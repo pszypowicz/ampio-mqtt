@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+
+# Secrets / local config (never commit credentials)
+*.env
+.secrets*
+secrets*
+
+# Local capture artifacts
+devicesDetails.json
+*.tsv
