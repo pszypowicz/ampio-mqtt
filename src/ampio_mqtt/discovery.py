@@ -69,9 +69,7 @@ async def _hostname_strategy(
     return [result] if result is not None else []
 
 
-async def _probe_host(
-    host: str, port: int, timeout: float
-) -> DiscoveryResult | None:
+async def _probe_host(host: str, port: int, timeout: float) -> DiscoveryResult | None:
     """TCP-connect to (host, port); on success resolve the IP for display."""
     try:
         async with asyncio.timeout(timeout):
@@ -85,9 +83,7 @@ async def _probe_host(
         pass
 
     address = await _resolve_address(host, port)
-    return DiscoveryResult(
-        host=host, port=port, address=address, source="ampio.local"
-    )
+    return DiscoveryResult(host=host, port=port, address=address, source="ampio.local")
 
 
 async def _resolve_address(host: str, port: int) -> str | None:
@@ -137,6 +133,7 @@ async def _browse_mdns(timeout: float) -> list[DiscoveryResult]:
         pending.append(asyncio.create_task(_resolve(zc, service_type, name)))
 
     async with AsyncZeroconf() as azc:
+
         def _bridge(
             _zc: object,
             service_type: str,
@@ -145,9 +142,7 @@ async def _browse_mdns(timeout: float) -> list[DiscoveryResult]:
         ) -> None:
             _on_change(azc, service_type, name, state_change)
 
-        browser = AsyncServiceBrowser(
-            azc.zeroconf, [_MDNS_SERVICE], handlers=[_bridge]
-        )
+        browser = AsyncServiceBrowser(azc.zeroconf, [_MDNS_SERVICE], handlers=[_bridge])
         await asyncio.sleep(timeout)
         await browser.async_cancel()
         if pending:

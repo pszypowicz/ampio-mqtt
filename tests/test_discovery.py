@@ -196,3 +196,215 @@ async def test_mdns_duplicate_address_is_deduped(
         results = await discover(timeout=0.2)
     assert len(results) == 1
     assert results[0].source == "ampio.local"
+
+
+# --- Real `_browse_mdns` body coverage --------------------------------------
+#
+# The tests above stub `_browse_mdns` itself, which leaves the AsyncZeroconf /
+# AsyncServiceBrowser / AsyncServiceInfo handling inside the function
+# untested. The fakes below stand in for those zeroconf classes so the actual
+# `_browse_mdns` body runs and its branches are exercised.
+
+
+class _FakeAsyncServiceInfo:
+    """Stand-in for `zeroconf.asyncio.AsyncServiceInfo`.
+
+    Class-level registries let each test prepare the answer for one or more
+    service names; `async_request` returns the pre-seeded answer.
+    """
+
+    answers: dict[str, _FakeAsyncServiceInfo] = {}
+
+    def __init__(self, service_type: str, name: str) -> None:
+        self.type = service_type
+        self.name = name
+        seed = _FakeAsyncServiceInfo.answers.get(name)
+        self._available = seed is not None
+        self.port = seed.port if seed is not None else None
+        self.server = seed.server if seed is not None else None
+        self._addresses: list[str] = list(seed._addresses) if seed is not None else []
+
+    @classmethod
+    def seed(
+        cls,
+        name: str,
+        *,
+        port: int,
+        server: str | None,
+        addresses: list[str],
+    ) -> None:
+        inst = cls.__new__(cls)
+        inst.type = "_mqtt._tcp.local."
+        inst.name = name
+        inst._available = True
+        inst.port = port
+        inst.server = server
+        inst._addresses = addresses
+        cls.answers[name] = inst
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.answers = {}
+
+    async def async_request(self, _zc: object, _timeout_ms: int) -> bool:
+        return self._available
+
+    def parsed_scoped_addresses(self) -> list[str]:
+        return list(self._addresses)
+
+
+class _FakeAsyncServiceBrowser:
+    """Fires the configured handlers synchronously on construction."""
+
+    state_change_added: object | None = None
+
+    def __init__(
+        self,
+        _zc: object,
+        _service_types: list[str],
+        handlers: list[Any],
+    ) -> None:
+        for handler in handlers:
+            for name in _FakeAsyncServiceBrowser.events_added:
+                handler(_zc, "_mqtt._tcp.local.", name, self.state_change_added)
+            for name in _FakeAsyncServiceBrowser.events_other:
+                handler(_zc, "_mqtt._tcp.local.", name, object())
+
+    async def async_cancel(self) -> None:
+        return None
+
+    events_added: list[str] = []
+    events_other: list[str] = []
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.events_added = []
+        cls.events_other = []
+
+
+class _FakeAsyncZeroconf:
+    """Async context manager stand-in for `AsyncZeroconf`."""
+
+    def __init__(self) -> None:
+        self.zeroconf = object()
+
+    async def __aenter__(self) -> _FakeAsyncZeroconf:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False
+
+
+class _FakeServiceStateChange:
+    """Enum-like stand-in; `Added` is the value the implementation checks for."""
+
+    Added = object()
+
+
+def _install_fake_zeroconf(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Insert the fake zeroconf modules into sys.modules for the lazy import."""
+    _FakeAsyncServiceInfo.reset()
+    _FakeAsyncServiceBrowser.reset()
+    _FakeAsyncServiceBrowser.state_change_added = _FakeServiceStateChange.Added
+
+    import types
+
+    root = types.ModuleType("zeroconf")
+    root.ServiceStateChange = _FakeServiceStateChange  # type: ignore[attr-defined]
+    asyncio_mod = types.ModuleType("zeroconf.asyncio")
+    asyncio_mod.AsyncServiceBrowser = _FakeAsyncServiceBrowser  # type: ignore[attr-defined]
+    asyncio_mod.AsyncServiceInfo = _FakeAsyncServiceInfo  # type: ignore[attr-defined]
+    asyncio_mod.AsyncZeroconf = _FakeAsyncZeroconf  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "zeroconf", root)
+    monkeypatch.setitem(sys.modules, "zeroconf.asyncio", asyncio_mod)
+
+
+async def test_browse_mdns_resolves_added_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An Added event with a resolvable AsyncServiceInfo becomes a result."""
+    _install_fake_zeroconf(monkeypatch)
+    _FakeAsyncServiceInfo.seed(
+        "broker._mqtt._tcp.local.",
+        port=1883,
+        server="broker.local.",
+        addresses=["192.0.2.99"],
+    )
+    _FakeAsyncServiceBrowser.events_added = ["broker._mqtt._tcp.local."]
+
+    results = await discovery_module._browse_mdns(timeout=0.01)
+    assert results == [
+        DiscoveryResult(
+            host="broker.local",
+            port=1883,
+            address="192.0.2.99",
+            source="mdns",
+            name="broker._mqtt._tcp.local",
+        )
+    ]
+
+
+async def test_browse_mdns_ignores_non_added_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removed/Updated events do not create resolve tasks or results."""
+    _install_fake_zeroconf(monkeypatch)
+    _FakeAsyncServiceBrowser.events_other = ["stale._mqtt._tcp.local."]
+
+    results = await discovery_module._browse_mdns(timeout=0.01)
+    assert results == []
+
+
+async def test_browse_mdns_drops_unresolvable_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An Added event whose AsyncServiceInfo.async_request returns False is skipped."""
+    _install_fake_zeroconf(monkeypatch)
+    # No seed -> async_request returns False.
+    _FakeAsyncServiceBrowser.events_added = ["ghost._mqtt._tcp.local."]
+
+    results = await discovery_module._browse_mdns(timeout=0.01)
+    assert results == []
+
+
+async def test_browse_mdns_drops_service_without_addresses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resolved AsyncServiceInfo with no addresses is also filtered out."""
+    _install_fake_zeroconf(monkeypatch)
+    _FakeAsyncServiceInfo.seed(
+        "empty._mqtt._tcp.local.",
+        port=1883,
+        server="empty.local.",
+        addresses=[],
+    )
+    _FakeAsyncServiceBrowser.events_added = ["empty._mqtt._tcp.local."]
+
+    results = await discovery_module._browse_mdns(timeout=0.01)
+    assert results == []
+
+
+async def test_browse_mdns_uses_address_when_server_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When `info.server` is empty, the first address is used as the host."""
+    _install_fake_zeroconf(monkeypatch)
+    _FakeAsyncServiceInfo.seed(
+        "noserver._mqtt._tcp.local.",
+        port=1883,
+        server=None,
+        addresses=["192.0.2.77"],
+    )
+    _FakeAsyncServiceBrowser.events_added = ["noserver._mqtt._tcp.local."]
+
+    results = await discovery_module._browse_mdns(timeout=0.01)
+    assert results == [
+        DiscoveryResult(
+            host="192.0.2.77",
+            port=1883,
+            address="192.0.2.77",
+            source="mdns",
+            name="noserver._mqtt._tcp.local",
+        )
+    ]

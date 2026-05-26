@@ -83,6 +83,7 @@ DeviceClass = Literal[
 # State-class strings. Values match Home Assistant's SensorStateClass.
 StateClass = Literal["measurement", "total", "total_increasing"]
 
+
 @dataclass(frozen=True, slots=True)
 class SensorKind:
     """Neutral description of a sensor measurement."""
