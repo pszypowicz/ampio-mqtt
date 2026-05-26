@@ -7,7 +7,8 @@ The mapping is derived from the device type table published by Ampio in
 `node-red-contrib-ampio` (file `ampioin/db/devtypes.json`).
 
   Copyright (c) 2019, Ampio Sp. z o.o.
-  Licensed under the ISC license.
+  Licensed under the ISC license. The full upstream notice is reproduced
+  verbatim in the project-root `NOTICES` file.
 
 Node-RED specific "(unsupported)" annotations and placeholder/reserved entries
 are omitted, since here the value is only the hardware model name.

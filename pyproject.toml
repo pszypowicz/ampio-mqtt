@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aioampio"
-version = "0.1.0"
+version = "0.2.0"
 description = "Async client for the Ampio Smart Home MQTT protocol"
 readme = "README.md"
 license = { text = "MIT" }
@@ -22,6 +22,26 @@ test = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/aioampio"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/aioampio/py.typed" = "aioampio/py.typed"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/aioampio/**/*.py",
+  "src/aioampio/py.typed",
+  "tests/**/*.py",
+  "README.md",
+  "LICENSE",
+  "NOTICES",
+  "PROTOCOL.md",
+  "pyproject.toml",
+]
+exclude = [
+  "tools/**",
+  ".venv/**",
+  ".pytest_cache/**",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

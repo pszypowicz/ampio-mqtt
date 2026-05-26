@@ -16,13 +16,8 @@ class AmpioObject:
     typ_komponentu: str | None = None
     name: str | None = None
     interpretacja: int | None = None
-    funkcja: int | None = None
-    room_id: int | None = None  # lokalizacja
-    min: float | None = None
-    max: float | None = None
     kind: SensorKind | None = None  # set when classified as a sensor
     value: str | None = None
-    desc: str | None = None
 
     @property
     def is_sensor(self) -> bool:

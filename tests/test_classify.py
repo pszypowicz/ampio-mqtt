@@ -68,7 +68,8 @@ def test_bit32_is_generic_measurement() -> None:
 
 
 @pytest.mark.parametrize(
-    "typ", ["przekaznik", "rgbw", "led", "roleta_procenty", "flaga", "detekcja", "symulacja"]
+    "typ",
+    ["przekaznik", "rgbw", "led", "roleta_procenty", "flaga", "detekcja", "symulacja"],
 )
 def test_non_sensor_types(typ) -> None:
     assert classify_object(typ, 1) is None
