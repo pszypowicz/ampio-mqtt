@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.1.0
+
+### Added
+
+- `discover()` coroutine and `DiscoveryResult` dataclass: best-effort LAN
+  discovery of an M-SERV by probing the `ampio.local` hostname and, when
+  the new `[discovery]` extra is installed, browsing `_mqtt._tcp.local.`
+  via zeroconf. Returns deduplicated candidates and never raises on
+  "not found".
+- New optional dependency extra: `pip install ampio-mqtt[discovery]`
+  pulls in `zeroconf` for the mDNS strategy. Without it, `discover()`
+  silently falls back to the hostname probe.
+
+### Changed
+
+- mypy: zeroconf is now declared as a scoped `ignore_missing_imports`
+  override in `pyproject.toml` instead of per-line `# type: ignore`
+  comments inside `discovery.py`. Strict typing stays clean whether or
+  not the `[discovery]` extra is installed.
+
 ## 1.0.0
 
 Initial public release. The project was renamed from an unpublished

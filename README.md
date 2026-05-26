@@ -12,13 +12,16 @@ from `ampio_mqtt.__init__`); further breaking changes ship as major versions.
 Currently supports:
 
 - TCP connection to the Ampio MQTT broker with username/password auth and
-  auto-reconnect with exponential backoff,
+  auto-reconnect with capped exponential backoff and jitter,
 - discovery of physical modules and logical DB objects from the M-SERV,
 - live push of object state changes via per-object MQTT topics, plus a bulk
   states snapshot at startup,
 - classification of sensor objects (temperature and M-SENS environmental
   channels) with Home-Assistant-compatible device/state class hints,
-- M-SERV identification (mac, firmware versions, local IP).
+- M-SERV identification (mac, firmware versions, local IP),
+- best-effort LAN discovery via `discover()` (hostname probe of
+  `ampio.local`, plus mDNS browse of `_mqtt._tcp.local.` when the
+  optional `[discovery]` extra is installed).
 
 The MQTT topic layout is documented at the top of
 [`src/ampio_mqtt/const.py`](src/ampio_mqtt/const.py).
@@ -26,7 +29,8 @@ The MQTT topic layout is documented at the top of
 ## Installation
 
 ```
-pip install ampio-mqtt
+pip install ampio-mqtt          # core async client
+pip install "ampio-mqtt[discovery]"   # adds zeroconf for mDNS browsing
 ```
 
 ## Usage
