@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
-from typing import Any
 
 import aiomqtt
 
+from . import _protocol
 from .const import (
     DETAILS_REQUEST_PAYLOAD,
     DEVICES_REQUEST_PAYLOAD,
@@ -26,49 +25,13 @@ from .const import (
     states_request_topic,
     states_response_topic,
 )
-from .device_types import module_model
+from .errors import AmpioAuthError, AmpioConnectionError
 from .models import AmpioModule, AmpioObject, AmpioServerInfo, AmpioState
 
 _LOGGER = logging.getLogger(__name__)
 
 ObjectListener = Callable[[AmpioObject], None]
 AvailabilityListener = Callable[[bool], None]
-
-
-class AmpioError(Exception):
-    """Base error."""
-
-
-class AmpioConnectionError(AmpioError):
-    """Raised when the broker connection fails for non-auth reasons."""
-
-
-class AmpioAuthError(AmpioConnectionError):
-    """Raised when the broker rejects the credentials."""
-
-
-# CONNACK return codes / reason strings that indicate an auth failure rather
-# than a network or transport problem. aiomqtt surfaces the broker text in the
-# `MqttError` message; matching is heuristic but covers MQTT 3.1.1 (rc 4/5) and
-# MQTT 5 (`not authorized`, `bad user name or password`).
-_AUTH_ERROR_MARKERS = (
-    "not authorized",
-    "bad user name",
-    "bad username",
-    "unauthorized",
-    "rc=4",
-    "rc=5",
-    "[code:4]",
-    "[code:5]",
-    "[code:134]",
-    "[code:135]",
-)
-
-
-def _is_auth_error(err: aiomqtt.MqttError) -> bool:
-    """Return True if the MQTT error looks like an authentication failure."""
-    msg = str(err).lower()
-    return any(marker in msg for marker in _AUTH_ERROR_MARKERS)
 
 
 class AmpioClient:
@@ -202,14 +165,13 @@ class AmpioClient:
                         async for message in client.messages:
                             if str(message.topic) != info_topic:
                                 continue
-                            payload = message.payload
-                            if isinstance(payload, bytes):
-                                payload = payload.decode("utf-8", "replace")
-                            return _parse_server_info(payload)
+                            return _protocol.parse_server_info(
+                                _decode_payload(message.payload)
+                            )
                 except TimeoutError:
                     return AmpioServerInfo()
         except aiomqtt.MqttError as err:
-            if _is_auth_error(err):
+            if _protocol.is_auth_error(err):
                 raise AmpioAuthError(str(err)) from err
             raise AmpioConnectionError(str(err)) from err
         return AmpioServerInfo()
@@ -231,7 +193,7 @@ class AmpioClient:
         connected_task = asyncio.create_task(self._connected.wait())
         auth_failed_task = asyncio.create_task(self._auth_failed.wait())
         try:
-            done, pending = await asyncio.wait(
+            done, _ = await asyncio.wait(
                 {connected_task, auth_failed_task},
                 timeout=timeout,
                 return_when=asyncio.FIRST_COMPLETED,
@@ -294,9 +256,7 @@ class AmpioClient:
         Public entry point intended for tests; the real broker drives the
         same logic through `_run`.
         """
-        if isinstance(payload, bytes):
-            payload = payload.decode("utf-8", "replace")
-        self._dispatch(topic, payload)
+        self._dispatch(topic, _decode_payload(payload))
 
     async def _publish_config(self, keyword: str) -> None:
         if self._client is None:
@@ -332,12 +292,11 @@ class AmpioClient:
                     await self.request_states()
                     await self.request_info()
                     async for message in client.messages:
-                        payload = message.payload
-                        if isinstance(payload, bytes):
-                            payload = payload.decode("utf-8", "replace")
-                        self._dispatch(str(message.topic), payload)
+                        self._dispatch(
+                            str(message.topic), _decode_payload(message.payload)
+                        )
             except aiomqtt.MqttError as err:
-                if _is_auth_error(err):
+                if _protocol.is_auth_error(err):
                     # Reconnecting will not help; surface to start() and stop.
                     self._auth_error_message = str(err)
                     self._auth_failed.set()
@@ -370,130 +329,86 @@ class AmpioClient:
         elif topic.endswith("/state") and "/ob/" in topic:
             self._handle_state(topic, payload)
 
-    def _handle_details(self, payload: Any) -> None:
-        try:
-            data = json.loads(payload)
-        except (ValueError, TypeError):
+    def _handle_details(self, payload: str) -> None:
+        items = _protocol.parse_details(payload)
+        if items is None:
             _LOGGER.warning("Could not parse Ampio devicesDetails")
             return
-        for item in data.get("List", []):
-            oid = _to_int(item.get("id"))
-            if oid is None:
-                continue
-            typ = item.get("typ_komponentu")
-            interp = _to_int(item.get("interpretacja"))
-            obj = self.state.objects.get(oid) or AmpioObject(id=oid)
-            obj.device_id = _to_int(item.get("id_urzadzenia"))
-            obj.typ_komponentu = typ
-            obj.name = item.get("opis_menu") or obj.name
-            obj.interpretacja = interp
-            obj.kind = classify_object(typ, interp)
-            if obj.value is None:
-                self._seed_from_stan_json(obj, item.get("stan_json"))
-            self.state.objects[oid] = obj
+        for meta in items:
+            obj = self.state.objects.get(meta.id) or AmpioObject(id=meta.id)
+            obj.device_id = meta.device_id
+            obj.typ_komponentu = meta.typ_komponentu
+            obj.name = meta.name or obj.name
+            obj.interpretacja = meta.interpretacja
+            obj.kind = classify_object(meta.typ_komponentu, meta.interpretacja)
+            if obj.value is None and meta.stan_json is not None:
+                self._apply_stan_json(obj, meta.stan_json)
+            self.state.objects[meta.id] = obj
             self._notify(obj)
         self._details_received.set()
 
-    def _seed_from_stan_json(self, obj: AmpioObject, stan_json: Any) -> None:
-        """Seed value from `stan_json` and bump the module's last_seen."""
-        if not stan_json:
-            return
-        try:
-            data = json.loads(stan_json)
-        except (ValueError, TypeError):
-            return
-        obj.value = data.get("state", obj.value)
-        self._touch_module(obj.device_id, data.get("on"))
-
-    def _handle_devices(self, payload: Any) -> None:
-        try:
-            data = json.loads(payload)
-        except (ValueError, TypeError):
+    def _handle_devices(self, payload: str) -> None:
+        modules = _protocol.parse_devices(payload)
+        if modules is None:
             _LOGGER.warning("Could not parse Ampio devices list")
             return
-        for item in data.get("List", []):
-            mid = _to_int(item.get("id"))
-            if mid is None:
-                continue
-            typ = _to_int(item.get("typ_urzadzenia"))
-            previous = self.state.modules.get(mid)
-            self.state.modules[mid] = AmpioModule(
-                id=mid,
-                mac=_to_int(item.get("mac")),
-                mac_global=_to_int(item.get("mac_global")),
-                name=item.get("nazwa_urzadzenia") or None,
-                type=typ,
-                model=module_model(typ),
-                sw_version=_to_int(item.get("wersja_softu")),
-                hw_version=_to_int(item.get("wersja_pcb")),
-                last_seen=previous.last_seen if previous else None,
-            )
+        for module in modules:
+            previous = self.state.modules.get(module.id)
+            if previous is not None:
+                module.last_seen = previous.last_seen
+            self.state.modules[module.id] = module
         self._devices_received.set()
 
-    def _handle_info(self, payload: Any) -> None:
-        """Parse the server info reply, keeping only safe fields."""
-        self.state.server_info = _parse_server_info(payload)
+    def _handle_info(self, payload: str) -> None:
+        self.state.server_info = _protocol.parse_server_info(payload)
         self._info_received.set()
 
-    def _handle_states_snapshot(self, payload: Any) -> None:
-        """Apply the bulk `data/states` snapshot.
-
-        Seeds the value for every object whose entry has a non-empty
-        `stan_json`. Existing fresh values from live pushes are preserved.
-        """
-        try:
-            data = json.loads(payload)
-        except (ValueError, TypeError):
+    def _handle_states_snapshot(self, payload: str) -> None:
+        entries = _protocol.parse_states_snapshot(payload)
+        if entries is None:
             _LOGGER.warning("Could not parse Ampio states snapshot")
             return
-        for item in data.get("List", []):
-            oid = _to_int(item.get("id"))
-            if oid is None:
-                continue
-            obj = self.state.objects.get(oid)
+        for entry in entries:
+            obj = self.state.objects.get(entry.id)
             if obj is None:
                 # Metadata not yet known (e.g. snapshot arrived before details).
-                obj = AmpioObject(id=oid, kind=classify_object(None, None))
-                self.state.objects[oid] = obj
-            if obj.value is None:
-                self._seed_from_stan_json(obj, item.get("stan_json"))
+                obj = AmpioObject(id=entry.id, kind=classify_object(None, None))
+                self.state.objects[entry.id] = obj
+            if obj.value is None and entry.stan_json is not None:
+                self._apply_stan_json(obj, entry.stan_json)
             self._notify(obj)
         self._states_received.set()
 
     def _handle_state(self, topic: str, payload: str) -> None:
-        parts = topic.split("/")
-        # ampio / fromDB / <user> / ob / <id> / state
-        if len(parts) < 6 or parts[3] != "ob":
+        update = _protocol.parse_state_message(topic, payload)
+        if update is None:
             return
-        oid = _to_int(parts[4])
-        if oid is None:
-            return
-        value = payload
-        on_ms: Any = None
-        try:
-            data = json.loads(payload)
-            value = data.get("state", payload)
-            on_ms = data.get("on")
-        except (ValueError, TypeError):
-            pass
-
-        obj = self.state.objects.get(oid)
+        obj = self.state.objects.get(update.id)
         if obj is None:
             # No metadata yet (e.g. restricted account) -> generic sensor.
-            obj = AmpioObject(id=oid, kind=classify_object(None, None))
-            self.state.objects[oid] = obj
-        obj.value = value
-        self._touch_module(obj.device_id, on_ms)
+            obj = AmpioObject(id=update.id, kind=classify_object(None, None))
+            self.state.objects[update.id] = obj
+        obj.value = update.value
+        self._touch_module(obj.device_id, update.on_ms)
         self._notify(obj)
 
-    def _touch_module(self, module_id: int | None, on_ms: Any) -> None:
+    def _apply_stan_json(self, obj: AmpioObject, stan_json: str) -> None:
+        """Seed `obj.value` from `stan_json` and bump the module's last_seen."""
+        seed = _protocol.parse_stan_json(stan_json)
+        if seed is None:
+            return
+        if seed.value is not None:
+            obj.value = seed.value
+        self._touch_module(obj.device_id, seed.on_ms)
+
+    def _touch_module(self, module_id: int | None, on_ms: int | float | None) -> None:
         """Mark the module as having reported now (or at `on_ms`, server time)."""
         if module_id is None:
             return
         module = self.state.modules.get(module_id)
         if module is None:
             return
-        if isinstance(on_ms, (int, float)) and on_ms > 0:
+        if on_ms is not None and on_ms > 0:
             ts = float(on_ms) / 1000.0
         else:
             ts = time.time()
@@ -505,28 +420,10 @@ class AmpioClient:
             listener(obj)
 
 
-def _parse_server_info(payload: Any) -> AmpioServerInfo:
-    """Parse a server-info MQTT payload, keeping only the safe fields."""
-    try:
-        outer = json.loads(payload)
-    except (ValueError, TypeError):
-        _LOGGER.warning("Could not parse Ampio info payload")
-        return AmpioServerInfo()
-    data = outer.get("Results", outer) if isinstance(outer, dict) else {}
-    if not isinstance(data, dict):
-        return AmpioServerInfo()
-    return AmpioServerInfo(
-        mac=_to_int(data.get("mac")),
-        server_version=data.get("serverVersion") or None,
-        server_revision=data.get("serverRevision") or None,
-        mqtt_version=data.get("mqttVersion") or None,
-        local_ip=data.get("local_ip") or None,
-        device_id=data.get("device_id") or None,
-    )
-
-
-def _to_int(value: Any) -> int | None:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+def _decode_payload(payload: object) -> str:
+    """Coerce an aiomqtt payload (`str | bytes | bytearray | None`) to text."""
+    if isinstance(payload, (bytes, bytearray)):
+        return bytes(payload).decode("utf-8", "replace")
+    if isinstance(payload, str):
+        return payload
+    return ""

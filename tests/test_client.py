@@ -441,6 +441,52 @@ async def test_start_raises_auth_error_on_credential_rejection() -> None:
     assert client._runner is None  # stop() ran during the raise
 
 
+@pytest.mark.parametrize(
+    "topic_suffix",
+    ["config/devicesDetails", "config/devices", "data/states"],
+)
+def test_handlers_log_and_skip_unparseable_payloads(
+    caplog: pytest.LogCaptureFixture, topic_suffix: str
+) -> None:
+    client = _client()
+    with caplog.at_level("WARNING", logger="aioampio.client"):
+        client.feed_message(f"ampio/fromDB/{USER}/{topic_suffix}", b"not json")
+    assert "Could not parse" in caplog.text
+
+
+def test_dispatch_ignores_unmatched_topics() -> None:
+    """A topic that matches none of the four patterns is silently ignored."""
+    client = _client()
+    client.feed_message("totally/unrelated/topic", b"anything")
+    assert client.objects == {}
+    assert client.modules == {}
+
+
+def test_state_with_unparseable_payload_is_dropped() -> None:
+    """An `/ob/<non-int>/state` topic is rejected without raising."""
+    client = _client()
+    client.feed_message(f"ampio/fromDB/{USER}/ob/not-an-int/state", b"x")
+    assert client.objects == {}
+
+
+def test_stan_json_with_no_state_field_does_not_overwrite_value() -> None:
+    """A stan_json blob without `state` should not clobber an existing value."""
+    client = _client()
+    client.feed_message(
+        f"ampio/fromDB/{USER}/config/devicesDetails",
+        _details(
+            {
+                "id": 41,
+                "typ_komponentu": "temp",
+                "interpretacja": 1,
+                "opis_menu": "T",
+                "stan_json": '{"on": 1779560000000}',  # no "state"
+            }
+        ),
+    )
+    assert client.objects[41].value is None
+
+
 async def test_start_times_out_without_auth_error() -> None:
     """A connection that simply never comes up still raises AmpioConnectionError."""
 

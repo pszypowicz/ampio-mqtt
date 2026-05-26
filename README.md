@@ -1,21 +1,34 @@
 # aioampio
 
-Async Python client for the **Ampio Smart Home** MQTT protocol (as published by
-`node-red-contrib-ampio`). Built to back a Home Assistant integration; the
+Async Python client for the **Ampio Smart Home** local MQTT protocol exposed by
+the Ampio M-SERV controller. Built to back a Home Assistant integration; the
 library itself is Home Assistant agnostic.
 
 ## Status
 
-Early work in progress. Implements:
+Stable. The 1.0.0 release freezes the public API surface (everything exported
+from `aioampio.__init__`); further breaking changes ship as major versions.
 
-- connection to the Ampio MQTT broker (TCP, username/password) with auto-reconnect,
-- device discovery (`ampio/to|from/can/dev/list`),
-- sensor state tracking via the retained `ampio/from/<mac>/state/<valtype>/<ioid>`
-  topics, with push callbacks,
-- classification of the first-platform sensor value types (temperature, M-SENS
-  environmental channels, M-CON analog measurements).
+Currently supports:
 
-See [PROTOCOL.md](PROTOCOL.md) for the captured protocol details.
+- TCP connection to the Ampio MQTT broker with username/password auth and
+  auto-reconnect,
+- discovery of physical modules and logical DB objects from the M-SERV,
+- live push of object state changes via per-object MQTT topics, plus a bulk
+  states snapshot at startup,
+- classification of sensor objects (temperature, M-SENS environmental channels,
+  M-CON analog measurements) with Home-Assistant-compatible device/state class
+  hints,
+- M-SERV identification (mac, firmware versions, local IP).
+
+The MQTT topic layout is documented at the top of
+[`src/aioampio/const.py`](src/aioampio/const.py).
+
+## Installation
+
+```
+pip install aioampio
+```
 
 ## Usage
 
@@ -25,7 +38,7 @@ from aioampio import AmpioClient
 
 async def main() -> None:
     client = AmpioClient("192.0.2.10", username="user", password="secret")
-    client.add_sensor_listener(lambda s: print(s.unique_id, s.value))
+    client.add_object_listener(lambda obj: print(obj.id, obj.kind, obj.value))
     await client.start()        # connects, subscribes, requests discovery
     await asyncio.sleep(30)
     await client.stop()

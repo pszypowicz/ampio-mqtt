@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-from .client import (
-    AmpioAuthError,
-    AmpioClient,
-    AmpioConnectionError,
-    AmpioError,
-)
-from .const import DeviceClass, SensorKind, StateClass, classify_object
+from .client import AmpioClient
+from .const import SensorKind, classify_object
 from .device_types import module_model
+from .errors import AmpioAuthError, AmpioConnectionError, AmpioError
 from .models import AmpioModule, AmpioObject, AmpioServerInfo, AmpioState
 
 __all__ = [
@@ -21,11 +17,9 @@ __all__ = [
     "AmpioObject",
     "AmpioServerInfo",
     "AmpioState",
-    "DeviceClass",
     "SensorKind",
-    "StateClass",
     "classify_object",
     "module_model",
 ]
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"

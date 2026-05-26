@@ -6,6 +6,12 @@ build/
 dist/
 .venv/
 .pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
 
 # Secrets / local config (never commit credentials)
 *.env
