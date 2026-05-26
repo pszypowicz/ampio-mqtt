@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Callable
 from contextlib import suppress
 from typing import Any
@@ -273,6 +274,7 @@ class AmpioClient:
             if mid is None:
                 continue
             typ = _to_int(item.get("typ_urzadzenia"))
+            previous = self.state.modules.get(mid)
             self.state.modules[mid] = AmpioModule(
                 id=mid,
                 mac=_to_int(item.get("mac")),
@@ -281,6 +283,7 @@ class AmpioClient:
                 model=module_model(typ),
                 sw_version=_to_int(item.get("wersja_softu")),
                 hw_version=_to_int(item.get("wersja_pcb")),
+                last_seen=previous.last_seen if previous else None,
             )
         self._devices_received.set()
 
@@ -294,10 +297,12 @@ class AmpioClient:
             return
         value = payload
         desc = None
+        on_ms: Any = None
         try:
             data = json.loads(payload)
             value = data.get("state", payload)
             desc = data.get("desc")
+            on_ms = data.get("on")
         except (ValueError, TypeError):
             pass
 
@@ -308,7 +313,22 @@ class AmpioClient:
             self.state.objects[oid] = obj
         obj.value = value
         obj.desc = desc
+        self._touch_module(obj.device_id, on_ms)
         self._notify(obj)
+
+    def _touch_module(self, module_id: int | None, on_ms: Any) -> None:
+        """Mark the module as having reported now (or at `on_ms`, server time)."""
+        if module_id is None:
+            return
+        module = self.state.modules.get(module_id)
+        if module is None:
+            return
+        if isinstance(on_ms, (int, float)) and on_ms > 0:
+            ts = float(on_ms) / 1000.0
+        else:
+            ts = time.time()
+        if module.last_seen is None or ts > module.last_seen:
+            module.last_seen = ts
 
     def _notify(self, obj: AmpioObject) -> None:
         for listener in list(self._object_listeners):

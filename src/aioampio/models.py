@@ -41,6 +41,10 @@ class AmpioModule:
     model: str | None = None  # resolved model name for `type`
     sw_version: int | None = None  # wersja_softu
     hw_version: int | None = None  # wersja_pcb
+    # Epoch seconds of the last state message received for any of the module's
+    # objects. Source: the `on` field of the state payload (milliseconds epoch
+    # at the server), falling back to local receive time if absent.
+    last_seen: float | None = None
 
 
 @dataclass(slots=True)

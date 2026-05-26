@@ -67,6 +67,55 @@ def test_devices_populate_modules_with_model_and_versions() -> None:
     assert client.modules[99].model is None
 
 
+def test_state_updates_module_last_seen_from_on_field() -> None:
+    client = _client()
+    client._handle_message(_msg(
+        f"ampio/fromDB/{USER}/config/devices",
+        _devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
+    ))
+    client._handle_message(_msg(
+        f"ampio/fromDB/{USER}/config/devicesDetails",
+        _details({"id": 41, "id_urzadzenia": 17, "typ_komponentu": "temp",
+                  "interpretacja": 1, "opis_menu": "T"}),
+    ))
+    assert client.modules[17].last_seen is None
+
+    client._handle_message(_msg(
+        f"ampio/fromDB/{USER}/ob/41/state",
+        b'{"state": "22.5", "on": 1779565263813}',
+    ))
+    # 1779565263813 ms -> 1779565263.813 s
+    assert client.modules[17].last_seen == 1779565263.813
+
+    # A later push moves last_seen forward; an older one does not regress it.
+    client._handle_message(_msg(
+        f"ampio/fromDB/{USER}/ob/41/state",
+        b'{"state": "23.0", "on": 1779565999000}',
+    ))
+    assert client.modules[17].last_seen == 1779565999.0
+    client._handle_message(_msg(
+        f"ampio/fromDB/{USER}/ob/41/state",
+        b'{"state": "21.0", "on": 1779560000000}',
+    ))
+    assert client.modules[17].last_seen == 1779565999.0
+
+
+def test_devices_redelivery_preserves_last_seen() -> None:
+    client = _client()
+    client._handle_message(_msg(
+        f"ampio/fromDB/{USER}/config/devices",
+        _devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
+    ))
+    client.state.modules[17].last_seen = 1700000000.0
+    # Re-deliver the devices list (e.g. on reconnect) - last_seen must persist.
+    client._handle_message(_msg(
+        f"ampio/fromDB/{USER}/config/devices",
+        _devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m2"}),
+    ))
+    assert client.modules[17].name == "m2"
+    assert client.modules[17].last_seen == 1700000000.0
+
+
 def test_state_updates_object_and_notifies() -> None:
     client = _client()
     client._handle_message(
