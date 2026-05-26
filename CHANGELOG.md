@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.2.0
+
+### Removed
+
+- `discover()` no longer browses `_mqtt._tcp.local.` via mDNS. The Ampio
+  M-SERV does not publish itself on Avahi, so the mDNS path only surfaced
+  unrelated brokers and added complexity. `discover()` is now hostname-only
+  (a TCP probe of `ampio.local` by default).
+- The `[discovery]` optional dependency (`zeroconf`) and the related
+  `[[tool.mypy.overrides]]` block are gone.
+- `DiscoveryResult` loses the `source` and `name` fields, and `discover()`
+  loses the `include_mdns` parameter. These were only meaningful for the
+  mDNS branch.
+
+This is a breaking change versus 1.1.0 for callers that explicitly opted
+into mDNS or read `DiscoveryResult.source`. The hostname-only behaviour
+matches what every real install would have observed anyway, so no
+functional regression is expected.
+
 ## 1.1.0
 
 ### Added

@@ -27,7 +27,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[test,discovery]"
+      - run: python -m pip install -e ".[test]"
       - run: python -m pytest --cov=src/ampio_mqtt --cov-report=term-missing --cov-branch --cov-fail-under=95
 
   lint:
@@ -52,9 +52,5 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      # Install the `[discovery]` extra so mypy sees real `zeroconf` types in
-      # the lazy imports inside `_browse_mdns`. Without it the
-      # `[[tool.mypy.overrides]]` block in pyproject.toml would silently
-      # downgrade them to Any.
-      - run: python -m pip install -e ".[test,discovery]"
+      - run: python -m pip install -e ".[test]"
       - run: mypy --strict src/ampio_mqtt

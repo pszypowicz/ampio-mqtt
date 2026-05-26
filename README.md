@@ -19,9 +19,8 @@ Currently supports:
 - classification of sensor objects (temperature and M-SENS environmental
   channels) with Home-Assistant-compatible device/state class hints,
 - M-SERV identification (mac, firmware versions, local IP),
-- best-effort LAN discovery via `discover()` (hostname probe of
-  `ampio.local`, plus mDNS browse of `_mqtt._tcp.local.` when the
-  optional `[discovery]` extra is installed).
+- best-effort LAN discovery via `discover()` (TCP probe of the well-known
+  `ampio.local` hostname).
 
 The MQTT topic layout is documented at the top of
 [`src/ampio_mqtt/const.py`](src/ampio_mqtt/const.py).
@@ -29,8 +28,7 @@ The MQTT topic layout is documented at the top of
 ## Installation
 
 ```
-pip install ampio-mqtt          # core async client
-pip install "ampio-mqtt[discovery]"   # adds zeroconf for mDNS browsing
+pip install ampio-mqtt
 ```
 
 ## Usage
