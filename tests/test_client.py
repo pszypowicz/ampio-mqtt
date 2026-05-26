@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import fields
+from unittest.mock import patch
 
-from aioampio import AmpioClient
+import aiomqtt
+import pytest
+
+from aioampio import AmpioAuthError, AmpioClient
 
 USER = "u"
 
@@ -410,3 +415,50 @@ def test_availability_listener() -> None:
     client._set_available(True)
     client._set_available(False)
     assert events == [True, False]
+
+
+class _AuthFailingClient:
+    """aiomqtt.Client stand-in whose context manager raises an auth error."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        self.messages = self  # any iterable - won't be reached
+
+    async def __aenter__(self):
+        raise aiomqtt.MqttError("Not authorized")
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+async def test_start_raises_auth_error_on_credential_rejection() -> None:
+    """A broker auth rejection during _run surfaces AmpioAuthError from start()."""
+    client = AmpioClient("host", username="u", password="bad", reconnect_interval=0.0)
+    with (
+        patch("aioampio.client.aiomqtt.Client", _AuthFailingClient),
+        pytest.raises(AmpioAuthError),
+    ):
+        await client.start(timeout=2.0, discovery_timeout=0.1)
+    assert client._runner is None  # stop() ran during the raise
+
+
+async def test_start_times_out_without_auth_error() -> None:
+    """A connection that simply never comes up still raises AmpioConnectionError."""
+
+    class _Stuck:
+        def __init__(self, *a, **k):
+            self.messages = self
+
+        async def __aenter__(self):
+            await asyncio.sleep(10)
+
+        async def __aexit__(self, *a):
+            return False
+
+    client = AmpioClient("host", username="u", password="p", reconnect_interval=0.0)
+    from aioampio import AmpioConnectionError
+
+    with (
+        patch("aioampio.client.aiomqtt.Client", _Stuck),
+        pytest.raises(AmpioConnectionError),
+    ):
+        await client.start(timeout=0.5, discovery_timeout=0.1)

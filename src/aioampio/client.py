@@ -101,10 +101,12 @@ class AmpioClient:
         self._client: aiomqtt.Client | None = None
         self._runner: asyncio.Task[None] | None = None
         self._connected = asyncio.Event()
+        self._auth_failed = asyncio.Event()
         self._details_received = asyncio.Event()
         self._devices_received = asyncio.Event()
         self._states_received = asyncio.Event()
         self._info_received = asyncio.Event()
+        self._auth_error_message: str | None = None
         self._available = False
         self._stop = False
 
@@ -223,12 +225,29 @@ class AmpioClient:
         simply times out and discovery continues opportunistically.
         """
         self._stop = False
+        self._auth_failed.clear()
+        self._auth_error_message = None
         self._runner = asyncio.create_task(self._run())
+        connected_task = asyncio.create_task(self._connected.wait())
+        auth_failed_task = asyncio.create_task(self._auth_failed.wait())
         try:
-            await asyncio.wait_for(self._connected.wait(), timeout)
-        except TimeoutError as err:
+            done, pending = await asyncio.wait(
+                {connected_task, auth_failed_task},
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for task in (connected_task, auth_failed_task):
+                if not task.done():
+                    task.cancel()
+        if not done:
             await self.stop()
-            raise AmpioConnectionError("Timed out connecting to Ampio") from err
+            raise AmpioConnectionError("Timed out connecting to Ampio")
+        if self._auth_failed.is_set():
+            await self.stop()
+            raise AmpioAuthError(
+                self._auth_error_message or "Authentication rejected by Ampio broker"
+            )
 
         waiters = [
             asyncio.create_task(self._details_received.wait()),
@@ -318,7 +337,13 @@ class AmpioClient:
                             payload = payload.decode("utf-8", "replace")
                         self._dispatch(str(message.topic), payload)
             except aiomqtt.MqttError as err:
-                _LOGGER.debug("Ampio MQTT connection error: %s", err)
+                if _is_auth_error(err):
+                    # Reconnecting will not help; surface to start() and stop.
+                    self._auth_error_message = str(err)
+                    self._auth_failed.set()
+                    self._stop = True
+                else:
+                    _LOGGER.debug("Ampio MQTT connection error: %s", err)
             finally:
                 self._client = None
                 self._set_available(False)
