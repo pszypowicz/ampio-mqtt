@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aioampio import module_model
+from ampio_mqtt import module_model
 import pytest
 
 

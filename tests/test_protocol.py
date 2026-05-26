@@ -1,4 +1,4 @@
-"""Direct tests for the pure parsers in `aioampio._protocol`."""
+"""Direct tests for the pure parsers in `ampio_mqtt._protocol`."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import json
 import aiomqtt
 import pytest
 
-from aioampio import AmpioModule, AmpioServerInfo
-from aioampio._protocol import (
+from ampio_mqtt import AmpioModule, AmpioServerInfo
+from ampio_mqtt._protocol import (
     is_auth_error,
     parse_details,
     parse_devices,
@@ -38,10 +38,18 @@ def test_to_int(value: object, expected: int | None) -> None:
 @pytest.mark.parametrize(
     "marker",
     [
+        # Every entry of `_protocol._AUTH_ERROR_MARKERS` is exercised here so a
+        # silent removal during an aiomqtt version bump fails loudly.
         "not authorized",
-        "Bad user name or password",
-        "[code:5] unauthorized",
+        "bad user name or password",
+        "bad username",
+        "unauthorized",
         "Connection refused: rc=4",
+        "Connection refused: rc=5",
+        "[code:4]",
+        "[code:5]",
+        "[code:134]",
+        "[code:135]",
     ],
 )
 def test_is_auth_error_true(marker: str) -> None:

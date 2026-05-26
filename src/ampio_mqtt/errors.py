@@ -1,4 +1,4 @@
-"""Exceptions raised by aioampio."""
+"""Exceptions raised by ampio_mqtt."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ class AmpioError(Exception):
 
 
 class AmpioConnectionError(AmpioError):
-    """Raised when the broker connection fails for non-auth reasons."""
+    """Raised when the broker connection fails for non-auth transport reasons."""
 
 
-class AmpioAuthError(AmpioConnectionError):
+class AmpioAuthError(AmpioError):
     """Raised when the broker rejects the credentials."""

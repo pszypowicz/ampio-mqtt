@@ -18,8 +18,8 @@ from unittest.mock import patch
 import aiomqtt
 import pytest
 
-from aioampio import AmpioClient, AmpioConnectionError
-from aioampio.errors import AmpioAuthError
+from ampio_mqtt import AmpioClient, AmpioConnectionError
+from ampio_mqtt.errors import AmpioAuthError
 
 USER = "u"
 
@@ -101,7 +101,7 @@ async def test_connection_returns_server_info_on_happy_path() -> None:
     FakeMqttClient.scripted_messages = [
         _Message(info_topic, json.dumps({"Results": {"mac": 42}}).encode())
     ]
-    with patch("aioampio.client.aiomqtt.Client", FakeMqttClient):
+    with patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient):
         info = await AmpioClient.test_connection("h", 1883, USER, "p", info_timeout=1)
     assert info.mac == 42
     assert info_topic in FakeMqttClient.subscribed
@@ -111,7 +111,7 @@ async def test_connection_returns_server_info_on_happy_path() -> None:
 
 async def test_connection_returns_empty_on_info_timeout() -> None:
     """A broker that connects but never replies returns an empty AmpioServerInfo."""
-    with patch("aioampio.client.aiomqtt.Client", FakeMqttClient):
+    with patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient):
         info = await AmpioClient.test_connection("h", 1883, USER, "p", info_timeout=0.1)
     assert info.mac is None
     assert info.server_version is None
@@ -120,7 +120,7 @@ async def test_connection_returns_empty_on_info_timeout() -> None:
 async def test_connection_raises_auth_error_on_bad_credentials() -> None:
     FakeMqttClient.enter_error = aiomqtt.MqttError("Not authorized")
     with (
-        patch("aioampio.client.aiomqtt.Client", FakeMqttClient),
+        patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient),
         pytest.raises(AmpioAuthError),
     ):
         await AmpioClient.test_connection("h", 1883, USER, "bad", info_timeout=0.1)
@@ -129,7 +129,7 @@ async def test_connection_raises_auth_error_on_bad_credentials() -> None:
 async def test_connection_raises_connection_error_on_transport_failure() -> None:
     FakeMqttClient.enter_error = aiomqtt.MqttError("Connection refused")
     with (
-        patch("aioampio.client.aiomqtt.Client", FakeMqttClient),
+        patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient),
         pytest.raises(AmpioConnectionError),
     ):
         await AmpioClient.test_connection("h", 1883, USER, "p", info_timeout=0.1)
@@ -142,7 +142,7 @@ async def test_connection_ignores_unrelated_topics() -> None:
         _Message("unrelated/topic", b"junk"),
         _Message(info_topic, json.dumps({"Results": {"mac": 7}}).encode()),
     ]
-    with patch("aioampio.client.aiomqtt.Client", FakeMqttClient):
+    with patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient):
         info = await AmpioClient.test_connection("h", 1883, USER, "p", info_timeout=1)
     assert info.mac == 7
 
@@ -188,7 +188,7 @@ async def test_start_drives_full_discovery_through_mocked_broker() -> None:
         _Message(info_topic, json.dumps({"Results": {"mac": 99}}).encode()),
     ]
     client = AmpioClient("h", username=USER, reconnect_interval=0.0)
-    with patch("aioampio.client.aiomqtt.Client", FakeMqttClient):
+    with patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient):
         await client.start(timeout=2.0, discovery_timeout=1.0)
     try:
         assert client.available is True

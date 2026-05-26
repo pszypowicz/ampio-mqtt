@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from aioampio import classify_object
+from ampio_mqtt import classify_object
 
 
 def test_temperature() -> None:

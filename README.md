@@ -1,4 +1,4 @@
-# aioampio
+# ampio-mqtt
 
 Async Python client for the **Ampio Smart Home** local MQTT protocol exposed by
 the Ampio M-SERV controller. Built to back a Home Assistant integration; the
@@ -7,34 +7,33 @@ library itself is Home Assistant agnostic.
 ## Status
 
 Stable. The 1.0.0 release freezes the public API surface (everything exported
-from `aioampio.__init__`); further breaking changes ship as major versions.
+from `ampio_mqtt.__init__`); further breaking changes ship as major versions.
 
 Currently supports:
 
 - TCP connection to the Ampio MQTT broker with username/password auth and
-  auto-reconnect,
+  auto-reconnect with exponential backoff,
 - discovery of physical modules and logical DB objects from the M-SERV,
 - live push of object state changes via per-object MQTT topics, plus a bulk
   states snapshot at startup,
-- classification of sensor objects (temperature, M-SENS environmental channels,
-  M-CON analog measurements) with Home-Assistant-compatible device/state class
-  hints,
+- classification of sensor objects (temperature and M-SENS environmental
+  channels) with Home-Assistant-compatible device/state class hints,
 - M-SERV identification (mac, firmware versions, local IP).
 
 The MQTT topic layout is documented at the top of
-[`src/aioampio/const.py`](src/aioampio/const.py).
+[`src/ampio_mqtt/const.py`](src/ampio_mqtt/const.py).
 
 ## Installation
 
 ```
-pip install aioampio
+pip install ampio-mqtt
 ```
 
 ## Usage
 
 ```python
 import asyncio
-from aioampio import AmpioClient
+from ampio_mqtt import AmpioClient
 
 async def main() -> None:
     client = AmpioClient("192.0.2.10", username="user", password="secret")

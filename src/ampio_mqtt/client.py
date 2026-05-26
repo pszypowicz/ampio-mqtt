@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 import uuid
 from collections.abc import Callable
@@ -30,6 +31,8 @@ from .models import AmpioModule, AmpioObject, AmpioServerInfo, AmpioState
 
 _LOGGER = logging.getLogger(__name__)
 
+_RECONNECT_BACKOFF_MAX = 60.0
+
 ObjectListener = Callable[[AmpioObject], None]
 AvailabilityListener = Callable[[bool], None]
 
@@ -55,7 +58,7 @@ class AmpioClient:
         # Stable client identifier; reusing the same id across reconnects keeps
         # the broker from seeing parallel "ghost" sessions while the previous
         # one expires.
-        self._client_id = f"aioampio_{uuid.uuid4().hex}"
+        self._client_id = f"ampio_mqtt_{uuid.uuid4().hex}"
 
         self.state = AmpioState()
         self._object_listeners: list[ObjectListener] = []
@@ -155,7 +158,7 @@ class AmpioClient:
                 port=port,
                 username=username,
                 password=password,
-                identifier=f"aioampio_test_{uuid.uuid4().hex}",
+                identifier=f"ampio_mqtt_test_{uuid.uuid4().hex}",
                 timeout=10,
             ) as client:
                 await client.subscribe(info_topic)
@@ -250,11 +253,11 @@ class AmpioClient:
             raise AmpioConnectionError("Not connected")
         await self._client.publish(info_request_topic(self._username), b"")
 
-    def feed_message(self, topic: str, payload: str | bytes) -> None:
+    def _feed_message(self, topic: str, payload: str | bytes) -> None:
         """Inject a message directly into the routing logic.
 
-        Public entry point intended for tests; the real broker drives the
-        same logic through `_run`.
+        Private entry point used by the library's own tests; the real broker
+        drives the same logic through `_run`.
         """
         self._dispatch(topic, _decode_payload(payload))
 
@@ -269,6 +272,7 @@ class AmpioClient:
 
     async def _run(self) -> None:
         user = self._username
+        attempt = 0
         while not self._stop:
             try:
                 async with aiomqtt.Client(
@@ -287,6 +291,7 @@ class AmpioClient:
                     await client.subscribe(ob_state_wildcard(user))
                     self._set_available(True)
                     self._connected.set()
+                    attempt = 0
                     await self.request_devices()
                     await self.request_details()
                     await self.request_states()
@@ -307,7 +312,18 @@ class AmpioClient:
                 self._client = None
                 self._set_available(False)
             if not self._stop:
-                await asyncio.sleep(self._reconnect_interval)
+                await asyncio.sleep(self._backoff_seconds(attempt))
+                attempt += 1
+
+    def _backoff_seconds(self, attempt: int) -> float:
+        """Capped exponential backoff with jitter, in seconds.
+
+        Caps so a long outage with many concurrent installs does not
+        thunder-herd the broker on recovery.
+        """
+        base = self._reconnect_interval
+        capped = min(_RECONNECT_BACKOFF_MAX, base * (2.0**attempt))
+        return float(capped + random.uniform(0.0, base))
 
     def _set_available(self, available: bool) -> None:
         if available == self._available:

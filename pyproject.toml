@@ -3,19 +3,19 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "aioampio"
+name = "ampio-mqtt"
 version = "1.0.0"
 description = "Async client for the Ampio Smart Home MQTT protocol"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 authors = [{ name = "pszypowicz" }]
 keywords = ["ampio", "mqtt", "home-assistant", "smart-home"]
 dependencies = ["aiomqtt>=2.0.0,<3"]
 
 [project.urls]
-Homepage = "https://github.com/pszypowicz/aioampio"
-Issues = "https://github.com/pszypowicz/aioampio/issues"
+Homepage = "https://github.com/pszypowicz/ampio-mqtt"
+Issues = "https://github.com/pszypowicz/ampio-mqtt/issues"
 
 [project.optional-dependencies]
 test = [
@@ -26,15 +26,15 @@ test = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/aioampio"]
+packages = ["src/ampio_mqtt"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/aioampio/py.typed" = "aioampio/py.typed"
+"src/ampio_mqtt/py.typed" = "ampio_mqtt/py.typed"
 
 [tool.hatch.build.targets.sdist]
 include = [
-  "src/aioampio/**/*.py",
-  "src/aioampio/py.typed",
+  "src/ampio_mqtt/**/*.py",
+  "src/ampio_mqtt/py.typed",
   "tests/**/*.py",
   "README.md",
   "CHANGELOG.md",

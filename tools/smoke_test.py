@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live smoke test for aioampio against a real Ampio broker.
+"""Live smoke test for ampio-mqtt against a real Ampio broker.
 
 Connects, requests device discovery, and prints discovered devices and any
 sensor states received (from retained state topics) for a fixed duration.
@@ -18,12 +18,12 @@ import asyncio
 import logging
 import os
 
-from aioampio import AmpioClient, AmpioConnectionError, AmpioObject
+from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioObject
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Live smoke test for aioampio against a real Ampio broker. "
+        description="Live smoke test for ampio-mqtt against a real Ampio broker. "
         "Credentials may come from AMPIO_HOST/AMPIO_USERNAME/AMPIO_PASSWORD env vars."
     )
     p.add_argument("--host", default=os.environ.get("AMPIO_HOST"), help="Broker host")

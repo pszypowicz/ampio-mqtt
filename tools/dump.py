@@ -56,7 +56,7 @@ async def run(a: argparse.Namespace) -> int:
             port=a.port,
             username=a.username,
             password=a.password,
-            identifier="aioampio_dump",
+            identifier="ampio_mqtt_dump",
             timeout=10,
         ) as client:
             await client.subscribe(a.topic)

@@ -19,7 +19,7 @@ pass them through unchanged.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, get_args
+from typing import Literal
 
 DETAILS_REQUEST_PAYLOAD = "devicesDetails"
 DEVICES_REQUEST_PAYLOAD = "devices"
@@ -83,10 +83,6 @@ DeviceClass = Literal[
 # State-class strings. Values match Home Assistant's SensorStateClass.
 StateClass = Literal["measurement", "total", "total_increasing"]
 
-_VALID_DEVICE_CLASSES = frozenset(get_args(DeviceClass))
-_VALID_STATE_CLASSES = frozenset(get_args(StateClass))
-
-
 @dataclass(frozen=True, slots=True)
 class SensorKind:
     """Neutral description of a sensor measurement."""
@@ -100,19 +96,6 @@ class SensorKind:
     # arrives as "2702.699951"); 1 decimal matches the device's own `desc`
     # field. 0 for quantities conventionally shown as integers.
     precision: int | None = 1
-
-    def __post_init__(self) -> None:
-        """Reject device/state class strings that are not in the typed set."""
-        if (
-            self.device_class is not None
-            and self.device_class not in _VALID_DEVICE_CLASSES
-        ):
-            raise ValueError(f"Unknown SensorKind device_class: {self.device_class!r}")
-        if (
-            self.state_class is not None
-            and self.state_class not in _VALID_STATE_CLASSES
-        ):
-            raise ValueError(f"Unknown SensorKind state_class: {self.state_class!r}")
 
 
 # lin_wej (analog input) measurement kind, keyed by `interpretacja`.
