@@ -18,6 +18,7 @@ Homepage = "https://github.com/pszypowicz/ampio-mqtt"
 Issues = "https://github.com/pszypowicz/ampio-mqtt/issues"
 
 [project.optional-dependencies]
+discovery = ["zeroconf>=0.131"]
 test = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
