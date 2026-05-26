@@ -26,9 +26,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## 1.0.0
 
-Initial public release. The project was renamed from an unpublished
-pre-release to avoid a PyPI name collision; this is the first release of the
-codebase under the `ampio-mqtt` distribution name.
+Initial public release.
 
 ### Added
 
