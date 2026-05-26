@@ -52,3 +52,14 @@ exclude = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+# `zeroconf` is an optional runtime dependency (the `[discovery]` extra).
+# Without the override, mypy emits `import-not-found` when the extra is
+# absent and `unused-ignore` when per-line `# type: ignore` comments are
+# present and the extra IS installed. The override keeps `discovery.py`
+# free of suppression comments in both configurations: zeroconf ships
+# `py.typed`, so real types are used when the extra is installed; without
+# it, mypy treats the module as `Any`.
+[[tool.mypy.overrides]]
+module = ["zeroconf", "zeroconf.*"]
+ignore_missing_imports = true

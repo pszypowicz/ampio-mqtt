@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from zeroconf.asyncio import AsyncServiceInfo  # type: ignore[import-not-found]
+    from zeroconf.asyncio import AsyncServiceInfo
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -105,8 +105,8 @@ async def _resolve_address(host: str, port: int) -> str | None:
 async def _browse_mdns(timeout: float) -> list[DiscoveryResult]:
     """Browse _mqtt._tcp.local. for the given window; empty list on import error."""
     try:
-        from zeroconf import ServiceStateChange  # type: ignore[import-not-found]
-        from zeroconf.asyncio import (  # type: ignore[import-not-found]
+        from zeroconf import ServiceStateChange
+        from zeroconf.asyncio import (
             AsyncServiceBrowser,
             AsyncServiceInfo,
             AsyncZeroconf,
