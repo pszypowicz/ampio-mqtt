@@ -16,7 +16,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        # Mirror the `requires-python` floor in pyproject.toml. 3.14 is the
+        # version Home Assistant currently ships on; 3.13 is kept as the
+        # support floor so downstream consumers on 3.13 still see green CI.
+        python-version: ["3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,8 +27,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[test]"
-      - run: python -m pytest --cov=src/aioampio --cov-report=term-missing --cov-branch --cov-fail-under=95
+      - run: python -m pip install -e ".[test,discovery]"
+      - run: python -m pytest --cov=src/ampio_mqtt --cov-report=term-missing --cov-branch --cov-fail-under=95
 
   lint:
     name: Lint
@@ -49,5 +52,9 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - run: python -m pip install -e ".[test]"
-      - run: mypy src/aioampio
+      # Install the `[discovery]` extra so mypy sees real `zeroconf` types in
+      # the lazy imports inside `_browse_mdns`. Without it the
+      # `[[tool.mypy.overrides]]` block in pyproject.toml would silently
+      # downgrade them to Any.
+      - run: python -m pip install -e ".[test,discovery]"
+      - run: mypy --strict src/ampio_mqtt
