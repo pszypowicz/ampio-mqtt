@@ -13,3 +13,9 @@ Initial public release.
 - Stable public API: `AmpioClient`, `AmpioError` and subclasses, `AmpioObject`,
   `AmpioModule`, `AmpioServerInfo`, `AmpioState`, `SensorKind`,
   `classify_object`, `module_model`.
+
+### Known follow-ups
+
+- The `aiomqtt` dependency is pinned to `>=2.0.0,<3`. When aiomqtt v3 lands,
+  re-verify the auth-error heuristic in `_protocol._AUTH_ERROR_MARKERS` and
+  bump the upper bound.

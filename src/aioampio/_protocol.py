@@ -21,7 +21,9 @@ if TYPE_CHECKING:
 # CONNACK return codes / reason strings that indicate an auth failure rather
 # than a network or transport problem. aiomqtt surfaces the broker text in the
 # `MqttError` message; matching is heuristic but covers MQTT 3.1.1 (rc 4/5) and
-# MQTT 5 (`not authorized`, `bad user name or password`).
+# MQTT 5 (`not authorized`, `bad user name or password`). The match runs over
+# `MqttError.__str__`, so revisit this table if aiomqtt changes its error
+# formatting (or when bumping to aiomqtt v3).
 _AUTH_ERROR_MARKERS = (
     "not authorized",
     "bad user name",
@@ -205,7 +207,11 @@ def parse_state_message(topic: str, payload: str) -> StateUpdate | None:
     except (ValueError, TypeError):
         data = None
     if isinstance(data, dict):
-        value = data.get("state", payload)
+        # Numeric `state` values arrive as int/float from JSON; the library
+        # contract is text, so coerce here rather than at every consumer.
+        raw_state = data.get("state")
+        if raw_state is not None:
+            value = str(raw_state)
         raw_on = data.get("on")
         if isinstance(raw_on, (int, float)):
             on_ms = raw_on
@@ -224,4 +230,8 @@ def parse_stan_json(stan_json: str) -> StanJsonSeed | None:
         return None
     raw_on = data.get("on")
     on_ms = raw_on if isinstance(raw_on, (int, float)) else None
-    return StanJsonSeed(value=data.get("state"), on_ms=on_ms)
+    raw_state = data.get("state")
+    return StanJsonSeed(
+        value=str(raw_state) if raw_state is not None else None,
+        on_ms=on_ms,
+    )

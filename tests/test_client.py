@@ -147,6 +147,34 @@ def test_state_updates_module_last_seen_from_on_field() -> None:
     assert client.modules[17].last_seen == 1779565999.0
 
 
+def test_state_push_with_numeric_state_is_stored_as_string() -> None:
+    """A broker that emits unquoted numbers in `state` still yields str value."""
+    client = _client()
+    client.feed_message(
+        f"ampio/fromDB/{USER}/config/devices",
+        _devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
+    )
+    client.feed_message(
+        f"ampio/fromDB/{USER}/config/devicesDetails",
+        _details(
+            {
+                "id": 41,
+                "id_urzadzenia": 17,
+                "typ_komponentu": "temp",
+                "interpretacja": 1,
+                "opis_menu": "T",
+            }
+        ),
+    )
+    client.feed_message(
+        f"ampio/fromDB/{USER}/ob/41/state",
+        b'{"state": 24.4, "on": 1779560000000}',
+    )
+    value = client.objects[41].value
+    assert value == "24.4"
+    assert isinstance(value, str)
+
+
 def test_states_snapshot_seeds_value_and_last_seen() -> None:
     """The bulk states reply seeds value and bumps module last_seen."""
     client = _client()

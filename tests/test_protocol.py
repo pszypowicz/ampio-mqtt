@@ -180,6 +180,36 @@ def test_parse_state_message_plain_payload() -> None:
 
 
 @pytest.mark.parametrize(
+    ("raw_state", "expected"),
+    [
+        pytest.param(24.4, "24.4", id="float"),
+        pytest.param(1, "1", id="int"),
+        pytest.param(0, "0", id="zero-int"),
+        pytest.param(True, "True", id="bool"),
+    ],
+)
+def test_parse_state_message_coerces_numeric_state_to_str(
+    raw_state: object, expected: str
+) -> None:
+    """Numeric JSON `state` values are normalized to text at the parser."""
+    update = parse_state_message(
+        "ampio/fromDB/u/ob/41/state",
+        json.dumps({"state": raw_state, "on": 1700}),
+    )
+    assert update is not None
+    assert update.value == expected
+    assert isinstance(update.value, str)
+
+
+def test_parse_state_message_null_state_falls_back_to_payload() -> None:
+    """An explicit `null` state preserves the raw payload as the value."""
+    payload = json.dumps({"state": None, "on": 1700})
+    update = parse_state_message("ampio/fromDB/u/ob/41/state", payload)
+    assert update is not None
+    assert update.value == payload
+
+
+@pytest.mark.parametrize(
     "topic",
     [
         "ampio/fromDB/u/notob/41/state",
@@ -195,6 +225,30 @@ def test_parse_stan_json_extracts_value_and_timestamp() -> None:
     seed = parse_stan_json(json.dumps({"state": "21.0", "on": 1700000000000}))
     assert seed is not None
     assert seed.value == "21.0" and seed.on_ms == 1700000000000
+
+
+@pytest.mark.parametrize(
+    ("raw_state", "expected"),
+    [
+        pytest.param(21.0, "21.0", id="float"),
+        pytest.param(7, "7", id="int"),
+    ],
+)
+def test_parse_stan_json_coerces_numeric_state_to_str(
+    raw_state: object, expected: str
+) -> None:
+    """`stan_json` seeds normalize numeric state to text too."""
+    seed = parse_stan_json(json.dumps({"state": raw_state, "on": 1}))
+    assert seed is not None
+    assert seed.value == expected
+    assert isinstance(seed.value, str)
+
+
+def test_parse_stan_json_null_state_yields_none() -> None:
+    """An explicit `null` state preserves the None contract."""
+    seed = parse_stan_json(json.dumps({"state": None, "on": 1}))
+    assert seed is not None
+    assert seed.value is None
 
 
 @pytest.mark.parametrize("payload", ["", "not json", json.dumps([1, 2])])
