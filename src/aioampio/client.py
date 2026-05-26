@@ -20,6 +20,8 @@ from .const import (
     details_response_topic,
     devices_response_topic,
     ob_state_wildcard,
+    states_request_topic,
+    states_response_topic,
 )
 from .device_types import module_model
 from .models import AmpioModule, AmpioObject, AmpioState
@@ -66,6 +68,7 @@ class AmpioClient:
         self._connected = asyncio.Event()
         self._details_received = asyncio.Event()
         self._devices_received = asyncio.Event()
+        self._states_received = asyncio.Event()
         self._available = False
         self._stop = False
 
@@ -142,6 +145,7 @@ class AmpioClient:
         waiters = [
             asyncio.create_task(self._details_received.wait()),
             asyncio.create_task(self._devices_received.wait()),
+            asyncio.create_task(self._states_received.wait()),
         ]
         _, pending = await asyncio.wait(waiters, timeout=discovery_timeout)
         for task in pending:
@@ -163,6 +167,12 @@ class AmpioClient:
     async def request_devices(self) -> None:
         """Ask the server for the physical module list."""
         await self._publish_config(DEVICES_REQUEST_PAYLOAD)
+
+    async def request_states(self) -> None:
+        """Ask the server for a snapshot of all current object states."""
+        if self._client is None:
+            raise AmpioConnectionError("Not connected")
+        await self._client.publish(states_request_topic(self._username), b"")
 
     async def _publish_config(self, keyword: str) -> None:
         if self._client is None:
@@ -188,11 +198,13 @@ class AmpioClient:
                     self._client = client
                     await client.subscribe(details_response_topic(user))
                     await client.subscribe(devices_response_topic(user))
+                    await client.subscribe(states_response_topic(user))
                     await client.subscribe(ob_state_wildcard(user))
                     self._set_available(True)
                     self._connected.set()
                     await self.request_devices()
                     await self.request_details()
+                    await self.request_states()
                     async for message in client.messages:
                         self._handle_message(message)
             except aiomqtt.MqttError as err:
@@ -220,6 +232,8 @@ class AmpioClient:
             self._handle_details(payload)
         elif topic == devices_response_topic(self._username):
             self._handle_devices(payload)
+        elif topic == states_response_topic(self._username):
+            self._handle_states_snapshot(payload)
         elif topic.endswith("/state") and "/ob/" in topic:
             self._handle_state(topic, payload)
 
@@ -286,6 +300,32 @@ class AmpioClient:
                 last_seen=previous.last_seen if previous else None,
             )
         self._devices_received.set()
+
+    def _handle_states_snapshot(self, payload: Any) -> None:
+        """Apply the bulk `data/states` snapshot.
+
+        Seeds value/desc and the owning module's last_seen for every object
+        whose entry has a non-empty `stan_json`. Existing fresh values from
+        live pushes are preserved.
+        """
+        try:
+            data = json.loads(payload)
+        except (ValueError, TypeError):
+            _LOGGER.warning("Could not parse Ampio states snapshot")
+            return
+        for item in data.get("List", []):
+            oid = _to_int(item.get("id"))
+            if oid is None:
+                continue
+            obj = self.state.objects.get(oid)
+            if obj is None:
+                # Metadata not yet known (e.g. snapshot arrived before details).
+                obj = AmpioObject(id=oid, kind=classify_object(None, None))
+                self.state.objects[oid] = obj
+            if obj.value is None:
+                self._seed_from_stan_json(obj, item.get("stan_json"))
+            self._notify(obj)
+        self._states_received.set()
 
     def _handle_state(self, topic: str, payload: str) -> None:
         parts = topic.split("/")

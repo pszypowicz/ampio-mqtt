@@ -48,6 +48,16 @@ def devices_response_topic(user: str) -> str:
     return f"ampio/fromDB/{user}/config/devices"
 
 
+def states_request_topic(user: str) -> str:
+    """Topic used to request a snapshot of all object states (empty payload)."""
+    return f"ampio/control/{user}/states"
+
+
+def states_response_topic(user: str) -> str:
+    """Topic carrying the bulk object-states snapshot response."""
+    return f"ampio/fromDB/{user}/data/states"
+
+
 # --- Sensor classification -------------------------------------------------
 
 
