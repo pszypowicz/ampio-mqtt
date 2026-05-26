@@ -4,6 +4,32 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.3.0
+
+### Added
+
+- `discover()` now drives multicast DNS resolution of `ampio.local` from
+  inside the process via `python-zeroconf`, instead of relying on the OS
+  resolver. This makes discovery behave the same on macOS, HAOS, plain
+  Linux, and Docker containers - the previous code path silently failed
+  anywhere `nss-mdns`/avahi was not configured on the host.
+- `discover(zeroconf=...)` accepts an externally-managed `AsyncZeroconf`
+  so a Home Assistant integration can share its existing instance instead
+  of opening a competing multicast socket. When omitted, `discover()`
+  creates a short-lived instance and closes it before returning.
+
+### Changed
+
+- `zeroconf>=0.131` becomes a required runtime dependency (it was an
+  optional `[discovery]` extra in 1.1.0 and removed entirely in 1.2.0).
+  Home Assistant always ships zeroconf, so this costs nothing in the
+  primary deployment target.
+- The library-internal mDNS A-record query replaces the previous
+  `asyncio.open_connection("ampio.local", 1883)` + `getaddrinfo` flow.
+  The TCP probe is still performed on the resolved IPv4 address as a
+  final reachability check before returning a candidate. `DiscoveryResult`
+  shape is unchanged.
+
 ## 1.2.0
 
 ### Removed

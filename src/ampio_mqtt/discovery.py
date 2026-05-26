@@ -1,25 +1,35 @@
 """Best-effort discovery of an Ampio M-SERV broker on the LAN.
 
-Only the well-known `ampio.local` hostname is probed. mDNS service discovery
-was considered but is not viable: the M-SERV does not publish a
-`_mqtt._tcp.local.` (or any other) service via avahi, so browsing the bus
-just surfaces unrelated brokers. Hostname probing is the only path that
-reliably identifies an Ampio installation without credentials.
+The M-SERV runs Avahi with default-only hostname publishing: no service type,
+no TXT records identifying it as Ampio - only an A/AAAA record for the
+well-known hostname ``ampio.local``. So discovery is a multicast DNS A-record
+query for that hostname, followed by a TCP probe to confirm the broker port
+is open.
+
+The mDNS query is driven from Python via the ``zeroconf`` package, which is a
+hard runtime dependency. Callers that already own an ``AsyncZeroconf``
+instance (Home Assistant integrations almost always do) can pass it in via
+``zeroconf=...`` to share the multicast socket; standalone callers can omit
+the argument and ``discover()`` will spin up its own per-call.
 """
 
 from __future__ import annotations
 
 import asyncio
-import socket
+import contextlib
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
+
+from zeroconf import AddressResolverIPv4, IPVersion
+from zeroconf.asyncio import AsyncZeroconf
 
 
 @dataclass(frozen=True)
 class DiscoveryResult:
     """A reachable Ampio M-SERV broker candidate.
 
-    The candidate is a hint based on the hostname probe; confirm identity with
-    ``AmpioClient.test_connection`` once credentials are known.
+    The candidate is a hint based on the mDNS hostname probe; confirm
+    identity with ``AmpioClient.test_connection`` once credentials are known.
     """
 
     host: str
@@ -32,43 +42,75 @@ async def discover(
     hostname: str = "ampio.local",
     port: int = 1883,
     timeout: float = 2.0,
+    zeroconf: AsyncZeroconf | None = None,
 ) -> list[DiscoveryResult]:
-    """Return reachable M-SERV candidates by probing ``hostname`` on ``port``.
+    """Return reachable M-SERV candidates by mDNS-resolving ``hostname``.
 
-    Returns a single-element list when the hostname answers a TCP connection,
-    and an empty list otherwise. Never raises on "not found".
+    Returns a single-element list when the hostname answers via mDNS *and* a
+    TCP connection to the resolved address succeeds, and an empty list
+    otherwise. Never raises on "not found".
+
+    ``zeroconf`` lets HA pass its shared ``AsyncZeroconf`` so the discovery
+    doesn't open a competing multicast socket. When omitted, a short-lived
+    instance is created for the call and closed before returning.
     """
     if timeout <= 0:
         raise ValueError("timeout must be positive")
 
-    result = await _probe_host(hostname, port, timeout)
+    result = await _probe_host(hostname, port, timeout, zeroconf)
     return [result] if result is not None else []
 
 
-async def _probe_host(host: str, port: int, timeout: float) -> DiscoveryResult | None:
-    """TCP-connect to (host, port); on success resolve the IP for display."""
+async def _probe_host(
+    host: str, port: int, timeout: float, zc: AsyncZeroconf | None
+) -> DiscoveryResult | None:
+    """Resolve `host` via mDNS, then TCP-probe the resolved address on `port`."""
+    address = await _resolve_mdns(host, timeout * 0.7, zc)
+    if address is None:
+        return None
+    if not await _tcp_probe(address, port, timeout * 0.3):
+        return None
+    return DiscoveryResult(host=host, port=port, address=address)
+
+
+async def _resolve_mdns(
+    hostname: str, timeout: float, zc: AsyncZeroconf | None
+) -> str | None:
+    """Issue a multicast DNS A-record query for `hostname`, return IPv4 or None.
+
+    `timeout` is the budget in seconds; zeroconf takes ms.
+    """
+    fqdn = hostname if hostname.endswith(".") else f"{hostname}."
+    async with _zeroconf_context(zc) as azc:
+        resolver = AddressResolverIPv4(fqdn)
+        if not await resolver.async_request(azc.zeroconf, int(timeout * 1000)):
+            return None
+        addrs = resolver.ip_addresses_by_version(IPVersion.V4Only)
+        return str(addrs[0]) if addrs else None
+
+
+@contextlib.asynccontextmanager
+async def _zeroconf_context(
+    zc: AsyncZeroconf | None,
+) -> AsyncIterator[AsyncZeroconf]:
+    """Yield `zc` if the caller owns it, else create and close one ourselves."""
+    if zc is not None:
+        yield zc
+        return
+    async with AsyncZeroconf() as owned:
+        yield owned
+
+
+async def _tcp_probe(address: str, port: int, timeout: float) -> bool:
+    """TCP-connect to (address, port); return True on success."""
     try:
         async with asyncio.timeout(timeout):
-            _reader, writer = await asyncio.open_connection(host, port)
+            _reader, writer = await asyncio.open_connection(address, port)
     except (OSError, TimeoutError):
-        return None
+        return False
     writer.close()
     try:
         await writer.wait_closed()
     except OSError:
         pass
-
-    address = await _resolve_address(host, port)
-    return DiscoveryResult(host=host, port=port, address=address)
-
-
-async def _resolve_address(host: str, port: int) -> str | None:
-    loop = asyncio.get_running_loop()
-    try:
-        infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    except socket.gaierror:
-        return None
-    for family, _type, _proto, _canon, sockaddr in infos:
-        if family in (socket.AF_INET, socket.AF_INET6) and sockaddr:
-            return str(sockaddr[0])
-    return None
+    return True
