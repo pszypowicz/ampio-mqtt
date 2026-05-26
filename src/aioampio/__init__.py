@@ -5,7 +5,7 @@ from __future__ import annotations
 from .client import AmpioClient, AmpioConnectionError, AmpioError
 from .const import SensorKind, classify_object
 from .device_types import module_model
-from .models import AmpioModule, AmpioObject, AmpioState
+from .models import AmpioModule, AmpioObject, AmpioServerInfo, AmpioState
 
 __all__ = [
     "AmpioClient",
@@ -13,6 +13,7 @@ __all__ = [
     "AmpioError",
     "AmpioModule",
     "AmpioObject",
+    "AmpioServerInfo",
     "AmpioState",
     "SensorKind",
     "classify_object",

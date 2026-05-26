@@ -19,12 +19,14 @@ from .const import (
     config_request_topic,
     details_response_topic,
     devices_response_topic,
+    info_request_topic,
+    info_response_topic,
     ob_state_wildcard,
     states_request_topic,
     states_response_topic,
 )
 from .device_types import module_model
-from .models import AmpioModule, AmpioObject, AmpioState
+from .models import AmpioModule, AmpioObject, AmpioServerInfo, AmpioState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,6 +71,7 @@ class AmpioClient:
         self._details_received = asyncio.Event()
         self._devices_received = asyncio.Event()
         self._states_received = asyncio.Event()
+        self._info_received = asyncio.Event()
         self._available = False
         self._stop = False
 
@@ -83,6 +86,31 @@ class AmpioClient:
     def modules(self) -> dict[int, AmpioModule]:
         """All known physical modules keyed by id."""
         return self.state.modules
+
+    @property
+    def server_info(self) -> AmpioServerInfo | None:
+        """The Ampio M-SERV self-reported info, if discovered."""
+        return self.state.server_info
+
+    @property
+    def mserv_id(self) -> int | None:
+        """Resolve the module id of the M-SERV server.
+
+        Prefers cross-validating the server's self-reported mac against each
+        module's mac_global/mac; falls back to the unique module whose
+        typ_urzadzenia is 10 (M-SERV-s).
+        """
+        info = self.state.server_info
+        if info is not None and info.mac is not None:
+            for mid, mod in self.state.modules.items():
+                if info.mac in (mod.mac_global, mod.mac):
+                    return mid
+        candidates = [
+            mid for mid, mod in self.state.modules.items() if mod.type == 10
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
 
     @property
     def sensors(self) -> dict[int, AmpioObject]:
@@ -146,6 +174,7 @@ class AmpioClient:
             asyncio.create_task(self._details_received.wait()),
             asyncio.create_task(self._devices_received.wait()),
             asyncio.create_task(self._states_received.wait()),
+            asyncio.create_task(self._info_received.wait()),
         ]
         _, pending = await asyncio.wait(waiters, timeout=discovery_timeout)
         for task in pending:
@@ -174,6 +203,12 @@ class AmpioClient:
             raise AmpioConnectionError("Not connected")
         await self._client.publish(states_request_topic(self._username), b"")
 
+    async def request_info(self) -> None:
+        """Ask the server for its own info (version, mac, local IP, ...)."""
+        if self._client is None:
+            raise AmpioConnectionError("Not connected")
+        await self._client.publish(info_request_topic(self._username), b"")
+
     async def _publish_config(self, keyword: str) -> None:
         if self._client is None:
             raise AmpioConnectionError("Not connected")
@@ -199,12 +234,14 @@ class AmpioClient:
                     await client.subscribe(details_response_topic(user))
                     await client.subscribe(devices_response_topic(user))
                     await client.subscribe(states_response_topic(user))
+                    await client.subscribe(info_response_topic(user))
                     await client.subscribe(ob_state_wildcard(user))
                     self._set_available(True)
                     self._connected.set()
                     await self.request_devices()
                     await self.request_details()
                     await self.request_states()
+                    await self.request_info()
                     async for message in client.messages:
                         self._handle_message(message)
             except aiomqtt.MqttError as err:
@@ -234,6 +271,8 @@ class AmpioClient:
             self._handle_devices(payload)
         elif topic == states_response_topic(self._username):
             self._handle_states_snapshot(payload)
+        elif topic == info_response_topic(self._username):
+            self._handle_info(payload)
         elif topic.endswith("/state") and "/ob/" in topic:
             self._handle_state(topic, payload)
 
@@ -292,6 +331,7 @@ class AmpioClient:
             self.state.modules[mid] = AmpioModule(
                 id=mid,
                 mac=_to_int(item.get("mac")),
+                mac_global=_to_int(item.get("mac_global")),
                 name=item.get("nazwa_urzadzenia") or None,
                 type=typ,
                 model=module_model(typ),
@@ -300,6 +340,26 @@ class AmpioClient:
                 last_seen=previous.last_seen if previous else None,
             )
         self._devices_received.set()
+
+    def _handle_info(self, payload: Any) -> None:
+        """Parse the server info reply, keeping only safe fields."""
+        try:
+            outer = json.loads(payload)
+        except (ValueError, TypeError):
+            _LOGGER.warning("Could not parse Ampio info payload")
+            return
+        data = outer.get("Results", outer) if isinstance(outer, dict) else {}
+        if not isinstance(data, dict):
+            return
+        self.state.server_info = AmpioServerInfo(
+            mac=_to_int(data.get("mac")),
+            server_version=data.get("serverVersion") or None,
+            server_revision=data.get("serverRevision") or None,
+            mqtt_version=data.get("mqttVersion") or None,
+            local_ip=data.get("local_ip") or None,
+            device_id=data.get("device_id") or None,
+        )
+        self._info_received.set()
 
     def _handle_states_snapshot(self, payload: Any) -> None:
         """Apply the bulk `data/states` snapshot.

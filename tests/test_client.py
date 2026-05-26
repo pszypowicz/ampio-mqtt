@@ -26,6 +26,10 @@ def _states(*items) -> bytes:
     return json.dumps({"List": list(items)}).encode()
 
 
+def _info(**fields) -> bytes:
+    return json.dumps({"Results": fields}).encode()
+
+
 def _client() -> AmpioClient:
     return AmpioClient("host", username=USER)
 
@@ -179,6 +183,83 @@ def test_details_seeds_module_last_seen_from_stan_json() -> None:
     ))
     assert client.objects[41].value == "22.5"
     assert client.modules[17].last_seen == 1779560000.0
+
+
+def test_info_parses_only_safe_fields() -> None:
+    """Server info parsing keeps version/ip/mac but drops geo/cloud/private fields."""
+    client = _client()
+    client._handle_message(_msg(
+        f"ampio/fromDB/{USER}/data/info",
+        _info(
+            serverVersion="1865", serverRevision="409",
+            mqttVersion="5.133.11", local_ip="10.0.0.1",
+            device_id="0011223344556677", mac="47846",
+            # Private fields that must not be stored on AmpioServerInfo.
+            lat="51.0", lon="17.0", city="Some Street",
+            cloudInfo="abc.example.com", publicKey="xxx", perm="0",
+        ),
+    ))
+    info = client.server_info
+    assert info is not None
+    assert info.mac == 47846
+    assert info.server_version == "1865"
+    assert info.mqtt_version == "5.133.11"
+    assert info.local_ip == "10.0.0.1"
+    assert info.device_id == "0011223344556677"
+    from dataclasses import fields
+    stored = {f.name for f in fields(info)}
+    for forbidden in ("lat", "lon", "city", "cloudInfo", "publicKey", "perm"):
+        assert forbidden not in stored
+
+
+def test_mserv_id_prefers_info_mac_cross_check() -> None:
+    """mserv_id matches the module whose mac_global matches info.mac."""
+    client = _client()
+    # Two modules with typ != 10 plus the actual M-SERV (typ=10, mac_global=47846).
+    client._handle_message(_msg(
+        f"ampio/fromDB/{USER}/config/devices",
+        _devices(
+            {"id": 1, "mac": 1, "mac_global": 47846, "typ_urzadzenia": 10,
+             "nazwa_urzadzenia": "MSERV"},
+            {"id": 2, "mac": 2, "mac_global": 1000, "typ_urzadzenia": 4,
+             "nazwa_urzadzenia": "MREL"},
+        ),
+    ))
+    client._handle_message(_msg(
+        f"ampio/fromDB/{USER}/data/info",
+        _info(serverVersion="1", mac="47846"),
+    ))
+    assert client.mserv_id == 1
+
+
+def test_mserv_id_falls_back_to_typ10_without_info() -> None:
+    """Without info, a unique typ_urzadzenia=10 module identifies the M-SERV."""
+    client = _client()
+    client._handle_message(_msg(
+        f"ampio/fromDB/{USER}/config/devices",
+        _devices(
+            {"id": 5, "mac": 1, "mac_global": 12345, "typ_urzadzenia": 10,
+             "nazwa_urzadzenia": "MSERV"},
+            {"id": 6, "mac": 2, "mac_global": 67890, "typ_urzadzenia": 4,
+             "nazwa_urzadzenia": "MREL"},
+        ),
+    ))
+    assert client.mserv_id == 5
+
+
+def test_mserv_id_none_when_ambiguous_and_no_info() -> None:
+    """If multiple modules are typ=10 and no info reply, do not guess."""
+    client = _client()
+    client._handle_message(_msg(
+        f"ampio/fromDB/{USER}/config/devices",
+        _devices(
+            {"id": 1, "mac": 1, "mac_global": 1, "typ_urzadzenia": 10,
+             "nazwa_urzadzenia": "MSERV-A"},
+            {"id": 2, "mac": 2, "mac_global": 2, "typ_urzadzenia": 10,
+             "nazwa_urzadzenia": "MSERV-B"},
+        ),
+    ))
+    assert client.mserv_id is None
 
 
 def test_devices_redelivery_preserves_last_seen() -> None:

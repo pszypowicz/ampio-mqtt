@@ -58,6 +58,16 @@ def states_response_topic(user: str) -> str:
     return f"ampio/fromDB/{user}/data/states"
 
 
+def info_request_topic(user: str) -> str:
+    """Topic used to request server info (empty payload)."""
+    return f"ampio/control/{user}/info"
+
+
+def info_response_topic(user: str) -> str:
+    """Topic carrying the server info response."""
+    return f"ampio/fromDB/{user}/data/info"
+
+
 # --- Sensor classification -------------------------------------------------
 
 

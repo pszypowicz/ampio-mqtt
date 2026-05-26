@@ -35,7 +35,8 @@ class AmpioModule:
     """A physical Ampio module (urzadzenie) that owns objects."""
 
     id: int
-    mac: int | None = None
+    mac: int | None = None  # local CAN address from devices.mac
+    mac_global: int | None = None  # globally-unique CAN id from devices.mac_global
     name: str | None = None  # nazwa_urzadzenia (user-given module name)
     type: int | None = None  # typ_urzadzenia
     model: str | None = None  # resolved model name for `type`
@@ -48,11 +49,28 @@ class AmpioModule:
 
 
 @dataclass(slots=True)
+class AmpioServerInfo:
+    """A safe subset of the Ampio M-SERV self-reported info.
+
+    Intentionally excludes fields that would leak private data
+    (geolocation, cloud endpoint, public key, user permissions).
+    """
+
+    mac: int | None = None  # the M-SERV's own CAN mac (matches a module's mac_global)
+    server_version: str | None = None  # ampio_mqtt application version
+    server_revision: str | None = None
+    mqtt_version: str | None = None  # broker version
+    local_ip: str | None = None  # used for the configuration_url
+    device_id: str | None = None  # hardware identifier of the host
+
+
+@dataclass(slots=True)
 class AmpioState:
-    """All known objects and modules, keyed by id."""
+    """All known objects, modules, and server info."""
 
     objects: dict[int, AmpioObject] = field(default_factory=dict)
     modules: dict[int, AmpioModule] = field(default_factory=dict)
+    server_info: AmpioServerInfo | None = None
 
     @property
     def sensors(self) -> dict[int, AmpioObject]:
