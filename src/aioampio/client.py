@@ -246,14 +246,13 @@ class AmpioClient:
             obj.max = _to_float(item.get("max"))
             obj.kind = classify_object(typ, interp)
             if obj.value is None:
-                self._seed_value(obj, item.get("stan_json"))
+                self._seed_from_stan_json(obj, item.get("stan_json"))
             self.state.objects[oid] = obj
             self._notify(obj)
         self._details_received.set()
 
-    @staticmethod
-    def _seed_value(obj: AmpioObject, stan_json: Any) -> None:
-        """Seed the last-known value from the metadata `stan_json` field."""
+    def _seed_from_stan_json(self, obj: AmpioObject, stan_json: Any) -> None:
+        """Seed value/desc from `stan_json` and bump the module's last_seen."""
         if not stan_json:
             return
         try:
@@ -262,6 +261,7 @@ class AmpioClient:
             return
         obj.value = data.get("state", obj.value)
         obj.desc = data.get("desc", obj.desc)
+        self._touch_module(obj.device_id, data.get("on"))
 
     def _handle_devices(self, payload: Any) -> None:
         try:
