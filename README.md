@@ -19,8 +19,10 @@ Currently supports:
 - classification of sensor objects (temperature and M-SENS environmental
   channels) with Home-Assistant-compatible device/state class hints,
 - M-SERV identification (mac, firmware versions, local IP),
-- best-effort LAN discovery via `discover()` (TCP probe of the well-known
-  `ampio.local` hostname).
+- best-effort LAN discovery via `discover()` (explicit multicast DNS A-record
+  lookup of `ampio.local` driven by `python-zeroconf`, followed by a TCP probe
+  of the resolved address). Home Assistant integrations can pass their shared
+  `AsyncZeroconf` instance via `discover(zeroconf=...)`.
 
 The MQTT topic layout is documented at the top of
 [`src/ampio_mqtt/const.py`](src/ampio_mqtt/const.py).
@@ -30,6 +32,12 @@ The MQTT topic layout is documented at the top of
 ```
 pip install ampio-mqtt
 ```
+
+`discover()` resolves `ampio.local` over multicast DNS from inside the
+process via [`python-zeroconf`](https://pypi.org/project/zeroconf/), which
+is a hard runtime dependency. The lookup works identically on macOS, HAOS,
+plain Linux, and Docker - no dependency on `nss-mdns`/avahi being
+configured on the host.
 
 ## Usage
 
