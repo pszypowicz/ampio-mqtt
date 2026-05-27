@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.4.1
+
+### Documentation
+
+- Replaced the README's Usage example with an end-to-end snippet that
+  exercises `discover()` and `AmpioClient.fetch_rooms()` alongside the
+  basic listener loop. No library behaviour change; published so the
+  PyPI project description reflects the 1.4 feature surface.
+
 ## 1.4.0
 
 ### Added
