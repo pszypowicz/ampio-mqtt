@@ -23,6 +23,11 @@ Currently supports:
   lookup of `ampio.local` driven by `python-zeroconf`, followed by a TCP probe
   of the resolved address). Home Assistant integrations can pass their shared
   `AsyncZeroconf` instance via `discover(zeroconf=...)`.
+- per-object room mapping via `AmpioClient.fetch_rooms()` (`{object_id:
+room_name}`), backed by the M-SERV's MQTT `data/groups` + `data/group_devices`
+  endpoints. Intended for a Home Assistant integration to forward as
+  `DeviceInfo.suggested_area` at first import; reassignment is the user's call
+  after that.
 
 The MQTT topic layout is documented at the top of
 [`src/ampio_mqtt/const.py`](src/ampio_mqtt/const.py).

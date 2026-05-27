@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import time
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
+from typing import Any
 
 import aiomqtt
 
@@ -16,10 +18,15 @@ from . import _protocol
 from .const import (
     DETAILS_REQUEST_PAYLOAD,
     DEVICES_REQUEST_PAYLOAD,
+    GROUP_DEVICES_REQUEST_PAYLOAD,
+    GROUPS_REQUEST_PAYLOAD,
     classify_object,
     config_request_topic,
+    data_request_topic,
     details_response_topic,
     devices_response_topic,
+    group_devices_response_topic,
+    groups_response_topic,
     info_request_topic,
     info_response_topic,
     ob_state_wildcard,
@@ -28,6 +35,7 @@ from .const import (
 )
 from .errors import AmpioAuthError, AmpioConnectionError
 from .models import AmpioModule, AmpioObject, AmpioServerInfo, AmpioState
+from .rooms import join_rooms
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,6 +80,10 @@ class AmpioClient:
         self._devices_received = asyncio.Event()
         self._states_received = asyncio.Event()
         self._info_received = asyncio.Event()
+        self._groups_received = asyncio.Event()
+        self._group_devices_received = asyncio.Event()
+        self._groups_payload: str | None = None
+        self._group_devices_payload: str | None = None
         self._auth_error_message: str | None = None
         self._available = False
         self._stop = False
@@ -253,6 +265,47 @@ class AmpioClient:
             raise AmpioConnectionError("Not connected")
         await self._client.publish(info_request_topic(self._username), b"")
 
+    async def fetch_rooms(self, timeout: float = 5.0) -> dict[int, str]:
+        """Return ``{ampio_object_id: room_name}`` for objects assigned to a room.
+
+        Publishes the ``groups`` and ``group_devices`` keywords to
+        ``ampio/control/<user>/data`` and awaits both responses on
+        ``ampio/fromDB/<user>/data/<keyword>``. Joins them in memory; objects
+        assigned to multiple groups map to the first room encountered (Home
+        Assistant allows one area per device).
+
+        Requires ``start()`` to have completed. Raises ``AmpioConnectionError``
+        if the broker is not connected or either response does not arrive
+        within ``timeout``.
+        """
+        if self._client is None:
+            raise AmpioConnectionError("Not connected")
+        self._groups_received.clear()
+        self._group_devices_received.clear()
+        self._groups_payload = None
+        self._group_devices_payload = None
+        await self._publish_data(GROUPS_REQUEST_PAYLOAD)
+        await self._publish_data(GROUP_DEVICES_REQUEST_PAYLOAD)
+        try:
+            async with asyncio.timeout(timeout):
+                await asyncio.gather(
+                    self._groups_received.wait(),
+                    self._group_devices_received.wait(),
+                )
+        except TimeoutError as err:
+            raise AmpioConnectionError(
+                "Timed out fetching room map from Ampio broker"
+            ) from err
+        return join_rooms(
+            _safe_json_object(self._groups_payload),
+            _safe_json_object(self._group_devices_payload),
+        )
+
+    async def _publish_data(self, keyword: str) -> None:
+        if self._client is None:
+            raise AmpioConnectionError("Not connected")
+        await self._client.publish(data_request_topic(self._username), keyword.encode())
+
     def _feed_message(self, topic: str, payload: str | bytes) -> None:
         """Inject a message directly into the routing logic.
 
@@ -288,6 +341,8 @@ class AmpioClient:
                     await client.subscribe(devices_response_topic(user))
                     await client.subscribe(states_response_topic(user))
                     await client.subscribe(info_response_topic(user))
+                    await client.subscribe(groups_response_topic(user))
+                    await client.subscribe(group_devices_response_topic(user))
                     await client.subscribe(ob_state_wildcard(user))
                     self._set_available(True)
                     self._connected.set()
@@ -342,6 +397,12 @@ class AmpioClient:
             self._handle_states_snapshot(payload)
         elif topic == info_response_topic(self._username):
             self._handle_info(payload)
+        elif topic == groups_response_topic(self._username):
+            self._groups_payload = payload
+            self._groups_received.set()
+        elif topic == group_devices_response_topic(self._username):
+            self._group_devices_payload = payload
+            self._group_devices_received.set()
         elif topic.endswith("/state") and "/ob/" in topic:
             self._handle_state(topic, payload)
 
@@ -443,3 +504,14 @@ def _decode_payload(payload: object) -> str:
     if isinstance(payload, str):
         return payload
     return ""
+
+
+def _safe_json_object(text: str | None) -> dict[str, Any]:
+    """Parse `text` as a JSON object; return an empty dict on any failure."""
+    if not text:
+        return {}
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}

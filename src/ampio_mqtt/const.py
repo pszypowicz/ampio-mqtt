@@ -23,6 +23,8 @@ from typing import Literal
 
 DETAILS_REQUEST_PAYLOAD = "devicesDetails"
 DEVICES_REQUEST_PAYLOAD = "devices"
+GROUPS_REQUEST_PAYLOAD = "groups"
+GROUP_DEVICES_REQUEST_PAYLOAD = "group_devices"
 
 
 def ob_state_wildcard(user: str) -> str:
@@ -63,6 +65,21 @@ def info_request_topic(user: str) -> str:
 def info_response_topic(user: str) -> str:
     """Topic carrying the server info response."""
     return f"ampio/fromDB/{user}/data/info"
+
+
+def data_request_topic(user: str) -> str:
+    """Shared topic for publishing 'data' request keywords (groups, group_devices)."""
+    return f"ampio/control/{user}/data"
+
+
+def groups_response_topic(user: str) -> str:
+    """Topic carrying the rooms/groups list response."""
+    return f"ampio/fromDB/{user}/data/groups"
+
+
+def group_devices_response_topic(user: str) -> str:
+    """Topic carrying the object-to-group join response."""
+    return f"ampio/fromDB/{user}/data/group_devices"
 
 
 # --- Sensor classification -------------------------------------------------

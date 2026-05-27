@@ -4,6 +4,32 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.4.0
+
+### Added
+
+- `AmpioClient.fetch_rooms()` returns `{ampio_object_id: room_name}` by
+  publishing the `groups` and `group_devices` keywords to
+  `ampio/control/<user>/data` and joining the two responses. The M-SERV's
+  MQTT-level `data/*` endpoints mirror its REST `/api/json/groups` and
+  `/api/json/group_devices`, so no HTTP hop is needed.
+- New const-module helpers `data_request_topic`, `groups_response_topic`,
+  `group_devices_response_topic`, and the matching request payloads.
+- New `ampio_mqtt.rooms.join_rooms()` pure helper exported for callers that
+  want to join cached payloads themselves.
+
+### Why
+
+The HA integration backed by this library needs a per-device room hint so it
+can pass `DeviceInfo.suggested_area` at first import (the pattern that
+`lutron_caseta` and `niko_home_control` use; HA's dev blog confirms input-side
+`suggested_area` is still officially supported, only the read-side
+deprecation kicks in at HA Core 2026.9). The M-SERV's `obiekty.lokalizacja`
+column we previously inspected is dead-code (uniformly `0` across installs);
+the real linkage is the `grupy`/`grupy_obiektow` join, which the M-SERV
+already exposes over MQTT under the same control/fromDB pattern used for
+`devicesDetails`.
+
 ## 1.3.0
 
 ### Added
