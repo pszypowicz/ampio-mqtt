@@ -48,14 +48,30 @@ configured on the host.
 
 ```python
 import asyncio
-from ampio_mqtt import AmpioClient
+
+from ampio_mqtt import AmpioClient, discover
+
 
 async def main() -> None:
-    client = AmpioClient("192.0.2.10", username="user", password="secret")
+    # Find the M-SERV on the LAN via mDNS.
+    candidates = await discover()
+    if not candidates:
+        raise SystemExit("No Ampio M-SERV found on the LAN")
+    host = candidates[0].address or candidates[0].host
+
+    client = AmpioClient(host, username="user", password="secret")
     client.add_object_listener(lambda obj: print(obj.id, obj.kind, obj.value))
-    await client.start()        # connects, subscribes, requests discovery
+    await client.start()  # connects, subscribes, requests discovery
+
+    # Per-object room map. A Home Assistant integration would forward each
+    # value as `DeviceInfo.suggested_area` at first device creation.
+    rooms = await client.fetch_rooms()
+    for obj_id, room in rooms.items():
+        print(f"object {obj_id} -> {room}")
+
     await asyncio.sleep(30)
     await client.stop()
+
 
 asyncio.run(main())
 ```
