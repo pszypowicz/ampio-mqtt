@@ -4,6 +4,46 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.5.0
+
+### Added
+
+- `AmpioModule.capabilities` is now populated for every known
+  `typ_urzadzenia`. Returns a `frozenset[Capability]` (`StrEnum`) with up
+  to 13 flags spanning physical I/O (`DIGITAL_OUTPUT`, `DIGITAL_INPUT`,
+  `ANALOG_INPUT`, `TEMPERATURE_INPUT`, `ENV_SENSOR`, `ROLLER_OUTPUT`,
+  `RGBW_OUTPUT`, `IR_OUTPUT`) and module-role hints (`UI_PANEL`,
+  `BRIDGE`, `HUB`, `ALARM`, `AUDIO_VIDEO`). Many modules carry multiple
+  capabilities - an M-OC-4s has `{DIGITAL_OUTPUT, ANALOG_INPUT,
+RGBW_OUTPUT}`; an M-REL-8s has `{DIGITAL_OUTPUT, DIGITAL_INPUT,
+TEMPERATURE_INPUT}`. A single label would discard most of the picture.
+- Public helper `module_capabilities(type_code)` mirrors the shape of
+  `module_model(type_code)` and returns `None` for unknown types so
+  callers can distinguish "known module with no flags" from
+  "unrecognised type code".
+- The full upstream Ampio device-type catalogue (84 entries from
+  `node-red-contrib-ampio/ampioin/db/devtypes.json`) is vendored as
+  `src/ampio_mqtt/_devtypes.json` and loaded at import time via
+  `importlib.resources`. `MODULE_MODELS` and `MODULE_CAPABILITIES` are
+  built from it. Refreshing the catalogue is a one-file update.
+
+### Why
+
+The downstream Home Assistant integration needs to decide, per Ampio
+module, which HA platforms to expose (switch / light / cover / sensor /
+binary_sensor / climate / ...) and whether to bundle a module's child
+objects into one HA device or split each into its own device linked via
+`via_device`. The capability set is the honest abstraction:
+
+- `DIGITAL_OUTPUT` -> module drives loads that may live in different rooms
+- `RGBW_OUTPUT` -> light platform (with color)
+- `ROLLER_OUTPUT` -> cover platform
+- `DIGITAL_INPUT` -> button presses (future `binary_sensor` / `event`)
+- `ENV_SENSOR` / `TEMPERATURE_INPUT` -> sensor platform
+- `UI_PANEL` / `BRIDGE` / `HUB` -> structural hints, not HA platforms
+
+The library exposes the _facts_; the integration applies the _policy_.
+
 ## 1.4.1
 
 ### Documentation

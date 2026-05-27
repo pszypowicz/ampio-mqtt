@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from .device_types import module_model
+from .device_types import module_capabilities, module_model
 from .models import AmpioModule, AmpioServerInfo
 
 if TYPE_CHECKING:
@@ -141,6 +141,7 @@ def parse_devices(payload: str) -> list[AmpioModule] | None:
                 name=item.get("nazwa_urzadzenia") or None,
                 type=typ,
                 model=module_model(typ),
+                capabilities=module_capabilities(typ) or frozenset(),
                 sw_version=to_int(item.get("wersja_softu")),
                 hw_version=to_int(item.get("wersja_pcb")),
             )

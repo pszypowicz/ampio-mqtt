@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .const import SensorKind
+from .device_types import Capability
 
 
 @dataclass(slots=True)
@@ -35,6 +36,7 @@ class AmpioModule:
     name: str | None = None  # nazwa_urzadzenia (user-given module name)
     type: int | None = None  # typ_urzadzenia
     model: str | None = None  # resolved model name for `type`
+    capabilities: frozenset[Capability] = field(default_factory=frozenset)
     sw_version: int | None = None  # wersja_softu
     hw_version: int | None = None  # wersja_pcb
     # Epoch seconds of the last state message received for any of the module's
