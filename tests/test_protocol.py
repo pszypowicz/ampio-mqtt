@@ -118,6 +118,42 @@ def test_parse_state_message_non_dict_payload() -> None:
     assert update.value == "[1, 2]" and update.on_ms is None
 
 
+def test_parse_devices_populates_capabilities_for_known_type() -> None:
+    """capabilities set is populated from device_types.module_capabilities."""
+    from ampio_mqtt import Capability
+
+    payload = json.dumps(
+        {
+            "List": [
+                {"id": 1, "typ_urzadzenia": 44},  # M-SENS
+                {"id": 2, "typ_urzadzenia": 4},  # M-REL-8s
+                {"id": 3, "typ_urzadzenia": 12},  # M-OC-4s
+                {"id": 4, "typ_urzadzenia": 14},  # M-INOC-8s
+                {"id": 5, "typ_urzadzenia": 999},  # unknown type
+                {"id": 6},  # no typ_urzadzenia
+            ]
+        }
+    )
+    modules = parse_devices(payload)
+    assert modules is not None
+    by_id = {m.id: m for m in modules}
+    # M-SENS: env sensors + IR output (no digital outputs)
+    assert Capability.ENV_SENSOR in by_id[1].capabilities
+    assert Capability.DIGITAL_OUTPUT not in by_id[1].capabilities
+    # M-REL-8s: digital out AND digital in
+    assert Capability.DIGITAL_OUTPUT in by_id[2].capabilities
+    assert Capability.DIGITAL_INPUT in by_id[2].capabilities
+    # M-OC-4s: drives RGBW + has analog inputs
+    assert Capability.RGBW_OUTPUT in by_id[3].capabilities
+    assert Capability.ANALOG_INPUT in by_id[3].capabilities
+    # M-INOC-8s hybrid
+    assert Capability.DIGITAL_OUTPUT in by_id[4].capabilities
+    assert Capability.ANALOG_INPUT in by_id[4].capabilities
+    # Unknown / missing types yield empty capabilities set
+    assert by_id[5].capabilities == frozenset()
+    assert by_id[6].capabilities == frozenset()
+
+
 def test_parse_devices_returns_modules() -> None:
     payload = json.dumps(
         {

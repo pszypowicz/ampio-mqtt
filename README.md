@@ -28,6 +28,13 @@ room_name}`), backed by the M-SERV's MQTT `data/groups` + `data/group_devices`
   endpoints. Intended for a Home Assistant integration to forward as
   `DeviceInfo.suggested_area` at first import; reassignment is the user's call
   after that.
+- per-module capability classification on `AmpioModule.capabilities` (a
+  `frozenset[Capability]`): `DIGITAL_OUTPUT`, `DIGITAL_INPUT`, `ANALOG_INPUT`,
+  `TEMPERATURE_INPUT`, `ENV_SENSOR`, `ROLLER_OUTPUT`, `RGBW_OUTPUT`,
+  `IR_OUTPUT`, `UI_PANEL`, `BRIDGE`, `HUB`, `ALARM`, `AUDIO_VIDEO`. Most
+  modules carry several flags (e.g. M-OC-4s = `{DIGITAL_OUTPUT, ANALOG_INPUT,
+RGBW_OUTPUT}`). Drives HA platform selection and bundle/split decisions in
+  the integration.
 
 The MQTT topic layout is documented at the top of
 [`src/ampio_mqtt/const.py`](src/ampio_mqtt/const.py).
