@@ -35,6 +35,12 @@ room_name}`), backed by the M-SERV's MQTT `data/groups` + `data/group_devices`
   modules carry several flags (e.g. M-OC-4s = `{DIGITAL_OUTPUT, ANALOG_INPUT,
 RGBW_OUTPUT}`). Drives HA platform selection and bundle/split decisions in
   the integration.
+- input-object classification via `classify_input()` / `InputKind`
+  (`AmpioObject.input_kind`, `is_input`, `is_on`): flags map to a generic
+  boolean, motion detection to `binary_sensor.motion`. Live flag/button events
+  are delivered with minimal latency through the same `add_object_listener()`
+  pipeline by routing the decoded raw per-channel topics (which fire ahead of
+  the per-object republish) to the owning object.
 
 The MQTT topic layout is documented at the top of
 [`src/ampio_mqtt/const.py`](src/ampio_mqtt/const.py).

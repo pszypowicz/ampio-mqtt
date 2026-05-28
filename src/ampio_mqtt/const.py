@@ -32,6 +32,15 @@ def ob_state_wildcard(user: str) -> str:
     return f"ampio/fromDB/{user}/ob/+/state"
 
 
+# Raw, module-scoped channel topics carry decoded CAN state per channel index
+# and are NOT namespaced by user (the `ampio/from/<MAC>/...` tree is global).
+# We subscribe only to the two input prefixes - `f` (flags) and `i` (digital
+# inputs) - because they publish on-change and are the low-latency source for
+# input objects. The high-rate prefixes (`a`/`t`/`rgbw`/`o`) are intentionally
+# excluded; those object types already arrive on the per-object topic.
+RAW_INPUT_WILDCARDS = ("ampio/from/+/state/f/+", "ampio/from/+/state/i/+")
+
+
 def config_request_topic(user: str) -> str:
     """Shared topic for publishing any discovery request keyword."""
     return f"ampio/control/{user}/config"
@@ -157,3 +166,55 @@ def classify_object(typ: str | None, interpretacja: int | None) -> SensorKind | 
     # May be non-numeric, so claim neither a state class nor a precision (both
     # would make Home Assistant reject a text value).
     return SensorKind("value", "Value", None, None, state_class=None, precision=None)
+
+
+# --- Input classification --------------------------------------------------
+
+# binary_sensor device-class strings the library can emit. Only "motion" is
+# mapped today; extend this Literal when a new input mapping is added. Values
+# match Home Assistant's BinarySensorDeviceClass enum.
+BinarySensorDeviceClass = Literal["motion"]
+
+
+@dataclass(frozen=True, slots=True)
+class InputKind:
+    """Neutral description of a binary / flag-shaped input object."""
+
+    key: str
+    name: str
+    # HA binary_sensor device class, or None for a generic boolean where the
+    # consumer decides how to model it (binary_sensor vs switch).
+    device_class: BinarySensorDeviceClass | None = None
+
+
+# typ_komponentu values handled by the input (binary_sensor) platform. These
+# also live in NON_SENSOR_TYPES - they are not sensors, but they are inputs.
+INPUT_TYPES = frozenset({"flaga", "detekcja", "symulacja"})
+
+# typ_komponentu -> raw channel-topic prefix, for the channel bridge. Only
+# verified prefixes are bridged; symulacja classifies as an input but is left
+# off until its prefix is confirmed (it falls back to the per-object topic).
+_INPUT_CHANNEL_PREFIX = {
+    "flaga": "f",  # confirmed live
+    "detekcja": "i",  # digital input, confirmed live
+}
+
+
+def classify_input(typ: str | None, interpretacja: int | None) -> InputKind | None:
+    """Classify a DB object into an InputKind, or None if it is not an input.
+
+    ``flaga`` -> generic boolean (``device_class=None``); a persistent 0/1 logic
+    flag the consumer may surface as a binary_sensor or a switch.
+    ``detekcja`` -> ``motion``.
+    ``symulacja`` -> generic boolean (the M-SERV presence-simulation flag).
+
+    ``interpretacja`` is accepted for parity with :func:`classify_object` and
+    possible future per-interpretation mapping; it is unused today.
+    """
+    if typ == "detekcja":
+        return InputKind("detekcja", "Detection", "motion")
+    if typ == "flaga":
+        return InputKind("flaga", "Flag", None)
+    if typ == "symulacja":
+        return InputKind("symulacja", "Simulation", None)
+    return None

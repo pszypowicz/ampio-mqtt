@@ -10,9 +10,23 @@ from unittest.mock import patch
 import aiomqtt
 import pytest
 
-from ampio_mqtt import AmpioAuthError, AmpioClient
+from ampio_mqtt import AmpioAuthError, AmpioClient, AmpioObject
 
 USER = "u"
+
+# A module whose mac is 0xCAFE, so its raw topics are `ampio/from/CAFE/...`.
+_PANEL = {"id": 7, "mac": 0xCAFE, "typ_urzadzenia": 11, "nazwa_urzadzenia": "panel"}
+
+
+def _flaga(oid: int, funkcja: int, dev: int = 7) -> dict:
+    return {
+        "id": oid,
+        "id_urzadzenia": dev,
+        "typ_komponentu": "flaga",
+        "interpretacja": 1,
+        "funkcja": funkcja,
+        "opis_menu": "Flag",
+    }
 
 
 def _details(*items) -> bytes:
@@ -536,3 +550,170 @@ async def test_start_times_out_without_auth_error() -> None:
         pytest.raises(AmpioConnectionError),
     ):
         await client.start(timeout=0.5, discovery_timeout=0.1)
+
+
+# --- raw-channel input bridge ---------------------------------------------
+
+
+def _client_with_panel_flag() -> AmpioClient:
+    """Client that knows panel module 7 (mac CAFE) and a flaga at funkcja 32."""
+    client = _client()
+    client._feed_message(f"ampio/fromDB/{USER}/config/devices", _devices(_PANEL))
+    client._feed_message(
+        f"ampio/fromDB/{USER}/config/devicesDetails", _details(_flaga(50, 32))
+    )
+    return client
+
+
+def test_details_classify_input_and_funkcja() -> None:
+    client = _client_with_panel_flag()
+    obj = client.objects[50]
+    assert obj.is_input is True
+    assert obj.input_kind is not None and obj.input_kind.key == "flaga"
+    assert obj.funkcja == 32
+    assert obj.is_sensor is False
+
+
+def test_raw_channel_routes_to_input_object_and_notifies() -> None:
+    client = _client_with_panel_flag()
+    received: list = []
+    client.add_object_listener(received.append)
+
+    client._feed_message("ampio/from/CAFE/state/f/32", b"1")
+
+    obj = client.objects[50]
+    assert obj.value == "1" and obj.is_on is True
+    assert received == [obj]
+
+
+def test_raw_channel_unmapped_is_ignored() -> None:
+    client = _client_with_panel_flag()
+    received: list = []
+    client.add_object_listener(received.append)
+
+    # funkcja 5 has no object; a different module mac has no objects at all.
+    client._feed_message("ampio/from/CAFE/state/f/5", b"1")
+    client._feed_message("ampio/from/BEEF/state/f/32", b"1")
+
+    assert client.objects[50].value is None
+    assert received == []
+
+
+def test_raw_channel_malformed_topic_is_ignored() -> None:
+    """A topic that passes the dispatch filter but fails the parser is dropped."""
+    client = _client_with_panel_flag()
+    client._feed_message("ampio/from/CAFE/state/f", b"1")  # too short
+    assert client.objects[50].value is None
+
+
+def test_raw_channel_missing_object_does_not_raise() -> None:
+    """Index entry whose object was dropped from state is handled gracefully."""
+    client = _client_with_panel_flag()
+    del client.state.objects[50]
+    client._feed_message("ampio/from/CAFE/state/f/32", b"1")  # must not raise
+    assert 50 not in client.objects
+
+
+def test_index_rebuilds_when_devices_arrive_after_details() -> None:
+    client = _client()
+    # Details first: module mac unknown, so the flag is not yet routable.
+    client._feed_message(
+        f"ampio/fromDB/{USER}/config/devicesDetails", _details(_flaga(50, 32))
+    )
+    client._feed_message("ampio/from/CAFE/state/f/32", b"1")
+    assert client.objects[50].value is None  # not routed - no module mac yet
+
+    # Devices arrive -> index rebuilds -> now routable.
+    client._feed_message(f"ampio/fromDB/{USER}/config/devices", _devices(_PANEL))
+    client._feed_message("ampio/from/CAFE/state/f/32", b"1")
+    assert client.objects[50].value == "1"
+
+
+def test_flag_without_funkcja_is_not_indexed() -> None:
+    client = _client()
+    client._feed_message(f"ampio/fromDB/{USER}/config/devices", _devices(_PANEL))
+    no_funkcja = {
+        "id": 51,
+        "id_urzadzenia": 7,
+        "typ_komponentu": "flaga",
+        "interpretacja": 1,
+        "opis_menu": "Flag",
+    }
+    client._feed_message(
+        f"ampio/fromDB/{USER}/config/devicesDetails", _details(no_funkcja)
+    )
+    assert client._input_index == {}
+
+
+def test_per_object_echo_dropped_after_raw_seen() -> None:
+    """Once raw is seen, the slower per-object echo is suppressed."""
+    client = _client_with_panel_flag()
+    received: list = []
+    client.add_object_listener(received.append)
+
+    client._feed_message("ampio/from/CAFE/state/f/32", b"1")
+    assert received == [client.objects[50]]
+
+    received.clear()
+    # The lagging per-object republish (note the different "255" encoding).
+    client._feed_message(
+        f"ampio/fromDB/{USER}/ob/50/state", b'{"state": "255", "on": 1700}'
+    )
+    assert received == []  # no double notify
+    assert client.objects[50].value == "1"  # fast raw value preserved
+
+
+def test_mapped_input_without_raw_uses_per_object_fallback() -> None:
+    """A mapped input that never produced a raw edge still updates per-object."""
+    client = _client_with_panel_flag()
+    received: list = []
+    client.add_object_listener(received.append)
+
+    client._feed_message(
+        f"ampio/fromDB/{USER}/ob/50/state", b'{"state": "255", "on": 1700}'
+    )
+    obj = client.objects[50]
+    assert obj.value == "255" and obj.is_on is True
+    assert received == [obj]
+
+
+def test_detekcja_routes_via_digital_input_prefix() -> None:
+    client = _client()
+    client._feed_message(f"ampio/fromDB/{USER}/config/devices", _devices(_PANEL))
+    det = {
+        "id": 60,
+        "id_urzadzenia": 7,
+        "typ_komponentu": "detekcja",
+        "interpretacja": 1,
+        "funkcja": 4,
+        "opis_menu": "Motion",
+    }
+    client._feed_message(f"ampio/fromDB/{USER}/config/devicesDetails", _details(det))
+    client._feed_message("ampio/from/CAFE/state/i/4", b"1")
+    obj = client.objects[60]
+    assert obj.input_kind is not None and obj.input_kind.device_class == "motion"
+    assert obj.value == "1"
+
+
+def test_symulacja_classifies_but_is_not_bridged() -> None:
+    client = _client()
+    client._feed_message(f"ampio/fromDB/{USER}/config/devices", _devices(_PANEL))
+    sym = {
+        "id": 61,
+        "id_urzadzenia": 7,
+        "typ_komponentu": "symulacja",
+        "interpretacja": 1,
+        "funkcja": 1,
+        "opis_menu": "Sim",
+    }
+    client._feed_message(f"ampio/fromDB/{USER}/config/devicesDetails", _details(sym))
+    assert client.objects[61].is_input is True
+    assert client._input_index == {}  # symulacja prefix not bridged
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, False), ("", False), ("0", False), ("1", True), ("255", True)],
+)
+def test_is_on_interpretation(value, expected) -> None:
+    assert AmpioObject(id=1, value=value).is_on is expected

@@ -47,6 +47,7 @@ class ObjectMetadata:
     typ_komponentu: str | None
     name: str | None
     interpretacja: int | None
+    funkcja: int | None  # physical channel index within the module
     stan_json: str | None  # raw seed for the initial value, applied by the client
 
 
@@ -111,6 +112,7 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
                 typ_komponentu=item.get("typ_komponentu"),
                 name=item.get("opis_menu") or None,
                 interpretacja=to_int(item.get("interpretacja")),
+                funkcja=to_int(item.get("funkcja")),
                 stan_json=item.get("stan_json") or None,
             )
         )
@@ -217,6 +219,30 @@ def parse_state_message(topic: str, payload: str) -> StateUpdate | None:
         if isinstance(raw_on, (int, float)):
             on_ms = raw_on
     return StateUpdate(id=oid, value=value, on_ms=on_ms)
+
+
+def parse_raw_channel_topic(topic: str) -> tuple[int, str, int] | None:
+    """Parse a raw `ampio/from/<MAC>/state/<prefix>/<channel>` topic.
+
+    Returns `(mac, prefix, channel)` where `mac` is the hex MAC segment parsed
+    as an int (so leading-zero / upper-vs-lower differences never matter) and
+    `channel` is the decimal channel index. Returns None on any shape mismatch.
+    The MAC is the module's effective CAN bus address (the Designer override),
+    matching `AmpioModule.mac`.
+    """
+    parts = topic.split("/")
+    if len(parts) != 6 or parts[0] != "ampio" or parts[1] != "from":
+        return None
+    if parts[3] != "state":
+        return None
+    try:
+        mac = int(parts[2], 16)
+    except ValueError:
+        return None
+    channel = to_int(parts[5])
+    if channel is None:
+        return None
+    return mac, parts[4], channel
 
 
 def parse_stan_json(stan_json: str) -> StanJsonSeed | None:

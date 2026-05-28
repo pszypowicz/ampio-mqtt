@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .const import SensorKind
+from .const import InputKind, SensorKind
 from .device_types import Capability
 
 
@@ -12,12 +12,24 @@ from .device_types import Capability
 class AmpioObject:
     """A logical Ampio object (DB object) and its latest state."""
 
+    # Volatile: `id` (and `device_id`, the owning id_urzadzenia) are DB
+    # autoincrement ids assigned in hardware (`mac_global`) order. They change
+    # when a module is replaced - do NOT use them as durable identity across a
+    # hardware swap. See `funkcja` and `AmpioModule.mac` for replacement-stable
+    # values.
     id: int
-    device_id: int | None = None  # id_urzadzenia (physical module)
+    device_id: int | None = None  # id_urzadzenia (physical module); see note above
     typ_komponentu: str | None = None
     name: str | None = None
     interpretacja: int | None = None
+    # Physical channel index within the module (obiekty.funkcja). Survives module
+    # replacement (it is part of the re-loaded Designer config), but is NOT a
+    # unique object id - multiple objects, even active ones, can share a funkcja
+    # (the same physical signal exposed as several Designer objects). Used to
+    # route raw channel events to this object.
+    funkcja: int | None = None
     kind: SensorKind | None = None  # set when classified as a sensor
+    input_kind: InputKind | None = None  # set when classified as an input
     value: str | None = None
 
     @property
@@ -25,14 +37,36 @@ class AmpioObject:
         """Whether this object is exposed by the sensor platform."""
         return self.kind is not None
 
+    @property
+    def is_input(self) -> bool:
+        """Whether this object is exposed by the binary_sensor/input platform."""
+        return self.input_kind is not None
+
+    @property
+    def is_on(self) -> bool:
+        """Boolean interpretation of `value`, meaningful for input objects.
+
+        Off when `value` is None/empty/`"0"`, on otherwise - so both the raw
+        channel form (`"1"`) and the per-object form (`"255"`) read as on.
+        """
+        return self.value not in (None, "", "0")
+
 
 @dataclass(slots=True)
 class AmpioModule:
     """A physical Ampio module (urzadzenie) that owns objects."""
 
     id: int
-    mac: int | None = None  # local CAN address from devices.mac
-    mac_global: int | None = None  # globally-unique CAN id from devices.mac_global
+    # Designer-assignable CAN bus address (the "MAC override"). This is the
+    # effective address the module uses on the bus and the one the raw
+    # `ampio/from/<MAC>/...` topics are keyed by. It is replacement-stable: a
+    # replacement unit is re-stamped with the dead one's value so other devices'
+    # CAN logic needs no reprogramming. May be a non-unique default (the M-SERV
+    # is 1). Prefer this over `mac_global` for a replacement-stable module key.
+    mac: int | None = None  # devices.mac (override / effective bus address)
+    # Factory-burned, globally-unique hardware id. CHANGES when the physical unit
+    # is replaced, so it is not stable identity across a hardware swap.
+    mac_global: int | None = None  # devices.mac_global (factory id)
     name: str | None = None  # nazwa_urzadzenia (user-given module name)
     type: int | None = None  # typ_urzadzenia
     model: str | None = None  # resolved model name for `type`
