@@ -12,6 +12,7 @@ from ampio_mqtt._protocol import (
     is_auth_error,
     parse_details,
     parse_devices,
+    parse_raw_channel_topic,
     parse_server_info,
     parse_stan_json,
     parse_state_message,
@@ -77,6 +78,7 @@ def test_parse_details_returns_metadata() -> None:
                     "id_urzadzenia": 3,
                     "typ_komponentu": "temp",
                     "interpretacja": 1,
+                    "funkcja": 7,
                     "opis_menu": "Salon",
                     "stan_json": json.dumps({"state": "21.5", "on": 1700000000000}),
                 },
@@ -89,8 +91,10 @@ def test_parse_details_returns_metadata() -> None:
     assert items is not None
     assert [m.id for m in items] == [41, 42]
     assert items[0].name == "Salon"
+    assert items[0].funkcja == 7
     assert items[0].stan_json is not None
     assert items[1].name is None and items[1].stan_json is None
+    assert items[1].funkcja is None  # absent -> None
 
 
 def test_parse_details_bad_json() -> None:
@@ -298,3 +302,32 @@ def test_parse_stan_json_null_state_yields_none() -> None:
 @pytest.mark.parametrize("payload", ["", "not json", json.dumps([1, 2])])
 def test_parse_stan_json_invalid(payload: str) -> None:
     assert parse_stan_json(payload) is None
+
+
+@pytest.mark.parametrize(
+    ("topic", "expected"),
+    [
+        ("ampio/from/CFFE/state/f/32", (0xCFFE, "f", 32)),
+        ("ampio/from/1/state/i/3", (1, "i", 3)),
+        # MAC is parsed as hex int, so case/zero-padding is normalized.
+        ("ampio/from/00cffe/state/f/1", (0xCFFE, "f", 1)),
+    ],
+)
+def test_parse_raw_channel_topic_ok(topic: str, expected: tuple[int, str, int]) -> None:
+    assert parse_raw_channel_topic(topic) == expected
+
+
+@pytest.mark.parametrize(
+    "topic",
+    [
+        "ampio/from/CFFE/state/f",  # too short
+        "ampio/from/CFFE/state/f/32/extra",  # too long
+        "ampio/from/CFFE/notstate/f/32",  # wrong segment
+        "ampio/to/CFFE/state/f/32",  # not a 'from' topic
+        "ampio/from/ZZZZ/state/f/32",  # non-hex mac
+        "ampio/from/CFFE/state/f/notint",  # non-int channel
+        "ampio/fromDB/u/ob/41/state",  # per-object topic, not raw
+    ],
+)
+def test_parse_raw_channel_topic_malformed(topic: str) -> None:
+    assert parse_raw_channel_topic(topic) is None

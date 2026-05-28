@@ -4,6 +4,38 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.6.0
+
+### Added
+
+- `classify_input(typ, interpretacja)` and the `InputKind` dataclass, mirroring
+  `classify_object`/`SensorKind` for input objects: `flaga` and `symulacja` map
+  to a generic boolean (`device_class=None`), `detekcja` to `motion`. Exported
+  from `ampio_mqtt`. `AmpioObject` gains `input_kind`, an `is_input` property,
+  and an `is_on` property (truthy interpretation of `value`, so both the raw
+  `"1"` and per-object `"255"` encodings read as on).
+- Low-latency live state for input objects via a raw-channel bridge. The client
+  now subscribes to the decoded per-channel topics for flags and digital inputs
+  and routes each edge to the owning object, surfaced through the existing
+  `add_object_listener()` pipeline. These raw channels fire on change and arrive
+  ahead of the per-object republish (measured ~150 ms sooner), so button and
+  flag events land with minimal latency. The raw stream is authoritative once
+  seen for an object; the slower per-object echo is then suppressed to avoid a
+  duplicate notification, while inputs never seen on the raw path keep their
+  per-object updates.
+- `AmpioObject.funkcja`, the object's physical channel index within its module.
+
+### Changed
+
+- Documented the identity semantics consumers need: `AmpioModule.mac` is the
+  Designer-assignable bus address (replacement-stable), `mac_global` is the
+  factory id (changes on hardware replacement), and `AmpioObject.id`/`device_id`
+  are not stable across a hardware swap.
+
+### Notes
+
+- MQTT-only and additive; no new dependencies and no breaking changes.
+
 ## 1.5.0
 
 ### Added

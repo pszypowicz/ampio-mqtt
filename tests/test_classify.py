@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ampio_mqtt import classify_object
+from ampio_mqtt import classify_input, classify_object
 
 
 def test_temperature() -> None:
@@ -80,3 +80,33 @@ def test_unknown_type_falls_back_to_generic() -> None:
     kind = classify_object(None, None)
     assert kind is not None
     assert kind.key == "value"
+
+
+@pytest.mark.parametrize(
+    ("typ", "key", "device_class"),
+    [
+        ("flaga", "flaga", None),  # generic boolean
+        ("detekcja", "detekcja", "motion"),
+        ("symulacja", "symulacja", None),  # generic boolean
+    ],
+)
+def test_classify_input_types(typ, key, device_class) -> None:
+    kind = classify_input(typ, 1)
+    assert kind is not None
+    assert kind.key == key
+    assert kind.device_class == device_class
+
+
+@pytest.mark.parametrize(
+    "typ",
+    ["temp", "lin_wej", "bit32", "przekaznik", "rgbw", "led", "roleta_procenty", None],
+)
+def test_classify_input_returns_none_for_non_inputs(typ) -> None:
+    assert classify_input(typ, 1) is None
+
+
+def test_input_and_sensor_classifications_are_disjoint() -> None:
+    """An input type is never also a sensor, and vice versa."""
+    for typ in ("flaga", "detekcja", "symulacja"):
+        assert classify_object(typ, 1) is None
+        assert classify_input(typ, 1) is not None

@@ -20,6 +20,9 @@ from .const import (
     DEVICES_REQUEST_PAYLOAD,
     GROUP_DEVICES_REQUEST_PAYLOAD,
     GROUPS_REQUEST_PAYLOAD,
+    RAW_INPUT_WILDCARDS,
+    _INPUT_CHANNEL_PREFIX,
+    classify_input,
     classify_object,
     config_request_topic,
     data_request_topic,
@@ -71,6 +74,15 @@ class AmpioClient:
         self.state = AmpioState()
         self._object_listeners: list[ObjectListener] = []
         self._availability_listeners: list[AvailabilityListener] = []
+
+        # Raw-channel bridge: maps a decoded channel topic to the Designer
+        # object that owns it. Key is (module.mac, prefix, channel) -> object_id.
+        self._input_index: dict[tuple[int, str, int], int] = {}
+        # Object ids for which a raw-channel message has actually arrived. Once
+        # an input is "raw-proven", the faster raw stream is authoritative and
+        # its per-object echoes are suppressed; an input never seen on the raw
+        # path (e.g. an M-SERV-internal object) keeps its per-object updates.
+        self._raw_seen_ids: set[int] = set()
 
         self._client: aiomqtt.Client | None = None
         self._runner: asyncio.Task[None] | None = None
@@ -344,6 +356,8 @@ class AmpioClient:
                     await client.subscribe(groups_response_topic(user))
                     await client.subscribe(group_devices_response_topic(user))
                     await client.subscribe(ob_state_wildcard(user))
+                    for wildcard in RAW_INPUT_WILDCARDS:
+                        await client.subscribe(wildcard)
                     self._set_available(True)
                     self._connected.set()
                     attempt = 0
@@ -405,6 +419,8 @@ class AmpioClient:
             self._group_devices_received.set()
         elif topic.endswith("/state") and "/ob/" in topic:
             self._handle_state(topic, payload)
+        elif topic.startswith("ampio/from/") and "/state/" in topic:
+            self._handle_raw_channel(topic, payload)
 
     def _handle_details(self, payload: str) -> None:
         items = _protocol.parse_details(payload)
@@ -417,11 +433,14 @@ class AmpioClient:
             obj.typ_komponentu = meta.typ_komponentu
             obj.name = meta.name or obj.name
             obj.interpretacja = meta.interpretacja
+            obj.funkcja = meta.funkcja
             obj.kind = classify_object(meta.typ_komponentu, meta.interpretacja)
+            obj.input_kind = classify_input(meta.typ_komponentu, meta.interpretacja)
             if obj.value is None and meta.stan_json is not None:
                 self._apply_stan_json(obj, meta.stan_json)
             self.state.objects[meta.id] = obj
             self._notify(obj)
+        self._rebuild_input_index()
         self._details_received.set()
 
     def _handle_devices(self, payload: str) -> None:
@@ -434,6 +453,7 @@ class AmpioClient:
             if previous is not None:
                 module.last_seen = previous.last_seen
             self.state.modules[module.id] = module
+        self._rebuild_input_index()
         self._devices_received.set()
 
     def _handle_info(self, payload: str) -> None:
@@ -460,6 +480,11 @@ class AmpioClient:
         update = _protocol.parse_state_message(topic, payload)
         if update is None:
             return
+        if update.id in self._raw_seen_ids:
+            # The faster raw-channel path is authoritative for this input; drop
+            # the slower per-object echo to avoid a double notify and a stale
+            # echo clobbering a fresh raw edge.
+            return
         obj = self.state.objects.get(update.id)
         if obj is None:
             # No metadata yet (e.g. restricted account) -> generic sensor.
@@ -467,6 +492,40 @@ class AmpioClient:
             self.state.objects[update.id] = obj
         obj.value = update.value
         self._touch_module(obj.device_id, update.on_ms)
+        self._notify(obj)
+
+    def _rebuild_input_index(self) -> None:
+        """Rebuild the (mac, prefix, channel) -> object_id routing table.
+
+        Keyed on the module's effective bus address (`mac`, the Designer
+        override) - never `mac_global`, which diverges from the raw-topic MAC on
+        replaced modules. Only bridgeable input types with a known channel and a
+        known module mac are indexed.
+        """
+        index: dict[tuple[int, str, int], int] = {}
+        for obj in self.state.objects.values():
+            prefix = _INPUT_CHANNEL_PREFIX.get(obj.typ_komponentu or "")
+            if prefix is None or obj.funkcja is None or obj.device_id is None:
+                continue
+            module = self.state.modules.get(obj.device_id)
+            if module is None or module.mac is None:
+                continue
+            index[(module.mac, prefix, obj.funkcja)] = obj.id
+        self._input_index = index
+
+    def _handle_raw_channel(self, topic: str, payload: str) -> None:
+        key = _protocol.parse_raw_channel_topic(topic)
+        if key is None:
+            return
+        oid = self._input_index.get(key)
+        if oid is None:
+            return  # channel has no exposed Designer object - ignore
+        obj = self.state.objects.get(oid)
+        if obj is None:
+            return
+        self._raw_seen_ids.add(oid)
+        obj.value = payload.strip()
+        self._touch_module(obj.device_id, None)
         self._notify(obj)
 
     def _apply_stan_json(self, obj: AmpioObject, stan_json: str) -> None:
