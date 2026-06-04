@@ -79,6 +79,7 @@ def test_parse_details_returns_metadata() -> None:
                     "typ_komponentu": "temp",
                     "interpretacja": 1,
                     "funkcja": 7,
+                    "powiazane": "1,4,9",
                     "opis_menu": "Salon",
                     "stan_json": json.dumps({"state": "21.5", "on": 1700000000000}),
                 },
@@ -92,9 +93,30 @@ def test_parse_details_returns_metadata() -> None:
     assert [m.id for m in items] == [41, 42]
     assert items[0].name == "Salon"
     assert items[0].funkcja == 7
+    assert items[0].group_ids == frozenset({1, 4, 9})
     assert items[0].stan_json is not None
     assert items[1].name is None and items[1].stan_json is None
     assert items[1].funkcja is None  # absent -> None
+    assert items[1].group_ids == frozenset()  # absent -> empty
+
+
+@pytest.mark.parametrize(
+    ("powiazane", "expected"),
+    [
+        ("1,4,9", frozenset({1, 4, 9})),
+        ("12", frozenset({12})),
+        (" 3 , 5 ,7", frozenset({3, 5, 7})),
+        ("1,bad,3", frozenset({1, 3})),  # non-int entries dropped, no raise
+        ("", frozenset()),
+        ("NULL", frozenset()),
+        (None, frozenset()),
+        (0, frozenset()),  # non-string payload -> empty
+    ],
+)
+def test_parse_details_powiazane(powiazane: object, expected: frozenset[int]) -> None:
+    payload = json.dumps({"List": [{"id": 1, "powiazane": powiazane}]})
+    items = parse_details(payload)
+    assert items is not None and items[0].group_ids == expected
 
 
 def test_parse_details_bad_json() -> None:

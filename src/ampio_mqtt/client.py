@@ -434,6 +434,7 @@ class AmpioClient:
             obj.name = meta.name or obj.name
             obj.interpretacja = meta.interpretacja
             obj.funkcja = meta.funkcja
+            obj.group_ids = meta.group_ids
             obj.kind = classify_object(meta.typ_komponentu, meta.interpretacja)
             obj.input_kind = classify_input(meta.typ_komponentu, meta.interpretacja)
             if obj.value is None and meta.stan_json is not None:

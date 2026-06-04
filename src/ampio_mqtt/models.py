@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .const import InputKind, SensorKind
+from .const import SYSTEM_TYPES, InputKind, SensorKind
 from .device_types import Capability
 
 
@@ -28,6 +28,11 @@ class AmpioObject:
     # (the same physical signal exposed as several Designer objects). Used to
     # route raw channel events to this object.
     funkcja: int | None = None
+    # Groups the object belongs to in the M-SERV's `grupy_obiektow` join,
+    # parsed from `devicesDetails.powiazane`. Empty for system objects (which
+    # have no room) and for ghosts (rows that survived removal from the
+    # Designer tree). See `is_system` and `visible`.
+    group_ids: frozenset[int] = field(default_factory=frozenset)
     kind: SensorKind | None = None  # set when classified as a sensor
     input_kind: InputKind | None = None  # set when classified as an input
     value: str | None = None
@@ -50,6 +55,29 @@ class AmpioObject:
         channel form (`"1"`) and the per-object form (`"255"`) read as on.
         """
         return self.value not in (None, "", "0")
+
+    @property
+    def is_system(self) -> bool:
+        """Whether this is a system object (always present regardless of grouping).
+
+        ``symulacja`` (presence-simulation) and ``detekcja`` (detection) live
+        outside the room/group hierarchy by design; the M-SERV always exposes
+        them. Used by :pyattr:`visible` so consumers do not have to hardcode
+        the membership rule.
+        """
+        return self.typ_komponentu in SYSTEM_TYPES
+
+    @property
+    def visible(self) -> bool:
+        """Whether the object is one the user can see in Designer's tree.
+
+        Mirrors the M-SERV's own "visible objects" query: belonging to at
+        least one group, OR being a system object. Removed-but-not-deleted
+        rows (`devicesDetails` ghosts) have neither, so a consumer using
+        ``visible`` as its discovery filter skips them without further
+        heuristics on ``value`` or ``name``.
+        """
+        return bool(self.group_ids) or self.is_system
 
 
 @dataclass(slots=True)

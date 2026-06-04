@@ -4,6 +4,44 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## 1.7.0
+
+### Added
+
+- `AmpioObject.group_ids: frozenset[int]` exposes the `grupy_obiektow`
+  membership the M-SERV already reports in `devicesDetails.powiazane` (a
+  comma-separated GROUP_CONCAT field the parser previously ignored). Empty
+  for system objects (which have no room) and for ghost rows that survived
+  removal from the Designer tree.
+- `AmpioObject.is_system` and `AmpioObject.visible` derived properties.
+  `is_system` is `True` for `typ_komponentu` in the new `SYSTEM_TYPES`
+  constant (`symulacja`, `detekcja`). `visible` is
+  `bool(group_ids) or is_system`, mirroring the M-SERV's own "visible
+  objects" query so a downstream consumer (the Home Assistant integration)
+  can drop the heuristic value/name filter and use the canonical predicate
+  instead.
+
+### Why
+
+Closes the first half of #15. `devicesDetails` returns every row in the
+M-SERV's object table - including objects the user has removed in
+Designer (which only unassigns the row from all groups, never deletes
+it). Without group membership a consumer cannot tell a removed-but-still-
+returned ghost from a real object that happens to have a name and a cached
+value. Surfacing `visible` lets the integration filter ghosts the way the
+M-SERV's own UI does, which avoids the leak observed in Ampio's Matter
+integration (a `przekaznik` row removed from the Designer tree still
+exposed as a Matter device).
+
+### Notes
+
+- Purely additive; no breaking changes.
+- `bit32` boolean inputs are still routed through `SensorKind`/`is_sensor`
+  by `classify_object`; the new properties do not change classification.
+- `leafId` (the strictly-unique stable per-object key tracked in the
+  remaining half of #15) is unchanged - still parked pending a real
+  hardware-swap test.
+
 ## 1.6.0
 
 ### Added
