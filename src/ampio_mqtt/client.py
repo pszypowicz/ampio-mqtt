@@ -221,7 +221,9 @@ class AmpioClient:
                 timeout=10,
             ) as client:
                 await client.subscribe(info_topic)
-                await client.publish(request_topic(info, user), info.req_payload.encode())
+                await client.publish(
+                    request_topic(info, user), info.req_payload.encode()
+                )
                 try:
                     async with asyncio.timeout(info_timeout):
                         async for message in client.messages:
@@ -537,9 +539,7 @@ class AmpioClient:
             obj.funkcja = meta.funkcja
             obj.leaf_id = meta.leaf_id
             obj.group_ids = meta.group_ids
-            obj.kind, obj.input_kind = classify(
-                meta.typ_komponentu, meta.interpretacja
-            )
+            obj.kind, obj.input_kind = classify(meta.typ_komponentu, meta.interpretacja)
             if obj.value is None and meta.stan_json is not None:
                 self._apply_stan_json(obj, meta.stan_json)
             self.state.objects[meta.id] = obj
