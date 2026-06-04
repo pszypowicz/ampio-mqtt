@@ -142,3 +142,19 @@ class AmpioState:
     def sensors(self) -> dict[int, AmpioObject]:
         """Objects classified as sensors."""
         return {i: o for i, o in self.objects.items() if o.is_sensor}
+
+
+@dataclass(slots=True)
+class ConnectionStats:
+    """Lightweight liveness counters surfaced for downstream diagnostics.
+
+    Updated by `AmpioClient` itself; values are monotonic except `last_error`
+    (overwritten on every reconnect attempt). Intended for HA's per-config-
+    entry diagnostics blob so a maintainer can correlate a "flapping" report
+    with the actual reconnect count seen by the client.
+    """
+
+    reconnect_count: int = 0
+    last_error: str | None = None
+    started_at: float | None = None  # epoch seconds of first successful connect
+    last_message_at: float | None = None  # epoch seconds of last MQTT message in

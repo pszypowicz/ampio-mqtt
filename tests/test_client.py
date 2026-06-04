@@ -719,6 +719,105 @@ def test_is_on_interpretation(value, expected) -> None:
     assert AmpioObject(id=1, value=value).is_on is expected
 
 
+def test_last_payloads_retained_for_each_handler() -> None:
+    """Each discovery handler stashes the verbatim payload for diagnostics."""
+    client = _client()
+    devices = _devices({"id": 1, "mac": 1, "typ_urzadzenia": 10})
+    details = _details(
+        {"id": 5, "id_urzadzenia": 1, "typ_komponentu": "temp", "interpretacja": 1}
+    )
+    info = _info(mac=12345, serverVersion="2025")
+
+    client._feed_message(f"ampio/fromDB/{USER}/config/devices", devices)
+    client._feed_message(f"ampio/fromDB/{USER}/config/devicesDetails", details)
+    client._feed_message(f"ampio/fromDB/{USER}/data/info", info)
+
+    assert client.last_devices_payload == devices.decode()
+    assert client.last_details_payload == details.decode()
+    assert client.last_info_payload == info.decode()
+
+
+def test_groups_payloads_are_public_attributes() -> None:
+    """`data/groups` and `data/group_devices` populate the public last_* attrs."""
+    client = _client()
+    groups = json.dumps({"List": [{"id": 1, "opis_menu": "Salon"}]}).encode()
+    group_devices = json.dumps({"List": [{"id_grupy": 1, "id_obiektu": 5}]}).encode()
+    client._feed_message(f"ampio/fromDB/{USER}/data/groups", groups)
+    client._feed_message(f"ampio/fromDB/{USER}/data/group_devices", group_devices)
+    assert client.last_groups_payload == groups.decode()
+    assert client.last_group_devices_payload == group_devices.decode()
+
+
+def test_dispatch_updates_last_message_at() -> None:
+    """Every dispatched MQTT message advances the connection stats clock."""
+    client = _client()
+    assert client.stats.last_message_at is None
+    client._feed_message(f"ampio/fromDB/{USER}/data/info", _info(mac=1))
+    assert client.stats.last_message_at is not None
+    first = client.stats.last_message_at
+    client._feed_message(f"ampio/fromDB/{USER}/data/info", _info(mac=1))
+    assert client.stats.last_message_at >= first
+
+
+async def test_reconnect_count_increments_on_reconnect() -> None:
+    """A poison-then-recover cycle bumps reconnect_count and captures the error."""
+
+    attempts = 0
+    keep_running = asyncio.Event()
+
+    class _Flapping:
+        def __init__(self, *args, **kwargs) -> None:
+            self.messages = self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def subscribe(self, _topic):  # pragma: no cover - trivial
+            return None
+
+        async def publish(self, _topic, _payload=b""):
+            return None
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                # First connection: raise mid-iteration so the runner reconnects.
+                raise aiomqtt.MqttError("simulated drop")
+            # Second connection: keep the runner alive long enough for the test
+            # to observe the reconnect_count increment, then end.
+            await keep_running.wait()
+            raise StopAsyncIteration
+
+    client = AmpioClient("host", username=USER, password="p", reconnect_interval=0.0)
+    runner_task: asyncio.Task[None]
+
+    async def _run() -> None:
+        with patch("ampio_mqtt.client.aiomqtt.Client", _Flapping):
+            client._stop = False
+            await client._run()
+
+    runner_task = asyncio.create_task(_run())
+    # Wait for the second connection to land (reconnect_count incremented).
+    for _ in range(100):
+        if client.stats.reconnect_count >= 1:
+            break
+        await asyncio.sleep(0.01)
+    keep_running.set()
+    client._stop = True
+    await runner_task
+
+    assert client.stats.reconnect_count == 1
+    assert client.stats.started_at is not None
+    assert client.stats.last_error == "simulated drop"
+
+
 @pytest.mark.parametrize(
     ("typ", "leaf_id", "group_ids", "is_system", "visible"),
     [

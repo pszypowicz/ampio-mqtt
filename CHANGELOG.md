@@ -14,6 +14,38 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.2.0
+
+### Added
+
+- `AmpioClient.last_devices_payload`, `last_details_payload`,
+  `last_info_payload`, `last_groups_payload`, `last_group_devices_payload`
+  - the verbatim decoded MQTT payload as the broker sent it, retained per
+  discovery topic so a downstream tester report can include the actual JSON
+  the M-SERV emitted (instead of forcing the consumer to re-derive it).
+  Pure passthrough, no parsing, no copies; replaces the previous private
+  `_groups_payload` / `_group_devices_payload` attributes.
+- `ConnectionStats` dataclass exposed as `client.stats`:
+  `reconnect_count` (bumped on every successful `__aenter__` after the
+  first), `last_error` (text of the most recent `aiomqtt.MqttError`),
+  `started_at` (epoch seconds of the first successful connect),
+  `last_message_at` (epoch seconds of the most recent dispatched message).
+  Also exported from `ampio_mqtt`.
+
+### Why
+
+Surfaces what a downstream HA integration needs for a tester-facing
+debug snapshot: the raw discovery JSON for repro-from-bug-report
+workflows, and connection liveness counters so a "works intermittently"
+report can be cross-checked against the actual reconnect count.
+
+### Notes
+
+- Additive; no breaking changes for consumers that used only the public
+  API surface of 0.1.0. The two private payload attributes are renamed,
+  which is fine in 0.x.x.
+- Coverage stays at 98%, mypy `--strict` clean, ruff clean.
+
 ## 0.1.0
 
 Initial beta cut consolidating the development surface into a single
