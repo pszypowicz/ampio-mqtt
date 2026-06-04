@@ -100,6 +100,11 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Further reading
+
+Protocol notes (topic map, identity rules, classification table,
+forward-work surfaces) live under [`docs/`](docs/README.md).
+
 ## License
 
 MIT
