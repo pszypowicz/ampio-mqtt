@@ -14,6 +14,38 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.3.0
+
+### Added
+
+- `AmpioClient.fetch_locations() -> dict[int, str]` returning the
+  Designer "Location" marker name table: the integer id -> human label
+  the per-output dropdown in Designer is populated from (e.g.
+  `{1: "Salon", 2: "Kuchnia", ...}`). Triggered by publishing
+  `locations` on `ampio/control/<user>/config`; the broker replies on
+  `ampio/fromDB/<user>/config/locations` with `{"List":[{"id",
+  "opis_menu"}]}`. The new topic is subscribed to on connect; the
+  retained payload is exposed as `AmpioClient.last_locations_payload`
+  alongside the other `last_*_payload` attributes.
+- `LOCATIONS_REQUEST_PAYLOAD` constant and `locations_response_topic`
+  topic helper.
+
+### Why
+
+The location is a per-output, user-editable string the integrator sets
+in the Designer's "Location" column. The *name table* (id -> label)
+flows over MQTT and is what this method returns. The *per-output integer
+pointer into that table* lives on the module's CAN-resident description
+table and is not published on any MQTT topic; resolving it would require
+either an RPC bridge or a CAN sniff and is intentionally out of scope
+here. Consumers that learn the per-output id by another route can use
+this table to resolve it to a label; consumers that don't still get a
+useful diagnostics blob (which locations does this M-SERV define?).
+
+### Notes
+
+- Additive; no breaking changes from 0.2.0.
+
 ## 0.2.0
 
 ### Added

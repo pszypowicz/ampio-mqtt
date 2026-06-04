@@ -20,6 +20,7 @@ from .const import (
     DEVICES_REQUEST_PAYLOAD,
     GROUP_DEVICES_REQUEST_PAYLOAD,
     GROUPS_REQUEST_PAYLOAD,
+    LOCATIONS_REQUEST_PAYLOAD,
     RAW_INPUT_WILDCARDS,
     _INPUT_CHANNEL_PREFIX,
     classify_input,
@@ -32,6 +33,7 @@ from .const import (
     groups_response_topic,
     info_request_topic,
     info_response_topic,
+    locations_response_topic,
     ob_state_wildcard,
     states_request_topic,
     states_response_topic,
@@ -100,6 +102,7 @@ class AmpioClient:
         self._info_received = asyncio.Event()
         self._groups_received = asyncio.Event()
         self._group_devices_received = asyncio.Event()
+        self._locations_received = asyncio.Event()
 
         # Last raw payloads as the broker sent them - retained for downstream
         # diagnostics so a tester report can include the actual JSON the
@@ -109,6 +112,7 @@ class AmpioClient:
         self.last_info_payload: str | None = None
         self.last_groups_payload: str | None = None
         self.last_group_devices_payload: str | None = None
+        self.last_locations_payload: str | None = None
 
         # Connection liveness counters surfaced as `client.stats`.
         self.stats = ConnectionStats()
@@ -330,6 +334,55 @@ class AmpioClient:
             _safe_json_object(self.last_group_devices_payload),
         )
 
+    async def fetch_locations(self, timeout: float = 5.0) -> dict[int, str]:
+        """Return ``{location_id: name}`` for the Designer "Location" markers.
+
+        The location is the user-editable per-output marker visible in the
+        Designer's "Lokalizacja" column (e.g. ``Salon``, ``Kuchnia``, ...).
+        It is **per-output**, not per-module: each module's outputs can be
+        assigned to different locations, and the per-output assignment lives
+        in the device's CAN-resident description table (not exposed via
+        MQTT - see the comment in `_run` and the integration's docs for
+        the RPC route that would resolve it).
+
+        This method returns only the *name table* - the integer ID -> human
+        label mapping the Designer uses to populate its dropdown. A consumer
+        that does have a way to learn the per-output integer can resolve it
+        through this dict. Without that, the table is still useful in
+        diagnostics ("which location ids does this M-SERV define?").
+
+        Publishes ``locations`` to ``ampio/control/<user>/config`` and awaits
+        the response on ``ampio/fromDB/<user>/config/locations``. Requires
+        ``start()`` to have completed. Raises ``AmpioConnectionError`` if the
+        broker is not connected or the response does not arrive within
+        ``timeout``.
+        """
+        if self._client is None:
+            raise AmpioConnectionError("Not connected")
+        self._locations_received.clear()
+        self.last_locations_payload = None
+        await self._client.publish(
+            config_request_topic(self._username),
+            LOCATIONS_REQUEST_PAYLOAD.encode(),
+        )
+        try:
+            async with asyncio.timeout(timeout):
+                await self._locations_received.wait()
+        except TimeoutError as err:
+            raise AmpioConnectionError(
+                "Timed out fetching locations table from Ampio broker"
+            ) from err
+        data = _safe_json_object(self.last_locations_payload)
+        out: dict[int, str] = {}
+        for item in data.get("List", []):
+            if not isinstance(item, dict):
+                continue
+            lid = item.get("id")
+            name = item.get("opis_menu")
+            if isinstance(lid, int) and isinstance(name, str) and name:
+                out[lid] = name
+        return out
+
     async def _publish_data(self, keyword: str) -> None:
         if self._client is None:
             raise AmpioConnectionError("Not connected")
@@ -372,6 +425,7 @@ class AmpioClient:
                     await client.subscribe(info_response_topic(user))
                     await client.subscribe(groups_response_topic(user))
                     await client.subscribe(group_devices_response_topic(user))
+                    await client.subscribe(locations_response_topic(user))
                     await client.subscribe(ob_state_wildcard(user))
                     for wildcard in RAW_INPUT_WILDCARDS:
                         await client.subscribe(wildcard)
@@ -440,6 +494,9 @@ class AmpioClient:
         elif topic == group_devices_response_topic(self._username):
             self.last_group_devices_payload = payload
             self._group_devices_received.set()
+        elif topic == locations_response_topic(self._username):
+            self.last_locations_payload = payload
+            self._locations_received.set()
         elif topic.endswith("/state") and "/ob/" in topic:
             self._handle_state(topic, payload)
         elif topic.startswith("ampio/from/") and "/state/" in topic:

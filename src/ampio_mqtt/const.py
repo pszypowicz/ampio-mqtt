@@ -25,6 +25,7 @@ DETAILS_REQUEST_PAYLOAD = "devicesDetails"
 DEVICES_REQUEST_PAYLOAD = "devices"
 GROUPS_REQUEST_PAYLOAD = "groups"
 GROUP_DEVICES_REQUEST_PAYLOAD = "group_devices"
+LOCATIONS_REQUEST_PAYLOAD = "locations"
 
 
 def ob_state_wildcard(user: str) -> str:
@@ -89,6 +90,17 @@ def groups_response_topic(user: str) -> str:
 def group_devices_response_topic(user: str) -> str:
     """Topic carrying the object-to-group join response."""
     return f"ampio/fromDB/{user}/data/group_devices"
+
+
+def locations_response_topic(user: str) -> str:
+    """Topic carrying the locations (Designer location-marker) table response.
+
+    The table is published on the *config* surface, not the *data* surface
+    like the rooms join is - it lives next to ``devicesDetails`` /
+    ``devices``. Triggered by publishing ``LOCATIONS_REQUEST_PAYLOAD`` on
+    ``config_request_topic(user)``.
+    """
+    return f"ampio/fromDB/{user}/config/locations"
 
 
 # --- Sensor classification -------------------------------------------------
