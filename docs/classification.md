@@ -13,6 +13,11 @@ Authoritative source:
 
 ## `typ_komponentu` truth table
 
+The Sensor / Input / System columns are derived from the
+`SENSOR_TYPES`, `INPUT_TYPES`, and `SYSTEM_TYPES` frozensets in
+`const.py` - keep this table in sync with those when a new type is
+added.
+
 | `typ_komponentu`  | Sensor? | Input? | System? | Note                                                                                                                       |
 | ----------------- | ------- | ------ | ------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `temp`            | yes     | no     | no      | Temperature reading, °C.                                                                                                   |
@@ -28,19 +33,14 @@ Authoritative source:
 
 ## `lin_wej` interpretation table
 
-| `interpretacja` | Kind                | Unit  | Device class           |
-| --------------- | ------------------- | ----- | ---------------------- |
-| 1               | humidity            | `%`   | `humidity`             |
-| 2               | pressure (absolute) | `hPa` | `atmospheric_pressure` |
-| 3               | loudness            | `dB`  | `sound_pressure`       |
-| 4               | illuminance         | `lx`  | `illuminance`          |
-| 5               | air quality index   | -     | `aqi`                  |
-| 6               | pressure (relative) | `hPa` | `pressure`             |
-| 7               | CO2                 | `ppm` | `carbon_dioxide`       |
-
-Unknown `interpretacja` values fall through to a generic `analog_<n>`
-SensorKind with no device class, so a future M-SENS variant still
-surfaces as a sensor.
+The per-`interpretacja` measurement kind, unit, and HA device class
+live in `_LIN_WEJ_BY_INTERP` in
+[`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py). Today the
+recognised values are 1-7 (humidity, absolute pressure, loudness,
+illuminance, AQI, relative pressure, CO2); read the dict for the
+canonical mapping. Unknown values fall through to a generic
+`analog_<n>` SensorKind with no device class so a future M-SENS
+variant still surfaces as a sensor.
 
 ## Why classification is split from visibility
 

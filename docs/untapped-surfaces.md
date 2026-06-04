@@ -1,31 +1,8 @@
 # Untapped surfaces
 
 The M-SERV exposes more than the library currently consumes. Each entry
-below is reachable today (the wire surface exists) but unimplemented,
-and worth noting so a future contributor does not have to re-discover
-it. Forward-work items each have a tracking issue; PRs picking up an
-item should reference its issue number.
-
-If you implement one of these, start by **verifying the wire shape**
-against a live broker before writing any library code. The repo
-already ships `tools/probe_config.py` for exactly this - it publishes
-each candidate keyword on `ampio/control/<user>/config` and prints
-whatever the broker replies on the matching `fromDB` topic, so the
-response shape is captured without guessing:
-
-```
-python tools/probe_config.py --keywords scenes,logs,resources
-```
-
-Once the response shape is in hand, the implementation pattern is
-almost always the same as `fetch_rooms()` / `fetch_locations()`:
-
-1. Add the topic helper to `const.py`.
-2. Subscribe to it in the `start()` loop.
-3. Add a dispatch branch in `_dispatch` that stores the retained
-   payload and sets an `asyncio.Event`.
-4. Expose a `fetch_<name>()` method that publishes the request keyword
-   and awaits the event.
+below is reachable today but unimplemented; each has a tracking issue
+PRs should reference.
 
 ## Reachable but not consumed
 
@@ -94,3 +71,25 @@ to `_INPUT_CHANNEL_PREFIX` closes the gap. See
 [`raw-channel-bridge.md`](raw-channel-bridge.md).
 
 Tracked as: [#26](https://github.com/pszypowicz/ampio-mqtt/issues/26)
+
+## If you pick one up
+
+Start by **verifying the wire shape** against a live broker before
+writing any library code. The repo ships `tools/probe_config.py` for
+exactly this - it publishes each candidate keyword on
+`ampio/control/<user>/config` and prints whatever the broker replies
+on the matching `fromDB` topic:
+
+```
+python tools/probe_config.py --keywords scenes,logs,resources
+```
+
+Once the response shape is in hand, the implementation pattern is
+almost always the same as `fetch_rooms()` / `fetch_locations()`:
+
+1. Add the topic helper to `const.py`.
+2. Subscribe to it in the `start()` loop.
+3. Add a dispatch branch in `_dispatch` that stores the retained
+   payload and sets an `asyncio.Event`.
+4. Expose a `fetch_<name>()` method that publishes the request keyword
+   and awaits the event.

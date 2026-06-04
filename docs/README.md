@@ -1,15 +1,9 @@
 # ampio-mqtt protocol notes
 
-Short, scannable notes that complement the source. The repo's
-[`README.md`](../README.md) is the feature list and quick-start;
-[`CHANGELOG.md`](../CHANGELOG.md) is the per-release history. These
-notes are for the reader who needs to reach further: "what shape comes
-back", "which id is replacement-stable", "what else is reachable that
-the library does not consume yet".
-
-Each file is one screen. If something is missing, the source is the
-authoritative answer - the notes link to the relevant symbol rather
-than restate it.
+Short, scannable notes for the reader who needs to reach further than
+the source comments - "what shape comes back", "which id is
+replacement-stable", "what else is reachable". Each file is one
+screen.
 
 | File                                             | Subject                                                                                                                      |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |

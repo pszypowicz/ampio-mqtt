@@ -42,11 +42,6 @@ push as for any other update.
 | `o` (other)            | Catch-all; payload shape varies by module.                                                                                                                                                                |
 | `symulacja` raw prefix | Classified as an input but the wire prefix is not yet confirmed. The object still updates through the per-object topic; tracked as a forward-work item in [`untapped-surfaces.md`](untapped-surfaces.md). |
 
-The exclusion is not a permanent design decision - if a future use case
-needs sub-second analog latency, adding `a` to the wildcards is a few
-lines. The default stays narrow because every extra wildcard widens the
-subscribe footprint on the broker.
-
 ## Routing key
 
 Raw-channel topics carry the module's effective MAC, not the user

@@ -1,8 +1,4 @@
-"""Data models for Ampio DB objects.
-
-See ``docs/identity.md`` for the ``mac`` / ``mac_global`` / ``leaf_id`` /
-``funkcja`` identity-stability rules consolidated in one page.
-"""
+"""Data models for Ampio DB objects."""
 
 from __future__ import annotations
 
