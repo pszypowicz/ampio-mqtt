@@ -21,11 +21,53 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-DETAILS_REQUEST_PAYLOAD = "devicesDetails"
-DEVICES_REQUEST_PAYLOAD = "devices"
-GROUPS_REQUEST_PAYLOAD = "groups"
-GROUP_DEVICES_REQUEST_PAYLOAD = "group_devices"
-LOCATIONS_REQUEST_PAYLOAD = "locations"
+# --- Endpoint table --------------------------------------------------------
+#
+# Every request/response endpoint the M-SERV exposes is one row here, and that
+# row is the single source of truth: the client derives its subscriptions,
+# topic-to-handler routing, discovery-completion signals, and retained payloads
+# from this table. Adding an endpoint is one row, not edits in four places.
+#
+# A request publishes ``req_payload`` (a keyword, or "" for the dedicated
+# ``states``/``info`` surfaces) to ``ampio/control/<user>/<req_surface>``; the
+# reply lands on ``ampio/fromDB/<user>/<resp_surface>/<resp_leaf>``.
+
+
+@dataclass(frozen=True, slots=True)
+class Endpoint:
+    """One M-SERV request/response endpoint."""
+
+    name: str
+    req_surface: str  # control sub-topic: "config" | "states" | "info" | "data"
+    req_payload: str  # request keyword, or "" for the states/info surfaces
+    resp_surface: str  # fromDB sub-topic: "config" | "data"
+    resp_leaf: str  # final response-topic segment
+    # Part of the initial-discovery set awaited by start() /
+    # wait_for_initial_discovery(). The rooms/locations endpoints are on-demand.
+    initial: bool = False
+
+
+ENDPOINTS: tuple[Endpoint, ...] = (
+    Endpoint("details", "config", "devicesDetails", "config", "devicesDetails", True),
+    Endpoint("devices", "config", "devices", "config", "devices", True),
+    Endpoint("states", "states", "", "data", "states", True),
+    Endpoint("info", "info", "", "data", "info", True),
+    Endpoint("groups", "data", "groups", "data", "groups"),
+    Endpoint("group_devices", "data", "group_devices", "data", "group_devices"),
+    Endpoint("locations", "config", "locations", "config", "locations"),
+)
+
+ENDPOINT_BY_NAME: dict[str, Endpoint] = {ep.name: ep for ep in ENDPOINTS}
+
+
+def request_topic(ep: Endpoint, user: str) -> str:
+    """Control topic an endpoint's request keyword is published to."""
+    return f"ampio/control/{user}/{ep.req_surface}"
+
+
+def response_topic(ep: Endpoint, user: str) -> str:
+    """fromDB topic an endpoint's reply arrives on."""
+    return f"ampio/fromDB/{user}/{ep.resp_surface}/{ep.resp_leaf}"
 
 
 def ob_state_wildcard(user: str) -> str:
@@ -40,67 +82,6 @@ def ob_state_wildcard(user: str) -> str:
 # input objects. The high-rate prefixes (`a`/`t`/`rgbw`/`o`) are intentionally
 # excluded; those object types already arrive on the per-object topic.
 RAW_INPUT_WILDCARDS = ("ampio/from/+/state/f/+", "ampio/from/+/state/i/+")
-
-
-def config_request_topic(user: str) -> str:
-    """Shared topic for publishing any discovery request keyword."""
-    return f"ampio/control/{user}/config"
-
-
-def details_response_topic(user: str) -> str:
-    """Topic carrying the devicesDetails (object list) response."""
-    return f"ampio/fromDB/{user}/config/devicesDetails"
-
-
-def devices_response_topic(user: str) -> str:
-    """Topic carrying the devices (physical module list) response."""
-    return f"ampio/fromDB/{user}/config/devices"
-
-
-def states_request_topic(user: str) -> str:
-    """Topic used to request a snapshot of all object states (empty payload)."""
-    return f"ampio/control/{user}/states"
-
-
-def states_response_topic(user: str) -> str:
-    """Topic carrying the bulk object-states snapshot response."""
-    return f"ampio/fromDB/{user}/data/states"
-
-
-def info_request_topic(user: str) -> str:
-    """Topic used to request server info (empty payload)."""
-    return f"ampio/control/{user}/info"
-
-
-def info_response_topic(user: str) -> str:
-    """Topic carrying the server info response."""
-    return f"ampio/fromDB/{user}/data/info"
-
-
-def data_request_topic(user: str) -> str:
-    """Shared topic for publishing 'data' request keywords (groups, group_devices)."""
-    return f"ampio/control/{user}/data"
-
-
-def groups_response_topic(user: str) -> str:
-    """Topic carrying the rooms/groups list response."""
-    return f"ampio/fromDB/{user}/data/groups"
-
-
-def group_devices_response_topic(user: str) -> str:
-    """Topic carrying the object-to-group join response."""
-    return f"ampio/fromDB/{user}/data/group_devices"
-
-
-def locations_response_topic(user: str) -> str:
-    """Topic carrying the locations (Designer location-marker) table response.
-
-    The table is published on the *config* surface, not the *data* surface
-    like the rooms join is - it lives next to ``devicesDetails`` /
-    ``devices``. Triggered by publishing ``LOCATIONS_REQUEST_PAYLOAD`` on
-    ``config_request_topic(user)``.
-    """
-    return f"ampio/fromDB/{user}/config/locations"
 
 
 # --- Sensor classification -------------------------------------------------
