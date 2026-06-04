@@ -1,22 +1,22 @@
 # Object classification
 
 The `devicesDetails` payload returns one row per logical object. The
-library classifies each row into either a `SensorKind` (sensor-side
-platforms) or an `InputKind` (binary/boolean platforms), or leaves it
-unclassified. Classification keys on two fields: `typ_komponentu` (the
-object type) and `interpretacja` (a refinement for analog inputs).
+library classifies each row into a `SensorKind` (sensor-side platforms)
+and/or an `InputKind` (binary/boolean platforms), or leaves it
+unclassified. A single `classify(typ_komponentu, interpretacja)` returns
+both, keying on `typ_komponentu` (the object type) and `interpretacja`
+(a refinement for analog inputs).
 
 Authoritative source:
 [`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py)
-(`classify_object`, `classify_input`, `_LIN_WEJ_BY_INTERP`,
-`SENSOR_TYPES`, `INPUT_TYPES`, `SYSTEM_TYPES`, `NON_SENSOR_TYPES`).
+(`classify`, the `TYPE_PROFILES` table, and `_LIN_WEJ_BY_INTERP`).
 
 ## `typ_komponentu` truth table
 
-The Sensor / Input / System columns are derived from the
-`SENSOR_TYPES`, `INPUT_TYPES`, and `SYSTEM_TYPES` frozensets in
-`const.py` - keep this table in sync with those when a new type is
-added.
+The Sensor / Input / System columns are one row each in the
+`TYPE_PROFILES` table in `const.py` (a type's `sensor`/`analog`/`numeric`,
+`input`, and `system` fields) - keep that table in sync when a new type
+is added.
 
 | `typ_komponentu`  | Sensor? | Input? | System? | Note                                                                                                                       |
 | ----------------- | ------- | ------ | ------- | -------------------------------------------------------------------------------------------------------------------------- |

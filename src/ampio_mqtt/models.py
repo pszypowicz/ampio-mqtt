@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .const import SYSTEM_TYPES, InputKind, SensorKind
+from .const import InputKind, SensorKind, is_system_type
 from .device_types import Capability
 
 
@@ -72,7 +72,7 @@ class AmpioObject:
         them. Used by :pyattr:`visible` so consumers do not have to hardcode
         the membership rule.
         """
-        return self.typ_komponentu in SYSTEM_TYPES
+        return is_system_type(self.typ_komponentu)
 
     @property
     def visible(self) -> bool:

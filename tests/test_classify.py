@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import pytest
 
-from ampio_mqtt import classify_input, classify_object
+from ampio_mqtt import classify
+from ampio_mqtt.const import InputKind, SensorKind
+
+
+def _sensor(typ: str | None, interp: int | None) -> SensorKind | None:
+    return classify(typ, interp)[0]
+
+
+def _input(typ: str | None, interp: int | None) -> InputKind | None:
+    return classify(typ, interp)[1]
 
 
 def test_temperature() -> None:
-    kind = classify_object("temp", 1)
+    kind = _sensor("temp", 1)
     assert kind is not None
     assert kind.key == "temperature"
     assert kind.unit == "°C"
@@ -29,7 +38,7 @@ def test_temperature() -> None:
     ],
 )
 def test_display_precision(typ, interp, precision) -> None:
-    kind = classify_object(typ, interp)
+    kind = _sensor(typ, interp)
     assert kind is not None
     assert kind.precision == precision
 
@@ -47,7 +56,7 @@ def test_display_precision(typ, interp, precision) -> None:
     ],
 )
 def test_lin_wej_channels(interp, key, unit, device_class) -> None:
-    kind = classify_object("lin_wej", interp)
+    kind = _sensor("lin_wej", interp)
     assert kind is not None
     assert kind.key == key
     assert kind.unit == unit
@@ -55,13 +64,13 @@ def test_lin_wej_channels(interp, key, unit, device_class) -> None:
 
 
 def test_lin_wej_unknown_interp_is_generic() -> None:
-    kind = classify_object("lin_wej", 42)
+    kind = _sensor("lin_wej", 42)
     assert kind is not None
     assert kind.device_class is None
 
 
 def test_bit32_is_generic_measurement() -> None:
-    kind = classify_object("bit32", 3)
+    kind = _sensor("bit32", 3)
     assert kind is not None
     assert kind.device_class is None
     assert kind.state_class == "measurement"
@@ -72,12 +81,12 @@ def test_bit32_is_generic_measurement() -> None:
     ["przekaznik", "rgbw", "led", "roleta_procenty", "flaga", "detekcja", "symulacja"],
 )
 def test_non_sensor_types(typ) -> None:
-    assert classify_object(typ, 1) is None
+    assert _sensor(typ, 1) is None
 
 
 def test_unknown_type_falls_back_to_generic() -> None:
     # No metadata (restricted account) -> generic value sensor.
-    kind = classify_object(None, None)
+    kind = _sensor(None, None)
     assert kind is not None
     assert kind.key == "value"
 
@@ -91,7 +100,7 @@ def test_unknown_type_falls_back_to_generic() -> None:
     ],
 )
 def test_classify_input_types(typ, key, device_class) -> None:
-    kind = classify_input(typ, 1)
+    kind = _input(typ, 1)
     assert kind is not None
     assert kind.key == key
     assert kind.device_class == device_class
@@ -102,11 +111,12 @@ def test_classify_input_types(typ, key, device_class) -> None:
     ["temp", "lin_wej", "bit32", "przekaznik", "rgbw", "led", "roleta_procenty", None],
 )
 def test_classify_input_returns_none_for_non_inputs(typ) -> None:
-    assert classify_input(typ, 1) is None
+    assert _input(typ, 1) is None
 
 
 def test_input_and_sensor_classifications_are_disjoint() -> None:
     """An input type is never also a sensor, and vice versa."""
     for typ in ("flaga", "detekcja", "symulacja"):
-        assert classify_object(typ, 1) is None
-        assert classify_input(typ, 1) is not None
+        sensor, inp = classify(typ, 1)
+        assert sensor is None
+        assert inp is not None

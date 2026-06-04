@@ -62,12 +62,12 @@ Tracked as: [#25](https://github.com/pszypowicz/ampio-mqtt/issues/25)
 
 ### `symulacja` raw-channel prefix - confirm and bridge
 
-`classify_input` routes `symulacja` to a generic-boolean `InputKind`,
-but `_INPUT_CHANNEL_PREFIX` only contains the confirmed `flaga` → `f`
-and `detekcja` → `i` mappings. Today `symulacja` objects still update
+`classify` routes `symulacja` to a generic-boolean `InputKind`, but its
+`TYPE_PROFILES` row has no `channel_prefix`; only `flaga` → `f` and
+`detekcja` → `i` are confirmed. Today `symulacja` objects still update
 through the per-object topic - correct but higher-latency than the
-raw form. Confirming the prefix on a live system and adding the entry
-to `_INPUT_CHANNEL_PREFIX` closes the gap. See
+raw form. Confirming the prefix on a live system and setting
+`channel_prefix` on the `symulacja` profile closes the gap. See
 [`raw-channel-bridge.md`](raw-channel-bridge.md).
 
 Tracked as: [#26](https://github.com/pszypowicz/ampio-mqtt/issues/26)

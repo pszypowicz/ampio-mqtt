@@ -23,10 +23,9 @@ from .const import (
     ENDPOINT_BY_NAME,
     ENDPOINTS,
     RAW_INPUT_WILDCARDS,
-    _INPUT_CHANNEL_PREFIX,
     Endpoint,
-    classify_input,
-    classify_object,
+    classify,
+    input_channel_prefix,
     ob_state_wildcard,
     request_topic,
     response_topic,
@@ -538,8 +537,9 @@ class AmpioClient:
             obj.funkcja = meta.funkcja
             obj.leaf_id = meta.leaf_id
             obj.group_ids = meta.group_ids
-            obj.kind = classify_object(meta.typ_komponentu, meta.interpretacja)
-            obj.input_kind = classify_input(meta.typ_komponentu, meta.interpretacja)
+            obj.kind, obj.input_kind = classify(
+                meta.typ_komponentu, meta.interpretacja
+            )
             if obj.value is None and meta.stan_json is not None:
                 self._apply_stan_json(obj, meta.stan_json)
             self.state.objects[meta.id] = obj
@@ -573,7 +573,7 @@ class AmpioClient:
             obj = self.state.objects.get(entry.id)
             if obj is None:
                 # Metadata not yet known (e.g. snapshot arrived before details).
-                obj = AmpioObject(id=entry.id, kind=classify_object(None, None))
+                obj = AmpioObject(id=entry.id, kind=classify(None, None)[0])
                 self.state.objects[entry.id] = obj
             if obj.value is None and entry.stan_json is not None:
                 self._apply_stan_json(obj, entry.stan_json)
@@ -592,7 +592,7 @@ class AmpioClient:
         obj = self.state.objects.get(update.id)
         if obj is None:
             # No metadata yet (e.g. restricted account) -> generic sensor.
-            obj = AmpioObject(id=update.id, kind=classify_object(None, None))
+            obj = AmpioObject(id=update.id, kind=classify(None, None)[0])
             self.state.objects[update.id] = obj
         obj.value = update.value
         self._touch_module(obj.device_id, update.on_ms)
@@ -608,7 +608,7 @@ class AmpioClient:
         """
         index: dict[tuple[int, str, int], int] = {}
         for obj in self.state.objects.values():
-            prefix = _INPUT_CHANNEL_PREFIX.get(obj.typ_komponentu or "")
+            prefix = input_channel_prefix(obj.typ_komponentu)
             if prefix is None or obj.funkcja is None or obj.device_id is None:
                 continue
             module = self.state.modules.get(obj.device_id)

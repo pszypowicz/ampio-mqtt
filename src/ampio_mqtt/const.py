@@ -118,51 +118,6 @@ class SensorKind:
     precision: int | None = 1
 
 
-# lin_wej (analog input) measurement kind, keyed by `interpretacja`.
-# Matches the M-SENS channel map confirmed live (4=lux, 5=IAQ, 7=CO2).
-_LIN_WEJ_BY_INTERP: dict[int, SensorKind] = {
-    1: SensorKind("humidity", "Humidity", "%", "humidity"),
-    2: SensorKind("pressure_abs", "Pressure (absolute)", "hPa", "atmospheric_pressure"),
-    3: SensorKind("loudness", "Loudness", "dB", "sound_pressure"),
-    4: SensorKind("illuminance", "Illuminance", "lx", "illuminance", precision=0),
-    5: SensorKind("iaq", "Air quality index", None, "aqi", precision=0),
-    6: SensorKind("pressure_rel", "Pressure (relative)", "hPa", "pressure"),
-    7: SensorKind("co2", "CO2", "ppm", "carbon_dioxide", precision=0),
-}
-
-# typ_komponentu values that the sensor platform handles.
-SENSOR_TYPES = frozenset({"temp", "lin_wej", "bit32"})
-# Known non-sensor types (handled by future platforms) - never sensors.
-NON_SENSOR_TYPES = frozenset(
-    {"przekaznik", "rgbw", "led", "roleta_procenty", "flaga", "detekcja", "symulacja"}
-)
-
-
-def classify_object(typ: str | None, interpretacja: int | None) -> SensorKind | None:
-    """Classify a DB object into a SensorKind, or None if it is not a sensor.
-
-    `typ` is `typ_komponentu`; `interpretacja` selects the lin_wej measurement.
-    Unknown `typ` (e.g. no metadata available) returns a generic measurement so
-    restricted accounts still get value-only sensors.
-    """
-    if typ == "temp":
-        return SensorKind("temperature", "Temperature", "°C", "temperature")
-    if typ == "lin_wej":
-        if interpretacja in _LIN_WEJ_BY_INTERP:
-            return _LIN_WEJ_BY_INTERP[interpretacja]
-        return SensorKind(f"analog_{interpretacja}", "Analog input", None, None)
-    if typ == "bit32":
-        return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
-    if typ in NON_SENSOR_TYPES:
-        return None
-    # Unknown / no metadata -> generic value-only sensor (restricted accounts).
-    # May be non-numeric, so claim neither a state class nor a precision (both
-    # would make Home Assistant reject a text value).
-    return SensorKind("value", "Value", None, None, state_class=None, precision=None)
-
-
-# --- Input classification --------------------------------------------------
-
 # binary_sensor device-class strings the library can emit. Only "motion" is
 # mapped today; extend this Literal when a new input mapping is added. Values
 # match Home Assistant's BinarySensorDeviceClass enum.
@@ -180,41 +135,107 @@ class InputKind:
     device_class: BinarySensorDeviceClass | None = None
 
 
-# typ_komponentu values handled by the input (binary_sensor) platform. These
-# also live in NON_SENSOR_TYPES - they are not sensors, but they are inputs.
-INPUT_TYPES = frozenset({"flaga", "detekcja", "symulacja"})
+# lin_wej (analog input) measurement kind, keyed by `interpretacja`.
+# Matches the M-SENS channel map confirmed live (4=lux, 5=IAQ, 7=CO2).
+_LIN_WEJ_BY_INTERP: dict[int, SensorKind] = {
+    1: SensorKind("humidity", "Humidity", "%", "humidity"),
+    2: SensorKind("pressure_abs", "Pressure (absolute)", "hPa", "atmospheric_pressure"),
+    3: SensorKind("loudness", "Loudness", "dB", "sound_pressure"),
+    4: SensorKind("illuminance", "Illuminance", "lx", "illuminance", precision=0),
+    5: SensorKind("iaq", "Air quality index", None, "aqi", precision=0),
+    6: SensorKind("pressure_rel", "Pressure (relative)", "hPa", "pressure"),
+    7: SensorKind("co2", "CO2", "ppm", "carbon_dioxide", precision=0),
+}
 
-# typ_komponentu values that are SYSTEM objects: the M-SERV always exposes
-# them regardless of grouping, and Designer's own "visible objects" query
-# treats them as visible even when they have no `powiazane` entry. Used by
-# `AmpioObject.is_system` / `visible`. Kept narrow on purpose - `flaga` is
-# an input but not a system object (it can be ungrouped without being one).
-SYSTEM_TYPES = frozenset({"symulacja", "detekcja"})
+# Generic value-only sensor for an object with no usable metadata (e.g. a
+# restricted account that never receives `devicesDetails`). The value may be
+# non-numeric, so it claims neither a state class nor a precision - both would
+# make Home Assistant reject a text value.
+_GENERIC_SENSOR = SensorKind(
+    "value", "Value", None, None, state_class=None, precision=None
+)
 
-# typ_komponentu -> raw channel-topic prefix, for the channel bridge. Only
-# verified prefixes are bridged; symulacja classifies as an input but is left
-# off until its prefix is confirmed (it falls back to the per-object topic).
-_INPUT_CHANNEL_PREFIX = {
-    "flaga": "f",  # confirmed live
-    "detekcja": "i",  # digital input, confirmed live
+
+@dataclass(frozen=True, slots=True)
+class TypeProfile:
+    """Everything the library derives from one ``typ_komponentu``.
+
+    One row per known component type, replacing the former overlapping
+    SENSOR_TYPES / NON_SENSOR_TYPES / INPUT_TYPES / SYSTEM_TYPES sets and the
+    channel-prefix map. A type absent from the table is unknown metadata and
+    classifies as the generic value sensor.
+    """
+
+    # Sensor side - at most one applies. ``sensor`` is a fixed kind; ``analog``
+    # selects the interpretacja-keyed lin_wej map; ``numeric`` is a generic
+    # bit32 measurement. A type with none of these is not a sensor.
+    sensor: SensorKind | None = None
+    analog: bool = False
+    numeric: bool = False
+    # Input side: the binary/flag kind, if this type is an input.
+    input: InputKind | None = None
+    # Raw ``ampio/from/<mac>/state/<prefix>/<ch>`` bridge prefix. Only verified
+    # prefixes are set; an input without one (symulacja) falls back to the
+    # per-object topic.
+    channel_prefix: str | None = None
+    # System objects (presence simulation / detection) live outside the
+    # room/group hierarchy; the M-SERV always exposes them, so they read as
+    # visible even with an empty leafId and no group membership.
+    system: bool = False
+
+
+TYPE_PROFILES: dict[str, TypeProfile] = {
+    "temp": TypeProfile(
+        sensor=SensorKind("temperature", "Temperature", "°C", "temperature")
+    ),
+    "lin_wej": TypeProfile(analog=True),
+    "bit32": TypeProfile(numeric=True),
+    "przekaznik": TypeProfile(),
+    "rgbw": TypeProfile(),
+    "led": TypeProfile(),
+    "roleta_procenty": TypeProfile(),
+    "flaga": TypeProfile(input=InputKind("flaga", "Flag", None), channel_prefix="f"),
+    "detekcja": TypeProfile(
+        input=InputKind("detekcja", "Detection", "motion"),
+        channel_prefix="i",
+        system=True,
+    ),
+    "symulacja": TypeProfile(
+        input=InputKind("symulacja", "Simulation", None), system=True
+    ),
 }
 
 
-def classify_input(typ: str | None, interpretacja: int | None) -> InputKind | None:
-    """Classify a DB object into an InputKind, or None if it is not an input.
+def classify(
+    typ: str | None, interpretacja: int | None
+) -> tuple[SensorKind | None, InputKind | None]:
+    """Classify a DB object into ``(sensor_kind, input_kind)``; either may be None.
 
-    ``flaga`` -> generic boolean (``device_class=None``); a persistent 0/1 logic
-    flag the consumer may surface as a binary_sensor or a switch.
-    ``detekcja`` -> ``motion``.
-    ``symulacja`` -> generic boolean (the M-SERV presence-simulation flag).
-
-    ``interpretacja`` is accepted for parity with :func:`classify_object` and
-    possible future per-interpretation mapping; it is unused today.
+    ``typ`` is ``typ_komponentu``; ``interpretacja`` selects the lin_wej
+    measurement. A ``typ`` with no table entry (unknown or no metadata) returns
+    the generic value-only sensor so restricted accounts still surface sensors.
     """
-    if typ == "detekcja":
-        return InputKind("detekcja", "Detection", "motion")
-    if typ == "flaga":
-        return InputKind("flaga", "Flag", None)
-    if typ == "symulacja":
-        return InputKind("symulacja", "Simulation", None)
-    return None
+    profile = TYPE_PROFILES.get(typ) if typ is not None else None
+    if profile is None:
+        return _GENERIC_SENSOR, None
+    sensor = profile.sensor
+    if profile.analog:
+        if interpretacja in _LIN_WEJ_BY_INTERP:
+            sensor = _LIN_WEJ_BY_INTERP[interpretacja]
+        else:
+            sensor = SensorKind(f"analog_{interpretacja}", "Analog input", None, None)
+    elif profile.numeric:
+        sensor = SensorKind(f"value_{interpretacja}", "Measurement", None, None)
+    return sensor, profile.input
+
+
+def is_system_type(typ: str | None) -> bool:
+    """Whether ``typ`` is a system component the M-SERV always exposes."""
+    profile = TYPE_PROFILES.get(typ) if typ is not None else None
+    return profile.system if profile is not None else False
+
+
+def input_channel_prefix(typ: str | None) -> str | None:
+    """Raw-channel bridge prefix for ``typ``, or None if it bridges no channel."""
+    profile = TYPE_PROFILES.get(typ) if typ is not None else None
+    return profile.channel_prefix if profile is not None else None
