@@ -50,6 +50,7 @@ class ObjectMetadata:
     funkcja: int | None  # physical channel index within the module
     leaf_id: str  # `leafId`; empty for ghost rows and for system objects
     group_ids: frozenset[int]  # parsed `powiazane` GROUP_CONCAT (rare in practice)
+    params: int  # `params` bitfield; bit 4 = hidden/stub, bit 37 = matter-exposed
     stan_json: str | None  # raw seed for the initial value, applied by the client
 
 
@@ -117,6 +118,10 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
                 funkcja=to_int(item.get("funkcja")),
                 leaf_id=_parse_leaf_id(item.get("leafId")),
                 group_ids=_parse_powiazane(item.get("powiazane")),
+                # Absent / non-numeric -> 0 (no flags); `params` can exceed 32
+                # bits (the matter-exposed flag is bit 37), which Python ints
+                # handle natively.
+                params=to_int(item.get("params")) or 0,
                 stan_json=item.get("stan_json") or None,
             )
         )

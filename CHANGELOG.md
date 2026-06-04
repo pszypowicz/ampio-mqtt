@@ -14,6 +14,31 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.6.0
+
+Surfaces the `devicesDetails` `params` bitfield and uses its hidden flag as the
+authoritative visibility marker, fixing the duplicated-Designer-channel case
+where a phantom stub and a labelled object share one `leaf_id` (the downstream
+unique-id collision tracked in #15, dup #32). The bit semantics are
+reverse-engineered from the M-SERV's own Matter bridge; see
+[docs/matter-bridge.md](docs/matter-bridge.md).
+
+### Added
+
+- `AmpioObject.params` - the raw `params` integer from `devicesDetails`.
+- `AmpioObject.hidden` (`params` bit 4) - the M-SERV's "do not surface" marker,
+  replacement-stable, set on phantom/stub rows and user-hidden objects.
+- `AmpioObject.matter_exposed` (`params` bit 37) - the per-object Matter opt-in,
+  informational only (never used for filtering).
+- `docs/matter-bridge.md` - the reverse-engineered M-SERV Matter bridge: its
+  `params` gate, `type`/`leafId` classification table, and gaps.
+
+### Changed
+
+- `AmpioObject.visible` now excludes `hidden` objects:
+  `visible = not hidden and (bool(leaf_id) or bool(group_ids) or is_system)`.
+  When `params` is absent (`0`) this degrades to the prior leaf_id heuristic.
+
 ## 0.5.0
 
 A structural simplification with no behaviour change on the wire. The
