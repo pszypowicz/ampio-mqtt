@@ -237,6 +237,12 @@ class AmpioClient:
         object and module lists so module names are known before entities are
         created. Restricted accounts may never receive these; the wait then
         simply times out and discovery continues opportunistically.
+
+        On return, the initial discovery cycle has been awaited up to
+        `discovery_timeout`; see `wait_for_initial_discovery` for the explicit,
+        opt-in form of that guarantee. A consumer that must read
+        `modules`/`objects`/`server_info` before building on top of the client
+        should call that method rather than relying on `start()`'s timing.
         """
         self._stop = False
         self._auth_failed.clear()
@@ -263,15 +269,37 @@ class AmpioClient:
                 self._auth_error_message or "Authentication rejected by Ampio broker"
             )
 
+        await self.wait_for_initial_discovery(timeout=discovery_timeout)
+
+    async def wait_for_initial_discovery(self, *, timeout: float = 8.0) -> bool:
+        """Block until the initial discovery cycle has populated the client.
+
+        Returns True once all four initial-discovery messages have been
+        received - devicesDetails (-> ``objects``), devices (-> ``modules``),
+        the states snapshot (seeds ``objects`` values), and info
+        (-> ``server_info``). Returns False if ``timeout`` elapses first.
+
+        This is the contract a consumer relies on when it must read
+        ``modules``/``objects``/``server_info`` (e.g. to resolve ``mserv_id``
+        and pre-register the M-SERV device) before building anything on top of
+        the client. It never raises on timeout: restricted accounts may never
+        receive the full set, in which case discovery continues
+        opportunistically and this simply returns False.
+
+        Safe to call repeatedly and after reconnects - the underlying signals
+        latch on first completion, so once discovery has happened this returns
+        immediately.
+        """
         waiters = [
             asyncio.create_task(self._details_received.wait()),
             asyncio.create_task(self._devices_received.wait()),
             asyncio.create_task(self._states_received.wait()),
             asyncio.create_task(self._info_received.wait()),
         ]
-        _, pending = await asyncio.wait(waiters, timeout=discovery_timeout)
+        _, pending = await asyncio.wait(waiters, timeout=timeout)
         for task in pending:
             task.cancel()
+        return not pending
 
     async def stop(self) -> None:
         """Stop the connection."""

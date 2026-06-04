@@ -6,6 +6,20 @@ By the time `start()` returns, `client.objects`, `client.modules`, and
 `client.server_info` are populated and ready to consult. Live state
 arrives via push from that point on.
 
+A consumer that **depends** on those collections being populated before
+it does anything else - the canonical case is resolving `mserv_id` to
+pre-register the M-SERV device so other modules' `via_device` parents
+resolve - should not rely on `start()`'s blocking as an implementation
+detail. It should call `await client.wait_for_initial_discovery()`
+(default `timeout=8.0`) explicitly. That method returns `True` once all
+four discovery messages have arrived and `False` if the timeout elapses;
+it never raises. `start()` itself delegates its discovery wait to this
+method, so the two share one definition of "discovery is done." Expressing
+the dependency explicitly keeps `start()` free to return earlier in a
+future revision without silently breaking that ordering - the library's
+own accessors degrade gracefully when nothing is known yet, so this
+guarantee exists for consumers, not for the library.
+
 Authoritative source:
 [`src/ampio_mqtt/client.py`](../src/ampio_mqtt/client.py) (`_run`,
 `_dispatch`, the `start()` / `stop()` lifecycle).
@@ -28,8 +42,11 @@ Authoritative source:
    - empty payload on `info` - server self-report.
    - empty payload on `states` - bulk snapshot of current values.
 4. **Await** all four responses or the `discovery_timeout` deadline,
-   whichever comes first. Each dispatched message bumps
-   `stats.last_message_at`.
+   whichever comes first - this step is `wait_for_initial_discovery()`,
+   which `start()` calls with `timeout=discovery_timeout`. Each dispatched
+   message bumps `stats.last_message_at`. The four signals latch, so a
+   later `wait_for_initial_discovery()` call returns immediately once they
+   have all fired (and stays correct across reconnects).
 5. **Return.** The library does not periodically refetch the
    catalogues; live state arrives via push on the per-object topic
    (and, for inputs, the raw-channel topics).

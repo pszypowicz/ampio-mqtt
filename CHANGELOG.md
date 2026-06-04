@@ -14,6 +14,38 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.4.0
+
+### Added
+
+- `AmpioClient.wait_for_initial_discovery(*, timeout=8.0) -> bool` - an
+  explicit, opt-in way to block until the initial discovery cycle has
+  populated `modules`, `objects`, and `server_info` (the four messages
+  devicesDetails, devices, the states snapshot, and info). Returns `True`
+  when all four have arrived, `False` if `timeout` elapses first. It never
+  raises on timeout: restricted accounts may never receive the full set, in
+  which case discovery continues opportunistically. The signals latch on
+  first completion, so the call is reconnect-safe and returns immediately
+  once discovery has happened.
+
+### Changed
+
+- `start()` now expresses its discovery wait by delegating to
+  `wait_for_initial_discovery(timeout=discovery_timeout)`. No behaviour change
+  for existing callers - `start()` still blocks on the initial cycle and still
+  never raises on discovery timeout.
+
+### Why
+
+A consumer that must read `modules`/`objects`/`server_info` before building
+on top of the client (e.g. resolving `mserv_id` to pre-register the M-SERV
+device, so other modules' `via_device` parents resolve) previously relied on
+an undocumented side effect: that `start()` happens to block until discovery
+completes. The library itself does not need that guarantee - its accessors
+degrade gracefully when nothing is known. Exposing the wait as its own method
+lets that consumer depend on the contract explicitly, and frees `start()` to
+return earlier in a future revision without silently breaking the ordering.
+
 ## 0.3.0
 
 ### Added
@@ -24,7 +56,7 @@ upgrade path.
   `{1: "Salon", 2: "Kuchnia", ...}`). Triggered by publishing
   `locations` on `ampio/control/<user>/config`; the broker replies on
   `ampio/fromDB/<user>/config/locations` with `{"List":[{"id",
-  "opis_menu"}]}`. The new topic is subscribed to on connect; the
+"opis_menu"}]}`. The new topic is subscribed to on connect; the
   retained payload is exposed as `AmpioClient.last_locations_payload`
   alongside the other `last_*_payload` attributes.
 - `LOCATIONS_REQUEST_PAYLOAD` constant and `locations_response_topic`
@@ -33,9 +65,9 @@ upgrade path.
 ### Why
 
 The location is a per-output, user-editable string the integrator sets
-in the Designer's "Location" column. The *name table* (id -> label)
-flows over MQTT and is what this method returns. The *per-output integer
-pointer into that table* lives on the module's CAN-resident description
+in the Designer's "Location" column. The _name table_ (id -> label)
+flows over MQTT and is what this method returns. The _per-output integer
+pointer into that table_ lives on the module's CAN-resident description
 table and is not published on any MQTT topic; resolving it would require
 either an RPC bridge or a CAN sniff and is intentionally out of scope
 here. Consumers that learn the per-output id by another route can use
@@ -53,10 +85,10 @@ useful diagnostics blob (which locations does this M-SERV define?).
 - `AmpioClient.last_devices_payload`, `last_details_payload`,
   `last_info_payload`, `last_groups_payload`, `last_group_devices_payload`
   - the verbatim decoded MQTT payload as the broker sent it, retained per
-  discovery topic so a downstream tester report can include the actual JSON
-  the M-SERV emitted (instead of forcing the consumer to re-derive it).
-  Pure passthrough, no parsing, no copies; replaces the previous private
-  `_groups_payload` / `_group_devices_payload` attributes.
+    discovery topic so a downstream tester report can include the actual JSON
+    the M-SERV emitted (instead of forcing the consumer to re-derive it).
+    Pure passthrough, no parsing, no copies; replaces the previous private
+    `_groups_payload` / `_group_devices_payload` attributes.
 - `ConnectionStats` dataclass exposed as `client.stats`:
   `reconnect_count` (bumped on every successful `__aenter__` after the
   first), `last_error` (text of the most recent `aiomqtt.MqttError`),
@@ -95,7 +127,7 @@ beta entry. Capabilities the library exposes today:
 - `classify_object(typ, interpretacja) -> SensorKind | None` for the
   sensor side (temperature, humidity, pressure, illuminance, loudness,
   IAQ, CO2, generic linear inputs) and `classify_input(...) -> InputKind |
-  None` for the boolean/binary-sensor side (`flaga`, `detekcja`,
+None` for the boolean/binary-sensor side (`flaga`, `detekcja`,
   `symulacja`).
 - Per-module `Capability` flag set populated from the upstream Ampio
   devtypes catalogue (vendored as `_devtypes.json`): digital / analog /
