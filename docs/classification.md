@@ -33,14 +33,43 @@ is added.
 
 ## `lin_wej` interpretation table
 
-The per-`interpretacja` measurement kind, unit, and HA device class
-live in `_LIN_WEJ_BY_INTERP` in
-[`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py). Today the
-recognised values are 1-7 (humidity, absolute pressure, loudness,
-illuminance, AQI, relative pressure, CO2); read the dict for the
-canonical mapping. Unknown values fall through to a generic
-`analog_<n>` SensorKind with no device class so a future M-SENS
-variant still surfaces as a sensor.
+For a `lin_wej` object the measurement is selected by `interpretacja`
+(`_LIN_WEJ_BY_INTERP` in
+[`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py)):
+
+| `interpretacja` | `SensorKind.key` | Unit  | HA device class        |
+| --------------- | ---------------- | ----- | ---------------------- |
+| 1               | `humidity`       | `%`   | `humidity`             |
+| 2               | `pressure_abs`   | `hPa` | `atmospheric_pressure` |
+| 3               | `loudness`       | `dB`  | `sound_pressure`       |
+| 4               | `illuminance`    | `lx`  | `illuminance`          |
+| 5               | `iaq`            | -     | `aqi`                  |
+| 6               | `pressure_rel`   | `hPa` | `pressure`             |
+| 7               | `co2`            | `ppm` | `carbon_dioxide`       |
+
+Unknown values fall through to a generic `analog_<n>` SensorKind with no
+device class, so a future M-SENS variant still surfaces as a sensor.
+
+## What classification keys on (and what it ignores)
+
+Classification uses exactly two wire fields:
+
+- **`typ_komponentu`** - the object type; the primary discriminator.
+- **`interpretacja`** - a refinement, used only for `lin_wej` analog inputs.
+
+It does **not** use:
+
+- **`opis_menu` (the object name)** - display only. A consumer uses it as the
+  entity's friendly name; it never affects the kind. Renaming a channel does not
+  change what it is.
+- **`funkcja` (the channel index)** - identity only. It is part of a consumer's
+  stable per-object key; it never affects the kind.
+
+`typ_komponentu` has to be the primary key: on an M-SENS the **temperature**
+object and the **humidity** object both carry `interpretacja=1`, and are told
+apart only by `typ_komponentu` (`temp` -> a fixed temperature kind; `lin_wej`
+with `interpretacja=1` -> humidity). Keying on `interpretacja` alone would
+mislabel temperature as humidity.
 
 ## Why classification is split from visibility
 
