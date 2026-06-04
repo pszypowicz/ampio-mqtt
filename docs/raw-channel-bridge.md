@@ -34,12 +34,12 @@ push as for any other update.
 
 ## What the library deliberately does NOT subscribe to
 
-| Prefix | Why excluded |
-| --- | --- |
-| `a` (analog input) | Already arrives on the per-object topic with full precision and the right state-class metadata. The raw form would force a re-classify per push. |
-| `t` (temperature) | Same reasoning - per-object form is sufficient. |
-| `rgbw` (RGBW output) | Output side. Latency is not the win it is for inputs, and the per-object form carries the user-friendly desc. |
-| `o` (other) | Catch-all; payload shape varies by module. |
+| Prefix                 | Why excluded                                                                                                                                                                                              |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `a` (analog input)     | Already arrives on the per-object topic with full precision and the right state-class metadata. The raw form would force a re-classify per push.                                                          |
+| `t` (temperature)      | Same reasoning - per-object form is sufficient.                                                                                                                                                           |
+| `rgbw` (RGBW output)   | Output side. Latency is not the win it is for inputs, and the per-object form carries the user-friendly desc.                                                                                             |
+| `o` (other)            | Catch-all; payload shape varies by module.                                                                                                                                                                |
 | `symulacja` raw prefix | Classified as an input but the wire prefix is not yet confirmed. The object still updates through the per-object topic; tracked as a forward-work item in [`untapped-surfaces.md`](untapped-surfaces.md). |
 
 The exclusion is not a permanent design decision - if a future use case

@@ -9,24 +9,24 @@ Authoritative source: [`src/ampio_mqtt/models.py`](../src/ampio_mqtt/models.py).
 
 ## Modules
 
-| Field | Stable across module replacement? | Use it for |
-| --- | --- | --- |
-| `id` (DB autoincrement) | **No** - assigned in `mac_global` order; reassigned when a module is replaced. | Cross-referencing objects to their owning module *within a single discovery snapshot* only. |
+| Field                     | Stable across module replacement?                                                  | Use it for                                                                                           |
+| ------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `id` (DB autoincrement)   | **No** - assigned in `mac_global` order; reassigned when a module is replaced.     | Cross-referencing objects to their owning module _within a single discovery snapshot_ only.          |
 | `mac` (Designer override) | **Yes** - re-stamped onto the replacement unit so CAN logic elsewhere stays valid. | The replacement-stable per-module key. Also what the raw `ampio/from/<MAC>/...` topics are keyed by. |
-| `mac_global` (factory id) | **No** - factory-burned, unique per physical unit, changes on swap. | Display in diagnostics; never as identity. |
+| `mac_global` (factory id) | **No** - factory-burned, unique per physical unit, changes on swap.                | Display in diagnostics; never as identity.                                                           |
 
 The M-SERV's default `mac` is `1`, which is not unique. Treat `mac` as
-unique *within a single install* (the user assigns the overrides), not
+unique _within a single install_ (the user assigns the overrides), not
 globally.
 
 ## Objects
 
-| Field | Stable across module replacement? | Notes |
-| --- | --- | --- |
-| `id` / `device_id` | **No** - DB autoincrement, change with the module. |
+| Field                     | Stable across module replacement?                                                                                                                                        | Notes |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----- |
+| `id` / `device_id`        | **No** - DB autoincrement, change with the module.                                                                                                                       |
 | `funkcja` (channel index) | **Yes** - part of the reloaded Designer config. Not unique: multiple objects can share one `funkcja` if the same physical signal is exposed as several Designer objects. |
-| `typ_komponentu` | **Yes** - the type vocabulary (`temp`, `lin_wej`, `flaga`, ...). |
-| `leaf_id` | **Yes**, when set. The wire-side visibility marker - see below. |
+| `typ_komponentu`          | **Yes** - the type vocabulary (`temp`, `lin_wej`, `flaga`, ...).                                                                                                         |
+| `leaf_id`                 | **Yes**, when set. The wire-side visibility marker - see below.                                                                                                          |
 
 A replacement-stable composite the HA integration uses for `unique_id`:
 
