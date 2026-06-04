@@ -191,6 +191,13 @@ class InputKind:
 # also live in NON_SENSOR_TYPES - they are not sensors, but they are inputs.
 INPUT_TYPES = frozenset({"flaga", "detekcja", "symulacja"})
 
+# typ_komponentu values that are SYSTEM objects: the M-SERV always exposes
+# them regardless of grouping, and Designer's own "visible objects" query
+# treats them as visible even when they have no `powiazane` entry. Used by
+# `AmpioObject.is_system` / `visible`. Kept narrow on purpose - `flaga` is
+# an input but not a system object (it can be ungrouped without being one).
+SYSTEM_TYPES = frozenset({"symulacja", "detekcja"})
+
 # typ_komponentu -> raw channel-topic prefix, for the channel bridge. Only
 # verified prefixes are bridged; symulacja classifies as an input but is left
 # off until its prefix is confirmed (it falls back to the per-object topic).
