@@ -13,6 +13,13 @@ Async Python client for the **Ampio Smart Home** local MQTT protocol exposed by
 the Ampio M-SERV controller. Built to back a Home Assistant integration; the
 library itself is Home Assistant agnostic.
 
+> **Account requirements.** The credentials you pass must belong to an Ampio
+> account that can read the M-SERV configuration (the module and object list).
+> In practice this currently means an **administrator** account. A restricted
+> account still connects, but the M-SERV never reports its identity
+> (`AmpioClient.mserv_id` stays `None`) and discovery yields no modules or
+> objects.
+
 ## Status
 
 Beta. The library is iterated alongside the home-assistant/core ampio
