@@ -169,34 +169,16 @@ class AmpioClient:
         return self._available
 
     @property
-    def last_details_payload(self) -> str | None:
-        """Verbatim last ``devicesDetails`` payload, for diagnostics."""
-        return self._last_payloads.get("details")
+    def last_payloads(self) -> dict[str, str]:
+        """Verbatim last response payload per endpoint, keyed by endpoint name.
 
-    @property
-    def last_devices_payload(self) -> str | None:
-        """Verbatim last ``devices`` payload, for diagnostics."""
-        return self._last_payloads.get("devices")
-
-    @property
-    def last_info_payload(self) -> str | None:
-        """Verbatim last server-info payload, for diagnostics."""
-        return self._last_payloads.get("info")
-
-    @property
-    def last_groups_payload(self) -> str | None:
-        """Verbatim last ``groups`` payload, for diagnostics."""
-        return self._last_payloads.get("groups")
-
-    @property
-    def last_group_devices_payload(self) -> str | None:
-        """Verbatim last ``group_devices`` payload, for diagnostics."""
-        return self._last_payloads.get("group_devices")
-
-    @property
-    def last_locations_payload(self) -> str | None:
-        """Verbatim last ``locations`` payload, for diagnostics."""
-        return self._last_payloads.get("locations")
+        Retained for the HA integration's diagnostics blob so a report can
+        include the actual JSON the M-SERV emitted. Keys are endpoint names
+        (``details``, ``devices``, ``states``, ``info``, ``groups``,
+        ``group_devices``, ``locations``); an endpoint absent until its first
+        reply lands.
+        """
+        return self._last_payloads
 
     def add_object_listener(self, listener: ObjectListener) -> Callable[[], None]:
         """Register a callback invoked on every object update (state/metadata)."""
@@ -343,25 +325,21 @@ class AmpioClient:
 
         The reply lands asynchronously on that endpoint's response topic and is
         applied by the dispatcher. ``name`` is one of the keys in the endpoint
-        table (``details``, ``devices``, ``states``, ``info``, ...).
+        table (``details``, ``devices``, ``states``, ``info``, ...). Use
+        :meth:`fetch_rooms` / :meth:`fetch_locations` for the on-demand
+        endpoints whose reply you need to read back synchronously.
         """
         await self._publish(ENDPOINT_BY_NAME[name])
 
-    async def request_details(self) -> None:
-        """Ask the server for the devicesDetails object list."""
-        await self.request("details")
+    async def refresh(self) -> None:
+        """Re-request the full initial-discovery set (objects, modules, states, info).
 
-    async def request_devices(self) -> None:
-        """Ask the server for the physical module list."""
-        await self.request("devices")
-
-    async def request_states(self) -> None:
-        """Ask the server for a snapshot of all current object states."""
-        await self.request("states")
-
-    async def request_info(self) -> None:
-        """Ask the server for its own info (version, mac, local IP, ...)."""
-        await self.request("info")
+        ``start()`` issues this once on every (re)connect; call it to force a
+        fresh discovery cycle without reconnecting.
+        """
+        for ep in ENDPOINTS:
+            if ep.initial:
+                await self._publish(ep)
 
     async def fetch_rooms(self, timeout: float = 5.0) -> dict[int, str]:
         """Return ``{ampio_object_id: room_name}`` for objects assigned to a room.
@@ -490,9 +468,7 @@ class AmpioClient:
                     self._set_available(True)
                     self._connected.set()
                     attempt = 0
-                    for ep in ENDPOINTS:
-                        if ep.initial:
-                            await self._publish(ep)
+                    await self.refresh()
                     async for message in client.messages:
                         self._dispatch(
                             str(message.topic), _decode_payload(message.payload)
