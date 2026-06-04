@@ -6,8 +6,19 @@ and worth noting so a future contributor does not have to re-discover
 it. Forward-work items each have a tracking issue; PRs picking up an
 item should reference its issue number.
 
-If you implement one of these, the implementation pattern is almost
-always the same as `fetch_rooms()` / `fetch_locations()`:
+If you implement one of these, start by **verifying the wire shape**
+against a live broker before writing any library code. The repo
+already ships `tools/probe_config.py` for exactly this - it publishes
+each candidate keyword on `ampio/control/<user>/config` and prints
+whatever the broker replies on the matching `fromDB` topic, so the
+response shape is captured without guessing:
+
+```
+python tools/probe_config.py --keywords scenes,logs,resources
+```
+
+Once the response shape is in hand, the implementation pattern is
+almost always the same as `fetch_rooms()` / `fetch_locations()`:
 
 1. Add the topic helper to `const.py`.
 2. Subscribe to it in the `start()` loop.

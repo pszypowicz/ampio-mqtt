@@ -53,8 +53,11 @@ RGBW_OUTPUT}`). Drives HA platform selection and bundle/split decisions in
   pipeline by routing the decoded raw per-channel topics (which fire ahead of
   the per-object republish) to the owning object.
 
-The MQTT topic layout is documented at the top of
-[`src/ampio_mqtt/const.py`](src/ampio_mqtt/const.py).
+Protocol reference notes (topic map, identity rules, classification
+table, forward-work surfaces) live under [`docs/`](docs/README.md).
+[`docs/protocol.md`](docs/protocol.md) is the friendly entry point for
+the MQTT topic layout; [`src/ampio_mqtt/const.py`](src/ampio_mqtt/const.py)
+remains the canonical source the helpers are defined in.
 
 ## Installation
 
@@ -99,11 +102,6 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
-
-## Further reading
-
-Protocol notes (topic map, identity rules, classification table,
-forward-work surfaces) live under [`docs/`](docs/README.md).
 
 ## License
 

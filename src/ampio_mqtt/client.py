@@ -1,4 +1,8 @@
-"""Async MQTT client for the Ampio DB-object protocol."""
+"""Async MQTT client for the Ampio DB-object protocol.
+
+See ``docs/discovery-flow.md`` for the ``start()`` lifecycle and what
+runs automatically vs on demand.
+"""
 
 from __future__ import annotations
 
