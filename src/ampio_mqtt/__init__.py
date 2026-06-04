@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .client import AmpioClient
-from .const import InputKind, SensorKind, classify_input, classify_object
+from .const import InputKind, SensorKind, classify
 from .device_types import Capability, module_capabilities, module_model
 from .discovery import DiscoveryResult, discover
 from .errors import AmpioAuthError, AmpioConnectionError, AmpioError
@@ -29,11 +29,10 @@ __all__ = [
     "DiscoveryResult",
     "InputKind",
     "SensorKind",
-    "classify_input",
-    "classify_object",
+    "classify",
     "discover",
     "module_capabilities",
     "module_model",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

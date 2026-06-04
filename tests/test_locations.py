@@ -62,7 +62,7 @@ async def test_fetch_locations_publishes_keyword_and_parses_response() -> None:
 
     assert result == {1: "Salon", 2: "Kuchnia", 21: "marker_full_capture_777"}
     assert fake_broker.published == [("ampio/control/u/config", b"locations")]
-    assert client.last_locations_payload == payload
+    assert client.last_payloads["locations"] == payload
 
 
 async def test_fetch_locations_times_out_when_response_missing() -> None:

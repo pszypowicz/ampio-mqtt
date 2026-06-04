@@ -14,6 +14,40 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.5.0
+
+A structural simplification with no behaviour change on the wire. The
+request/response endpoints, formerly described in four parallel places
+(per-endpoint topic builders, the subscribe block, the dispatch if/elif
+chain, and a fan of per-endpoint events plus `last_*_payload` fields), are
+now one `Endpoint` table that the client derives all four from. Object
+classification, formerly five overlapping `typ_komponentu` sets plus two
+`classify_*` functions, is now one `TYPE_PROFILES` table and one `classify()`.
+Public API changes below are breaking - per the beta posture above, 0.x bumps
+break freely.
+
+### Changed
+
+- `classify_object()` and `classify_input()` are replaced by a single
+  `classify(typ, interpretacja) -> tuple[SensorKind | None, InputKind | None]`
+  returning both classifications in one pass. `SensorKind` / `InputKind` are
+  unchanged.
+- The six `AmpioClient.last_*_payload` properties are replaced by one
+  `AmpioClient.last_payloads: dict[str, str]` keyed by endpoint name
+  (`details`, `devices`, `states`, `info`, `groups`, `group_devices`,
+  `locations`). The states snapshot is now retained too.
+- The four `request_details()` / `request_devices()` / `request_states()` /
+  `request_info()` methods are replaced by `refresh()` (re-request the full
+  initial-discovery set) and the general `request(name)`.
+
+### Why
+
+The four representations had to be edited in lockstep to add or change an
+endpoint, and the five classification sets overlapped on the same key. Folding
+each into a single table removes the synchronisation burden and makes adding an
+endpoint or component type a one-line change, without altering any topic,
+payload, or classification result.
+
 ## 0.4.0
 
 ### Added

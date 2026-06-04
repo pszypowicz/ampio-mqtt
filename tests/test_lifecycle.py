@@ -157,14 +157,17 @@ async def test_connection_ignores_unrelated_topics() -> None:
 # --- request_* and _publish_config when disconnected ----------------------
 
 
-@pytest.mark.parametrize(
-    "method",
-    ["request_details", "request_devices", "request_states", "request_info"],
-)
-async def test_request_methods_raise_when_disconnected(method: str) -> None:
+@pytest.mark.parametrize("name", ["details", "devices", "states", "info"])
+async def test_request_raises_when_disconnected(name: str) -> None:
     client = AmpioClient("h", username=USER)
     with pytest.raises(AmpioConnectionError):
-        await getattr(client, method)()
+        await client.request(name)
+
+
+async def test_refresh_raises_when_disconnected() -> None:
+    client = AmpioClient("h", username=USER)
+    with pytest.raises(AmpioConnectionError):
+        await client.refresh()
 
 
 # --- stop() and start() lifecycle -----------------------------------------

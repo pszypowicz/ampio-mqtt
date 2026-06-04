@@ -732,20 +732,20 @@ def test_last_payloads_retained_for_each_handler() -> None:
     client._feed_message(f"ampio/fromDB/{USER}/config/devicesDetails", details)
     client._feed_message(f"ampio/fromDB/{USER}/data/info", info)
 
-    assert client.last_devices_payload == devices.decode()
-    assert client.last_details_payload == details.decode()
-    assert client.last_info_payload == info.decode()
+    assert client.last_payloads["devices"] == devices.decode()
+    assert client.last_payloads["details"] == details.decode()
+    assert client.last_payloads["info"] == info.decode()
 
 
-def test_groups_payloads_are_public_attributes() -> None:
-    """`data/groups` and `data/group_devices` populate the public last_* attrs."""
+def test_groups_payloads_are_retained() -> None:
+    """`data/groups` and `data/group_devices` populate the last_payloads map."""
     client = _client()
     groups = json.dumps({"List": [{"id": 1, "opis_menu": "Salon"}]}).encode()
     group_devices = json.dumps({"List": [{"id_grupy": 1, "id_obiektu": 5}]}).encode()
     client._feed_message(f"ampio/fromDB/{USER}/data/groups", groups)
     client._feed_message(f"ampio/fromDB/{USER}/data/group_devices", group_devices)
-    assert client.last_groups_payload == groups.decode()
-    assert client.last_group_devices_payload == group_devices.decode()
+    assert client.last_payloads["groups"] == groups.decode()
+    assert client.last_payloads["group_devices"] == group_devices.decode()
 
 
 def test_dispatch_updates_last_message_at() -> None:

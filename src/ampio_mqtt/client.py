@@ -20,27 +20,15 @@ import aiomqtt
 
 from . import _protocol
 from .const import (
-    DETAILS_REQUEST_PAYLOAD,
-    DEVICES_REQUEST_PAYLOAD,
-    GROUP_DEVICES_REQUEST_PAYLOAD,
-    GROUPS_REQUEST_PAYLOAD,
-    LOCATIONS_REQUEST_PAYLOAD,
+    ENDPOINT_BY_NAME,
+    ENDPOINTS,
     RAW_INPUT_WILDCARDS,
-    _INPUT_CHANNEL_PREFIX,
-    classify_input,
-    classify_object,
-    config_request_topic,
-    data_request_topic,
-    details_response_topic,
-    devices_response_topic,
-    group_devices_response_topic,
-    groups_response_topic,
-    info_request_topic,
-    info_response_topic,
-    locations_response_topic,
+    Endpoint,
+    classify,
+    input_channel_prefix,
     ob_state_wildcard,
-    states_request_topic,
-    states_response_topic,
+    request_topic,
+    response_topic,
 )
 from .errors import AmpioAuthError, AmpioConnectionError
 from .models import (
@@ -100,23 +88,32 @@ class AmpioClient:
         self._runner: asyncio.Task[None] | None = None
         self._connected = asyncio.Event()
         self._auth_failed = asyncio.Event()
-        self._details_received = asyncio.Event()
-        self._devices_received = asyncio.Event()
-        self._states_received = asyncio.Event()
-        self._info_received = asyncio.Event()
-        self._groups_received = asyncio.Event()
-        self._group_devices_received = asyncio.Event()
-        self._locations_received = asyncio.Event()
 
-        # Last raw payloads as the broker sent them - retained for downstream
-        # diagnostics so a tester report can include the actual JSON the
-        # M-SERV emitted, without the consumer having to re-derive it.
-        self.last_devices_payload: str | None = None
-        self.last_details_payload: str | None = None
-        self.last_info_payload: str | None = None
-        self.last_groups_payload: str | None = None
-        self.last_group_devices_payload: str | None = None
-        self.last_locations_payload: str | None = None
+        # Per-endpoint latch: set the first time each endpoint's reply lands.
+        # wait_for_initial_discovery() awaits the `initial` subset; fetch_rooms /
+        # fetch_locations await their own. Derived from the endpoint table so a
+        # new endpoint needs no new field here.
+        self._received: dict[str, asyncio.Event] = {
+            ep.name: asyncio.Event() for ep in ENDPOINTS
+        }
+        # Response topic -> endpoint, for O(1) dispatch routing.
+        self._by_response: dict[str, Endpoint] = {
+            response_topic(ep, self._username): ep for ep in ENDPOINTS
+        }
+        # Endpoints whose reply mutates state, each returning whether the payload
+        # parsed (a malformed reply leaves the latch unset). The rest (groups /
+        # group_devices / locations) are pure request/response: their payload is
+        # retained and the latch set, and fetch_* parse it on demand.
+        self._handlers: dict[str, Callable[[str], bool]] = {
+            "details": self._handle_details,
+            "devices": self._handle_devices,
+            "states": self._handle_states_snapshot,
+            "info": self._handle_info,
+        }
+        # Last payload per endpoint as the broker sent it, retained for
+        # downstream diagnostics so a tester report can include the actual JSON
+        # the M-SERV emitted without re-deriving it.
+        self._last_payloads: dict[str, str] = {}
 
         # Connection liveness counters surfaced as `client.stats`.
         self.stats = ConnectionStats()
@@ -170,6 +167,18 @@ class AmpioClient:
         """Whether the broker connection is up."""
         return self._available
 
+    @property
+    def last_payloads(self) -> dict[str, str]:
+        """Verbatim last response payload per endpoint, keyed by endpoint name.
+
+        Retained for the HA integration's diagnostics blob so a report can
+        include the actual JSON the M-SERV emitted. Keys are endpoint names
+        (``details``, ``devices``, ``states``, ``info``, ``groups``,
+        ``group_devices``, ``locations``); an endpoint absent until its first
+        reply lands.
+        """
+        return self._last_payloads
+
     def add_object_listener(self, listener: ObjectListener) -> Callable[[], None]:
         """Register a callback invoked on every object update (state/metadata)."""
         self._object_listeners.append(listener)
@@ -200,7 +209,8 @@ class AmpioClient:
         than raising - the caller can decide whether identity is required.
         """
         user = username or ""
-        info_topic = info_response_topic(user)
+        info = ENDPOINT_BY_NAME["info"]
+        info_topic = response_topic(info, user)
         try:
             async with aiomqtt.Client(
                 hostname=host,
@@ -211,7 +221,9 @@ class AmpioClient:
                 timeout=10,
             ) as client:
                 await client.subscribe(info_topic)
-                await client.publish(info_request_topic(user), b"")
+                await client.publish(
+                    request_topic(info, user), info.req_payload.encode()
+                )
                 try:
                     async with asyncio.timeout(info_timeout):
                         async for message in client.messages:
@@ -291,10 +303,9 @@ class AmpioClient:
         immediately.
         """
         waiters = [
-            asyncio.create_task(self._details_received.wait()),
-            asyncio.create_task(self._devices_received.wait()),
-            asyncio.create_task(self._states_received.wait()),
-            asyncio.create_task(self._info_received.wait()),
+            asyncio.create_task(self._received[ep.name].wait())
+            for ep in ENDPOINTS
+            if ep.initial
         ]
         _, pending = await asyncio.wait(waiters, timeout=timeout)
         for task in pending:
@@ -310,25 +321,26 @@ class AmpioClient:
                 await self._runner
             self._runner = None
 
-    async def request_details(self) -> None:
-        """Ask the server for the devicesDetails object list."""
-        await self._publish_config(DETAILS_REQUEST_PAYLOAD)
+    async def request(self, name: str) -> None:
+        """Publish the request keyword for endpoint ``name``.
 
-    async def request_devices(self) -> None:
-        """Ask the server for the physical module list."""
-        await self._publish_config(DEVICES_REQUEST_PAYLOAD)
+        The reply lands asynchronously on that endpoint's response topic and is
+        applied by the dispatcher. ``name`` is one of the keys in the endpoint
+        table (``details``, ``devices``, ``states``, ``info``, ...). Use
+        :meth:`fetch_rooms` / :meth:`fetch_locations` for the on-demand
+        endpoints whose reply you need to read back synchronously.
+        """
+        await self._publish(ENDPOINT_BY_NAME[name])
 
-    async def request_states(self) -> None:
-        """Ask the server for a snapshot of all current object states."""
-        if self._client is None:
-            raise AmpioConnectionError("Not connected")
-        await self._client.publish(states_request_topic(self._username), b"")
+    async def refresh(self) -> None:
+        """Re-request the full initial-discovery set (objects, modules, states, info).
 
-    async def request_info(self) -> None:
-        """Ask the server for its own info (version, mac, local IP, ...)."""
-        if self._client is None:
-            raise AmpioConnectionError("Not connected")
-        await self._client.publish(info_request_topic(self._username), b"")
+        ``start()`` issues this once on every (re)connect; call it to force a
+        fresh discovery cycle without reconnecting.
+        """
+        for ep in ENDPOINTS:
+            if ep.initial:
+                await self._publish(ep)
 
     async def fetch_rooms(self, timeout: float = 5.0) -> dict[int, str]:
         """Return ``{ampio_object_id: room_name}`` for objects assigned to a room.
@@ -343,27 +355,14 @@ class AmpioClient:
         if the broker is not connected or either response does not arrive
         within ``timeout``.
         """
-        if self._client is None:
-            raise AmpioConnectionError("Not connected")
-        self._groups_received.clear()
-        self._group_devices_received.clear()
-        self.last_groups_payload = None
-        self.last_group_devices_payload = None
-        await self._publish_data(GROUPS_REQUEST_PAYLOAD)
-        await self._publish_data(GROUP_DEVICES_REQUEST_PAYLOAD)
-        try:
-            async with asyncio.timeout(timeout):
-                await asyncio.gather(
-                    self._groups_received.wait(),
-                    self._group_devices_received.wait(),
-                )
-        except TimeoutError as err:
-            raise AmpioConnectionError(
-                "Timed out fetching room map from Ampio broker"
-            ) from err
+        await self._request_and_wait(
+            ("groups", "group_devices"),
+            timeout,
+            "Timed out fetching room map from Ampio broker",
+        )
         return join_rooms(
-            _safe_json_object(self.last_groups_payload),
-            _safe_json_object(self.last_group_devices_payload),
+            _safe_json_object(self._last_payloads.get("groups")),
+            _safe_json_object(self._last_payloads.get("group_devices")),
         )
 
     async def fetch_locations(self, timeout: float = 5.0) -> dict[int, str]:
@@ -389,22 +388,12 @@ class AmpioClient:
         broker is not connected or the response does not arrive within
         ``timeout``.
         """
-        if self._client is None:
-            raise AmpioConnectionError("Not connected")
-        self._locations_received.clear()
-        self.last_locations_payload = None
-        await self._client.publish(
-            config_request_topic(self._username),
-            LOCATIONS_REQUEST_PAYLOAD.encode(),
+        await self._request_and_wait(
+            ("locations",),
+            timeout,
+            "Timed out fetching locations table from Ampio broker",
         )
-        try:
-            async with asyncio.timeout(timeout):
-                await self._locations_received.wait()
-        except TimeoutError as err:
-            raise AmpioConnectionError(
-                "Timed out fetching locations table from Ampio broker"
-            ) from err
-        data = _safe_json_object(self.last_locations_payload)
+        data = _safe_json_object(self._last_payloads.get("locations"))
         out: dict[int, str] = {}
         for item in data.get("List", []):
             if not isinstance(item, dict):
@@ -415,10 +404,34 @@ class AmpioClient:
                 out[lid] = name
         return out
 
-    async def _publish_data(self, keyword: str) -> None:
+    async def _publish(self, ep: Endpoint) -> None:
+        """Publish an endpoint's request keyword to its control topic."""
         if self._client is None:
             raise AmpioConnectionError("Not connected")
-        await self._client.publish(data_request_topic(self._username), keyword.encode())
+        await self._client.publish(
+            request_topic(ep, self._username), ep.req_payload.encode()
+        )
+
+    async def _request_and_wait(
+        self, names: tuple[str, ...], timeout: float, timeout_message: str
+    ) -> None:
+        """Re-request the given endpoints and block until each reply latches.
+
+        Clears each endpoint's latch and retained payload first so a stale prior
+        reply can't satisfy the wait, then publishes and awaits all of them.
+        """
+        if self._client is None:
+            raise AmpioConnectionError("Not connected")
+        for name in names:
+            self._received[name].clear()
+            self._last_payloads.pop(name, None)
+        for name in names:
+            await self._publish(ENDPOINT_BY_NAME[name])
+        try:
+            async with asyncio.timeout(timeout):
+                await asyncio.gather(*(self._received[n].wait() for n in names))
+        except TimeoutError as err:
+            raise AmpioConnectionError(timeout_message) from err
 
     def _feed_message(self, topic: str, payload: str | bytes) -> None:
         """Inject a message directly into the routing logic.
@@ -427,13 +440,6 @@ class AmpioClient:
         drives the same logic through `_run`.
         """
         self._dispatch(topic, _decode_payload(payload))
-
-    async def _publish_config(self, keyword: str) -> None:
-        if self._client is None:
-            raise AmpioConnectionError("Not connected")
-        await self._client.publish(
-            config_request_topic(self._username), keyword.encode()
-        )
 
     # --- internal ---------------------------------------------------------
 
@@ -451,13 +457,8 @@ class AmpioClient:
                     timeout=10,
                 ) as client:
                     self._client = client
-                    await client.subscribe(details_response_topic(user))
-                    await client.subscribe(devices_response_topic(user))
-                    await client.subscribe(states_response_topic(user))
-                    await client.subscribe(info_response_topic(user))
-                    await client.subscribe(groups_response_topic(user))
-                    await client.subscribe(group_devices_response_topic(user))
-                    await client.subscribe(locations_response_topic(user))
+                    for ep in ENDPOINTS:
+                        await client.subscribe(response_topic(ep, user))
                     await client.subscribe(ob_state_wildcard(user))
                     for wildcard in RAW_INPUT_WILDCARDS:
                         await client.subscribe(wildcard)
@@ -468,10 +469,7 @@ class AmpioClient:
                     self._set_available(True)
                     self._connected.set()
                     attempt = 0
-                    await self.request_devices()
-                    await self.request_details()
-                    await self.request_states()
-                    await self.request_info()
+                    await self.refresh()
                     async for message in client.messages:
                         self._dispatch(
                             str(message.topic), _decode_payload(message.payload)
@@ -512,34 +510,26 @@ class AmpioClient:
     def _dispatch(self, topic: str, payload: str) -> None:
         """Route a received MQTT message to the appropriate handler."""
         self.stats.last_message_at = time.time()
-        if topic == details_response_topic(self._username):
-            self._handle_details(payload)
-        elif topic == devices_response_topic(self._username):
-            self._handle_devices(payload)
-        elif topic == states_response_topic(self._username):
-            self._handle_states_snapshot(payload)
-        elif topic == info_response_topic(self._username):
-            self._handle_info(payload)
-        elif topic == groups_response_topic(self._username):
-            self.last_groups_payload = payload
-            self._groups_received.set()
-        elif topic == group_devices_response_topic(self._username):
-            self.last_group_devices_payload = payload
-            self._group_devices_received.set()
-        elif topic == locations_response_topic(self._username):
-            self.last_locations_payload = payload
-            self._locations_received.set()
-        elif topic.endswith("/state") and "/ob/" in topic:
+        ep = self._by_response.get(topic)
+        if ep is not None:
+            # Retain the verbatim payload for diagnostics, apply any state
+            # handler, and latch the endpoint - but only if it parsed, so a
+            # malformed reply does not falsely complete discovery.
+            self._last_payloads[ep.name] = payload
+            handler = self._handlers.get(ep.name)
+            if handler is None or handler(payload):
+                self._received[ep.name].set()
+            return
+        if topic.endswith("/state") and "/ob/" in topic:
             self._handle_state(topic, payload)
         elif topic.startswith("ampio/from/") and "/state/" in topic:
             self._handle_raw_channel(topic, payload)
 
-    def _handle_details(self, payload: str) -> None:
-        self.last_details_payload = payload
+    def _handle_details(self, payload: str) -> bool:
         items = _protocol.parse_details(payload)
         if items is None:
             _LOGGER.warning("Could not parse Ampio devicesDetails")
-            return
+            return False
         for meta in items:
             obj = self.state.objects.get(meta.id) or AmpioObject(id=meta.id)
             obj.device_id = meta.device_id
@@ -549,49 +539,46 @@ class AmpioClient:
             obj.funkcja = meta.funkcja
             obj.leaf_id = meta.leaf_id
             obj.group_ids = meta.group_ids
-            obj.kind = classify_object(meta.typ_komponentu, meta.interpretacja)
-            obj.input_kind = classify_input(meta.typ_komponentu, meta.interpretacja)
+            obj.kind, obj.input_kind = classify(meta.typ_komponentu, meta.interpretacja)
             if obj.value is None and meta.stan_json is not None:
                 self._apply_stan_json(obj, meta.stan_json)
             self.state.objects[meta.id] = obj
             self._notify(obj)
         self._rebuild_input_index()
-        self._details_received.set()
+        return True
 
-    def _handle_devices(self, payload: str) -> None:
-        self.last_devices_payload = payload
+    def _handle_devices(self, payload: str) -> bool:
         modules = _protocol.parse_devices(payload)
         if modules is None:
             _LOGGER.warning("Could not parse Ampio devices list")
-            return
+            return False
         for module in modules:
             previous = self.state.modules.get(module.id)
             if previous is not None:
                 module.last_seen = previous.last_seen
             self.state.modules[module.id] = module
         self._rebuild_input_index()
-        self._devices_received.set()
+        return True
 
-    def _handle_info(self, payload: str) -> None:
-        self.last_info_payload = payload
+    def _handle_info(self, payload: str) -> bool:
         self.state.server_info = _protocol.parse_server_info(payload)
-        self._info_received.set()
+        return True
 
-    def _handle_states_snapshot(self, payload: str) -> None:
+    def _handle_states_snapshot(self, payload: str) -> bool:
         entries = _protocol.parse_states_snapshot(payload)
         if entries is None:
             _LOGGER.warning("Could not parse Ampio states snapshot")
-            return
+            return False
         for entry in entries:
             obj = self.state.objects.get(entry.id)
             if obj is None:
                 # Metadata not yet known (e.g. snapshot arrived before details).
-                obj = AmpioObject(id=entry.id, kind=classify_object(None, None))
+                obj = AmpioObject(id=entry.id, kind=classify(None, None)[0])
                 self.state.objects[entry.id] = obj
             if obj.value is None and entry.stan_json is not None:
                 self._apply_stan_json(obj, entry.stan_json)
             self._notify(obj)
-        self._states_received.set()
+        return True
 
     def _handle_state(self, topic: str, payload: str) -> None:
         update = _protocol.parse_state_message(topic, payload)
@@ -605,7 +592,7 @@ class AmpioClient:
         obj = self.state.objects.get(update.id)
         if obj is None:
             # No metadata yet (e.g. restricted account) -> generic sensor.
-            obj = AmpioObject(id=update.id, kind=classify_object(None, None))
+            obj = AmpioObject(id=update.id, kind=classify(None, None)[0])
             self.state.objects[update.id] = obj
         obj.value = update.value
         self._touch_module(obj.device_id, update.on_ms)
@@ -621,7 +608,7 @@ class AmpioClient:
         """
         index: dict[tuple[int, str, int], int] = {}
         for obj in self.state.objects.values():
-            prefix = _INPUT_CHANNEL_PREFIX.get(obj.typ_komponentu or "")
+            prefix = input_channel_prefix(obj.typ_komponentu)
             if prefix is None or obj.funkcja is None or obj.device_id is None:
                 continue
             module = self.state.modules.get(obj.device_id)
