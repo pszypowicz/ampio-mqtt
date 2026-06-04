@@ -46,6 +46,7 @@ include = [
   "tests/**/*.py",
   "README.md",
   "CHANGELOG.md",
+  "docs/**/*.md",
   "LICENSE",
   "NOTICES",
   "pyproject.toml",
