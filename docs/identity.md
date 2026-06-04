@@ -35,9 +35,12 @@ A replacement-stable composite the HA integration uses for `unique_id`:
 ```
 
 `prefix` is the M-SERV's own CAN mac (from `AmpioServerInfo.mac`).
-The composite is empirically collision-free for the entity surfaces
-shipping today; #15 tracks the open question of whether the wire offers
-a strict-unique stable per-object key.
+The composite is collision-free **once hidden objects are filtered out**
+(see Visibility below). The one observed collision - the same physical
+channel materialised as a phantom stub and a labelled object sharing one
+`leaf_id` - is resolved because the phantom carries the `params` hidden
+flag, so `visible` drops it. #15 tracks the history; the hidden flag is
+the replacement-stable discriminator that closes it.
 
 ## Visibility (`AmpioObject.visible`)
 
@@ -45,9 +48,21 @@ Not every row in `devicesDetails` is meant to be surfaced. The
 predicate is:
 
 ```
-visible = bool(leaf_id) or bool(group_ids) or is_system
+visible = not hidden and (bool(leaf_id) or bool(group_ids) or is_system)
 ```
 
+- **`hidden`** - `params` bit 4 (`params & 16`). The M-SERV's own
+  authoritative "do not surface" marker, and it takes precedence over
+  everything else. It is set on phantom rows that duplicate a real
+  Designer channel (same `leaf_id`, no value) and on objects the user
+  hid - exactly the rows the `leaf_id` test alone wrongly keeps. It is a
+  Designer config flag, so unlike the DB `id` it is replacement-stable.
+  When `params` is absent (older firmware / restricted account) it is
+  `0`, so `hidden` is False and the rule degrades to the former
+  leaf_id heuristic. This is the same gate the M-SERV's Matter bridge
+  uses (`(params & 2**37) && !(params & 16)`); see
+  [`matter-bridge.md`](matter-bridge.md). Bit 37 (`matter_exposed`) is a
+  Matter-only opt-in and is deliberately **not** used for filtering.
 - **`leaf_id`** - non-empty for every "real" object in the M-SERV's
   view. Empty for **ghost rows** (objects the user deleted in Designer
   but that still come back over the wire) and for **system objects**

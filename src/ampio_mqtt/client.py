@@ -539,6 +539,7 @@ class AmpioClient:
             obj.funkcja = meta.funkcja
             obj.leaf_id = meta.leaf_id
             obj.group_ids = meta.group_ids
+            obj.params = meta.params
             obj.kind, obj.input_kind = classify(meta.typ_komponentu, meta.interpretacja)
             if obj.value is None and meta.stan_json is not None:
                 self._apply_stan_json(obj, meta.stan_json)

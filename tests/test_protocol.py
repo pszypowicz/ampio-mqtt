@@ -81,6 +81,7 @@ def test_parse_details_returns_metadata() -> None:
                     "funkcja": 7,
                     "leafId": "0_cb8f_76_0_0",
                     "powiazane": "1,4,9",
+                    "params": 137438953473,  # 2**37 + 1: matter-exposed, not hidden
                     "opis_menu": "Salon",
                     "stan_json": json.dumps({"state": "21.5", "on": 1700000000000}),
                 },
@@ -96,11 +97,29 @@ def test_parse_details_returns_metadata() -> None:
     assert items[0].funkcja == 7
     assert items[0].leaf_id == "0_cb8f_76_0_0"
     assert items[0].group_ids == frozenset({1, 4, 9})
+    assert items[0].params == 137438953473  # parsed as a >32-bit int
     assert items[0].stan_json is not None
     assert items[1].name is None and items[1].stan_json is None
     assert items[1].funkcja is None  # absent -> None
     assert items[1].leaf_id == ""  # absent -> empty string
     assert items[1].group_ids == frozenset()  # absent -> empty
+    assert items[1].params == 0  # absent -> 0 (no flags)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (17, 17),  # bit0 + bit4 (the live phantom shape)
+        ("16", 16),  # string coerced
+        (137438953473, 137438953473),  # >32-bit matter-exposed value
+        (None, 0),  # absent -> 0
+        ("not-a-number", 0),  # junk -> 0
+    ],
+)
+def test_parse_details_params(raw: object, expected: int) -> None:
+    payload = json.dumps({"List": [{"id": 1, "params": raw}]})
+    items = parse_details(payload)
+    assert items is not None and items[0].params == expected
 
 
 @pytest.mark.parametrize(

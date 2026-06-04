@@ -13,3 +13,4 @@ screen.
 | [`raw-channel-bridge.md`](raw-channel-bridge.md) | The `ampio/from/<MAC>/state/...` parallel topic surface; what is bridged today and what is not.                              |
 | [`discovery-flow.md`](discovery-flow.md)         | What `start()` does, what runs automatically vs on demand, and the connection liveness counters.                             |
 | [`untapped-surfaces.md`](untapped-surfaces.md)   | Reachable but unconsumed surfaces (scenes, resources, logs, MD5 hashes, RPC bridge). Each entry links to its tracking issue. |
+| [`matter-bridge.md`](matter-bridge.md)           | The M-SERV's own Matter bridge, reverse-engineered: the `params` bit-4/bit-37 gate, its `type`/`leafId` classification table, and its gaps.        |

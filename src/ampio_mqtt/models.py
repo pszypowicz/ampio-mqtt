@@ -7,6 +7,20 @@ from dataclasses import dataclass, field
 from .const import InputKind, SensorKind, is_system_type
 from .device_types import Capability
 
+# Bit flags inside the `params` integer (`obiekty.params`). Reverse-engineered
+# from the M-SERV's own Matter bridge, which selects exposable objects with
+# `(params & 2**37) and not (params & 16)`. See docs/matter-bridge.md.
+#
+# - bit 4 (`16`): the object is hidden / a stub. The M-SERV sets it on the
+#   phantom rows that duplicate a real Designer channel (same leafId, no value)
+#   and on objects the user removed/hid. It is the authoritative "do not
+#   surface this" marker, and unlike the DB `id` it is replacement-stable.
+# - bit 37: the object is flagged for the Matter bridge specifically. NOT a
+#   general visibility signal - most real objects leave it clear - so it is
+#   exposed only as `matter_exposed` and never used for filtering here.
+_HIDDEN_FLAG = 1 << 4
+_MATTER_EXPOSED_FLAG = 1 << 37
+
 
 @dataclass(slots=True)
 class AmpioObject:
@@ -40,6 +54,12 @@ class AmpioObject:
     # `fetch_rooms()` instead. Kept here for any future M-SERV that does emit
     # it, and contributes to `visible` when populated.
     group_ids: frozenset[int] = field(default_factory=frozenset)
+    # `params` bitfield from `devicesDetails`. Replacement-stable Designer
+    # config flags; see `_HIDDEN_FLAG` / `_MATTER_EXPOSED_FLAG`, `hidden`, and
+    # `matter_exposed`. Defaults to 0 so a payload without the column (older
+    # firmware, restricted account) reads as "nothing hidden" and the visibility
+    # rule degrades to the leaf_id heuristic alone.
+    params: int = 0
     kind: SensorKind | None = None  # set when classified as a sensor
     input_kind: InputKind | None = None  # set when classified as an input
     value: str | None = None
@@ -75,15 +95,42 @@ class AmpioObject:
         return is_system_type(self.typ_komponentu)
 
     @property
+    def hidden(self) -> bool:
+        """Whether the M-SERV flags this object as hidden / a stub (``params`` bit 4).
+
+        This is the authoritative "do not surface" marker - the same one the
+        M-SERV's own Matter bridge honours. It catches the phantom rows that
+        duplicate a real Designer channel (sharing its ``leaf_id`` but carrying
+        no value), which the ``leaf_id`` heuristic alone lets through. See
+        docs/matter-bridge.md.
+        """
+        return bool(self.params & _HIDDEN_FLAG)
+
+    @property
+    def matter_exposed(self) -> bool:
+        """Whether the object is flagged for the M-SERV's Matter bridge (``params`` bit 37).
+
+        Informational only - it reflects a per-object Matter opt-in the user
+        sets in Designer, NOT general visibility, so it is never used to filter
+        here. Most real objects leave it clear.
+        """
+        return bool(self.params & _MATTER_EXPOSED_FLAG)
+
+    @property
     def visible(self) -> bool:
         """Whether the object is one the user can see in Designer's tree.
 
-        The wire-side visibility marker is ``leaf_id`` - the M-SERV sets it
-        for every real object and leaves it empty for ghost rows. System
-        objects (presence simulation / detection) also have an empty
-        ``leaf_id``; they are pulled in by ``is_system``. ``group_ids`` only
-        contributes for the rare M-SERV firmware that does emit `powiazane`.
+        ``hidden`` (``params`` bit 4) takes precedence: a hidden object is never
+        visible, even with a populated ``leaf_id`` - this is what drops the
+        phantom half of a duplicated Designer channel. Otherwise the wire-side
+        marker is ``leaf_id`` (set for every real object, empty for ghost rows
+        and system objects), with system objects pulled in by ``is_system`` and
+        ``group_ids`` contributing only on the rare firmware that emits
+        `powiazane`. When ``params`` is absent (so ``hidden`` is False) this
+        degrades exactly to the former leaf_id heuristic.
         """
+        if self.hidden:
+            return False
         return bool(self.leaf_id) or bool(self.group_ids) or self.is_system
 
 

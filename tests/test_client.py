@@ -858,3 +858,41 @@ def test_visibility_predicate(
     obj = AmpioObject(id=1, typ_komponentu=typ, leaf_id=leaf_id, group_ids=group_ids)
     assert obj.is_system is is_system
     assert obj.visible is visible
+
+
+@pytest.mark.parametrize(
+    ("params", "hidden", "matter_exposed"),
+    [
+        (0, False, False),  # absent -> no flags
+        (1, False, False),  # bit 0 only (every real object carries it)
+        (16, True, False),  # bit 4 -> hidden stub
+        (17, True, False),  # bit 0 + bit 4 (the live phantom shape)
+        (1 << 37, False, True),  # matter-exposed, not hidden
+        ((1 << 37) | 1, False, True),  # bit 37 + bit 0 (live matter-exposed shape)
+        ((1 << 37) | 16, True, True),  # exposed AND hidden -> hidden still wins
+    ],
+)
+def test_params_flags(params: int, hidden: bool, matter_exposed: bool) -> None:
+    obj = AmpioObject(id=1, params=params)
+    assert obj.hidden is hidden
+    assert obj.matter_exposed is matter_exposed
+
+
+def test_hidden_overrides_leaf_id_visibility() -> None:
+    """Bit 4 (hidden) drops an object even when its leaf_id would show it.
+
+    This is the duplicated-Designer-channel case: a phantom and its labelled
+    twin share a leaf_id, so the leaf_id heuristic keeps both and the consumer's
+    unique-id collides. The phantom carries bit 4, so it is filtered out.
+    """
+    phantom = AmpioObject(
+        id=1, typ_komponentu="lin_wej", leaf_id="0_cb97_74_0_1", params=17
+    )
+    labelled = AmpioObject(
+        id=2, typ_komponentu="lin_wej", leaf_id="0_cb97_74_0_1", params=(1 << 37) | 1
+    )
+    assert phantom.visible is False
+    assert labelled.visible is True
+    # A system object the M-SERV explicitly hid (bit 4) is dropped too, even
+    # though is_system would otherwise force it visible.
+    assert AmpioObject(id=3, typ_komponentu="symulacja", params=16).visible is False
