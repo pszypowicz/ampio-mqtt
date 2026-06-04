@@ -79,6 +79,7 @@ def test_parse_details_returns_metadata() -> None:
                     "typ_komponentu": "temp",
                     "interpretacja": 1,
                     "funkcja": 7,
+                    "leafId": "0_cb8f_76_0_0",
                     "powiazane": "1,4,9",
                     "opis_menu": "Salon",
                     "stan_json": json.dumps({"state": "21.5", "on": 1700000000000}),
@@ -93,10 +94,12 @@ def test_parse_details_returns_metadata() -> None:
     assert [m.id for m in items] == [41, 42]
     assert items[0].name == "Salon"
     assert items[0].funkcja == 7
+    assert items[0].leaf_id == "0_cb8f_76_0_0"
     assert items[0].group_ids == frozenset({1, 4, 9})
     assert items[0].stan_json is not None
     assert items[1].name is None and items[1].stan_json is None
     assert items[1].funkcja is None  # absent -> None
+    assert items[1].leaf_id == ""  # absent -> empty string
     assert items[1].group_ids == frozenset()  # absent -> empty
 
 

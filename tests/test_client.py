@@ -720,28 +720,38 @@ def test_is_on_interpretation(value, expected) -> None:
 
 
 @pytest.mark.parametrize(
-    ("typ", "group_ids", "is_system", "visible"),
+    ("typ", "leaf_id", "group_ids", "is_system", "visible"),
     [
-        # Grouped real object -> visible, not system.
-        ("temp", frozenset({1}), False, True),
-        # Ghost (no groups, no system role) -> not visible.
-        ("temp", frozenset(), False, False),
+        # Real object with a non-empty leafId (the real-install shape).
+        ("temp", "0_cb8f_76_0_0", frozenset(), False, True),
+        # Grouped real object via the rare `powiazane` channel.
+        ("temp", "", frozenset({1}), False, True),
+        # Both signals present.
+        ("temp", "0_x_x_x_x", frozenset({1}), False, True),
+        # Ghost: empty leafId, no groups, not a system type.
+        ("temp", "", frozenset(), False, False),
         # Named-output ghost on the M-SERV - the canonical Matter-leak case.
-        ("przekaznik", frozenset(), False, False),
-        # System objects are visible even without any group.
-        ("symulacja", frozenset(), True, True),
-        ("detekcja", frozenset(), True, True),
-        # `flaga` is an input but NOT a system object: must rely on group membership.
-        ("flaga", frozenset(), False, False),
-        ("flaga", frozenset({3}), False, True),
+        ("przekaznik", "", frozenset(), False, False),
+        # System objects are visible regardless of leafId/groups.
+        ("symulacja", "", frozenset(), True, True),
+        ("detekcja", "", frozenset(), True, True),
+        # `flaga` is an input but NOT a system object: relies on the
+        # external signals (leafId on real installs, groups otherwise).
+        ("flaga", "", frozenset(), False, False),
+        ("flaga", "", frozenset({3}), False, True),
+        ("flaga", "0_d09a_3_0_1", frozenset(), False, True),
         # Unclassified / missing typ_komponentu - treat as non-system.
-        (None, frozenset(), False, False),
-        (None, frozenset({2, 5}), False, True),
+        (None, "", frozenset(), False, False),
+        (None, "0_x_x_x_x", frozenset(), False, True),
     ],
 )
 def test_visibility_predicate(
-    typ: str | None, group_ids: frozenset[int], is_system: bool, visible: bool
+    typ: str | None,
+    leaf_id: str,
+    group_ids: frozenset[int],
+    is_system: bool,
+    visible: bool,
 ) -> None:
-    obj = AmpioObject(id=1, typ_komponentu=typ, group_ids=group_ids)
+    obj = AmpioObject(id=1, typ_komponentu=typ, leaf_id=leaf_id, group_ids=group_ids)
     assert obj.is_system is is_system
     assert obj.visible is visible

@@ -1,13 +1,24 @@
 # ampio-mqtt
 
+> **Beta - 0.x.x.** This library exists to back the
+> [home-assistant/core ampio integration](https://github.com/home-assistant/core)
+> currently in development. Anything below `1.0.0` is unstable by design:
+> the public surface (dataclass fields, exported names, method signatures)
+> can and will change between any two 0.x.x releases without migration
+> shims. `1.0.0` is reserved for the moment the integration PR is accepted
+> upstream; until then, breaking changes are expected and pins should be
+> exact.
+
 Async Python client for the **Ampio Smart Home** local MQTT protocol exposed by
 the Ampio M-SERV controller. Built to back a Home Assistant integration; the
 library itself is Home Assistant agnostic.
 
 ## Status
 
-Stable. The 1.0.0 release freezes the public API surface (everything exported
-from `ampio_mqtt.__init__`); further breaking changes ship as major versions.
+Beta. The library is iterated alongside the home-assistant/core ampio
+integration; both move together. There is no API stability promise at this
+stage - any 0.x.x release may break consumers. The `1.0.0` cut ships when
+the HA Core integration PR is accepted.
 
 Currently supports:
 
