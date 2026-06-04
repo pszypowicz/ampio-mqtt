@@ -3,8 +3,8 @@
 The M-SERV exposes more than the library currently consumes. Each entry
 below is reachable today (the wire surface exists) but unimplemented,
 and worth noting so a future contributor does not have to re-discover
-it. Forward-work items each have a tracking issue; the line "tracked
-as `#N`" is filled in once the issue is filed.
+it. Forward-work items each have a tracking issue; PRs picking up an
+item should reference its issue number.
 
 If you implement one of these, the implementation pattern is almost
 always the same as `fetch_rooms()` / `fetch_locations()`:
@@ -26,7 +26,7 @@ catalogue ships over the same discovery RPC pattern as rooms
 `fromDB/<user>/.../scenes` topic). A `fetch_scenes()` helper would feed
 a future HA `scene` platform.
 
-Tracked as: (pending)
+Tracked as: [#21](https://github.com/pszypowicz/ampio-mqtt/issues/21)
 
 ### `resources` - icons, media, possibly cameras
 
@@ -35,7 +35,7 @@ references, and what looks like camera/intercom entries. Concrete
 shape needs to be confirmed on the wire before deciding which HA
 platforms this maps to.
 
-Tracked as: (pending)
+Tracked as: [#22](https://github.com/pszypowicz/ampio-mqtt/issues/22)
 
 ### `logs` - server-side event log
 
@@ -44,7 +44,7 @@ the HA integration's diagnostics blob (so a "broker keeps
 disconnecting" report includes the broker's view of why), or a future
 HA `event` platform forwarding select log lines.
 
-Tracked as: (pending)
+Tracked as: [#23](https://github.com/pszypowicz/ampio-mqtt/issues/23)
 
 ### MD5 change-detection topics - skip redundant refetches
 
@@ -55,7 +55,7 @@ and future `fetch_*` helpers no-op on reconnect when nothing has
 changed. Optimization, not a correctness fix - the current behaviour
 of re-fetching every time is correct, just chatty.
 
-Tracked as: (pending)
+Tracked as: [#24](https://github.com/pszypowicz/ampio-mqtt/issues/24)
 
 ### `device_raw_api` RPC bridge - per-output `outLoc` resolution
 
@@ -70,7 +70,7 @@ column directly.
 High value, invasive: the RPC channel is its own protocol surface to
 validate, and the response shape per-method is CAN-firmware specific.
 
-Tracked as: (pending)
+Tracked as: [#25](https://github.com/pszypowicz/ampio-mqtt/issues/25)
 
 ### `symulacja` raw-channel prefix - confirm and bridge
 
@@ -82,4 +82,4 @@ raw form. Confirming the prefix on a live system and adding the entry
 to `_INPUT_CHANNEL_PREFIX` closes the gap. See
 [`raw-channel-bridge.md`](raw-channel-bridge.md).
 
-Tracked as: (pending)
+Tracked as: [#26](https://github.com/pszypowicz/ampio-mqtt/issues/26)
