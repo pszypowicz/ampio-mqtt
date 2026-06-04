@@ -48,7 +48,8 @@ class ObjectMetadata:
     name: str | None
     interpretacja: int | None
     funkcja: int | None  # physical channel index within the module
-    group_ids: frozenset[int]  # parsed `powiazane` GROUP_CONCAT
+    leaf_id: str  # `leafId`; empty for ghost rows and for system objects
+    group_ids: frozenset[int]  # parsed `powiazane` GROUP_CONCAT (rare in practice)
     stan_json: str | None  # raw seed for the initial value, applied by the client
 
 
@@ -114,6 +115,7 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
                 name=item.get("opis_menu") or None,
                 interpretacja=to_int(item.get("interpretacja")),
                 funkcja=to_int(item.get("funkcja")),
+                leaf_id=_parse_leaf_id(item.get("leafId")),
                 group_ids=_parse_powiazane(item.get("powiazane")),
                 stan_json=item.get("stan_json") or None,
             )
@@ -121,13 +123,25 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
     return out
 
 
+def _parse_leaf_id(value: Any) -> str:
+    """Coerce the `leafId` field to a string.
+
+    The M-SERV emits an empty string for ghost rows (object removed from the
+    Designer tree, DB row still returned) and for system objects (presence
+    simulation / detection types). For everything else the value is a short
+    underscored token like ``0_cb8f_76_0_0`` whose meaning is opaque - the
+    library uses it only as the binary visibility marker.
+    """
+    return value if isinstance(value, str) else ""
+
+
 def _parse_powiazane(value: Any) -> frozenset[int]:
     """Parse the GROUP_CONCAT `powiazane` field into a set of group ids.
 
-    The field holds the comma-separated ``id_grupy`` rows the object belongs
-    to. Treat every non-integer entry (including ``None``/``""``/``"NULL"``)
-    as no membership rather than raising - the M-SERV emits both literal NULL
-    and empty strings, and an unexpected payload should not poison discovery.
+    Most M-SERV firmware does not emit this column in `devicesDetails`; the
+    parser keeps it for any future build that does, but real installs see an
+    empty result. Group membership is enriched from the separate
+    ``data/groups`` / ``data/group_devices`` join via ``fetch_rooms()``.
     """
     if not isinstance(value, str) or not value or value == "NULL":
         return frozenset()

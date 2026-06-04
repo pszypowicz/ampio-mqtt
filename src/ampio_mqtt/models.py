@@ -28,10 +28,17 @@ class AmpioObject:
     # (the same physical signal exposed as several Designer objects). Used to
     # route raw channel events to this object.
     funkcja: int | None = None
-    # Groups the object belongs to in the M-SERV's `grupy_obiektow` join,
-    # parsed from `devicesDetails.powiazane`. Empty for system objects (which
-    # have no room) and for ghosts (rows that survived removal from the
-    # Designer tree). See `is_system` and `visible`.
+    # `leafId` from `devicesDetails` - a short token like ``0_cb8f_76_0_0``.
+    # The wire payload sets it for every "real" object; ghost rows that
+    # survived a Designer removal AND system objects (Simulation / Detection)
+    # both come back with an empty string. The library treats it as a binary
+    # marker; see `visible`.
+    leaf_id: str = ""
+    # GROUP_CONCAT of `grupy_obiektow.id_grupy`, parsed from
+    # `devicesDetails.powiazane`. Most M-SERV firmware does not emit this
+    # column - real installs see it empty. Group/room membership ships through
+    # `fetch_rooms()` instead. Kept here for any future M-SERV that does emit
+    # it, and contributes to `visible` when populated.
     group_ids: frozenset[int] = field(default_factory=frozenset)
     kind: SensorKind | None = None  # set when classified as a sensor
     input_kind: InputKind | None = None  # set when classified as an input
@@ -71,13 +78,13 @@ class AmpioObject:
     def visible(self) -> bool:
         """Whether the object is one the user can see in Designer's tree.
 
-        Mirrors the M-SERV's own "visible objects" query: belonging to at
-        least one group, OR being a system object. Removed-but-not-deleted
-        rows (`devicesDetails` ghosts) have neither, so a consumer using
-        ``visible`` as its discovery filter skips them without further
-        heuristics on ``value`` or ``name``.
+        The wire-side visibility marker is ``leaf_id`` - the M-SERV sets it
+        for every real object and leaves it empty for ghost rows. System
+        objects (presence simulation / detection) also have an empty
+        ``leaf_id``; they are pulled in by ``is_system``. ``group_ids`` only
+        contributes for the rare M-SERV firmware that does emit `powiazane`.
         """
-        return bool(self.group_ids) or self.is_system
+        return bool(self.leaf_id) or bool(self.group_ids) or self.is_system
 
 
 @dataclass(slots=True)
