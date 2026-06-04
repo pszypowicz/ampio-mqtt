@@ -717,3 +717,31 @@ def test_symulacja_classifies_but_is_not_bridged() -> None:
 )
 def test_is_on_interpretation(value, expected) -> None:
     assert AmpioObject(id=1, value=value).is_on is expected
+
+
+@pytest.mark.parametrize(
+    ("typ", "group_ids", "is_system", "visible"),
+    [
+        # Grouped real object -> visible, not system.
+        ("temp", frozenset({1}), False, True),
+        # Ghost (no groups, no system role) -> not visible.
+        ("temp", frozenset(), False, False),
+        # Named-output ghost on the M-SERV - the canonical Matter-leak case.
+        ("przekaznik", frozenset(), False, False),
+        # System objects are visible even without any group.
+        ("symulacja", frozenset(), True, True),
+        ("detekcja", frozenset(), True, True),
+        # `flaga` is an input but NOT a system object: must rely on group membership.
+        ("flaga", frozenset(), False, False),
+        ("flaga", frozenset({3}), False, True),
+        # Unclassified / missing typ_komponentu - treat as non-system.
+        (None, frozenset(), False, False),
+        (None, frozenset({2, 5}), False, True),
+    ],
+)
+def test_visibility_predicate(
+    typ: str | None, group_ids: frozenset[int], is_system: bool, visible: bool
+) -> None:
+    obj = AmpioObject(id=1, typ_komponentu=typ, group_ids=group_ids)
+    assert obj.is_system is is_system
+    assert obj.visible is visible

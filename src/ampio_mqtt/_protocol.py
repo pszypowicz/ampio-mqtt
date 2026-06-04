@@ -48,6 +48,7 @@ class ObjectMetadata:
     name: str | None
     interpretacja: int | None
     funkcja: int | None  # physical channel index within the module
+    group_ids: frozenset[int]  # parsed `powiazane` GROUP_CONCAT
     stan_json: str | None  # raw seed for the initial value, applied by the client
 
 
@@ -113,10 +114,29 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
                 name=item.get("opis_menu") or None,
                 interpretacja=to_int(item.get("interpretacja")),
                 funkcja=to_int(item.get("funkcja")),
+                group_ids=_parse_powiazane(item.get("powiazane")),
                 stan_json=item.get("stan_json") or None,
             )
         )
     return out
+
+
+def _parse_powiazane(value: Any) -> frozenset[int]:
+    """Parse the GROUP_CONCAT `powiazane` field into a set of group ids.
+
+    The field holds the comma-separated ``id_grupy`` rows the object belongs
+    to. Treat every non-integer entry (including ``None``/``""``/``"NULL"``)
+    as no membership rather than raising - the M-SERV emits both literal NULL
+    and empty strings, and an unexpected payload should not poison discovery.
+    """
+    if not isinstance(value, str) or not value or value == "NULL":
+        return frozenset()
+    ids: set[int] = set()
+    for piece in value.split(","):
+        gid = to_int(piece.strip())
+        if gid is not None:
+            ids.add(gid)
+    return frozenset(ids)
 
 
 def parse_devices(payload: str) -> list[AmpioModule] | None:
