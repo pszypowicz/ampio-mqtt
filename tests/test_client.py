@@ -82,6 +82,9 @@ def test_details_populate_and_classify() -> None:
     temp = client.objects[41]
     assert temp.kind is not None and temp.kind.device_class == "temperature"
     assert temp.name == "Salon" and temp.device_id == 3
+    # The raw `interpretacja` selector is retained on the object for consumers,
+    # alongside the resolved `kind` the library derives from it.
+    assert client.objects[107].interpretacja == 7
     # relay is not a sensor
     assert client.objects[1].is_sensor is False
     assert set(client.sensors) == {41, 107}
@@ -309,6 +312,7 @@ def test_info_parses_only_safe_fields() -> None:
     assert info is not None
     assert info.mac == 47846
     assert info.server_version == "1865"
+    assert info.server_revision == "409"
     assert info.mqtt_version == "5.133.11"
     assert info.local_ip == "10.0.0.1"
     assert info.device_id == "0011223344556677"
