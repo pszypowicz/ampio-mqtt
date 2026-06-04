@@ -37,7 +37,13 @@ from .const import (
     states_response_topic,
 )
 from .errors import AmpioAuthError, AmpioConnectionError
-from .models import AmpioModule, AmpioObject, AmpioServerInfo, AmpioState
+from .models import (
+    AmpioModule,
+    AmpioObject,
+    AmpioServerInfo,
+    AmpioState,
+    ConnectionStats,
+)
 from .rooms import join_rooms
 
 _LOGGER = logging.getLogger(__name__)
@@ -94,8 +100,19 @@ class AmpioClient:
         self._info_received = asyncio.Event()
         self._groups_received = asyncio.Event()
         self._group_devices_received = asyncio.Event()
-        self._groups_payload: str | None = None
-        self._group_devices_payload: str | None = None
+
+        # Last raw payloads as the broker sent them - retained for downstream
+        # diagnostics so a tester report can include the actual JSON the
+        # M-SERV emitted, without the consumer having to re-derive it.
+        self.last_devices_payload: str | None = None
+        self.last_details_payload: str | None = None
+        self.last_info_payload: str | None = None
+        self.last_groups_payload: str | None = None
+        self.last_group_devices_payload: str | None = None
+
+        # Connection liveness counters surfaced as `client.stats`.
+        self.stats = ConnectionStats()
+
         self._auth_error_message: str | None = None
         self._available = False
         self._stop = False
@@ -294,8 +311,8 @@ class AmpioClient:
             raise AmpioConnectionError("Not connected")
         self._groups_received.clear()
         self._group_devices_received.clear()
-        self._groups_payload = None
-        self._group_devices_payload = None
+        self.last_groups_payload = None
+        self.last_group_devices_payload = None
         await self._publish_data(GROUPS_REQUEST_PAYLOAD)
         await self._publish_data(GROUP_DEVICES_REQUEST_PAYLOAD)
         try:
@@ -309,8 +326,8 @@ class AmpioClient:
                 "Timed out fetching room map from Ampio broker"
             ) from err
         return join_rooms(
-            _safe_json_object(self._groups_payload),
-            _safe_json_object(self._group_devices_payload),
+            _safe_json_object(self.last_groups_payload),
+            _safe_json_object(self.last_group_devices_payload),
         )
 
     async def _publish_data(self, keyword: str) -> None:
@@ -358,6 +375,10 @@ class AmpioClient:
                     await client.subscribe(ob_state_wildcard(user))
                     for wildcard in RAW_INPUT_WILDCARDS:
                         await client.subscribe(wildcard)
+                    if self.stats.started_at is None:
+                        self.stats.started_at = time.time()
+                    else:
+                        self.stats.reconnect_count += 1
                     self._set_available(True)
                     self._connected.set()
                     attempt = 0
@@ -370,6 +391,7 @@ class AmpioClient:
                             str(message.topic), _decode_payload(message.payload)
                         )
             except aiomqtt.MqttError as err:
+                self.stats.last_error = str(err)
                 if _protocol.is_auth_error(err):
                     # Reconnecting will not help; surface to start() and stop.
                     self._auth_error_message = str(err)
@@ -403,6 +425,7 @@ class AmpioClient:
 
     def _dispatch(self, topic: str, payload: str) -> None:
         """Route a received MQTT message to the appropriate handler."""
+        self.stats.last_message_at = time.time()
         if topic == details_response_topic(self._username):
             self._handle_details(payload)
         elif topic == devices_response_topic(self._username):
@@ -412,10 +435,10 @@ class AmpioClient:
         elif topic == info_response_topic(self._username):
             self._handle_info(payload)
         elif topic == groups_response_topic(self._username):
-            self._groups_payload = payload
+            self.last_groups_payload = payload
             self._groups_received.set()
         elif topic == group_devices_response_topic(self._username):
-            self._group_devices_payload = payload
+            self.last_group_devices_payload = payload
             self._group_devices_received.set()
         elif topic.endswith("/state") and "/ob/" in topic:
             self._handle_state(topic, payload)
@@ -423,6 +446,7 @@ class AmpioClient:
             self._handle_raw_channel(topic, payload)
 
     def _handle_details(self, payload: str) -> None:
+        self.last_details_payload = payload
         items = _protocol.parse_details(payload)
         if items is None:
             _LOGGER.warning("Could not parse Ampio devicesDetails")
@@ -446,6 +470,7 @@ class AmpioClient:
         self._details_received.set()
 
     def _handle_devices(self, payload: str) -> None:
+        self.last_devices_payload = payload
         modules = _protocol.parse_devices(payload)
         if modules is None:
             _LOGGER.warning("Could not parse Ampio devices list")
@@ -459,6 +484,7 @@ class AmpioClient:
         self._devices_received.set()
 
     def _handle_info(self, payload: str) -> None:
+        self.last_info_payload = payload
         self.state.server_info = _protocol.parse_server_info(payload)
         self._info_received.set()
 

@@ -7,7 +7,13 @@ from .const import InputKind, SensorKind, classify_input, classify_object
 from .device_types import Capability, module_capabilities, module_model
 from .discovery import DiscoveryResult, discover
 from .errors import AmpioAuthError, AmpioConnectionError, AmpioError
-from .models import AmpioModule, AmpioObject, AmpioServerInfo, AmpioState
+from .models import (
+    AmpioModule,
+    AmpioObject,
+    AmpioServerInfo,
+    AmpioState,
+    ConnectionStats,
+)
 
 __all__ = [
     "AmpioAuthError",
@@ -19,6 +25,7 @@ __all__ = [
     "AmpioServerInfo",
     "AmpioState",
     "Capability",
+    "ConnectionStats",
     "DiscoveryResult",
     "InputKind",
     "SensorKind",
@@ -29,4 +36,4 @@ __all__ = [
     "module_model",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
