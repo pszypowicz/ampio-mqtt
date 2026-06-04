@@ -203,3 +203,67 @@ async def test_start_drives_full_discovery_through_mocked_broker() -> None:
         }.issubset(set(FakeMqttClient.subscribed))
     finally:
         await client.stop()
+
+
+async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None:
+    """All four discovery messages populate the client and the wait returns True."""
+    info_topic = f"ampio/fromDB/{USER}/data/info"
+    details_topic = f"ampio/fromDB/{USER}/config/devicesDetails"
+    devices_topic = f"ampio/fromDB/{USER}/config/devices"
+    states_topic = f"ampio/fromDB/{USER}/data/states"
+    FakeMqttClient.scripted_messages = [
+        _Message(
+            devices_topic,
+            json.dumps(
+                {"List": [{"id": 17, "mac": 52111, "typ_urzadzenia": 44}]}
+            ).encode(),
+        ),
+        _Message(
+            details_topic,
+            json.dumps(
+                {
+                    "List": [
+                        {
+                            "id": 41,
+                            "id_urzadzenia": 17,
+                            "typ_komponentu": "temp",
+                            "interpretacja": 1,
+                            "opis_menu": "Salon",
+                        }
+                    ]
+                }
+            ).encode(),
+        ),
+        _Message(states_topic, json.dumps({"List": []}).encode()),
+        _Message(info_topic, json.dumps({"Results": {"mac": 99}}).encode()),
+    ]
+    client = AmpioClient("h", username=USER, reconnect_interval=0.0)
+    with patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient):
+        await client.start(timeout=2.0, discovery_timeout=1.0)
+    try:
+        assert await client.wait_for_initial_discovery(timeout=1.0) is True
+        assert client.modules and 17 in client.modules
+        assert client.objects and 41 in client.objects
+        assert client.server_info is not None and client.server_info.mac == 99
+    finally:
+        await client.stop()
+
+
+async def test_wait_for_initial_discovery_returns_false_on_timeout() -> None:
+    """A partial discovery set leaves the wait returning False without raising."""
+    details_topic = f"ampio/fromDB/{USER}/config/devicesDetails"
+    devices_topic = f"ampio/fromDB/{USER}/config/devices"
+    states_topic = f"ampio/fromDB/{USER}/data/states"
+    # No info message scripted -> _info_received never fires.
+    FakeMqttClient.scripted_messages = [
+        _Message(devices_topic, json.dumps({"List": []}).encode()),
+        _Message(details_topic, json.dumps({"List": []}).encode()),
+        _Message(states_topic, json.dumps({"List": []}).encode()),
+    ]
+    client = AmpioClient("h", username=USER, reconnect_interval=0.0)
+    with patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient):
+        await client.start(timeout=2.0, discovery_timeout=0.1)
+        try:
+            assert await client.wait_for_initial_discovery(timeout=0.1) is False
+        finally:
+            await client.stop()
