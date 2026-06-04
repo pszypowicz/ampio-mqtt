@@ -12,6 +12,7 @@ coverage.xml
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+uv.lock
 
 # Secrets / local config (never commit credentials)
 *.env
