@@ -22,12 +22,8 @@ library itself is Home Assistant agnostic.
 
 ## Status
 
-Beta. The library is iterated alongside the home-assistant/core ampio
-integration; both move together. There is no API stability promise at this
-stage - any 0.x.x release may break consumers. The `1.0.0` cut ships when
-the HA Core integration PR is accepted.
-
-Currently supports:
+Beta, iterated alongside the home-assistant/core ampio integration (see the
+stability note above). Currently supports:
 
 - TCP connection to the Ampio MQTT broker with username/password auth and
   auto-reconnect with capped exponential backoff and jitter,

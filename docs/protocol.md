@@ -44,9 +44,9 @@ immediately.
 
 ## Library helpers
 
-| Method                          | What it does                                                                                                                                                                                                    |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AmpioClient.start()`           | Connects, subscribes, publishes the three auto-discovery keywords (`devicesDetails`, `devices`, info / states), waits for responses, returns. See [`discovery-flow.md`](discovery-flow.md).                     |
-| `AmpioClient.fetch_rooms()`     | One-shot: publishes `groups` + `group_devices`, joins both responses into `{object_id: room_name}`. On-demand because the consumer decides when room hints are needed.                                          |
-| `AmpioClient.fetch_locations()` | One-shot: publishes `locations`, returns `{location_id: label}`. On-demand for the same reason.                                                                                                                 |
-| `AmpioClient.last_payloads`     | `{endpoint_name: payload}` of the verbatim retained response per endpoint (`details`, `devices`, `states`, `info`, `groups`, `group_devices`, `locations`). Intended for the HA integration's diagnostics blob. |
+| Method                          | What it does                                                                                                                                                                                                                                 |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AmpioClient.start()`           | Connects, subscribes, publishes the four auto-discovery requests (`devicesDetails` and `devices` keywords, plus the empty-payload `states` and `info` surfaces), waits for responses, returns. See [`discovery-flow.md`](discovery-flow.md). |
+| `AmpioClient.fetch_rooms()`     | One-shot: publishes `groups` + `group_devices`, joins both responses into `{object_id: room_name}`. On-demand because the consumer decides when room hints are needed.                                                                       |
+| `AmpioClient.fetch_locations()` | One-shot: publishes `locations`, returns `{location_id: label}`. On-demand for the same reason.                                                                                                                                              |
+| `AmpioClient.last_payloads`     | `{endpoint_name: payload}` of the verbatim retained response per endpoint (`details`, `devices`, `states`, `info`, `groups`, `group_devices`, `locations`). Intended for the HA integration's diagnostics blob.                              |
