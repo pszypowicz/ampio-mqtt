@@ -47,20 +47,25 @@ if ((BigInt(J.params) & M) > 0 && (J.params & 16) === 0) { ... }
 ## Classification: `ARe` then `RRe`
 
 ```js
-let Q = ARe(Number(J.type));                       // (a) by numeric Matter type
-if (!Q) Q = RRe(J.typ_komponentu, J.leafId);       // (b) fallback
+let Q = ARe(Number(J.type)); // (a) by numeric Matter type
+if (!Q) Q = RRe(J.typ_komponentu, J.leafId); // (b) fallback
 ```
 
 ### `ARe(type)` - "findDeviceByType" (primary)
 
 ```js
-function ARe(t){ return uo.find(e => e.deviceType === t) }
+function ARe(t) {
+  return uo.find((e) => e.deviceType === t);
+}
 ```
 
 `uo` is the registry of supported Matter device types; `ARe` returns the one
 whose `deviceType` equals the object's numeric `type` field. `type` is a Matter
-device-type ID **hand-set in Designer**. On the reference install only
-air-quality (`44`) and temperature (`770`) objects carry one.
+device-type ID **hand-set in Designer**, so an object carries one only where the
+user assigned it. On the live reference install relays (`256`/`266`), lights
+(`257`/`269`), flags (`266`), air-quality (`44`), and temperature (`770`)
+objects carry one; most analog/environmental channels (humidity, pressure,
+loudness, illuminance, CO2) leave it empty.
 
 ### `RRe(typ_komponentu, leafId)` - "findDeviceByComponent" (fallback)
 
@@ -70,30 +75,30 @@ against `name:"…"` definitions.
 
 `typ_komponentu` switch:
 
-| `typ_komponentu`                         | Matter device       | `deviceType`   |
-| ---------------------------------------- | ------------------- | -------------- |
-| `roleta`, `roleta_lamelki`, `roleta_procenty` | WindowCovering | 514 (0x0202)   |
-| `reg`, `ac`                              | Thermostat          | 769 (0x0301)   |
-| `temp`                                   | TemperatureSensor   | 770 (0x0302)   |
-| `przekaznik`, `flaga`                    | **OnOffLight**      | 256 (0x0100)   |
-| `led`, `flaga_liniowa`, `flaga_liniowa16`| DimmableLight       | 257 (0x0101)   |
-| `rgb`, `rgbw`, `rgbww`, `ledww`          | ExtendedColorLight  | 269 (0x010D)   |
-| `wej`                                    | OnOffSensor         | 2128 (0x0850)  |
-| `radio`, `ip_radio`                      | Speaker             | 34 (0x0022)    |
+| `typ_komponentu`                              | Matter device      | `deviceType`  |
+| --------------------------------------------- | ------------------ | ------------- |
+| `roleta`, `roleta_lamelki`, `roleta_procenty` | WindowCovering     | 514 (0x0202)  |
+| `reg`, `ac`                                   | Thermostat         | 769 (0x0301)  |
+| `temp`                                        | TemperatureSensor  | 770 (0x0302)  |
+| `przekaznik`, `flaga`                         | **OnOffLight**     | 256 (0x0100)  |
+| `led`, `flaga_liniowa`, `flaga_liniowa16`     | DimmableLight      | 257 (0x0101)  |
+| `rgb`, `rgbw`, `rgbww`, `ledww`               | ExtendedColorLight | 269 (0x010D)  |
+| `wej`                                         | OnOffSensor        | 2128 (0x0850) |
+| `radio`, `ip_radio`                           | Speaker            | 34 (0x0022)   |
 
 `leafId` table (only reached when the switch misses, e.g. for `lin_wej`).
 `leafId` is `0_<macHex>_<F2>_<F3>_<F4>`; the table reads **F2** and **F4**
 (F3 is parsed into a variable and then never used):
 
-| F2       | F4  | Matter device                     | `deviceType` |
-| -------- | --- | --------------------------------- | ------------ |
-| 72 or 73 | 0   | HumiditySensor                    | 775 (0x0307) |
-| 72 or 73 | 1   | PressureSensor                    | 773 (0x0305) |
-| 74       | 0   | LightSensor (illuminance)         | 262 (0x0106) |
-| 74       | 1   | AirQualitySensor                  | 44 (0x002C)  |
-| 74       | 2   | PressureSensor                    | 773 (0x0305) |
-| 77       | any | LightSensor                       | 262 (0x0106) |
-| 75       | any | AirQualitySensor + CO2 numeric    | 44 + CO2 cluster |
+| F2       | F4  | Matter device                  | `deviceType`     |
+| -------- | --- | ------------------------------ | ---------------- |
+| 72 or 73 | 0   | HumiditySensor                 | 775 (0x0307)     |
+| 72 or 73 | 1   | PressureSensor                 | 773 (0x0305)     |
+| 74       | 0   | LightSensor (illuminance)      | 262 (0x0106)     |
+| 74       | 1   | AirQualitySensor               | 44 (0x002C)      |
+| 74       | 2   | PressureSensor                 | 773 (0x0305)     |
+| 77       | any | LightSensor                    | 262 (0x0106)     |
+| 75       | any | AirQualitySensor + CO2 numeric | 44 + CO2 cluster |
 
 The `75` branch returns an AirQualitySensor decorated with a
 `CarbonDioxideConcentrationMeasurementServer` (`NumericMeasurement`).
@@ -104,8 +109,10 @@ The `75` branch returns an AirQualitySensor decorated with a
   channel falls through to the `leafId` table (or needs a hand-set numeric
   `type`). The string `lin_wej` does not appear anywhere in the bundle.
 - **The `leafId` table is effectively dead code on the reference install.**
-  Every Matter-exposed sensor there happens to carry a numeric `type`, so `ARe`
-  always answers first and the `(F2,F4)` table is never reached.
+  Every Matter-exposed sensor there is answered earlier in the chain -
+  air-quality by `ARe` (its `type=44`), temperature by the `typ_komponentu`
+  switch (the `temp` branch, since most exposed temperature objects leave `type`
+  empty) - so the `(F2,F4)` table is never reached.
 - **F3 is parsed but unused** - only `(F2, F4)` decide the type.
 - **No `(73, 2)` rule -> Loudness / sound-pressure is unmappable.** Matter has
   no sound-pressure device type, and the bridge has no branch for it, so a
@@ -118,12 +125,12 @@ The `75` branch returns an AirQualitySensor decorated with a
 - **`przekaznik`/`flaga` -> OnOffLight (256)**, not a generic on/off plug, and
   **`wej` -> OnOffSensor (2128)**. Relays therefore appear in Matter as lights.
 
-## What the bridge actually exposes (reference install: 39 modules, 131 objects)
+## What the bridge actually exposes (live reference install: 39 modules, 134 objects)
 
-Only **7 environmental channels** reach Matter: 6 air-quality (`type=44`) + 1
-temperature (`type=770`). **Humidity, Brightness/Illuminance, Loudness, and CO2
-are exposed on zero modules** - their objects have the matter-exposed flag clear
-(`params` bit 37 unset), so they are dropped at the gate before any
+Only **12 environmental channels** reach Matter: 6 air-quality (`type=44`) + 6
+temperature. **Humidity, both pressure channels, Loudness, Brightness/Illuminance,
+and CO2 are exposed on zero modules** - their objects have the matter-exposed
+flag clear (`params` bit 37 unset), so they are dropped at the gate before any
 classification. Loudness could not be exposed even if flagged.
 
 ## Implications for this library and the HA integration

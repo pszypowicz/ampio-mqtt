@@ -36,11 +36,12 @@ A replacement-stable composite the HA integration uses for `unique_id`:
 
 `prefix` is the M-SERV's own CAN mac (from `AmpioServerInfo.mac`).
 The composite is collision-free **once hidden objects are filtered out**
-(see Visibility below). The one observed collision - the same physical
-channel materialised as a phantom stub and a labelled object sharing one
-`leaf_id` - is resolved because the phantom carries the `params` hidden
-flag, so `visible` drops it. #15 tracks the history; the hidden flag is
-the replacement-stable discriminator that closes it.
+(see Visibility below). The collision it closes - the same physical
+channel materialised as both a phantom stub and a labelled object sharing
+one `leaf_id` - is resolved because the phantom carries the `params`
+hidden flag, so `visible` drops it. (Live installs can carry several such
+pairs at once, all on M-SENS analog channels.) #15 tracks the history;
+the hidden flag is the replacement-stable discriminator that closes it.
 
 ## Visibility (`AmpioObject.visible`)
 
