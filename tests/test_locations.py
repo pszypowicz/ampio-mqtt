@@ -38,7 +38,7 @@ async def test_fetch_locations_raises_when_not_connected() -> None:
 async def test_fetch_locations_publishes_keyword_and_parses_response() -> None:
     client = AmpioClient("host", username="u", password="p")
     fake_broker = _FakeMqttClient()
-    client._client = fake_broker  # type: ignore[assignment]
+    client._connection._client = fake_broker  # type: ignore[assignment]
 
     payload = json.dumps(
         {
@@ -67,14 +67,14 @@ async def test_fetch_locations_publishes_keyword_and_parses_response() -> None:
 
 async def test_fetch_locations_times_out_when_response_missing() -> None:
     client = AmpioClient("host", username="u", password="p")
-    client._client = _FakeMqttClient()  # type: ignore[assignment]
+    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
     with pytest.raises(AmpioConnectionError):
         await client.fetch_locations(timeout=0.05)
 
 
 async def test_fetch_locations_skips_malformed_entries() -> None:
     client = AmpioClient("host", username="u", password="p")
-    client._client = _FakeMqttClient()  # type: ignore[assignment]
+    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
 
     payload = json.dumps(
         {
@@ -105,7 +105,7 @@ async def test_fetch_locations_skips_malformed_entries() -> None:
 async def test_fetch_locations_recovers_from_malformed_response() -> None:
     """A garbage payload yields an empty dict, not a crash."""
     client = AmpioClient("host", username="u", password="p")
-    client._client = _FakeMqttClient()  # type: ignore[assignment]
+    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
 
     async def _deliver() -> None:
         await asyncio.sleep(0)
@@ -121,7 +121,7 @@ async def test_fetch_locations_recovers_from_malformed_response() -> None:
 
 async def test_fetch_locations_clears_state_between_calls() -> None:
     client = AmpioClient("host", username="u", password="p")
-    client._client = _FakeMqttClient()  # type: ignore[assignment]
+    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
 
     async def _deliver(payload: str) -> None:
         await asyncio.sleep(0)
@@ -148,6 +148,6 @@ async def test_fetch_locations_propagates_publish_failure() -> None:
             raise aiomqtt.MqttError("publish failed")
 
     client = AmpioClient("host", username="u", password="p")
-    client._client = _RaisingClient()  # type: ignore[assignment]
+    client._connection._client = _RaisingClient()  # type: ignore[assignment]
     with pytest.raises(aiomqtt.MqttError):
         await client.fetch_locations(timeout=1.0)

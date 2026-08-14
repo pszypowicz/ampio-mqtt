@@ -9,17 +9,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import random
 import time
-import uuid
 from collections.abc import Callable
 from contextlib import suppress
-from functools import partial
 from typing import Any
 
-import aiomqtt
-
-from . import _protocol
+from . import _connection, _protocol
+from ._store import AmpioStore
 from .const import (
     DISCOVERY_ADMIN,
     DISCOVERY_COMMON,
@@ -32,32 +28,27 @@ from .const import (
     RAW_INPUT_WILDCARDS,
     AccessTier,
     Endpoint,
-    classify,
     command_payload,
     command_topic,
     event_payload,
-    input_channel_prefix,
     ob_state_wildcard,
     request_topic,
     response_topic,
     scene_payload,
 )
 from .device_types import Capability
-from .errors import AmpioAuthError, AmpioConnectionError
+from .errors import AmpioConnectionError
 from .models import (
     AmpioEvent,
     AmpioModule,
     AmpioObject,
     AmpioScene,
     AmpioServerInfo,
-    AmpioState,
     ConnectionStats,
 )
 from .rooms import join_rooms
 
 _LOGGER = logging.getLogger(__name__)
-
-_RECONNECT_BACKOFF_MAX = 60.0
 
 ObjectListener = Callable[[AmpioObject], None]
 ModuleListener = Callable[[AmpioModule], None]
@@ -78,94 +69,83 @@ class AmpioClient:
         reconnect_interval: float = 5.0,
     ) -> None:
         """Initialize the client. `username` also namespaces the MQTT topics."""
-        self._host = host
-        self._port = port
         self._username = username or ""
-        self._password = password
-        self._reconnect_interval = reconnect_interval
-        # Stable client identifier; reusing the same id across reconnects keeps
-        # the broker from seeing parallel "ghost" sessions while the previous
-        # one expires.
-        self._client_id = f"ampio_mqtt_{uuid.uuid4().hex}"
+        self._store = AmpioStore(self._username)
+        self.stats = ConnectionStats()
+        self._connection = _connection.Connection(
+            host,
+            port,
+            username,
+            password,
+            reconnect_interval=reconnect_interval,
+            topics=self._subscriptions(),
+            stats=self.stats,
+            on_message=self._handle_message,
+            on_availability=self._handle_availability,
+            on_connected=self.refresh,
+        )
 
-        self.state = AmpioState()
         self._object_listeners: list[ObjectListener] = []
         self._module_listeners: list[ModuleListener] = []
         self._event_listeners: list[EventListener] = []
         self._availability_listeners: list[AvailabilityListener] = []
 
-        # Raw-channel bridge: maps a decoded channel topic to the Designer
-        # object that owns it. Key is (module.mac, prefix, channel) -> object_id.
-        self._input_index: dict[tuple[int, str, int], int] = {}
-        # Effective bus mac -> module, for routing the module's own broadcasts.
-        self._module_by_mac: dict[int, AmpioModule] = {}
-        # Object ids for which a raw-channel message has actually arrived. Once
-        # an input is "raw-proven", the faster raw stream is authoritative and
-        # its per-object echoes are suppressed; an input never seen on the raw
-        # path (e.g. an M-SERV-internal object) keeps its per-object updates.
-        self._raw_seen_ids: set[int] = set()
-
-        self._client: aiomqtt.Client | None = None
-        self._runner: asyncio.Task[None] | None = None
-        self._connected = asyncio.Event()
-        self._auth_failed = asyncio.Event()
-
-        # Per-endpoint latch: set the first time each endpoint's reply lands.
-        # wait_for_initial_discovery() awaits the `initial` subset; fetch_rooms /
-        # fetch_locations await their own. Derived from the endpoint table so a
-        # new endpoint needs no new field here.
+        # Per-endpoint latch, set the first time each reply lands. Derived from
+        # the endpoint table so a new endpoint needs no new field here.
         self._received: dict[str, asyncio.Event] = {
             ep.name: asyncio.Event() for ep in ENDPOINTS
         }
-        # Response topic -> endpoint, for O(1) dispatch routing.
-        self._by_response: dict[str, Endpoint] = {
-            response_topic(ep, self._username): ep for ep in ENDPOINTS
-        }
-        # Endpoints whose reply mutates state, each returning whether the payload
-        # parsed (a malformed reply leaves the latch unset). The rest (groups /
-        # group_devices / locations) are pure request/response: their payload is
-        # retained and the latch set, and fetch_* parse it on demand.
-        self._handlers: dict[str, Callable[[str], bool]] = {
-            "details": partial(self._handle_catalogue, "devicesDetails"),
-            "devices": self._handle_devices,
-            "states": self._handle_states_snapshot,
-            "info": self._handle_info,
-            "data_devices": partial(self._handle_catalogue, "data/devices"),
-            "params_devices": self._handle_params_devices,
-        }
-        # Full-catalogue `{object_id: params}` table from `data/params_devices`
-        # (not grant-filtered). Consulted by `_handle_data_devices` because the
-        # app-sync catalogue rows carry no `params` column, and reply order
-        # between the two endpoints is not guaranteed.
-        self._params_by_id: dict[int, int] = {}
-        # Last payload per endpoint as the broker sent it, retained for
-        # downstream diagnostics so a tester report can include the actual JSON
-        # the M-SERV emitted without re-deriving it.
+        # Last payload per endpoint as the broker sent it: the on-demand
+        # fetches parse theirs out of here, and a consumer can put the verbatim
+        # JSON into a diagnostics report without re-deriving it.
         self._last_payloads: dict[str, str] = {}
 
-        # Connection liveness counters surfaced as `client.stats`.
-        self.stats = ConnectionStats()
+    def _subscriptions(self) -> list[str]:
+        """Every topic the client needs on each (re)connect."""
+        return [
+            *(response_topic(ep, self._username) for ep in ENDPOINTS),
+            ob_state_wildcard(self._username),
+            *RAW_INPUT_WILDCARDS,
+            RAW_DIAGNOSTICS_WILDCARD,
+            RAW_EVENT_WILDCARD,
+        ]
 
-        self._auth_error_message: str | None = None
-        self._available = False
-        self._stop = False
+    def _handle_message(self, topic: str, payload: str) -> None:
+        """Apply one message, then tell whoever the change concerns."""
+        self.stats.last_message_at = time.time()
+        applied = self._store.apply(topic, payload)
+        if applied.endpoint is not None:
+            self._last_payloads[applied.endpoint.name] = payload
+            # Latch only on a payload that parsed, so a malformed reply does
+            # not falsely complete discovery.
+            if applied.parsed:
+                self._received[applied.endpoint.name].set()
+        for obj in applied.objects:
+            _emit(self._object_listeners, obj, "object")
+        for module in applied.modules:
+            _emit(self._module_listeners, module, "module")
+        for event in applied.events:
+            _emit(self._event_listeners, event, "event")
+
+    def _handle_availability(self, available: bool) -> None:
+        _emit(self._availability_listeners, available, "availability")
 
     # --- public API -------------------------------------------------------
 
     @property
     def objects(self) -> dict[int, AmpioObject]:
         """All known objects keyed by id."""
-        return self.state.objects
+        return self._store.objects
 
     @property
     def modules(self) -> dict[int, AmpioModule]:
         """All known physical modules keyed by id."""
-        return self.state.modules
+        return self._store.modules
 
     @property
     def server_info(self) -> AmpioServerInfo | None:
         """The Ampio M-SERV self-reported info, if discovered."""
-        return self.state.server_info
+        return self._store.server_info
 
     @property
     def mserv_id(self) -> int | None:
@@ -175,14 +155,14 @@ class AmpioClient:
         module's mac_global/mac; falls back to the unique module the device
         catalogue marks as a hub.
         """
-        info = self.state.server_info
+        info = self._store.server_info
         if info is not None and info.mac is not None:
-            for mid, mod in self.state.modules.items():
+            for mid, mod in self._store.modules.items():
                 if info.mac in (mod.mac_global, mod.mac):
                     return mid
         candidates = [
             mid
-            for mid, mod in self.state.modules.items()
+            for mid, mod in self._store.modules.items()
             if Capability.HUB in mod.capabilities
         ]
         if len(candidates) == 1:
@@ -192,12 +172,12 @@ class AmpioClient:
     @property
     def sensors(self) -> dict[int, AmpioObject]:
         """Objects classified as sensors."""
-        return self.state.sensors
+        return self._store.state.sensors
 
     @property
     def available(self) -> bool:
         """Whether the broker connection is up."""
-        return self._available
+        return self._connection.available
 
     @property
     def access_tier(self) -> AccessTier:
@@ -281,35 +261,21 @@ class AmpioClient:
         """
         user = username or ""
         info = ENDPOINT_BY_NAME["info"]
-        info_topic = response_topic(info, user)
-        try:
-            async with aiomqtt.Client(
-                hostname=host,
-                port=port,
-                username=username,
-                password=password,
-                identifier=f"ampio_mqtt_test_{uuid.uuid4().hex}",
-                timeout=10,
-            ) as client:
-                await client.subscribe(info_topic)
-                await client.publish(
-                    request_topic(info, user), info.req_payload.encode()
-                )
-                try:
-                    async with asyncio.timeout(info_timeout):
-                        async for message in client.messages:
-                            if str(message.topic) != info_topic:
-                                continue
-                            return _protocol.parse_server_info(
-                                _decode_payload(message.payload)
-                            )
-                except TimeoutError:
-                    return AmpioServerInfo()
-        except aiomqtt.MqttError as err:
-            if _protocol.is_auth_error(err):
-                raise AmpioAuthError(str(err)) from err
-            raise AmpioConnectionError(str(err)) from err
-        return AmpioServerInfo()
+        payload = await _connection.probe(
+            host,
+            port,
+            username,
+            password,
+            request_topic=request_topic(info, user),
+            request_payload=info.req_payload,
+            reply_topic=response_topic(info, user),
+            timeout=info_timeout,
+        )
+        return (
+            AmpioServerInfo()
+            if payload is None
+            else _protocol.parse_server_info(payload)
+        )
 
     async def start(
         self, *, timeout: float = 15.0, discovery_timeout: float = 8.0
@@ -329,32 +295,7 @@ class AmpioClient:
         `modules`/`objects`/`server_info` before building on top of the client
         should call that method rather than relying on `start()`'s timing.
         """
-        self._stop = False
-        self._connected.clear()
-        self._auth_failed.clear()
-        self._auth_error_message = None
-        self._runner = asyncio.create_task(self._run())
-        connected_task = asyncio.create_task(self._connected.wait())
-        auth_failed_task = asyncio.create_task(self._auth_failed.wait())
-        try:
-            done, _ = await asyncio.wait(
-                {connected_task, auth_failed_task},
-                timeout=timeout,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-        finally:
-            for task in (connected_task, auth_failed_task):
-                if not task.done():
-                    task.cancel()
-        if not done:
-            await self.stop()
-            raise AmpioConnectionError("Timed out connecting to Ampio")
-        if self._auth_failed.is_set():
-            await self.stop()
-            raise AmpioAuthError(
-                self._auth_error_message or "Authentication rejected by Ampio broker"
-            )
-
+        await self._connection.open(timeout)
         await self.wait_for_initial_discovery(timeout=discovery_timeout)
 
     async def wait_for_initial_discovery(
@@ -435,17 +376,7 @@ class AmpioClient:
         already failed: whatever it died of is logged rather than raised, so a
         consumer can always tear the client down.
         """
-        self._stop = True
-        runner, self._runner = self._runner, None
-        if runner is None:
-            return
-        runner.cancel()
-        try:
-            await runner
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            _LOGGER.exception("Ampio connection loop failed")
+        await self._connection.close()
 
     async def request(self, name: str) -> None:
         """Publish the request keyword for endpoint ``name``.
@@ -514,9 +445,7 @@ class AmpioClient:
         cannot command directly.
         """
         _check_range("event_number", event_number, 1, 65535)
-        if self._client is None:
-            raise AmpioConnectionError("Not connected")
-        await self._client.publish(
+        await self._connection.publish(
             command_topic(self._username), event_payload(event_number).encode()
         )
 
@@ -538,9 +467,7 @@ class AmpioClient:
         Like any other command these are bounded by the account's grant, so a
         scene touching objects outside it does nothing.
         """
-        if self._client is None:
-            raise AmpioConnectionError("Not connected")
-        await self._client.publish(
+        await self._connection.publish(
             command_topic(self._username), scene_payload(scene_id, verb).encode()
         )
 
@@ -602,9 +529,7 @@ class AmpioClient:
         Note the M-SERV does not restrict commands to the objects an account
         was granted in the app; a non-admin account can command any object.
         """
-        if self._client is None:
-            raise AmpioConnectionError("Not connected")
-        await self._client.publish(
+        await self._connection.publish(
             command_topic(self._username),
             command_payload(object_id, verb, args).encode(),
         )
@@ -689,9 +614,7 @@ class AmpioClient:
 
     async def _publish(self, ep: Endpoint) -> None:
         """Publish an endpoint's request keyword to its control topic."""
-        if self._client is None:
-            raise AmpioConnectionError("Not connected")
-        await self._client.publish(
+        await self._connection.publish(
             request_topic(ep, self._username), ep.req_payload.encode()
         )
 
@@ -703,8 +626,6 @@ class AmpioClient:
         Clears each endpoint's latch and retained payload first so a stale prior
         reply can't satisfy the wait, then publishes and awaits all of them.
         """
-        if self._client is None:
-            raise AmpioConnectionError("Not connected")
         for name in names:
             self._received[name].clear()
             self._last_payloads.pop(name, None)
@@ -720,364 +641,11 @@ class AmpioClient:
         """Inject a message directly into the routing logic.
 
         Private entry point used by the library's own tests; the real broker
-        drives the same logic through `_run`.
+        drives the same path through the connection.
         """
-        self._dispatch(topic, _decode_payload(payload))
+        self._handle_message(topic, _decode_payload(payload))
 
     # --- internal ---------------------------------------------------------
-
-    async def _run(self) -> None:
-        user = self._username
-        attempt = 0
-        while not self._stop:
-            try:
-                async with aiomqtt.Client(
-                    hostname=self._host,
-                    port=self._port,
-                    username=self._username,
-                    password=self._password,
-                    identifier=self._client_id,
-                    timeout=10,
-                ) as client:
-                    self._client = client
-                    for ep in ENDPOINTS:
-                        await client.subscribe(response_topic(ep, user))
-                    await client.subscribe(ob_state_wildcard(user))
-                    for wildcard in RAW_INPUT_WILDCARDS:
-                        await client.subscribe(wildcard)
-                    await client.subscribe(RAW_DIAGNOSTICS_WILDCARD)
-                    await client.subscribe(RAW_EVENT_WILDCARD)
-                    if self.stats.started_at is None:
-                        self.stats.started_at = time.time()
-                    else:
-                        self.stats.reconnect_count += 1
-                    self._set_available(True)
-                    self._connected.set()
-                    attempt = 0
-                    await self.refresh()
-                    async for message in client.messages:
-                        self._dispatch(
-                            str(message.topic), _decode_payload(message.payload)
-                        )
-            except aiomqtt.MqttError as err:
-                self.stats.last_error = str(err)
-                if _protocol.is_auth_error(err):
-                    # Reconnecting will not help; surface to start() and stop.
-                    self._auth_error_message = str(err)
-                    self._auth_failed.set()
-                    self._stop = True
-                else:
-                    _LOGGER.debug("Ampio MQTT connection error: %s", err)
-            finally:
-                self._client = None
-                self._set_available(False)
-            if not self._stop:
-                await asyncio.sleep(self._backoff_seconds(attempt))
-                attempt += 1
-
-    def _backoff_seconds(self, attempt: int) -> float:
-        """Capped exponential backoff with jitter, in seconds.
-
-        Caps so a long outage with many concurrent installs does not
-        thunder-herd the broker on recovery.
-        """
-        base = self._reconnect_interval
-        # The exponent is clamped because attempts are unbounded: a broker down
-        # overnight would otherwise overflow the float and kill the retry loop.
-        capped = min(_RECONNECT_BACKOFF_MAX, base * (2.0 ** min(attempt, 16)))
-        return float(capped + random.uniform(0.0, base))
-
-    def _set_available(self, available: bool) -> None:
-        if available == self._available:
-            return
-        self._available = available
-        _emit(self._availability_listeners, available, "availability")
-
-    def _dispatch(self, topic: str, payload: str) -> None:
-        """Route a received MQTT message to the appropriate handler."""
-        self.stats.last_message_at = time.time()
-        ep = self._by_response.get(topic)
-        if ep is not None:
-            # Retain the verbatim payload for diagnostics, apply any state
-            # handler, and latch the endpoint - but only if it parsed, so a
-            # malformed reply does not falsely complete discovery.
-            self._last_payloads[ep.name] = payload
-            handler = self._handlers.get(ep.name)
-            if handler is None or handler(payload):
-                self._received[ep.name].set()
-            return
-        if topic.endswith("/state") and "/ob/" in topic:
-            self._handle_state(topic, payload)
-        elif topic.startswith("ampio/from/") and "/state/" in topic:
-            self._handle_raw_channel(topic, payload)
-        elif topic.startswith("ampio/from/") and "/b/" in topic:
-            self._handle_diagnostics(topic, payload)
-        elif topic.startswith("ampio/from/") and topic.endswith("/event"):
-            self._handle_event(topic, payload)
-
-    def _handle_catalogue(self, surface: str, payload: str) -> bool:
-        """Apply an object catalogue from either discovery surface.
-
-        The two surfaces carry the same rows: the app-sync one simply omits
-        ``params`` (which the ``params_devices`` table supplies instead) and
-        ``stan_json``, so one merge covers both. On the admin tier both answer,
-        and the second pass changes nothing.
-        """
-        items = _protocol.parse_details(payload)
-        if items is None:
-            _LOGGER.warning("Could not parse Ampio %s catalogue", surface)
-            return False
-        touched = False
-        for meta in items:
-            touched |= self._merge_metadata(meta)
-        if touched:
-            self._rebuild_indexes()
-        return True
-
-    def _merge_metadata(self, meta: _protocol.ObjectMetadata) -> bool:
-        """Fold one catalogue row into its object; True when anything changed.
-
-        Only a real change notifies, so re-requesting the catalogue on every
-        reconnect does not hand a consumer a full set of updates that say
-        nothing new.
-        """
-        obj = self.state.objects.get(meta.id)
-        if obj is None:
-            obj = AmpioObject(id=meta.id)
-            self.state.objects[meta.id] = obj
-        before = (
-            obj.device_id,
-            obj.typ_komponentu,
-            obj.name,
-            obj.interpretacja,
-            obj.funkcja,
-            obj.leaf_id,
-            obj.params,
-            obj.kind,
-        )
-        obj.device_id = meta.device_id
-        obj.typ_komponentu = meta.typ_komponentu
-        obj.name = meta.name or obj.name
-        obj.interpretacja = meta.interpretacja
-        obj.funkcja = meta.funkcja
-        obj.leaf_id = meta.leaf_id
-        # A row without the column leaves the params_devices value standing.
-        params = (
-            meta.params if meta.params is not None else self._params_by_id.get(meta.id)
-        )
-        if params is not None:
-            obj.params = params
-        obj.kind = classify(meta.typ_komponentu, meta.interpretacja)
-        changed = before != (
-            obj.device_id,
-            obj.typ_komponentu,
-            obj.name,
-            obj.interpretacja,
-            obj.funkcja,
-            obj.leaf_id,
-            obj.params,
-            obj.kind,
-        )
-        if meta.stan_json is not None:
-            changed |= self._apply_stan_json(obj, meta.stan_json)
-        if changed:
-            self._notify(obj)
-        return changed
-
-    def _handle_devices(self, payload: str) -> bool:
-        modules = _protocol.parse_devices(payload)
-        if modules is None:
-            _LOGGER.warning("Could not parse Ampio devices list")
-            return False
-        for module in modules:
-            previous = self.state.modules.get(module.id)
-            if previous is not None:
-                module.last_seen = previous.last_seen
-                module.supply_voltage = previous.supply_voltage
-                module.temperature = previous.temperature
-            self.state.modules[module.id] = module
-        self._rebuild_indexes()
-        return True
-
-    def _handle_params_devices(self, payload: str) -> bool:
-        """Apply the ``data/params_devices`` params table.
-
-        Stores the full table for catalogue rows that arrive later, and
-        updates objects already known. Ids with no known object create no
-        placeholder: the table is not grant-filtered, so on a restricted
-        account most of it refers to objects the account cannot otherwise see.
-        """
-        table = _protocol.parse_params_devices(payload)
-        if table is None:
-            _LOGGER.warning("Could not parse Ampio params_devices table")
-            return False
-        self._params_by_id = table
-        for oid, params in table.items():
-            obj = self.state.objects.get(oid)
-            if obj is not None and obj.params != params:
-                obj.params = params
-                self._notify(obj)
-        return True
-
-    def _handle_info(self, payload: str) -> bool:
-        self.state.server_info = _protocol.parse_server_info(payload)
-        return True
-
-    def _handle_states_snapshot(self, payload: str) -> bool:
-        entries = _protocol.parse_states_snapshot(payload)
-        if entries is None:
-            _LOGGER.warning("Could not parse Ampio states snapshot")
-            return False
-        for entry in entries:
-            obj = self.state.objects.get(entry.id)
-            if obj is None:
-                # Metadata not yet known (e.g. snapshot arrived before details).
-                obj = AmpioObject(id=entry.id, kind=classify(None, None))
-                self.state.objects[entry.id] = obj
-            if entry.stan_json is not None and self._apply_stan_json(
-                obj, entry.stan_json
-            ):
-                self._notify(obj)
-        return True
-
-    def _handle_state(self, topic: str, payload: str) -> None:
-        update = _protocol.parse_state_message(topic, payload)
-        if update is None:
-            return
-        if update.id in self._raw_seen_ids:
-            # The faster raw-channel path is authoritative for this input; drop
-            # the slower per-object echo to avoid a double notify and a stale
-            # echo clobbering a fresh raw edge.
-            return
-        obj = self.state.objects.get(update.id)
-        if obj is None:
-            # State raced ahead of the catalogues -> generic sensor until
-            # metadata lands.
-            obj = AmpioObject(id=update.id, kind=classify(None, None))
-            self.state.objects[update.id] = obj
-        obj.value = update.value
-        if update.tilt is not None:
-            obj.tilt_position = update.tilt
-        obj.updated_at = float(update.on_ms) / 1000.0 if update.on_ms else time.time()
-        self._touch_module(obj.device_id, update.on_ms)
-        self._notify(obj)
-
-    def _rebuild_indexes(self) -> None:
-        """Rebuild the routing tables for the raw tree.
-
-        Both are keyed on the module's effective bus address (`mac`, the
-        Designer override) - never `mac_global`, which diverges from the
-        raw-topic MAC on replaced modules. `(mac, prefix, channel)` routes an
-        input channel to its object, covering only bridgeable input types with
-        a known channel and module mac; `mac` alone routes a module's own
-        diagnostics broadcast.
-        """
-        index: dict[tuple[int, str, int], int] = {}
-        for obj in self.state.objects.values():
-            prefix = input_channel_prefix(obj.typ_komponentu)
-            if prefix is None or obj.funkcja is None or obj.device_id is None:
-                continue
-            module = self.state.modules.get(obj.device_id)
-            if module is None or module.mac is None:
-                continue
-            index[(module.mac, prefix, obj.funkcja)] = obj.id
-        self._input_index = index
-        self._module_by_mac = {
-            module.mac: module
-            for module in self.state.modules.values()
-            if module.mac is not None
-        }
-
-    def _handle_raw_channel(self, topic: str, payload: str) -> None:
-        key = _protocol.parse_raw_channel_topic(topic)
-        if key is None:
-            return
-        oid = self._input_index.get(key)
-        if oid is None:
-            return  # channel has no exposed Designer object - ignore
-        obj = self.state.objects[oid]
-        self._raw_seen_ids.add(oid)
-        obj.value = payload.strip()
-        obj.updated_at = time.time()
-        self._touch_module(obj.device_id, None)
-        self._notify(obj)
-
-    def _handle_event(self, topic: str, payload: str) -> None:
-        event = _protocol.parse_event(topic, payload)
-        if event is None:
-            return
-        _emit(self._event_listeners, event, "event")
-
-    def _handle_diagnostics(self, topic: str, payload: str) -> None:
-        mac = _protocol.parse_diagnostics_mac(topic)
-        if mac is None:
-            return
-        module = self._module_by_mac.get(mac)
-        if module is None:
-            return  # a module the catalogue does not list
-        diagnostics = _protocol.parse_diagnostics(payload)
-        if diagnostics is None:
-            return
-        module.supply_voltage = diagnostics.supply_voltage
-        module.temperature = diagnostics.temperature
-        module.last_seen = time.time()
-        _emit(self._module_listeners, module, "module")
-
-    def _apply_stan_json(self, obj: AmpioObject, stan_json: str) -> bool:
-        """Apply a bulk-snapshot value to `obj` when it is not older than what it holds.
-
-        The per-object topics are not retained, so this snapshot is the only
-        resync after a reconnect - during which the object may well have
-        changed. It must therefore be able to correct a stale value, while
-        still losing to the live push that can arrive first on a fresh
-        connection.
-        """
-        seed = _protocol.parse_stan_json(stan_json)
-        if seed is None:
-            return False
-        self._touch_module(obj.device_id, seed.on_ms)
-        reported_at = None if seed.on_ms is None else float(seed.on_ms) / 1000.0
-        if seed.value is None or not self._supersedes(obj, reported_at):
-            return False
-        changed = obj.value != seed.value or (
-            seed.tilt is not None and obj.tilt_position != seed.tilt
-        )
-        obj.value = seed.value
-        if seed.tilt is not None:
-            obj.tilt_position = seed.tilt
-        obj.updated_at = reported_at
-        return changed
-
-    @staticmethod
-    def _supersedes(obj: AmpioObject, reported_at: float | None) -> bool:
-        """Whether a snapshot report should replace what `obj` already holds.
-
-        Undated reports only fill a gap; a dated one wins from the same instant
-        onwards. Both sides are wall-clock epochs - the M-SERV's `on` field and,
-        for the undated raw channel, local receive time.
-        """
-        if obj.value is None:
-            return True
-        if reported_at is None or obj.updated_at is None:
-            return False
-        return reported_at >= obj.updated_at
-
-    def _touch_module(self, module_id: int | None, on_ms: float | None) -> None:
-        """Mark the module as having reported now (or at `on_ms`, server time)."""
-        if module_id is None:
-            return
-        module = self.state.modules.get(module_id)
-        if module is None:
-            return
-        if on_ms is not None and on_ms > 0:
-            ts = float(on_ms) / 1000.0
-        else:
-            ts = time.time()
-        if module.last_seen is None or ts > module.last_seen:
-            module.last_seen = ts
-
-    def _notify(self, obj: AmpioObject) -> None:
-        _emit(self._object_listeners, obj, "object")
 
 
 def _emit(listeners: list[Any], payload: Any, kind: str) -> None:

@@ -22,8 +22,11 @@ the library's own accessors degrade gracefully when nothing is known
 yet, so this guarantee exists for consumers, not for the library.
 
 Authoritative source:
-[`src/ampio_mqtt/client.py`](../src/ampio_mqtt/client.py) (`_run`,
-`_dispatch`, the `start()` / `stop()` lifecycle).
+[`src/ampio_mqtt/_connection.py`](../src/ampio_mqtt/_connection.py) for the
+session and reconnect loop,
+[`src/ampio_mqtt/_store.py`](../src/ampio_mqtt/_store.py) for what a message
+does to state, and [`src/ampio_mqtt/client.py`](../src/ampio_mqtt/client.py)
+for the `start()` / `stop()` lifecycle that joins them.
 
 ## Sequence
 

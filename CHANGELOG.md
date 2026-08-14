@@ -14,6 +14,30 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.15.0
+
+Splits the client into the two things it was doing. No behaviour change - the
+same 366 tests and a live install produce the same objects, modules, rooms,
+scenes and events as before.
+
+### Changed
+
+- `_connection.py` owns the MQTT session: the aiomqtt client, the subscribe
+  set, reconnect with backoff, auth detection and availability. It knows
+  nothing about what the messages mean.
+- `_store.py` owns state: `AmpioStore.apply(topic, payload)` folds one message
+  into the object, module and server state and returns an `Applied` describing
+  what it touched - which endpoint replied, whether the payload parsed, and
+  which objects, modules and events changed. No sockets, no tasks, no
+  listeners, so every protocol behaviour is reachable from a plain function
+  call.
+- `client.py` keeps the public API and joins the two, turning what the store
+  reports into listener callbacks and discovery latches.
+
+The client drops from 1120 lines to 688. "Which objects changed" is now a
+return value rather than something reconstructed from callbacks, and
+`tests/test_store.py` exercises the protocol without a broker or an event loop.
+
 ## 0.14.0
 
 Structural cleanup from a full review. No protocol behaviour changes; the model

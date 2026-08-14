@@ -114,7 +114,7 @@ async def test_fetch_rooms_raises_when_not_connected() -> None:
 async def test_fetch_rooms_publishes_keywords_and_joins_responses() -> None:
     client = AmpioClient("host", username="u", password="p")
     fake_broker = _FakeMqttClient()
-    client._client = fake_broker  # type: ignore[assignment]
+    client._connection._client = fake_broker  # type: ignore[assignment]
 
     groups_payload = json.dumps(
         {"List": [{"id": 8, "opis_menu": "Salon"}, {"id": 7, "opis_menu": "Jadalnia"}]}
@@ -149,7 +149,7 @@ async def test_fetch_rooms_publishes_keywords_and_joins_responses() -> None:
 
 async def test_fetch_rooms_times_out_when_response_missing() -> None:
     client = AmpioClient("host", username="u", password="p")
-    client._client = _FakeMqttClient()  # type: ignore[assignment]
+    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
     # Deliver only one of the two responses - groups arrives, group_devices never does.
 
     async def _deliver_partial() -> None:
@@ -167,7 +167,7 @@ async def test_fetch_rooms_times_out_when_response_missing() -> None:
 async def test_fetch_rooms_recovers_from_malformed_response() -> None:
     """A garbage payload yields an empty join, not a crash."""
     client = AmpioClient("host", username="u", password="p")
-    client._client = _FakeMqttClient()  # type: ignore[assignment]
+    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
 
     async def _deliver_garbage() -> None:
         await asyncio.sleep(0)
@@ -185,7 +185,7 @@ async def test_fetch_rooms_recovers_from_malformed_response() -> None:
 async def test_fetch_rooms_clears_state_between_calls() -> None:
     """A second call must not see stale events from the first."""
     client = AmpioClient("host", username="u", password="p")
-    client._client = _FakeMqttClient()  # type: ignore[assignment]
+    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
 
     async def _deliver(groups: str, group_devices: str) -> None:
         await asyncio.sleep(0)
@@ -221,7 +221,7 @@ async def test_fetch_rooms_propagates_publish_failure() -> None:
             raise aiomqtt.MqttError("publish failed")
 
     client = AmpioClient("host", username="u", password="p")
-    client._client = _RaisingClient()  # type: ignore[assignment]
+    client._connection._client = _RaisingClient()  # type: ignore[assignment]
 
     with pytest.raises(aiomqtt.MqttError):
         await client.fetch_rooms(timeout=1.0)

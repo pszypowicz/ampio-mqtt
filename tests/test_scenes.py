@@ -78,7 +78,7 @@ class _RecordingClient:
 def _connected() -> tuple[AmpioClient, _RecordingClient]:
     client = AmpioClient("host", username=USER)
     recorder = _RecordingClient()
-    client._client = recorder  # type: ignore[assignment]
+    client._connection._client = recorder  # type: ignore[assignment]
     return client, recorder
 
 
