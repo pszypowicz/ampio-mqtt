@@ -35,8 +35,8 @@ if ((BigInt(J.params) & M) > 0 && (J.params & 16) === 0) { ... }
 ```
 
 - **bit 37** (`params & 2**37`) - "expose this object to Matter". A per-object
-  opt-in the user sets in Designer. Surfaced here as `AmpioObject.matter_exposed`
-  and never used for filtering (most real objects leave it clear).
+  opt-in the user sets in Designer. The library does not surface it and never
+  filters on it (most real objects leave it clear).
 - **bit 4** (`params & 16`) - "hidden / stub". `!(params & 16)` is the bridge's
   general "not hidden" test. Surfaced here as `AmpioObject.hidden` and used by
   `visible`. It is the authoritative marker that drops phantom rows and
@@ -137,7 +137,7 @@ classification. Loudness could not be exposed even if flagged.
 
 - **Visibility / identity:** `params` bit 4 is the authoritative hidden marker;
   this library uses it in `hidden` / `visible`. Bit 37 is Matter-only and is
-  surfaced as `matter_exposed` for information, never for filtering.
+  documented here rather than surfaced, since nothing should filter on it.
 - **Sensor typing:** this library types analog channels from `interpretacja`
   (the complete `lin_wej` map: humidity, pressure, loudness, illuminance, IAQ,
   CO2 - see [`classification.md`](classification.md)), which is more complete

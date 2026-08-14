@@ -14,6 +14,44 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.14.0
+
+Structural cleanup from a full review. No protocol behaviour changes; the model
+gets smaller and the catalogue path stops doing the same work twice.
+
+### Changed
+
+- `classify()` returns one `ObjectKind` (`SensorKind | InputKind | OutputKind`)
+  instead of a 3-tuple, and `AmpioObject.kind` holds it. A component type is a
+  measurement, a boolean input, or something controllable, never two, so the
+  three kinds are alternatives - the old shape could represent combinations
+  that cannot occur, and three tests existed only to assert they never did.
+  `is_sensor` / `is_input` / `is_output` / `supports_tilt` are now `isinstance`
+  checks over the one field.
+- The two catalogue handlers are one. Both discovery surfaces carry the same
+  rows - the app-sync one simply omits `params` and `stan_json` - so a single
+  merge covers them, replacing ~55 lines that expressed ~10 lines of difference.
+- Catalogue merges only notify when something actually changed. Re-requesting
+  both surfaces on every reconnect used to hand a consumer two full sets of
+  updates saying nothing new; on a 50-object install that is 100 notifications
+  down to 0, each one an `async_write_ha_state()` in Home Assistant.
+- `AmpioObject.tilt_position` is `int | None`; a slat angle is always a percent.
+- `mserv_id` resolves its fallback through `Capability.HUB` rather than a bare
+  `typ_urzadzenia == 10` literal.
+- Module diagnostics survive a catalogue refresh instead of being reset by it.
+
+### Removed
+
+- `AmpioObject.group_ids` and the `powiazane` parser. The column is empty on
+  every observed firmware and the code said as much - room membership comes
+  from `fetch_rooms()`. `visible` loses the clause it fed.
+- `AmpioObject.matter_exposed`. Informational only, filtered on by nothing, and
+  read by nothing; the bit stays documented in `docs/matter-bridge.md`.
+- `AmpioState` from the public exports - the client's `objects` / `modules` /
+  `server_info` / `sensors` properties are the read surface.
+- An unreachable guard in the raw-channel handler, whose test had to delete an
+  object by hand to reach it.
+
 ## 0.13.0
 
 Keeps the connection alive through the things that used to end it silently.

@@ -14,6 +14,7 @@ import time
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
+from functools import partial
 from typing import Any
 
 import aiomqtt
@@ -41,6 +42,7 @@ from .const import (
     response_topic,
     scene_payload,
 )
+from .device_types import Capability
 from .errors import AmpioAuthError, AmpioConnectionError
 from .models import (
     AmpioEvent,
@@ -124,11 +126,11 @@ class AmpioClient:
         # group_devices / locations) are pure request/response: their payload is
         # retained and the latch set, and fetch_* parse it on demand.
         self._handlers: dict[str, Callable[[str], bool]] = {
-            "details": self._handle_details,
+            "details": partial(self._handle_catalogue, "devicesDetails"),
             "devices": self._handle_devices,
             "states": self._handle_states_snapshot,
             "info": self._handle_info,
-            "data_devices": self._handle_data_devices,
+            "data_devices": partial(self._handle_catalogue, "data/devices"),
             "params_devices": self._handle_params_devices,
         }
         # Full-catalogue `{object_id: params}` table from `data/params_devices`
@@ -170,15 +172,19 @@ class AmpioClient:
         """Resolve the module id of the M-SERV server.
 
         Prefers cross-validating the server's self-reported mac against each
-        module's mac_global/mac; falls back to the unique module whose
-        typ_urzadzenia is 10 (M-SERV-s).
+        module's mac_global/mac; falls back to the unique module the device
+        catalogue marks as a hub.
         """
         info = self.state.server_info
         if info is not None and info.mac is not None:
             for mid, mod in self.state.modules.items():
                 if info.mac in (mod.mac_global, mod.mac):
                     return mid
-        candidates = [mid for mid, mod in self.state.modules.items() if mod.type == 10]
+        candidates = [
+            mid
+            for mid, mod in self.state.modules.items()
+            if Capability.HUB in mod.capabilities
+        ]
         if len(candidates) == 1:
             return candidates[0]
         return None
@@ -809,31 +815,74 @@ class AmpioClient:
         elif topic.startswith("ampio/from/") and topic.endswith("/event"):
             self._handle_event(topic, payload)
 
-    def _handle_details(self, payload: str) -> bool:
+    def _handle_catalogue(self, surface: str, payload: str) -> bool:
+        """Apply an object catalogue from either discovery surface.
+
+        The two surfaces carry the same rows: the app-sync one simply omits
+        ``params`` (which the ``params_devices`` table supplies instead) and
+        ``stan_json``, so one merge covers both. On the admin tier both answer,
+        and the second pass changes nothing.
+        """
         items = _protocol.parse_details(payload)
         if items is None:
-            _LOGGER.warning("Could not parse Ampio devicesDetails")
+            _LOGGER.warning("Could not parse Ampio %s catalogue", surface)
             return False
+        touched = False
         for meta in items:
-            obj = self.state.objects.get(meta.id) or AmpioObject(id=meta.id)
-            obj.device_id = meta.device_id
-            obj.typ_komponentu = meta.typ_komponentu
-            obj.name = meta.name or obj.name
-            obj.interpretacja = meta.interpretacja
-            obj.funkcja = meta.funkcja
-            obj.leaf_id = meta.leaf_id
-            obj.group_ids = meta.group_ids
-            if meta.params is not None:
-                obj.params = meta.params
-            obj.kind, obj.input_kind, obj.output_kind = classify(
-                meta.typ_komponentu, meta.interpretacja
-            )
-            if meta.stan_json is not None:
-                self._apply_stan_json(obj, meta.stan_json)
-            self.state.objects[meta.id] = obj
-            self._notify(obj)
-        self._rebuild_indexes()
+            touched |= self._merge_metadata(meta)
+        if touched:
+            self._rebuild_indexes()
         return True
+
+    def _merge_metadata(self, meta: _protocol.ObjectMetadata) -> bool:
+        """Fold one catalogue row into its object; True when anything changed.
+
+        Only a real change notifies, so re-requesting the catalogue on every
+        reconnect does not hand a consumer a full set of updates that say
+        nothing new.
+        """
+        obj = self.state.objects.get(meta.id)
+        if obj is None:
+            obj = AmpioObject(id=meta.id)
+            self.state.objects[meta.id] = obj
+        before = (
+            obj.device_id,
+            obj.typ_komponentu,
+            obj.name,
+            obj.interpretacja,
+            obj.funkcja,
+            obj.leaf_id,
+            obj.params,
+            obj.kind,
+        )
+        obj.device_id = meta.device_id
+        obj.typ_komponentu = meta.typ_komponentu
+        obj.name = meta.name or obj.name
+        obj.interpretacja = meta.interpretacja
+        obj.funkcja = meta.funkcja
+        obj.leaf_id = meta.leaf_id
+        # A row without the column leaves the params_devices value standing.
+        params = (
+            meta.params if meta.params is not None else self._params_by_id.get(meta.id)
+        )
+        if params is not None:
+            obj.params = params
+        obj.kind = classify(meta.typ_komponentu, meta.interpretacja)
+        changed = before != (
+            obj.device_id,
+            obj.typ_komponentu,
+            obj.name,
+            obj.interpretacja,
+            obj.funkcja,
+            obj.leaf_id,
+            obj.params,
+            obj.kind,
+        )
+        if meta.stan_json is not None:
+            changed |= self._apply_stan_json(obj, meta.stan_json)
+        if changed:
+            self._notify(obj)
+        return changed
 
     def _handle_devices(self, payload: str) -> bool:
         modules = _protocol.parse_devices(payload)
@@ -844,39 +893,9 @@ class AmpioClient:
             previous = self.state.modules.get(module.id)
             if previous is not None:
                 module.last_seen = previous.last_seen
+                module.supply_voltage = previous.supply_voltage
+                module.temperature = previous.temperature
             self.state.modules[module.id] = module
-        self._rebuild_indexes()
-        return True
-
-    def _handle_data_devices(self, payload: str) -> bool:
-        """Apply the app-sync ``data/devices`` object catalogue.
-
-        Rows carry the ``devicesDetails`` columns except ``params``,
-        ``powiazane``, and ``stan_json``: params come from the
-        ``params_devices`` table (kept from whichever of the two replies
-        landed first), group membership from ``fetch_rooms()``, and values
-        from the states snapshot. On the admin tier the same objects also
-        arrive via ``devicesDetails`` with identical field values, so
-        re-applying is idempotent there.
-        """
-        items = _protocol.parse_details(payload)
-        if items is None:
-            _LOGGER.warning("Could not parse Ampio data/devices catalogue")
-            return False
-        for meta in items:
-            obj = self.state.objects.get(meta.id) or AmpioObject(id=meta.id)
-            obj.device_id = meta.device_id
-            obj.typ_komponentu = meta.typ_komponentu
-            obj.name = meta.name or obj.name
-            obj.interpretacja = meta.interpretacja
-            obj.funkcja = meta.funkcja
-            obj.leaf_id = meta.leaf_id
-            obj.params = self._params_by_id.get(meta.id, obj.params)
-            obj.kind, obj.input_kind, obj.output_kind = classify(
-                meta.typ_komponentu, meta.interpretacja
-            )
-            self.state.objects[meta.id] = obj
-            self._notify(obj)
         self._rebuild_indexes()
         return True
 
@@ -913,11 +932,12 @@ class AmpioClient:
             obj = self.state.objects.get(entry.id)
             if obj is None:
                 # Metadata not yet known (e.g. snapshot arrived before details).
-                obj = AmpioObject(id=entry.id, kind=classify(None, None)[0])
+                obj = AmpioObject(id=entry.id, kind=classify(None, None))
                 self.state.objects[entry.id] = obj
-            if entry.stan_json is not None:
-                self._apply_stan_json(obj, entry.stan_json)
-            self._notify(obj)
+            if entry.stan_json is not None and self._apply_stan_json(
+                obj, entry.stan_json
+            ):
+                self._notify(obj)
         return True
 
     def _handle_state(self, topic: str, payload: str) -> None:
@@ -933,7 +953,7 @@ class AmpioClient:
         if obj is None:
             # State raced ahead of the catalogues -> generic sensor until
             # metadata lands.
-            obj = AmpioObject(id=update.id, kind=classify(None, None)[0])
+            obj = AmpioObject(id=update.id, kind=classify(None, None))
             self.state.objects[update.id] = obj
         obj.value = update.value
         if update.tilt is not None:
@@ -975,9 +995,7 @@ class AmpioClient:
         oid = self._input_index.get(key)
         if oid is None:
             return  # channel has no exposed Designer object - ignore
-        obj = self.state.objects.get(oid)
-        if obj is None:
-            return
+        obj = self.state.objects[oid]
         self._raw_seen_ids.add(oid)
         obj.value = payload.strip()
         obj.updated_at = time.time()
@@ -1005,7 +1023,7 @@ class AmpioClient:
         module.last_seen = time.time()
         _emit(self._module_listeners, module, "module")
 
-    def _apply_stan_json(self, obj: AmpioObject, stan_json: str) -> None:
+    def _apply_stan_json(self, obj: AmpioObject, stan_json: str) -> bool:
         """Apply a bulk-snapshot value to `obj` when it is not older than what it holds.
 
         The per-object topics are not retained, so this snapshot is the only
@@ -1016,14 +1034,19 @@ class AmpioClient:
         """
         seed = _protocol.parse_stan_json(stan_json)
         if seed is None:
-            return
-        reported_at = None if seed.on_ms is None else float(seed.on_ms) / 1000.0
-        if seed.value is not None and self._supersedes(obj, reported_at):
-            obj.value = seed.value
-            if seed.tilt is not None:
-                obj.tilt_position = seed.tilt
-            obj.updated_at = reported_at
+            return False
         self._touch_module(obj.device_id, seed.on_ms)
+        reported_at = None if seed.on_ms is None else float(seed.on_ms) / 1000.0
+        if seed.value is None or not self._supersedes(obj, reported_at):
+            return False
+        changed = obj.value != seed.value or (
+            seed.tilt is not None and obj.tilt_position != seed.tilt
+        )
+        obj.value = seed.value
+        if seed.tilt is not None:
+            obj.tilt_position = seed.tilt
+        obj.updated_at = reported_at
+        return changed
 
     @staticmethod
     def _supersedes(obj: AmpioObject, reported_at: float | None) -> bool:

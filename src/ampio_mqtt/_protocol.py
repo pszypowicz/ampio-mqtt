@@ -49,7 +49,6 @@ class ObjectMetadata:
     interpretacja: int | None
     funkcja: int | None  # physical channel index within the module
     leaf_id: str  # `leafId`; empty for ghost rows and for system objects
-    group_ids: frozenset[int]  # parsed `powiazane` GROUP_CONCAT (rare in practice)
     # `params` bitfield; bit 4 = hidden/stub, bit 37 = matter-exposed. None
     # when the reply carried no such column, which the app-sync catalogue never
     # does - the client then keeps whatever `params_devices` supplied.
@@ -72,7 +71,7 @@ class StateUpdate:
     id: int
     value: str
     on_ms: int | float | None
-    tilt: str | None  # `lammel`, present only for tilt-capable covers
+    tilt: int | None  # `lammel` percent, present only for tilt-capable covers
 
 
 @dataclass(slots=True)
@@ -89,7 +88,7 @@ class StanJsonSeed:
 
     value: str | None
     on_ms: int | float | None
-    tilt: str | None
+    tilt: int | None
 
 
 def is_auth_error(err: aiomqtt.MqttError) -> bool:
@@ -151,7 +150,6 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
                 interpretacja=to_int(item.get("interpretacja")),
                 funkcja=to_int(item.get("funkcja")),
                 leaf_id=_parse_leaf_id(item.get("leafId")),
-                group_ids=_parse_powiazane(item.get("powiazane")),
                 # `params` can exceed 32 bits (the matter-exposed flag is bit
                 # 37), which Python ints handle natively.
                 params=to_int(item.get("params")),
@@ -171,24 +169,6 @@ def _parse_leaf_id(value: Any) -> str:
     library uses it only as the binary visibility marker.
     """
     return value if isinstance(value, str) else ""
-
-
-def _parse_powiazane(value: Any) -> frozenset[int]:
-    """Parse the GROUP_CONCAT `powiazane` field into a set of group ids.
-
-    Most M-SERV firmware does not emit this column in `devicesDetails`; the
-    parser keeps it for any future build that does, but real installs see an
-    empty result. Group membership is enriched from the separate
-    ``data/groups`` / ``data/group_devices`` join via ``fetch_rooms()``.
-    """
-    if not isinstance(value, str) or not value or value == "NULL":
-        return frozenset()
-    ids: set[int] = set()
-    for piece in value.split(","):
-        gid = to_int(piece.strip())
-        if gid is not None:
-            ids.add(gid)
-    return frozenset(ids)
 
 
 def parse_devices(payload: str) -> list[AmpioModule] | None:
@@ -334,7 +314,7 @@ def parse_state_message(topic: str, payload: str) -> StateUpdate | None:
         return None
     value: str = payload
     on_ms: int | float | None = None
-    tilt: str | None = None
+    tilt: int | None = None
     try:
         data = json.loads(payload)
     except (ValueError, TypeError):
@@ -352,10 +332,9 @@ def parse_state_message(topic: str, payload: str) -> StateUpdate | None:
     return StateUpdate(id=oid, value=value, on_ms=on_ms, tilt=tilt)
 
 
-def _parse_lammel(data: dict[str, Any]) -> str | None:
-    """Read the `lammel` lamella angle from a state payload."""
-    raw = data.get("lammel")
-    return str(raw) if raw is not None else None
+def _parse_lammel(data: dict[str, Any]) -> int | None:
+    """Read the `lammel` slat angle percent from a state payload."""
+    return to_int(data.get("lammel"))
 
 
 def parse_raw_channel_topic(topic: str) -> tuple[int, str, int] | None:

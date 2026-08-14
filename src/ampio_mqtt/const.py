@@ -273,6 +273,12 @@ _GENERIC_SENSOR = SensorKind(
 )
 
 
+# What an object is. Exactly one of the three applies - a component type is a
+# measurement, a boolean input, or something controllable, never two - so the
+# kinds are alternatives rather than a set of optional slots.
+ObjectKind = SensorKind | InputKind | OutputKind
+
+
 @dataclass(frozen=True, slots=True)
 class TypeProfile:
     """Everything the library derives from one ``typ_komponentu``.
@@ -281,9 +287,9 @@ class TypeProfile:
     metadata and classifies as the generic value sensor.
     """
 
-    # Sensor side - at most one applies. ``sensor`` is a fixed kind; ``analog``
-    # selects the interpretacja-keyed lin_wej map; ``numeric`` is a generic
-    # bit32 measurement. A type with none of these is not a sensor.
+    # Sensor side. ``sensor`` is a fixed kind; ``analog`` selects the
+    # interpretacja-keyed lin_wej map; ``numeric`` is a generic bit32
+    # measurement. A type with none of these is not a sensor.
     sensor: SensorKind | None = None
     analog: bool = False
     numeric: bool = False
@@ -329,28 +335,23 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
 }
 
 
-def classify(
-    typ: str | None, interpretacja: int | None
-) -> tuple[SensorKind | None, InputKind | None, OutputKind | None]:
-    """Classify a DB object into ``(sensor_kind, input_kind, output_kind)``.
+def classify(typ: str | None, interpretacja: int | None) -> ObjectKind:
+    """Classify a DB object into the one kind it is.
 
-    Any of the three may be None. ``typ`` is ``typ_komponentu``;
-    ``interpretacja`` selects the lin_wej measurement. A ``typ`` with no table
-    entry (unknown or no metadata) returns the generic value-only sensor so
-    metadata-less objects still surface.
+    ``typ`` is ``typ_komponentu``; ``interpretacja`` selects the lin_wej
+    measurement. A ``typ`` with no table entry (unknown, or no metadata yet)
+    is the generic value-only sensor, so such an object still surfaces.
     """
     profile = TYPE_PROFILES.get(typ) if typ is not None else None
     if profile is None:
-        return _GENERIC_SENSOR, None, None
-    sensor = profile.sensor
+        return _GENERIC_SENSOR
     if profile.analog:
         if interpretacja in _LIN_WEJ_BY_INTERP:
-            sensor = _LIN_WEJ_BY_INTERP[interpretacja]
-        else:
-            sensor = SensorKind(f"analog_{interpretacja}", "Analog input", None, None)
-    elif profile.numeric:
-        sensor = SensorKind(f"value_{interpretacja}", "Measurement", None, None)
-    return sensor, profile.input, profile.output
+            return _LIN_WEJ_BY_INTERP[interpretacja]
+        return SensorKind(f"analog_{interpretacja}", "Analog input", None, None)
+    if profile.numeric:
+        return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
+    return profile.sensor or profile.input or profile.output or _GENERIC_SENSOR
 
 
 def is_system_type(typ: str | None) -> bool:
