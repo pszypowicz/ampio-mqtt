@@ -103,7 +103,7 @@ def test_parse_details_returns_metadata() -> None:
     assert items[1].funkcja is None  # absent -> None
     assert items[1].leaf_id == ""  # absent -> empty string
     assert items[1].group_ids == frozenset()  # absent -> empty
-    assert items[1].params == 0  # absent -> 0 (no flags)
+    assert items[1].params is None  # absent column, distinct from "no flags"
 
 
 @pytest.mark.parametrize(
@@ -112,11 +112,11 @@ def test_parse_details_returns_metadata() -> None:
         (17, 17),  # bit0 + bit4 (the live phantom shape)
         ("16", 16),  # string coerced
         (137438953473, 137438953473),  # >32-bit matter-exposed value
-        (None, 0),  # absent -> 0
-        ("not-a-number", 0),  # junk -> 0
+        (None, None),  # absent column -> None, so the client keeps what it has
+        ("not-a-number", None),  # junk is indistinguishable from absent
     ],
 )
-def test_parse_details_params(raw: object, expected: int) -> None:
+def test_parse_details_params(raw: object, expected: int | None) -> None:
     payload = json.dumps({"List": [{"id": 1, "params": raw}]})
     items = parse_details(payload)
     assert items is not None and items[0].params == expected

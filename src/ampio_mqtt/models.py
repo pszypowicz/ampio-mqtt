@@ -66,6 +66,11 @@ class AmpioObject:
     input_kind: InputKind | None = None  # set when classified as an input
     output_kind: OutputKind | None = None  # set when the object accepts commands
     value: str | None = None
+    # Epoch seconds of the report `value` came from - the `on` field when the
+    # M-SERV supplied one, local receive time for the raw channel, which sends
+    # none. Lets a later bulk snapshot be compared against what is already
+    # held instead of being applied or dropped blind.
+    updated_at: float | None = None
     # Lamella angle percent, from the `lammel` state field. Only tilt-capable
     # covers report it.
     tilt_position: str | None = None

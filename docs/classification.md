@@ -105,8 +105,9 @@ Classification answers "what kind of thing is this row". Visibility
 (see [`identity.md`](identity.md)) answers "should the consumer surface
 it at all". They compose:
 
-```
-should_surface = classify(...) is not None and obj.visible
+```python
+sensor, binary, output = classify(obj.typ_komponentu, obj.interpretacja)
+should_surface = any((sensor, binary, output)) and obj.visible
 ```
 
 A ghost row (`leaf_id == ""`, not a system object) is still classifiable
