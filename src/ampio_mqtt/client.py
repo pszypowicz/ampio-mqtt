@@ -27,12 +27,14 @@ from .const import (
     ENDPOINTS,
     KEEP_POSITION,
     RAW_DIAGNOSTICS_WILDCARD,
+    RAW_EVENT_WILDCARD,
     RAW_INPUT_WILDCARDS,
     AccessTier,
     Endpoint,
     classify,
     command_payload,
     command_topic,
+    event_payload,
     input_channel_prefix,
     ob_state_wildcard,
     request_topic,
@@ -41,6 +43,7 @@ from .const import (
 )
 from .errors import AmpioAuthError, AmpioConnectionError
 from .models import (
+    AmpioEvent,
     AmpioModule,
     AmpioObject,
     AmpioScene,
@@ -56,6 +59,7 @@ _RECONNECT_BACKOFF_MAX = 60.0
 
 ObjectListener = Callable[[AmpioObject], None]
 ModuleListener = Callable[[AmpioModule], None]
+EventListener = Callable[[AmpioEvent], None]
 AvailabilityListener = Callable[[bool], None]
 
 
@@ -85,6 +89,7 @@ class AmpioClient:
         self.state = AmpioState()
         self._object_listeners: list[ObjectListener] = []
         self._module_listeners: list[ModuleListener] = []
+        self._event_listeners: list[EventListener] = []
         self._availability_listeners: list[AvailabilityListener] = []
 
         # Raw-channel bridge: maps a decoded channel topic to the Designer
@@ -232,6 +237,16 @@ class AmpioClient:
         """
         self._module_listeners.append(listener)
         return lambda: self._module_listeners.remove(listener)
+
+    def add_event_listener(self, listener: EventListener) -> Callable[[], None]:
+        """Register a callback invoked when a bus event is raised.
+
+        Received events ride the administrator-only raw tree, so this never
+        fires on a standard account even though such an account can raise
+        events itself.
+        """
+        self._event_listeners.append(listener)
+        return lambda: self._event_listeners.remove(listener)
 
     def add_availability_listener(
         self, listener: AvailabilityListener
@@ -472,6 +487,21 @@ class AmpioClient:
         )
         return _protocol.parse_scenes(self._last_payloads.get("scenes") or "") or []
 
+    async def send_event(self, event_number: int) -> None:
+        """Raise a bus event, running whatever Ampio logic is bound to it.
+
+        Works on both account tiers: events carry their own per-user rights in
+        the Ampio app, separate from object grants, so an account that holds
+        the right for an event can raise it even when the logic behind it
+        drives objects the account cannot command directly.
+        """
+        _check_range("event_number", event_number, 1, 65535)
+        if self._client is None:
+            raise AmpioConnectionError("Not connected")
+        await self._client.publish(
+            command_topic(self._username), event_payload(event_number).encode()
+        )
+
     async def run_scene(self, scene_id: int) -> None:
         """Apply a scene's actions."""
         await self._scene_command(scene_id, "run")
@@ -698,6 +728,7 @@ class AmpioClient:
                     for wildcard in RAW_INPUT_WILDCARDS:
                         await client.subscribe(wildcard)
                     await client.subscribe(RAW_DIAGNOSTICS_WILDCARD)
+                    await client.subscribe(RAW_EVENT_WILDCARD)
                     if self.stats.started_at is None:
                         self.stats.started_at = time.time()
                     else:
@@ -762,6 +793,8 @@ class AmpioClient:
             self._handle_raw_channel(topic, payload)
         elif topic.startswith("ampio/from/") and "/b/" in topic:
             self._handle_diagnostics(topic, payload)
+        elif topic.startswith("ampio/from/") and topic.endswith("/event"):
+            self._handle_event(topic, payload)
 
     def _handle_details(self, payload: str) -> bool:
         items = _protocol.parse_details(payload)
@@ -935,6 +968,13 @@ class AmpioClient:
         obj.value = payload.strip()
         self._touch_module(obj.device_id, None)
         self._notify(obj)
+
+    def _handle_event(self, topic: str, payload: str) -> None:
+        event = _protocol.parse_event(topic, payload)
+        if event is None:
+            return
+        for listener in list(self._event_listeners):
+            listener(event)
 
     def _handle_diagnostics(self, topic: str, payload: str) -> None:
         mac = _protocol.parse_diagnostics_mac(topic)

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .device_types import module_capabilities, module_model
-from .models import AmpioModule, AmpioScene, AmpioServerInfo
+from .models import AmpioEvent, AmpioModule, AmpioScene, AmpioServerInfo
 
 if TYPE_CHECKING:
     import aiomqtt
@@ -356,6 +356,23 @@ def parse_raw_channel_topic(topic: str) -> tuple[int, str, int] | None:
     if channel is None:
         return None
     return mac, parts[4], channel
+
+
+def parse_event(topic: str, payload: str) -> AmpioEvent | None:
+    """Parse an `ampio/from/<MAC>/event` push into an `AmpioEvent`."""
+    parts = topic.split("/")
+    if len(parts) != 4 or parts[0] != "ampio" or parts[1] != "from":
+        return None
+    if parts[3] != "event":
+        return None
+    try:
+        mac = int(parts[2], 16)
+    except ValueError:
+        return None
+    number = to_int(payload.strip())
+    if number is None:
+        return None
+    return AmpioEvent(number=number, mac=mac)
 
 
 def parse_diagnostics_mac(topic: str) -> int | None:

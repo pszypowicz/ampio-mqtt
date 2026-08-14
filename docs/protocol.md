@@ -115,6 +115,38 @@ slats end wherever the travel leaves them: closed (`lammel` 0) after a
 downward move, open (100) after an upward one. Pass an explicit
 `lamella` in the same command to land on a chosen angle instead.
 
+## Bus events
+
+Events are logical signals numbered 1-65535 that Ampio's own logic raises
+and reacts to: a wall-panel press can raise one, and a scenario can be
+bound to one. They are independent of objects - an event carries no state
+and drives whatever logic the installer bound to it.
+
+| Direction | Topic / payload                                  |
+| --------- | ------------------------------------------------ |
+| Raise     | `ampio/control/<user>/api` ← `/api/setEvent/<n>` |
+| Receive   | `ampio/from/<MAC>/event` → `<n>`                 |
+
+The MAC on a received event identifies what raised it: the module's own
+address for a panel press, the M-SERV's (`1` by default) for an event
+injected through the command surface.
+
+The two directions are gated differently, which is verified live:
+
+- **Raising** works on both account tiers. Events carry their own
+  per-user rights in the Ampio app, separate from object grants, so an
+  account holding an event's right can raise it even when the logic
+  behind it drives objects that account cannot command directly.
+- **Receiving** is administrator-only. It rides the raw tree, and a
+  standard account holding the event's right still sees nothing - not on
+  the raw tree and not anywhere in its own namespace.
+
+**The M-SERV raises event 254 from its own MAC whenever a client asks for
+a discovery refresh**, so `start()` normally produces one. It is not
+periodic; a purely passive listener sees no events at all. A consumer
+that only cares about panel presses should filter on the originating MAC
+rather than treat every event as user intent.
+
 ## Live state
 
 | Topic                                      | Payload                  | Notes                                                                                                            |
@@ -131,5 +163,6 @@ downward move, open (100) after an upward one. Pass an explicit
 | `AmpioClient.start()`           | Connects, subscribes, publishes the six auto-discovery requests (`devicesDetails` and `devices` on `config`, `devices` and `params_devices` on `data`, plus the empty-payload `states` and `info` surfaces), waits for whichever catalogue answers, returns. See [`discovery-flow.md`](discovery-flow.md). |
 | `AmpioClient.fetch_rooms()`     | One-shot: publishes `groups` + `group_devices`, joins both responses into `{object_id: room_name}`. On-demand because the consumer decides when room hints are needed.                                                                                                                                     |
 | `AmpioClient.fetch_locations()` | One-shot: publishes `locations`, returns `{location_id: label}`. On-demand for the same reason.                                                                                                                                                                                                            |
+| `AmpioClient.send_event()`      | Raises a bus event; `add_event_listener()` reports the ones the bus raises (administrator-only). |
 | `AmpioClient.fetch_scenes()`    | One-shot: publishes `scenes`, returns `list[AmpioScene]`. Drive them with `run_scene()` / `turn_scene_off()` / `undo_scene()`.                                                                                                                                                                             |
-| `AmpioClient.last_payloads`     | `{endpoint_name: payload}` of the verbatim retained response per endpoint (`details`, `devices`, `states`, `info`, `data_devices`, `params_devices`, `groups`, `group_devices`, `locations`, `scenes`). Intended for the HA integration's diagnostics blob.                                                          |
+| `AmpioClient.last_payloads`     | `{endpoint_name: payload}` of the verbatim retained response per endpoint (`details`, `devices`, `states`, `info`, `data_devices`, `params_devices`, `groups`, `group_devices`, `locations`, `scenes`). Intended for the HA integration's diagnostics blob.                                                |

@@ -14,6 +14,29 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.12.0
+
+Adds bus events, the logical 1-65535 signals Ampio's own logic raises and reacts
+to, so a consumer can both drive Ampio scenarios and react to panel presses.
+
+### Added
+
+- `AmpioClient.send_event(number)` - raises an event via `/api/setEvent/<n>`.
+- `AmpioClient.add_event_listener()` and `AmpioEvent(number, mac)` - the events
+  the bus raises. The mac identifies the originator: the module's address for a
+  panel press, the M-SERV's for an injected event.
+
+### Notes
+
+- The two directions are gated differently. Raising works on both tiers, since
+  events carry their own per-user rights in the app, separate from object
+  grants - so an event can drive objects the raising account cannot command
+  directly. Receiving is administrator-only: it rides the raw tree, and a
+  standard account holding the event's right still receives nothing anywhere.
+- The M-SERV raises event 254 from its own mac whenever a client asks for a
+  discovery refresh, so `start()` normally produces one. Filter on the
+  originating mac to tell panel presses from the server's own signalling.
+
 ## 0.11.0
 
 Exposes the Ampio app's scene catalogue and the three verbs that drive it,

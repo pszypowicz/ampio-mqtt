@@ -199,6 +199,16 @@ class AmpioModule:
     temperature: float | None = None  # °C
 
 
+@dataclass(slots=True, frozen=True)
+class AmpioEvent:
+    """A logical bus event raised by Ampio logic."""
+
+    number: int  # 1-65535
+    # Effective bus mac of whatever raised it: a module for a panel press, the
+    # M-SERV itself for an event injected through the command surface.
+    mac: int
+
+
 @dataclass(slots=True)
 class AmpioScene:
     """A named multi-action preset defined in the Ampio app."""

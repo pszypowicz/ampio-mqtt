@@ -70,6 +70,10 @@ Prefer an administrator account when the install needs:
   itself classifies arrive as ordinary objects and need no admin.
 - **Module metadata** - per-module device entries, models, firmware
   versions, and `mserv_id` for a `via_device` hierarchy.
+- **Bus events** - panel presses and other Ampio logic signals only
+  arrive on the admin tier. A standard account can still raise events it
+  holds the right for, so automation *into* Ampio works either way; it is
+  reacting *to* Ampio's own events that needs admin.
 - **Module health** - each module broadcasts its CAN supply voltage, and
   the output modules their own temperature, as
   `AmpioModule.supply_voltage` / `temperature`. Useful for spotting a

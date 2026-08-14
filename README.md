@@ -62,6 +62,9 @@ stability note above). Currently supports:
 - classification of sensor objects (temperature and M-SENS environmental
   channels) with Home-Assistant-compatible device/state class hints,
 - M-SERV identification (mac, firmware versions, local IP),
+- bus events: `send_event()` raises one on either tier, and
+  `add_event_listener()` reports the ones Ampio's own logic raises (panel
+  presses and the like, administrator-only),
 - scene catalogue and control via `fetch_scenes()` / `run_scene()` /
   `turn_scene_off()` / `undo_scene()` (`undo` restores what the objects
   held before the scene ran),
