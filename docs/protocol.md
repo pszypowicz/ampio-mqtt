@@ -115,6 +115,52 @@ slats end wherever the travel leaves them: closed (`lammel` 0) after a
 downward move, open (100) after an upward one. Pass an explicit
 `lamella` in the same command to land on a chosen angle instead.
 
+## Bus events
+
+Events are logical signals numbered 1-65535 that Ampio's own logic raises
+and reacts to: a wall-panel press can raise one, and a scenario can be
+bound to one. They are independent of objects - an event carries no state
+and drives whatever logic the installer bound to it.
+
+| Direction | Topic / payload                                  |
+| --------- | ------------------------------------------------ |
+| Raise     | `ampio/control/<user>/api` ← `/api/setEvent/<n>` |
+| Receive   | `ampio/from/<MAC>/event` → `<n>`                 |
+
+The MAC on a received event identifies what raised it: the module's own
+address for a panel press, the M-SERV's (`1` by default) for an event
+injected through the command surface.
+
+The two directions are gated differently, which is verified live:
+
+- **Raising** works on both account tiers and is bounded by nothing.
+  The Ampio app shows a per-user rights list per event, but that list is
+  not enforced here: a standard account raised an event it had no right
+  to, verified live against a control event created without it. Since
+  the logic behind an event can drive anything, this is how an account
+  reaches objects it cannot command directly.
+- **Receiving** is administrator-only. It rides the raw tree, and a
+  standard account holding the event's right still sees nothing - not on
+  the raw tree and not anywhere in its own namespace.
+
+On the CAN side an event is frame type `0x2B` carrying a 16-bit
+little-endian number, low byte first - `FE 2B BD 00` for 189 and
+`FE 2B BD BD` for 48573. A legacy 8-bit event is simply one whose high
+byte is zero.
+
+That layout invites a suspicion worth ruling out: that logic bound to an
+8-bit event also fires for a 16-bit event sharing one of its bytes.
+Tested against a module rule bound to event 189 (`0x00BD`), neither
+`0xBDBD` nor `0xBD00` moved it, while 189 itself toggled reliably and an
+unrelated event did nothing. Matching is on the full 16-bit value, at
+least on the M-DOT firmware this was run against.
+
+**The M-SERV raises event 254 from its own MAC whenever a client asks for
+a discovery refresh**, so `start()` normally produces one. It is not
+periodic; a purely passive listener sees no events at all. A consumer
+that only cares about panel presses should filter on the originating MAC
+rather than treat every event as user intent.
+
 ## Live state
 
 | Topic                                      | Payload                  | Notes                                                                                                            |
@@ -131,5 +177,6 @@ downward move, open (100) after an upward one. Pass an explicit
 | `AmpioClient.start()`           | Connects, subscribes, publishes the six auto-discovery requests (`devicesDetails` and `devices` on `config`, `devices` and `params_devices` on `data`, plus the empty-payload `states` and `info` surfaces), waits for whichever catalogue answers, returns. See [`discovery-flow.md`](discovery-flow.md). |
 | `AmpioClient.fetch_rooms()`     | One-shot: publishes `groups` + `group_devices`, joins both responses into `{object_id: room_name}`. On-demand because the consumer decides when room hints are needed.                                                                                                                                     |
 | `AmpioClient.fetch_locations()` | One-shot: publishes `locations`, returns `{location_id: label}`. On-demand for the same reason.                                                                                                                                                                                                            |
+| `AmpioClient.send_event()`      | Raises a bus event; `add_event_listener()` reports the ones the bus raises (administrator-only).                                                                                                                                                                                                           |
 | `AmpioClient.fetch_scenes()`    | One-shot: publishes `scenes`, returns `list[AmpioScene]`. Drive them with `run_scene()` / `turn_scene_off()` / `undo_scene()`.                                                                                                                                                                             |
-| `AmpioClient.last_payloads`     | `{endpoint_name: payload}` of the verbatim retained response per endpoint (`details`, `devices`, `states`, `info`, `data_devices`, `params_devices`, `groups`, `group_devices`, `locations`, `scenes`). Intended for the HA integration's diagnostics blob.                                                          |
+| `AmpioClient.last_payloads`     | `{endpoint_name: payload}` of the verbatim retained response per endpoint (`details`, `devices`, `states`, `info`, `data_devices`, `params_devices`, `groups`, `group_devices`, `locations`, `scenes`). Intended for the HA integration's diagnostics blob.                                                |

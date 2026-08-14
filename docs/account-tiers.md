@@ -25,10 +25,17 @@ account granted every permission in the app is still a standard account.
 | **CAN write tree** (`ampio/to/#`)             | yes           | **no**                                |
 | Designer location table (`fetch_locations`)   | yes           | no                                    |
 
-Grants bound reads and writes alike. A command for an object outside a
-standard account's grant is dropped with no effect and no reply, and no
-state for it reaches that account's namespace - so a dedicated standard
-account is a real privilege boundary, not just a narrower view.
+Grants bound reads and object writes alike. A command for an object
+outside a standard account's grant is dropped with no effect and no
+reply, and no state for it reaches that account's namespace.
+
+**Bus events are the exception.** Raising one is bounded by neither the
+object grants nor the per-event rights the app displays - a standard
+account raised an event it had no right to. Whatever logic the installer
+bound to that event then runs with full authority, so an account can
+reach objects it cannot command directly. A dedicated standard account
+is a real boundary for direct object control; it is not a boundary
+against anything reachable through Ampio's own event logic.
 
 ## The latency difference is on reads only
 
@@ -70,6 +77,10 @@ Prefer an administrator account when the install needs:
   itself classifies arrive as ordinary objects and need no admin.
 - **Module metadata** - per-module device entries, models, firmware
   versions, and `mserv_id` for a `via_device` hierarchy.
+- **Bus events** - panel presses and other Ampio logic signals only
+  arrive on the admin tier. A standard account can still raise events it
+  holds the right for, so automation *into* Ampio works either way; it is
+  reacting *to* Ampio's own events that needs admin.
 - **Module health** - each module broadcasts its CAN supply voltage, and
   the output modules their own temperature, as
   `AmpioModule.supply_voltage` / `temperature`. Useful for spotting a

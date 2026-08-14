@@ -124,6 +124,11 @@ def command_payload(object_id: int, verb: str, args: Sequence[object] = ()) -> s
     return f"/api/set/{object_id}/{verb}" + "".join(f"/{a}" for a in args)
 
 
+def event_payload(event_number: int) -> str:
+    """Build the payload that raises a bus event."""
+    return f"/api/setEvent/{event_number}"
+
+
 def scene_payload(scene_id: int, verb: str) -> str:
     """Build a scene command payload; ``verb`` is run, off, or undo."""
     return f"/api/{verb}/scene/{scene_id}"
@@ -162,6 +167,13 @@ RAW_INPUT_WILDCARDS = ("ampio/from/+/state/f/+", "ampio/from/+/state/i/+")
 # carrying their CAN supply voltage and, on the modules that measure it, their
 # own temperature. Like the rest of the raw tree this is administrator-only.
 RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
+
+# Bus events are logical signals (1-65535) that Ampio logic raises and reacts
+# to - a wall-panel press can raise one, and a scenario can be bound to one.
+# Receiving them rides the administrator-only raw tree. Raising one goes to the
+# command surface, works on both tiers, and is bounded by nothing - not object
+# grants, and not the per-event rights the app displays.
+RAW_EVENT_WILDCARD = "ampio/from/+/event"
 
 
 # --- Sensor classification -------------------------------------------------
