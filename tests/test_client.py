@@ -579,7 +579,7 @@ def test_details_classify_input_and_funkcja() -> None:
     client = _client_with_panel_flag()
     obj = client.objects[50]
     assert obj.is_input is True
-    assert obj.input_kind is not None and obj.input_kind.key == "flaga"
+    assert obj.kind is not None and obj.kind.key == "flaga"
     assert obj.funkcja == 32
     assert obj.is_sensor is False
 
@@ -614,14 +614,6 @@ def test_raw_channel_malformed_topic_is_ignored() -> None:
     client = _client_with_panel_flag()
     client._feed_message("ampio/from/CAFE/state/f", b"1")  # too short
     assert client.objects[50].value is None
-
-
-def test_raw_channel_missing_object_does_not_raise() -> None:
-    """Index entry whose object was dropped from state is handled gracefully."""
-    client = _client_with_panel_flag()
-    del client.state.objects[50]
-    client._feed_message("ampio/from/CAFE/state/f/32", b"1")  # must not raise
-    assert 50 not in client.objects
 
 
 def test_index_rebuilds_when_devices_arrive_after_details() -> None:
@@ -701,7 +693,7 @@ def test_detekcja_routes_via_digital_input_prefix() -> None:
     client._feed_message(f"ampio/fromDB/{USER}/config/devicesDetails", _details(det))
     client._feed_message("ampio/from/CAFE/state/i/4", b"1")
     obj = client.objects[60]
-    assert obj.input_kind is not None and obj.input_kind.device_class == "motion"
+    assert obj.kind is not None and obj.kind.device_class == "motion"
     assert obj.value == "1"
 
 
@@ -833,7 +825,6 @@ def test_data_devices_does_not_degrade_details() -> None:
     client._feed_message(DATA_DEVICES_TOPIC, _devices(row))
     obj = client.objects[24]
     assert obj.params == (1 << 37) | 1
-    assert obj.matter_exposed is True
     assert obj.name == "Named"
 
 
@@ -926,59 +917,50 @@ async def test_reconnect_count_increments_on_reconnect() -> None:
 
 
 @pytest.mark.parametrize(
-    ("typ", "leaf_id", "group_ids", "is_system", "visible"),
+    ("typ", "leaf_id", "is_system", "visible"),
     [
         # Real object with a non-empty leafId (the real-install shape).
-        ("temp", "0_cb8f_76_0_0", frozenset(), False, True),
-        # Grouped real object via the rare `powiazane` channel.
-        ("temp", "", frozenset({1}), False, True),
-        # Both signals present.
-        ("temp", "0_x_x_x_x", frozenset({1}), False, True),
-        # Ghost: empty leafId, no groups, not a system type.
-        ("temp", "", frozenset(), False, False),
+        ("temp", "0_cb8f_76_0_0", False, True),
+        # Ghost: empty leafId, not a system type.
+        ("temp", "", False, False),
         # Named-output ghost on the M-SERV - the canonical Matter-leak case.
-        ("przekaznik", "", frozenset(), False, False),
-        # System objects are visible regardless of leafId/groups.
-        ("symulacja", "", frozenset(), True, True),
-        ("detekcja", "", frozenset(), True, True),
-        # `flaga` is an input but NOT a system object: relies on the
-        # external signals (leafId on real installs, groups otherwise).
-        ("flaga", "", frozenset(), False, False),
-        ("flaga", "", frozenset({3}), False, True),
-        ("flaga", "0_d09a_3_0_1", frozenset(), False, True),
+        ("przekaznik", "", False, False),
+        # System objects are visible regardless of leafId.
+        ("symulacja", "", True, True),
+        ("detekcja", "", True, True),
+        # `flaga` is an input but NOT a system object, so it needs its leafId.
+        ("flaga", "", False, False),
+        ("flaga", "0_d09a_3_0_1", False, True),
         # Unclassified / missing typ_komponentu - treat as non-system.
-        (None, "", frozenset(), False, False),
-        (None, "0_x_x_x_x", frozenset(), False, True),
+        (None, "", False, False),
+        (None, "0_x_x_x_x", False, True),
     ],
 )
 def test_visibility_predicate(
     typ: str | None,
     leaf_id: str,
-    group_ids: frozenset[int],
     is_system: bool,
     visible: bool,
 ) -> None:
-    obj = AmpioObject(id=1, typ_komponentu=typ, leaf_id=leaf_id, group_ids=group_ids)
+    obj = AmpioObject(id=1, typ_komponentu=typ, leaf_id=leaf_id)
     assert obj.is_system is is_system
     assert obj.visible is visible
 
 
 @pytest.mark.parametrize(
-    ("params", "hidden", "matter_exposed"),
+    ("params", "hidden"),
     [
-        (0, False, False),  # absent -> no flags
-        (1, False, False),  # bit 0 only (every real object carries it)
-        (16, True, False),  # bit 4 -> hidden stub
-        (17, True, False),  # bit 0 + bit 4 (the live phantom shape)
-        (1 << 37, False, True),  # matter-exposed, not hidden
-        ((1 << 37) | 1, False, True),  # bit 37 + bit 0 (live matter-exposed shape)
-        ((1 << 37) | 16, True, True),  # exposed AND hidden -> hidden still wins
+        (0, False),  # absent -> no flags
+        (1, False),  # bit 0 only (every real object carries it)
+        (16, True),  # bit 4 -> hidden stub
+        (17, True),  # bit 0 + bit 4 (the live phantom shape)
+        (1 << 37, False),  # a Matter opt-in is not a visibility signal
+        ((1 << 37) | 16, True),  # opted in AND hidden -> hidden still wins
     ],
 )
-def test_params_flags(params: int, hidden: bool, matter_exposed: bool) -> None:
+def test_params_flags(params: int, hidden: bool) -> None:
     obj = AmpioObject(id=1, params=params)
     assert obj.hidden is hidden
-    assert obj.matter_exposed is matter_exposed
 
 
 def test_hidden_overrides_leaf_id_visibility() -> None:
@@ -1016,7 +998,7 @@ def test_lammel_is_parsed_into_tilt_position() -> None:
     )
     obj = client.objects[66]
     assert obj.value == "95"
-    assert obj.tilt_position == "65"
+    assert obj.tilt_position == 65
     assert obj.supports_tilt is True
     assert obj.is_output is True
 
@@ -1047,7 +1029,7 @@ def test_states_snapshot_seeds_tilt_position() -> None:
             }
         ),
     )
-    assert client.objects[66].tilt_position == "100"
+    assert client.objects[66].tilt_position == 100
 
 
 # --- module diagnostics ----------------------------------------------------

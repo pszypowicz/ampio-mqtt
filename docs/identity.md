@@ -74,7 +74,7 @@ Not every row in `devicesDetails` is meant to be surfaced. The
 predicate is:
 
 ```
-visible = not hidden and (bool(leaf_id) or bool(group_ids) or is_system)
+visible = not hidden and (bool(leaf_id) or is_system)
 ```
 
 - **`hidden`** - `params` bit 4 (`params & 16`). The M-SERV's own
@@ -88,17 +88,15 @@ visible = not hidden and (bool(leaf_id) or bool(group_ids) or is_system)
   receives `params` (via `devicesDetails` or `data/params_devices`).
   This is the same gate the M-SERV's Matter bridge
   uses (`(params & 2**37) && !(params & 16)`); see
-  [`matter-bridge.md`](matter-bridge.md). Bit 37 (`matter_exposed`) is a
-  Matter-only opt-in and is deliberately **not** used for filtering.
+  [`matter-bridge.md`](matter-bridge.md). Bit 37 is a Matter-only opt-in
+  and is deliberately **not** used for filtering, so the library does not
+  surface it.
 - **`leaf_id`** - non-empty for every "real" object in the M-SERV's
   view. Empty for **ghost rows** (objects the user deleted in Designer
   but that still come back over the wire) and for **system objects**
   (presence simulation, detection). Use `leaf_id` non-empty as the
   default visibility filter.
-- **`group_ids`** - parsed from `devicesDetails.powiazane` (GROUP_CONCAT
-  of group memberships). Most M-SERV firmware leaves this empty; the
-  membership lives in `data/group_devices` instead. Kept here for the
-  rare firmware that does emit it.
+
 - **`is_system`** - `typ_komponentu in {symulacja, detekcja}`. Always
   visible regardless of grouping; the M-SERV exposes these
   unconditionally.

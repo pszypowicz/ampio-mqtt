@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .const import InputKind, OutputKind, SensorKind, is_system_type
+from .const import InputKind, ObjectKind, OutputKind, SensorKind, is_system_type
 from .device_types import Capability
 
 # Bit flags inside the `params` integer (`obiekty.params`). The semantics
@@ -15,11 +15,9 @@ from .device_types import Capability
 #   phantom rows that duplicate a real Designer channel (same leafId, no value)
 #   and on objects the user removed/hid. It is the authoritative "do not
 #   surface this" marker, and unlike the DB `id` it is replacement-stable.
-# - bit 37: the object is flagged for the Matter bridge specifically. NOT a
-#   general visibility signal - most real objects leave it clear - so it is
-#   exposed only as `matter_exposed` and never used for filtering here.
+# Bit 37 marks a per-object Matter opt-in; it is not a visibility signal and
+# nothing here reads it. See docs/matter-bridge.md.
 _HIDDEN_FLAG = 1 << 4
-_MATTER_EXPOSED_FLAG = 1 << 37
 
 
 @dataclass(slots=True)
@@ -49,51 +47,44 @@ class AmpioObject:
     # back with an empty string. Doubles as the visibility marker (see
     # `visible`) and the stable identity source (see `stable_key`).
     leaf_id: str = ""
-    # GROUP_CONCAT of `grupy_obiektow.id_grupy`, parsed from
-    # `devicesDetails.powiazane`. Most M-SERV firmware does not emit this
-    # column - real installs see it empty. Group/room membership ships through
-    # `fetch_rooms()` instead. Kept here for any future M-SERV that does emit
-    # it, and contributes to `visible` when populated.
-    group_ids: frozenset[int] = field(default_factory=frozenset)
     # `params` bitfield from `devicesDetails` (admin tier) or the
     # `data/params_devices` table (every tier). Replacement-stable Designer
     # config flags; see `_HIDDEN_FLAG` / `_MATTER_EXPOSED_FLAG`, `hidden`, and
-    # `matter_exposed`. Defaults to 0 so a payload without the column reads as
+    # Defaults to 0 so a payload without the column reads as
     # "nothing hidden" and the visibility rule falls back to the leaf_id
     # heuristic alone.
     params: int = 0
-    kind: SensorKind | None = None  # set when classified as a sensor
-    input_kind: InputKind | None = None  # set when classified as an input
-    output_kind: OutputKind | None = None  # set when the object accepts commands
+    # What this object is, once metadata has arrived. Exactly one kind applies.
+    kind: ObjectKind | None = None
     value: str | None = None
     # Epoch seconds of the report `value` came from - the `on` field when the
     # M-SERV supplied one, local receive time for the raw channel, which sends
     # none. Lets a later bulk snapshot be compared against what is already
     # held instead of being applied or dropped blind.
     updated_at: float | None = None
-    # Lamella angle percent, from the `lammel` state field. Only tilt-capable
+    # Slat angle percent, from the `lammel` state field. Only tilt-capable
     # covers report it.
-    tilt_position: str | None = None
+    tilt_position: int | None = None
 
     @property
     def is_sensor(self) -> bool:
         """Whether this object is exposed by the sensor platform."""
-        return self.kind is not None
+        return isinstance(self.kind, SensorKind)
 
     @property
     def is_input(self) -> bool:
         """Whether this object is exposed by the binary_sensor/input platform."""
-        return self.input_kind is not None
+        return isinstance(self.kind, InputKind)
 
     @property
     def is_output(self) -> bool:
         """Whether this object accepts commands (switch/light/cover platforms)."""
-        return self.output_kind is not None
+        return isinstance(self.kind, OutputKind)
 
     @property
     def supports_tilt(self) -> bool:
-        """Whether this object has a lamella axis."""
-        return self.output_kind is not None and self.output_kind.tilt
+        """Whether this object has a slat axis."""
+        return isinstance(self.kind, OutputKind) and self.kind.tilt
 
     @property
     def is_on(self) -> bool:
@@ -128,16 +119,6 @@ class AmpioObject:
         return bool(self.params & _HIDDEN_FLAG)
 
     @property
-    def matter_exposed(self) -> bool:
-        """Whether the object is flagged for the M-SERV's Matter bridge (``params`` bit 37).
-
-        Informational only - it reflects a per-object Matter opt-in the user
-        sets in Designer, NOT general visibility, so it is never used to filter
-        here. Most real objects leave it clear.
-        """
-        return bool(self.params & _MATTER_EXPOSED_FLAG)
-
-    @property
     def stable_key(self) -> str | None:
         """Replacement-stable identity token (``leaf_<leaf_id>``), or None.
 
@@ -160,15 +141,14 @@ class AmpioObject:
         ``hidden`` (``params`` bit 4) takes precedence: a hidden object is never
         visible, even with a populated ``leaf_id`` - this is what drops the
         phantom half of a duplicated Designer channel. Otherwise the wire-side
-        marker is ``leaf_id`` (set for every real object, empty for ghost rows
-        and system objects), with system objects pulled in by ``is_system`` and
-        ``group_ids`` contributing only on the rare firmware that emits
-        `powiazane`. When ``params`` is absent (so ``hidden`` is False) the
+        marker is ``leaf_id``, set for every real object and empty for ghost
+        rows and system objects, with the latter pulled back in by
+        ``is_system``. When ``params`` is absent (so ``hidden`` is False) the
         ``leaf_id`` test alone decides.
         """
         if self.hidden:
             return False
-        return bool(self.leaf_id) or bool(self.group_ids) or self.is_system
+        return bool(self.leaf_id) or self.is_system
 
 
 @dataclass(slots=True)

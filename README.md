@@ -98,13 +98,13 @@ RGBW_OUTPUT}`). Drives HA platform selection and bundle/split decisions in
   `open_cover`, `close_cover`, `set_cover_position`, `set_cover_tilt`). Works on both
   account tiers - see [`docs/protocol.md`](docs/protocol.md),
 - output-object classification via `classify()` / `OutputKind`
-  (`AmpioObject.output_kind`, `is_output`, `supports_tilt`): relays,
+  (`AmpioObject.kind`, `is_output`, `supports_tilt`): relays,
   dimmers, RGBW lights, and the three cover types, each flagged with the
   command verbs it answers so a consumer picks a platform without its own
   type table. Tilt-capable blinds also report their slat angle as
   `AmpioObject.tilt_position`,
 - input-object classification via `classify()` / `InputKind`
-  (`AmpioObject.input_kind`, `is_input`, `is_on`): flags map to a generic
+  (`AmpioObject.kind`, `is_input`, `is_on`): flags map to a generic
   boolean, motion detection to `binary_sensor.motion`. Live flag/button events
   are delivered with minimal latency through the same `add_object_listener()`
   pipeline by routing the decoded raw per-channel topics (which fire ahead of

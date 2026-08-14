@@ -1,12 +1,13 @@
 # Object classification
 
 The `devicesDetails` payload returns one row per logical object. The
-library classifies each row into a `SensorKind` (sensor-side platforms),
-an `InputKind` (binary/boolean platforms), and/or an `OutputKind`
-(controllable platforms), or leaves it unclassified. A single
-`classify(typ_komponentu, interpretacja)` returns all three, keying on
-`typ_komponentu` (the object type) and `interpretacja` (a refinement for
-analog inputs).
+library classifies each row into exactly one kind - a `SensorKind`
+(sensor-side platforms), an `InputKind` (binary/boolean platforms), or an
+`OutputKind` (controllable platforms). `classify(typ_komponentu,
+interpretacja)` returns it, keying on `typ_komponentu` (the object type)
+and `interpretacja` (a refinement for analog inputs). A component type is
+a measurement, a boolean input, or something controllable, never two, so
+the three are alternatives rather than optional slots on the object.
 
 Authoritative source:
 [`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py)
@@ -106,8 +107,8 @@ Classification answers "what kind of thing is this row". Visibility
 it at all". They compose:
 
 ```python
-sensor, binary, output = classify(obj.typ_komponentu, obj.interpretacja)
-should_surface = any((sensor, binary, output)) and obj.visible
+should_surface = obj.visible          # classify() always yields a kind
+platform = obj.kind                   # SensorKind | InputKind | OutputKind
 ```
 
 A ghost row (`leaf_id == ""`, not a system object) is still classifiable

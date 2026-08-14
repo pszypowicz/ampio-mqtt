@@ -5,15 +5,17 @@ from __future__ import annotations
 import pytest
 
 from ampio_mqtt import classify
-from ampio_mqtt.const import InputKind, SensorKind
+from ampio_mqtt.const import InputKind, OutputKind, SensorKind
 
 
 def _sensor(typ: str | None, interp: int | None) -> SensorKind | None:
-    return classify(typ, interp)[0]
+    kind = classify(typ, interp)
+    return kind if isinstance(kind, SensorKind) else None
 
 
 def _input(typ: str | None, interp: int | None) -> InputKind | None:
-    return classify(typ, interp)[1]
+    kind = classify(typ, interp)
+    return kind if isinstance(kind, InputKind) else None
 
 
 def test_temperature() -> None:
@@ -106,27 +108,9 @@ def test_classify_input_types(typ, key, device_class) -> None:
     assert kind.device_class == device_class
 
 
-@pytest.mark.parametrize(
-    "typ",
-    ["temp", "lin_wej", "bit32", "przekaznik", "rgbw", "led", "roleta_procenty", None],
-)
-def test_classify_input_returns_none_for_non_inputs(typ) -> None:
-    assert _input(typ, 1) is None
-
-
-def test_input_and_sensor_classifications_are_disjoint() -> None:
-    """An input type is never also a sensor, and vice versa."""
-    for typ in ("flaga", "detekcja", "symulacja"):
-        sensor, inp, _ = classify(typ, 1)
-        assert sensor is None
-        assert inp is not None
-
-
-# --- output classification -------------------------------------------------
-
-
 def _output(typ, interp=1):
-    return classify(typ, interp)[2]
+    kind = classify(typ, interp)
+    return kind if isinstance(kind, OutputKind) else None
 
 
 @pytest.mark.parametrize(
@@ -148,17 +132,25 @@ def test_output_kinds(typ, key, dimmable, color, cover, position, tilt) -> None:
     assert (out.cover, out.position, out.tilt) == (cover, position, tilt)
 
 
-@pytest.mark.parametrize("typ", ["temp", "lin_wej", "bit32", "flaga", "detekcja", None])
-def test_non_outputs_have_no_output_kind(typ) -> None:
-    assert _output(typ) is None
-
-
 @pytest.mark.parametrize(
-    "typ", ["przekaznik", "led", "rgbw", "roleta", "roleta_procenty", "roleta_lamelki"]
+    ("typ", "expected"),
+    [
+        ("temp", SensorKind),
+        ("lin_wej", SensorKind),
+        ("bit32", SensorKind),
+        ("flaga", InputKind),
+        ("detekcja", InputKind),
+        ("symulacja", InputKind),
+        ("przekaznik", OutputKind),
+        ("led", OutputKind),
+        ("rgbw", OutputKind),
+        ("roleta", OutputKind),
+        ("roleta_procenty", OutputKind),
+        ("roleta_lamelki", OutputKind),
+        (None, SensorKind),  # no metadata yet -> the generic value sensor
+        ("nonsense", SensorKind),  # unknown type, same fallback
+    ],
 )
-def test_outputs_are_not_sensors(typ) -> None:
-    """An output must not fall through to the generic value sensor."""
-    sensor, inp, out = classify(typ, 1)
-    assert sensor is None
-    assert inp is None
-    assert out is not None
+def test_every_type_maps_to_exactly_one_kind(typ: str | None, expected: type) -> None:
+    """An object is a measurement, a boolean input, or controllable - never two."""
+    assert isinstance(classify(typ, 1), expected)

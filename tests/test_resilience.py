@@ -212,7 +212,7 @@ def test_snapshot_also_corrects_tilt() -> None:
         ).encode(),
     )
     obj = client.objects[66]
-    assert (obj.value, obj.tilt_position) == ("100", "90")
+    assert (obj.value, obj.tilt_position) == ("100", 90)
 
 
 # --- params ownership -------------------------------------------------------
