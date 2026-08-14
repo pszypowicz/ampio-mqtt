@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .device_types import module_capabilities, module_model
-from .models import AmpioModule, AmpioServerInfo
+from .models import AmpioModule, AmpioScene, AmpioServerInfo
 
 if TYPE_CHECKING:
     import aiomqtt
@@ -219,6 +219,40 @@ def parse_params_devices(payload: str) -> dict[int, int] | None:
         if oid is None:
             continue
         out[oid] = to_int(item.get("params")) or 0
+    return out
+
+
+def parse_scenes(payload: str) -> list[AmpioScene] | None:
+    """Parse a `data/scenes` payload into the scene catalogue.
+
+    Each row carries its actions twice - `Actions` as the wire command strings
+    and `Infos` as their structured form. Only the object ids are kept, since
+    the M-SERV replays the actions itself when a scene is run.
+    """
+    try:
+        data = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    out: list[AmpioScene] = []
+    for item in data.get("List", []):
+        sid = to_int(item.get("id"))
+        if sid is None:
+            continue
+        parent = to_int(item.get("parentId"))
+        objects = {
+            oid
+            for info in item.get("Infos", [])
+            if isinstance(info, dict) and (oid := to_int(info.get("id"))) is not None
+        }
+        out.append(
+            AmpioScene(
+                id=sid,
+                name=item.get("sceneName") or "",
+                active=bool(to_int(item.get("active"))),
+                parent_id=parent if parent is not None and parent >= 0 else None,
+                object_ids=frozenset(objects),
+            )
+        )
     return out
 
 

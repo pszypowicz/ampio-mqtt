@@ -200,6 +200,21 @@ class AmpioModule:
 
 
 @dataclass(slots=True)
+class AmpioScene:
+    """A named multi-action preset defined in the Ampio app."""
+
+    id: int
+    name: str
+    # The M-SERV's own enabled flag for the scene.
+    active: bool = True
+    # Parent scene when the install nests them; None for a top-level scene.
+    parent_id: int | None = None
+    # Objects the scene's actions touch, for a consumer that wants to relate a
+    # scene to its entities.
+    object_ids: frozenset[int] = field(default_factory=frozenset)
+
+
+@dataclass(slots=True)
 class AmpioServerInfo:
     """A safe subset of the Ampio M-SERV self-reported info.
 

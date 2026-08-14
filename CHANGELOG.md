@@ -14,6 +14,27 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.11.0
+
+Exposes the Ampio app's scene catalogue and the three verbs that drive it,
+closing #21.
+
+### Added
+
+- `AmpioClient.fetch_scenes() -> list[AmpioScene]` - the scene catalogue, with
+  each scene's name, enabled flag, parent, and the objects its actions touch.
+- `AmpioClient.run_scene()`, `turn_scene_off()`, and `undo_scene()`. The M-SERV
+  replays the scene's own actions, so a consumer never sends them itself.
+  `undo` restores the objects to the state they held before the scene ran,
+  which is distinct from `off` driving them to zero - both verified live.
+- `AmpioScene`, exported from the package.
+
+### Notes
+
+- Scene commands are grant-scoped like any other command: a scene touching
+  objects outside a standard account's grant does nothing.
+- The catalogue itself reaches both tiers.
+
 ## 0.10.0
 
 Surfaces the health each module broadcasts about itself, for a per-module

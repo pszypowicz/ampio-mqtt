@@ -75,6 +75,7 @@ ENDPOINTS: tuple[Endpoint, ...] = (
     Endpoint("groups", "data", "groups", "data", "groups"),
     Endpoint("group_devices", "data", "group_devices", "data", "group_devices"),
     Endpoint("locations", "config", "locations", "config", "locations"),
+    Endpoint("scenes", "data", "scenes", "data", "scenes"),
 )
 
 ENDPOINT_BY_NAME: dict[str, Endpoint] = {ep.name: ep for ep in ENDPOINTS}
@@ -121,6 +122,11 @@ def command_topic(user: str) -> str:
 def command_payload(object_id: int, verb: str, args: Sequence[object] = ()) -> str:
     """Build an ``/api/set`` command payload."""
     return f"/api/set/{object_id}/{verb}" + "".join(f"/{a}" for a in args)
+
+
+def scene_payload(scene_id: int, verb: str) -> str:
+    """Build a scene command payload; ``verb`` is run, off, or undo."""
+    return f"/api/{verb}/scene/{scene_id}"
 
 
 # `setRollerPos` takes a position and a lamella angle. 101 on either axis means

@@ -10,6 +10,7 @@ from .errors import AmpioAuthError, AmpioConnectionError, AmpioError
 from .models import (
     AmpioModule,
     AmpioObject,
+    AmpioScene,
     AmpioServerInfo,
     AmpioState,
     ConnectionStats,
@@ -23,6 +24,7 @@ __all__ = [
     "AmpioError",
     "AmpioModule",
     "AmpioObject",
+    "AmpioScene",
     "AmpioServerInfo",
     "AmpioState",
     "Capability",
@@ -37,4 +39,4 @@ __all__ = [
     "module_model",
 ]
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
