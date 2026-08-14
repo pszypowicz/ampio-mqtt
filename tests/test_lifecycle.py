@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, ClassVar, Self
 from unittest.mock import patch
 
 import aiomqtt
 import pytest
 
-from ampio_mqtt import AmpioClient, AmpioConnectionError
+from ampio_mqtt import AccessTier, AmpioClient, AmpioConnectionError
 from ampio_mqtt.errors import AmpioAuthError
 
 USER = "u"
@@ -29,6 +29,8 @@ DETAILS_TOPIC = f"ampio/fromDB/{USER}/config/devicesDetails"
 DEVICES_TOPIC = f"ampio/fromDB/{USER}/config/devices"
 STATES_TOPIC = f"ampio/fromDB/{USER}/data/states"
 INFO_TOPIC = f"ampio/fromDB/{USER}/data/info"
+DATA_DEVICES_TOPIC = f"ampio/fromDB/{USER}/data/devices"
+PARAMS_DEVICES_TOPIC = f"ampio/fromDB/{USER}/data/params_devices"
 
 
 class _Message:
@@ -48,9 +50,9 @@ class FakeMqttClient:
 
     enter_error: BaseException | None = None
     enter_delay: float = 0.0
-    scripted_messages: list[_Message] = []
-    published: list[tuple[str, bytes]] = []
-    subscribed: list[str] = []
+    scripted_messages: ClassVar[list[_Message]] = []
+    published: ClassVar[list[tuple[str, bytes]]] = []
+    subscribed: ClassVar[list[str]] = []
 
     @classmethod
     def reset(cls) -> None:
@@ -63,7 +65,7 @@ class FakeMqttClient:
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._messages_queue: asyncio.Queue[_Message] = asyncio.Queue()
 
-    async def __aenter__(self) -> FakeMqttClient:
+    async def __aenter__(self) -> Self:
         if self.enter_delay:
             await asyncio.sleep(self.enter_delay)
         if self.enter_error is not None:
@@ -244,8 +246,62 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
         await client.start(timeout=2.0, discovery_timeout=1.0)
     try:
         assert await client.wait_for_initial_discovery(timeout=1.0) is True
+        assert client.access_tier is AccessTier.ADMIN
         assert 17 in client.modules
         assert 41 in client.objects
+        assert client.server_info is not None and client.server_info.mac == 99
+    finally:
+        await client.stop()
+
+
+async def test_restricted_account_completes_via_data_surface_fallback() -> None:
+    """With the config surface silent, the app-sync pair completes discovery.
+
+    This is the non-admin shape verified live: `config/devicesDetails` and
+    `config/devices` never answer, while `data/devices` (grant-filtered, with
+    full metadata) and `data/params_devices` do.
+    """
+    FakeMqttClient.scripted_messages = [
+        _Message(
+            DATA_DEVICES_TOPIC,
+            json.dumps(
+                {
+                    "List": [
+                        {
+                            "id": 24,
+                            "id_urzadzenia": 20,
+                            "typ_komponentu": "lin_wej",
+                            "interpretacja": 7,
+                            "funkcja": 5,
+                            "leafId": "0_cb9b_75_0_0",
+                            "opis_menu": "CO2",
+                        }
+                    ]
+                }
+            ).encode(),
+        ),
+        _Message(
+            PARAMS_DEVICES_TOPIC,
+            json.dumps({"List": [{"id": 24, "params": 1}]}).encode(),
+        ),
+        _Message(STATES_TOPIC, json.dumps({"List": []}).encode()),
+        _Message(INFO_TOPIC, json.dumps({"Results": {"mac": 99}}).encode()),
+    ]
+    client = AmpioClient("h", username=USER, reconnect_interval=0.0)
+    with patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient):
+        await client.start(timeout=2.0, discovery_timeout=0.3)
+    try:
+        assert (
+            await client.wait_for_initial_discovery(timeout=1.0, admin_grace=0.05)
+            is True
+        )
+        assert client.access_tier is AccessTier.RESTRICTED
+        obj = client.objects[24]
+        assert obj.name == "CO2"
+        assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
+        assert obj.stable_key == "leaf_0_cb9b_75_0_0"
+        assert obj.visible is True
+        assert client.modules == {}
         assert client.server_info is not None and client.server_info.mac == 99
     finally:
         await client.stop()

@@ -3,9 +3,10 @@
 The M-SERV publishes the same data twice:
 
 - On the **per-object topic** `ampio/fromDB/<user>/ob/<id>/state`,
-  user-scoped, retained. This is the well-formed JSON form
-  (`{state, desc, on}`) and the one the library's per-object dispatcher
-  consumes.
+  user-scoped, not retained - initial values come from the bulk
+  `states` snapshot. This is the well-formed JSON form
+  (`{state, desc, on}`, `desc` optional) and the one the library's
+  per-object dispatcher consumes.
 - On the **raw channel tree** `ampio/from/<MAC>/state/<prefix>/<channel>`,
   global, NOT user-scoped. This is the decoded-CAN form: plain-text
   payloads (`"0"`, `"1"`, ...) keyed by the module's effective bus MAC
@@ -15,6 +16,12 @@ The raw form arrives **first** for input changes (the M-SERV decodes
 CAN and publishes the raw value before re-encoding the per-object
 record). For an input platform that wants minimum latency on a
 button-press or flag toggle, the raw form is the right source.
+
+The raw tree is served only to **administrator** accounts: the broker
+ACL delivers nothing on `ampio/from/#` to a standard account, retained
+or live (live-verified, and independent of the account's app
+permissions). On the standard tier the bridge simply never fires and
+inputs update through the per-object topic at its higher latency.
 
 Authoritative source:
 [`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py)

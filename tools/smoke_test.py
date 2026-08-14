@@ -70,7 +70,8 @@ async def run(args: argparse.Namespace) -> int:
     types: dict = {}
     for o in objs.values():
         types[o.typ_komponentu] = types.get(o.typ_komponentu, 0) + 1
-    print(f"\n=== Objects: {len(objs)} (sensors: {len(client.sensors)}) ===")
+    print(f"\n=== Access tier: {client.access_tier.value} ===")
+    print(f"=== Objects: {len(objs)} (sensors: {len(client.sensors)}), modules: {len(client.modules)} ===")
     print("  by typ_komponentu:", types)
 
     print("\n=== Sensors (auto-discovered) ===")

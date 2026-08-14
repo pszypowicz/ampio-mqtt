@@ -96,6 +96,9 @@ def to_int(value: Any) -> int | None:
 def parse_details(payload: str) -> list[ObjectMetadata] | None:
     """Parse a `devicesDetails` payload into per-object metadata.
 
+    Also parses the app-sync `data/devices` catalogue, which shares the row
+    shape minus the `params` and `stan_json` columns (those read as 0 / None).
+
     Returns None when the payload is not parseable JSON; an empty list is a
     valid (empty) response.
     """
@@ -187,6 +190,25 @@ def parse_devices(payload: str) -> list[AmpioModule] | None:
                 hw_version=to_int(item.get("wersja_pcb")),
             )
         )
+    return out
+
+
+def parse_params_devices(payload: str) -> dict[int, int] | None:
+    """Parse a `data/params_devices` payload into `{object_id: params}`.
+
+    The table covers the full object catalogue regardless of the account's
+    grants. Returns None when the payload is not parseable JSON.
+    """
+    try:
+        data = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    out: dict[int, int] = {}
+    for item in data.get("List", []):
+        oid = to_int(item.get("id"))
+        if oid is None:
+            continue
+        out[oid] = to_int(item.get("params")) or 0
     return out
 
 

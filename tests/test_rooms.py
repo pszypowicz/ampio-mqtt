@@ -22,7 +22,6 @@ import pytest
 from ampio_mqtt import AmpioClient, AmpioConnectionError
 from ampio_mqtt.rooms import join_rooms
 
-
 # --- join_rooms() pure tests ----------------------------------------------
 
 

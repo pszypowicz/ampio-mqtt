@@ -13,12 +13,25 @@ Async Python client for the **Ampio Smart Home** local MQTT protocol exposed by
 the Ampio M-SERV controller. Built to back a Home Assistant integration; the
 library itself is Home Assistant agnostic.
 
-> **Account requirements.** The credentials you pass must belong to an Ampio
-> account that can read the M-SERV configuration (the module and object list).
-> In practice this currently means an **administrator** account. A restricted
-> account still connects, but the M-SERV never reports its identity
-> (`AmpioClient.mserv_id` stays `None`) and discovery yields no modules or
-> objects.
+> **Account tiers.** Any Ampio account works; what the library can see is
+> decided by the account's administrator bit. Per-user app permissions do
+> not change it (live-verified with a standard account granted every app
+> permission):
+>
+> - **Administrator** - the full catalogue: every DB object, the module
+>   list (`AmpioClient.modules` with names, models, firmware), and the
+>   global raw-channel topics that deliver input events with minimal
+>   latency.
+> - **Standard user** (the recommended shape for a dedicated Home
+>   Assistant account) - the app-sync surface: the objects the
+>   administrator granted the account in the Ampio app, with names,
+>   classification metadata, visibility flags, rooms, and the server
+>   identity (`AmpioClient.server_info`). No module list (so `mserv_id`
+>   stays `None`) and no raw input topics - input events arrive only
+>   through the slower per-object republish.
+>
+> `AmpioClient.access_tier` reports the detected tier once discovery
+> completes.
 
 ## Status
 
@@ -28,6 +41,14 @@ stability note above). Currently supports:
 - TCP connection to the Ampio MQTT broker with username/password auth and
   auto-reconnect with capped exponential backoff and jitter,
 - discovery of physical modules and logical DB objects from the M-SERV,
+- two-tier discovery: administrator accounts read the full `config`
+  catalogue; standard accounts fall back to the app-sync `data` surface
+  (grant-filtered objects with full metadata, plus the `params_devices`
+  visibility table). The detected tier is exposed as
+  `AmpioClient.access_tier`,
+- replacement-stable per-object identity via `AmpioObject.stable_key`
+  (the Designer `leafId`), identical on both tiers - see
+  [`docs/identity.md`](docs/identity.md),
 - live push of object state changes via per-object MQTT topics, plus a bulk
   states snapshot at startup,
 - classification of sensor objects (temperature and M-SENS environmental

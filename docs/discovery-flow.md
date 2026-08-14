@@ -2,8 +2,9 @@
 
 `AmpioClient.start()` runs the bring-up sequence: connect, subscribe,
 publish the auto-discovery keywords, wait for the responses, return.
-By the time `start()` returns, `client.objects`, `client.modules`, and
-`client.server_info` are populated and ready to consult. Live state
+By the time `start()` returns, `client.objects` and
+`client.server_info` are populated and ready to consult
+(`client.modules` too on the admin tier - see below). Live state
 arrives via push from that point on.
 
 A consumer that **depends** on those collections being populated before
@@ -11,14 +12,14 @@ it does anything else - the canonical case is resolving `mserv_id` to
 pre-register the M-SERV device so other modules' `via_device` parents
 resolve - should not rely on `start()`'s blocking as an implementation
 detail. It should call `await client.wait_for_initial_discovery()`
-(default `timeout=8.0`) explicitly. That method returns `True` once all
-four discovery messages have arrived and `False` if the timeout elapses;
-it never raises. `start()` itself delegates its discovery wait to this
-method, so the two share one definition of "discovery is done." Expressing
-the dependency explicitly keeps `start()` free to return earlier in a
-future revision without silently breaking that ordering - the library's
-own accessors degrade gracefully when nothing is known yet, so this
-guarantee exists for consumers, not for the library.
+(default `timeout=8.0`) explicitly. That method returns `True` once
+discovery is complete for the account's tier and `False` if the timeout
+elapses; it never raises. `start()` itself delegates its discovery wait
+to this method, so the two share one definition of "discovery is done."
+Expressing the dependency explicitly keeps `start()` free to return
+earlier in a future revision without silently breaking that ordering -
+the library's own accessors degrade gracefully when nothing is known
+yet, so this guarantee exists for consumers, not for the library.
 
 Authoritative source:
 [`src/ampio_mqtt/client.py`](../src/ampio_mqtt/client.py) (`_run`,
@@ -30,23 +31,36 @@ Authoritative source:
    capped-exponential reconnect loop. Each successful (re)connect bumps
    `stats.reconnect_count` and stamps `stats.started_at` on the first
    one.
-2. **Subscribe** - the per-user topics (`ob/+/state`, the seven
+2. **Subscribe** - the per-user topics (`ob/+/state`, the nine
    response topics) plus the global raw-channel wildcards. See
    [`protocol.md`](protocol.md) and
    [`raw-channel-bridge.md`](raw-channel-bridge.md) for the full
    subscribe list.
 3. **Publish the auto-discovery keywords** on the matching control
    surfaces:
-   - `devicesDetails` on `config` - object catalogue.
-   - `devices` on `config` - module catalogue.
+   - `devicesDetails` on `config` - object catalogue (admin tier).
+   - `devices` on `config` - module catalogue (admin tier).
+   - `devices` on `data` - app-sync object catalogue (every tier,
+     grant-filtered).
+   - `params_devices` on `data` - full-catalogue `params` table
+     (every tier).
    - empty payload on `info` - server self-report.
    - empty payload on `states` - bulk snapshot of current values.
-4. **Await** all four responses or the `discovery_timeout` deadline,
-   whichever comes first - this step is `wait_for_initial_discovery()`,
-   which `start()` calls with `timeout=discovery_timeout`. Each dispatched
-   message bumps `stats.last_message_at`. The four signals latch, so a
-   later `wait_for_initial_discovery()` call returns immediately once they
-   have all fired (and stays correct across reconnects).
+4. **Await** completion or the `discovery_timeout` deadline, whichever
+   comes first - this step is `wait_for_initial_discovery()`, which
+   `start()` calls with `timeout=discovery_timeout`. Discovery is
+   complete when `states` and `info` have arrived plus one catalogue
+   pair: the `config` pair (admin accounts) or the `data` pair
+   (standard accounts, whose `config` requests are never answered).
+   When the `data` pair completes first, up to `admin_grace` seconds
+   (default 2.0, spent from the same `timeout` budget) are granted for
+   the `config` pair before returning, so `access_tier` reads its
+   settled value: both requests went out together, so continued
+   `config` silence after `data` answered means the account is not an
+   administrator. Each dispatched message bumps
+   `stats.last_message_at`. The signals latch, so a later
+   `wait_for_initial_discovery()` call returns immediately once a
+   tier's set has fired (and stays correct across reconnects).
 5. **Return.** The library does not periodically refetch the
    catalogues; live state arrives via push on the per-object topic
    (and, for inputs, the raw-channel topics).

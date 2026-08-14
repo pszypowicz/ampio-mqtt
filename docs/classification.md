@@ -18,18 +18,18 @@ The Sensor / Input / System columns are one row each in the
 `input`, and `system` fields) - keep that table in sync when a new type
 is added.
 
-| `typ_komponentu`  | Sensor? | Input? | System? | Note                                                                                                                       |
-| ----------------- | ------- | ------ | ------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `temp`            | yes     | no     | no      | Temperature reading, °C.                                                                                                   |
-| `lin_wej`         | yes     | no     | no      | Analog input - kind set by `interpretacja` (see below).                                                                    |
-| `bit32`           | yes     | no     | no      | Generic 32-bit measurement (units unknown).                                                                                |
-| `flaga`           | no      | yes    | no      | Generic boolean flag (logic flag, button-press hold, etc.).                                                                |
-| `detekcja`        | no      | yes    | yes     | Motion-style detection. Always visible.                                                                                    |
-| `symulacja`       | no      | yes    | yes     | Presence simulation. Always visible. Raw-channel prefix not yet bridged.                                                   |
-| `przekaznik`      | no      | no     | no      | Relay output - future `switch` platform.                                                                                   |
-| `rgbw`, `led`     | no      | no     | no      | Color/light outputs - future `light` platform.                                                                             |
-| `roleta_procenty` | no      | no     | no      | Roller percentage - future `cover` platform.                                                                               |
-| (anything else)   | "value" | no     | no      | Generic value-only sensor with no state class - the fallback used on restricted-account installs where metadata is sparse. |
+| `typ_komponentu`  | Sensor? | Input? | System? | Note                                                                                                                                       |
+| ----------------- | ------- | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `temp`            | yes     | no     | no      | Temperature reading, °C.                                                                                                                   |
+| `lin_wej`         | yes     | no     | no      | Analog input - kind set by `interpretacja` (see below).                                                                                    |
+| `bit32`           | yes     | no     | no      | Generic 32-bit measurement (units unknown).                                                                                                |
+| `flaga`           | no      | yes    | no      | Generic boolean flag (logic flag, button-press hold, etc.).                                                                                |
+| `detekcja`        | no      | yes    | yes     | Motion-style detection. Always visible.                                                                                                    |
+| `symulacja`       | no      | yes    | yes     | Presence simulation. Always visible. Raw-channel prefix not yet bridged.                                                                   |
+| `przekaznik`      | no      | no     | no      | Relay output - future `switch` platform.                                                                                                   |
+| `rgbw`, `led`     | no      | no     | no      | Color/light outputs - future `light` platform.                                                                                             |
+| `roleta_procenty` | no      | no     | no      | Roller percentage - future `cover` platform.                                                                                               |
+| (anything else)   | "value" | no     | no      | Generic value-only sensor with no state class - the fallback for objects whose metadata has not arrived or whose type is not in the table. |
 
 ## `lin_wej` interpretation table
 

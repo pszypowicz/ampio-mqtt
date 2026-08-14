@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from .const import InputKind, SensorKind, is_system_type
 from .device_types import Capability
 
-# Bit flags inside the `params` integer (`obiekty.params`). Reverse-engineered
-# from the M-SERV's own Matter bridge, which selects exposable objects with
+# Bit flags inside the `params` integer (`obiekty.params`). The semantics
+# match the M-SERV's own Matter bridge, which selects exposable objects with
 # `(params & 2**37) and not (params & 16)`. See docs/matter-bridge.md.
 #
 # - bit 4 (`16`): the object is hidden / a stub. The M-SERV sets it on the
@@ -42,11 +42,12 @@ class AmpioObject:
     # (the same physical signal exposed as several Designer objects). Used to
     # route raw channel events to this object.
     funkcja: int | None = None
-    # `leafId` from `devicesDetails` - a short token like ``0_cb8f_76_0_0``.
-    # The wire payload sets it for every "real" object; ghost rows that
-    # survived a Designer removal AND system objects (Simulation / Detection)
-    # both come back with an empty string. The library treats it as a binary
-    # marker; see `visible`.
+    # `leafId` from `devicesDetails` / the app-sync `data/devices` catalogue -
+    # a short token like ``0_cb8f_76_0_0``, identical on both surfaces. The
+    # wire payload sets it for every "real" object; ghost rows that survived a
+    # Designer removal AND system objects (Simulation / Detection) both come
+    # back with an empty string. Doubles as the visibility marker (see
+    # `visible`) and the stable identity source (see `stable_key`).
     leaf_id: str = ""
     # GROUP_CONCAT of `grupy_obiektow.id_grupy`, parsed from
     # `devicesDetails.powiazane`. Most M-SERV firmware does not emit this
@@ -54,11 +55,12 @@ class AmpioObject:
     # `fetch_rooms()` instead. Kept here for any future M-SERV that does emit
     # it, and contributes to `visible` when populated.
     group_ids: frozenset[int] = field(default_factory=frozenset)
-    # `params` bitfield from `devicesDetails`. Replacement-stable Designer
+    # `params` bitfield from `devicesDetails` (admin tier) or the
+    # `data/params_devices` table (every tier). Replacement-stable Designer
     # config flags; see `_HIDDEN_FLAG` / `_MATTER_EXPOSED_FLAG`, `hidden`, and
-    # `matter_exposed`. Defaults to 0 so a payload without the column (older
-    # firmware, restricted account) reads as "nothing hidden" and the visibility
-    # rule degrades to the leaf_id heuristic alone.
+    # `matter_exposed`. Defaults to 0 so a payload without the column reads as
+    # "nothing hidden" and the visibility rule falls back to the leaf_id
+    # heuristic alone.
     params: int = 0
     kind: SensorKind | None = None  # set when classified as a sensor
     input_kind: InputKind | None = None  # set when classified as an input
@@ -117,6 +119,22 @@ class AmpioObject:
         return bool(self.params & _MATTER_EXPOSED_FLAG)
 
     @property
+    def stable_key(self) -> str | None:
+        """Replacement-stable identity token (``leaf_<leaf_id>``), or None.
+
+        The recommended per-object unique id (see docs/identity.md).
+        ``leaf_id`` is part of the reloaded Designer config, so it survives a
+        module swap; the ``config`` and ``data`` discovery surfaces report the
+        same value, so the key is identical on both access tiers; and it is
+        unique among ``visible`` objects - hidden phantom stubs share their
+        twin's ``leaf_id``, so filter on ``visible`` first. Objects with an
+        empty ``leaf_id`` (system objects, ghost rows) return None; a consumer
+        surfacing those needs its own fallback key. Scope the key per M-SERV
+        by prefixing with a server identifier (e.g. ``AmpioServerInfo.mac``).
+        """
+        return f"leaf_{self.leaf_id}" if self.leaf_id else None
+
+    @property
     def visible(self) -> bool:
         """Whether the object is one the user can see in Designer's tree.
 
@@ -126,8 +144,8 @@ class AmpioObject:
         marker is ``leaf_id`` (set for every real object, empty for ghost rows
         and system objects), with system objects pulled in by ``is_system`` and
         ``group_ids`` contributing only on the rare firmware that emits
-        `powiazane`. When ``params`` is absent (so ``hidden`` is False) this
-        degrades exactly to the former leaf_id heuristic.
+        `powiazane`. When ``params`` is absent (so ``hidden`` is False) the
+        ``leaf_id`` test alone decides.
         """
         if self.hidden:
             return False

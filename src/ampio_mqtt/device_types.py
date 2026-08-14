@@ -114,7 +114,7 @@ def _load_upstream_devtypes() -> list[dict[str, Any]]:
     payload = files(__package__).joinpath("_devtypes.json").read_text(encoding="utf-8")
     data = json.loads(payload)
     if not isinstance(data, list):
-        raise RuntimeError("_devtypes.json: top-level must be a list")
+        raise TypeError("_devtypes.json: top-level must be a list")
     return data
 
 
