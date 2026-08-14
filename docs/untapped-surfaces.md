@@ -6,16 +6,6 @@ PRs should reference.
 
 ## Reachable but not consumed
 
-### `scenes` - the M-SERV scene catalogue
-
-Designer's "Scenes" view is a list of named multi-action presets. The
-catalogue ships over the same discovery RPC pattern as rooms
-(publish `scenes` on `/data` or `/config`, await the matching
-`fromDB/<user>/.../scenes` topic). A `fetch_scenes()` helper would feed
-a future HA `scene` platform.
-
-Tracked as: [#21](https://github.com/pszypowicz/ampio-mqtt/issues/21)
-
 ### `resources` - icons, media, possibly cameras
 
 Designer's "Resources" view groups static assets (icons), media

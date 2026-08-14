@@ -37,11 +37,13 @@ from .const import (
     ob_state_wildcard,
     request_topic,
     response_topic,
+    scene_payload,
 )
 from .errors import AmpioAuthError, AmpioConnectionError
 from .models import (
     AmpioModule,
     AmpioObject,
+    AmpioScene,
     AmpioServerInfo,
     AmpioState,
     ConnectionStats,
@@ -456,6 +458,42 @@ class AmpioClient:
         return join_rooms(
             _safe_json_object(self._last_payloads.get("groups")),
             _safe_json_object(self._last_payloads.get("group_devices")),
+        )
+
+    async def fetch_scenes(self, timeout: float = 5.0) -> list[AmpioScene]:
+        """Return the scene catalogue defined in the Ampio app.
+
+        Requires ``start()`` to have completed. Raises ``AmpioConnectionError``
+        if the broker is not connected or the response does not arrive within
+        ``timeout``.
+        """
+        await self._request_and_wait(
+            ("scenes",), timeout, "Timed out fetching scenes from Ampio broker"
+        )
+        return _protocol.parse_scenes(self._last_payloads.get("scenes") or "") or []
+
+    async def run_scene(self, scene_id: int) -> None:
+        """Apply a scene's actions."""
+        await self._scene_command(scene_id, "run")
+
+    async def turn_scene_off(self, scene_id: int) -> None:
+        """Turn off the objects a scene drives."""
+        await self._scene_command(scene_id, "off")
+
+    async def undo_scene(self, scene_id: int) -> None:
+        """Restore the objects a scene drives to the state they held before it ran."""
+        await self._scene_command(scene_id, "undo")
+
+    async def _scene_command(self, scene_id: int, verb: str) -> None:
+        """Publish a scene command; the M-SERV replays the scene's own actions.
+
+        Like any other command these are bounded by the account's grant, so a
+        scene touching objects outside it does nothing.
+        """
+        if self._client is None:
+            raise AmpioConnectionError("Not connected")
+        await self._client.publish(
+            command_topic(self._username), scene_payload(scene_id, verb).encode()
         )
 
     async def fetch_locations(self, timeout: float = 5.0) -> dict[int, str]:

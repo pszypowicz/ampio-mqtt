@@ -30,17 +30,18 @@ standard accounts get silence there (no error, no reply - live-verified,
 and independent of the account's app permissions). Everything on the
 `data`, `states`, and `info` surfaces answers for every account.
 
-| Keyword          | Control surface               | Response topic                              | Shape                                                                                                                                                     |
-| ---------------- | ----------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `devicesDetails` | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devicesDetails` | `{Status, List: [{id, id_urzadzenia, typ_komponentu, interpretacja, funkcja, leafId, opis_menu, stan_json, ...}]}`                                        |
-| `devices`        | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devices`        | `{List: [{id, mac, mac_global, typ_urzadzenia, nazwa_urzadzenia, wersja_softu, wersja_pcb, ...}]}`                                                        |
-| `locations`      | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/locations`      | `{List: [{id, opis_menu}]}` - Designer's "Location" name table only (see [`untapped-surfaces.md`](untapped-surfaces.md) for the per-output pointer half). |
-| `devices`        | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/devices`          | `{List: [...]}` - app-sync object catalogue: the `devicesDetails` row shape minus `params`/`stan_json`, filtered to the account's app grants.             |
-| `params_devices` | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/params_devices`   | `{List: [{id, params, param1, czas, powiazane, url}]}` - per-object `params` bitfields for the **full** catalogue (not grant-filtered).                   |
-| `groups`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/groups`           | `{List: [{id, id_rodzica, opis_menu}]}` - room tree.                                                                                                      |
-| `group_devices`  | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/group_devices`    | `{List: [{id_grupy, id_obiektu}]}` - object-to-room join.                                                                                                 |
-| (empty)          | `ampio/control/<user>/states` | `ampio/fromDB/<user>/data/states`           | `{List: [{id, stan_json}]}` - bulk snapshot of the account's object states.                                                                               |
-| (empty)          | `ampio/control/<user>/info`   | `ampio/fromDB/<user>/data/info`             | `{Results: {mac, serverVersion, serverRevision, mqttVersion, local_ip, device_id, ...}}` - server self-report; retained in the account namespace.         |
+| Keyword          | Control surface               | Response topic                              | Shape                                                                                                                                                          |
+| ---------------- | ----------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `devicesDetails` | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devicesDetails` | `{Status, List: [{id, id_urzadzenia, typ_komponentu, interpretacja, funkcja, leafId, opis_menu, stan_json, ...}]}`                                             |
+| `devices`        | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devices`        | `{List: [{id, mac, mac_global, typ_urzadzenia, nazwa_urzadzenia, wersja_softu, wersja_pcb, ...}]}`                                                             |
+| `locations`      | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/locations`      | `{List: [{id, opis_menu}]}` - Designer's "Location" name table only (see [`untapped-surfaces.md`](untapped-surfaces.md) for the per-output pointer half).      |
+| `devices`        | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/devices`          | `{List: [...]}` - app-sync object catalogue: the `devicesDetails` row shape minus `params`/`stan_json`, filtered to the account's app grants.                  |
+| `params_devices` | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/params_devices`   | `{List: [{id, params, param1, czas, powiazane, url}]}` - per-object `params` bitfields for the **full** catalogue (not grant-filtered).                        |
+| `groups`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/groups`           | `{List: [{id, id_rodzica, opis_menu}]}` - room tree.                                                                                                           |
+| `group_devices`  | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/group_devices`    | `{List: [{id_grupy, id_obiektu}]}` - object-to-room join.                                                                                                      |
+| `scenes`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/scenes`           | `{List: [{id, parentId, sceneName, active, Actions, Infos, Schedules}]}` - scene catalogue. `Actions` are wire command strings, `Infos` their structured form. |
+| (empty)          | `ampio/control/<user>/states` | `ampio/fromDB/<user>/data/states`           | `{List: [{id, stan_json}]}` - bulk snapshot of the account's object states.                                                                                    |
+| (empty)          | `ampio/control/<user>/info`   | `ampio/fromDB/<user>/data/info`             | `{Results: {mac, serverVersion, serverRevision, mqttVersion, local_ip, device_id, ...}}` - server self-report; retained in the account namespace.              |
 
 ## Commands (write)
 
@@ -88,6 +89,19 @@ which works on both tiers.
 | `setText`                           | `<text>`                                  | Sets app-visible text on sensor objects. Spec-documented.                                                                 |
 | `setVirtualTemp`, `setVirtualValue` | virtual devices                           | Spec-documented, not verified here.                                                                                       |
 
+Scenes are driven by their own payloads on the same topic, addressing the
+scene rather than an object:
+
+| Payload                | Effect                                                                                                                |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `/api/run/scene/<id>`  | Verified. Applies the scene's actions.                                                                                |
+| `/api/off/scene/<id>`  | Verified. Turns off the objects the scene drives.                                                                     |
+| `/api/undo/scene/<id>` | Verified. Restores those objects to the state they held before the run - distinct from `off`, which drives them to 0. |
+
+The M-SERV replays the scene's own actions, so a consumer never sends
+them itself. Scene commands are grant-scoped like any other: a scene
+touching objects outside a standard account's grant does nothing.
+
 A `roleta_lamelki` object carries its lamella angle in a `lammel` field
 alongside `state` in its state payload; no other type emits it, so its
 presence is a second, runtime signal that an object has slats.
@@ -117,4 +131,5 @@ downward move, open (100) after an upward one. Pass an explicit
 | `AmpioClient.start()`           | Connects, subscribes, publishes the six auto-discovery requests (`devicesDetails` and `devices` on `config`, `devices` and `params_devices` on `data`, plus the empty-payload `states` and `info` surfaces), waits for whichever catalogue answers, returns. See [`discovery-flow.md`](discovery-flow.md). |
 | `AmpioClient.fetch_rooms()`     | One-shot: publishes `groups` + `group_devices`, joins both responses into `{object_id: room_name}`. On-demand because the consumer decides when room hints are needed.                                                                                                                                     |
 | `AmpioClient.fetch_locations()` | One-shot: publishes `locations`, returns `{location_id: label}`. On-demand for the same reason.                                                                                                                                                                                                            |
-| `AmpioClient.last_payloads`     | `{endpoint_name: payload}` of the verbatim retained response per endpoint (`details`, `devices`, `states`, `info`, `data_devices`, `params_devices`, `groups`, `group_devices`, `locations`). Intended for the HA integration's diagnostics blob.                                                          |
+| `AmpioClient.fetch_scenes()`    | One-shot: publishes `scenes`, returns `list[AmpioScene]`. Drive them with `run_scene()` / `turn_scene_off()` / `undo_scene()`.                                                                                                                                                                             |
+| `AmpioClient.last_payloads`     | `{endpoint_name: payload}` of the verbatim retained response per endpoint (`details`, `devices`, `states`, `info`, `data_devices`, `params_devices`, `groups`, `group_devices`, `locations`, `scenes`). Intended for the HA integration's diagnostics blob.                                                          |
