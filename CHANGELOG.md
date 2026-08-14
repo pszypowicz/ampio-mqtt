@@ -31,13 +31,12 @@ made in 0.8.0.
 - `AmpioObject.tilt_position` from the `lammel` state field, which only
   tilt-capable covers emit. It is also a runtime signal that an object has
   slats, independent of `typ_komponentu`.
+- `set_cover_tilt(object_id, lamella)` - move a blind's slats without touching
+  its position. Both axes take the `101` "leave it alone" sentinel, so a
+  position move, a tilt move, or both at once is always a single command.
 
 ### Fixed
 
-- `set_cover_position()` without a `lamella` argument silently did nothing on
-  a `roleta_lamelki` object: that type discards a command whose lamella axis
-  carries the `101` "leave it alone" sentinel. Tilt-capable objects are now
-  re-sent their current angle instead, and everything else keeps the sentinel.
 - **Corrected: commands are grant-scoped.** 0.8.0 documented the opposite, from
   a test against an object that turned out to be inside the account's grant.
   Re-verified against two non-granted objects of different types: the command

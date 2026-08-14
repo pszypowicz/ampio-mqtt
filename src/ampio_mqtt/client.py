@@ -564,29 +564,28 @@ class AmpioClient:
     ) -> None:
         """Drive a cover to ``position`` percent (0 closed, 100 open).
 
-        ``lamella`` is the slat angle for blinds that have one. Omit it to
-        leave the slats where they are: a tilt-capable object is re-sent its
-        current angle, because it ignores a whole command carrying the
-        KEEP_POSITION sentinel on that axis, and everything else gets the
-        sentinel. Position updates stream in as the cover travels, so a
-        consumer sees the movement rather than one jump to the target.
+        ``lamella`` sets the slat angle of a blind that has one, in the same
+        command. Omitting it sends no angle, which is not the same as holding
+        one: travel drags the slats along mechanically and leaves them closed
+        after a downward move and open after an upward one, so pass
+        ``lamella`` to land on a chosen angle. Position updates stream in as
+        the cover travels, so a consumer sees the movement rather than one
+        jump to the target.
         """
         _check_range("position", position, 0, 100)
         if lamella is not None:
             _check_range("lamella", lamella, 0, 100)
-        else:
-            lamella = self._current_lamella(object_id)
-        await self.command(object_id, "setRollerPos", position, lamella)
+        await self.command(
+            object_id,
+            "setRollerPos",
+            position,
+            KEEP_POSITION if lamella is None else lamella,
+        )
 
-    def _current_lamella(self, object_id: int) -> int:
-        """Lamella argument that leaves a cover's slats untouched."""
-        obj = self.state.objects.get(object_id)
-        if obj is None or not obj.supports_tilt:
-            return KEEP_POSITION
-        try:
-            return max(0, min(100, int(float(obj.tilt_position or ""))))
-        except ValueError:
-            return KEEP_POSITION
+    async def set_cover_tilt(self, object_id: int, lamella: int) -> None:
+        """Set a blind's slat angle percent, leaving its position alone."""
+        _check_range("lamella", lamella, 0, 100)
+        await self.command(object_id, "setRollerPos", KEEP_POSITION, lamella)
 
     async def _publish(self, ep: Endpoint) -> None:
         """Publish an endpoint's request keyword to its control topic."""

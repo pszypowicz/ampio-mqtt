@@ -78,7 +78,7 @@ RGBW_OUTPUT}`). Drives HA platform selection and bundle/split decisions in
   the integration.
 - object control via `AmpioClient.command()` plus typed helpers
   (`turn_on`, `turn_off`, `toggle`, `set_value`, `set_color`,
-  `open_cover`, `close_cover`, `set_cover_position`). Works on both
+  `open_cover`, `close_cover`, `set_cover_position`, `set_cover_tilt`). Works on both
   account tiers - see [`docs/protocol.md`](docs/protocol.md),
 - output-object classification via `classify()` / `OutputKind`
   (`AmpioObject.output_kind`, `is_output`, `supports_tilt`): relays,

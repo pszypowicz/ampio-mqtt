@@ -113,30 +113,36 @@ def _cover(client: AmpioClient, oid: int, typ: str, tilt: str | None = None) -> 
         client.objects[oid].tilt_position = tilt
 
 
-async def test_position_only_move_keeps_a_plain_cover_sentinel() -> None:
+async def test_position_only_move_leaves_the_slats_alone() -> None:
+    """Both cover types take the sentinel on the axis that must not move."""
     client, recorder = _connected_client()
     _cover(client, 48, "roleta_procenty")
+    _cover(client, 66, "roleta_lamelki", tilt="100")
     await client.set_cover_position(48, 55)
-    assert recorder.published == [(TOPIC, b"/api/set/48/setRollerPos/55/101")]
+    await client.set_cover_position(66, 95)
+    assert recorder.published == [
+        (TOPIC, b"/api/set/48/setRollerPos/55/101"),
+        (TOPIC, b"/api/set/66/setRollerPos/95/101"),
+    ]
 
 
-async def test_position_only_move_resends_current_angle_on_a_blind() -> None:
-    """A tilt-capable object ignores the sentinel, so its own angle is re-sent."""
+async def test_tilt_only_move_leaves_the_position_alone() -> None:
     client, recorder = _connected_client()
     _cover(client, 66, "roleta_lamelki", tilt="100")
-    await client.set_cover_position(66, 95)
-    assert recorder.published == [(TOPIC, b"/api/set/66/setRollerPos/95/100")]
+    await client.set_cover_tilt(66, 50)
+    assert recorder.published == [(TOPIC, b"/api/set/66/setRollerPos/101/50")]
 
 
-async def test_blind_without_a_known_angle_falls_back_to_the_sentinel() -> None:
-    client, recorder = _connected_client()
-    _cover(client, 66, "roleta_lamelki")
-    await client.set_cover_position(66, 95)
-    assert recorder.published == [(TOPIC, b"/api/set/66/setRollerPos/95/101")]
-
-
-async def test_explicit_lamella_always_wins() -> None:
+async def test_both_axes_move_in_one_command() -> None:
     client, recorder = _connected_client()
     _cover(client, 66, "roleta_lamelki", tilt="100")
     await client.set_cover_position(66, 95, lamella=20)
     assert recorder.published == [(TOPIC, b"/api/set/66/setRollerPos/95/20")]
+
+
+@pytest.mark.parametrize("lamella", [-1, 101, 200])
+async def test_tilt_range_is_checked(lamella: int) -> None:
+    client, recorder = _connected_client()
+    with pytest.raises(ValueError):
+        await client.set_cover_tilt(66, lamella)
+    assert recorder.published == []

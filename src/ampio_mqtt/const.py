@@ -124,8 +124,8 @@ def command_payload(object_id: int, verb: str, args: Sequence[object] = ()) -> s
 
 
 # `setRollerPos` takes a position and a lamella angle. 101 on either axis means
-# "leave this one where it is" - except on `roleta_lamelki`, which discards a
-# command carrying the sentinel on its lamella axis and needs a real angle.
+# "leave this one where it is", so one command can move either axis alone or
+# both together.
 KEEP_POSITION = 101
 
 

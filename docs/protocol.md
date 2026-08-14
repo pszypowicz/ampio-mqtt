@@ -70,23 +70,23 @@ channel covering CCT, DALI, blind angles, and display text). It is
 this library confirmed live - so the library uses the `/api` surface,
 which works on both tiers.
 
-| Verb                                | Args                                      | Notes                                                                                                                                                              |
-| ----------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `turnOn`                            | -                                         | Verified. Full on (255).                                                                                                                                           |
-| `turnOff`                           | -                                         | Verified.                                                                                                                                                          |
-| `switch`                            | -                                         | Verified. Inverts current state.                                                                                                                                   |
-| `open`                              | -                                         | Verified. Cover to 100.                                                                                                                                            |
-| `close`                             | -                                         | Verified. Cover to 0.                                                                                                                                              |
-| `setValue`                          | `<0-255>[/<time>]`                        | Verified. `time` is in 10 ms units and **reverts** the object afterwards - a timed pulse, not a fade.                                                              |
-| `setColors`                         | `<R>/<G>/<B>/<W>`                         | Verified. Also accepts one packed int (`R \| G<<8 \| B<<16 \| W<<24`), which is what object state reports back.                                                    |
-| `setRollerPos`                      | `<position>/<lamella>`                    | Verified. Percent each; `101` on an axis means "leave it alone", **except on `roleta_lamelki`, which discards the whole command** - send that object a real angle. |
-| `setColor`                          | 24-bit `R \| G<<8 \| B<<16`               | Spec-documented, not verified here.                                                                                                                                |
-| `setColorW`                         | `<rgb24>/<white>`                         | Spec-documented, not verified here.                                                                                                                                |
-| `setTemperature`, `setHeatingMode`  | regulator setpoint / mode `A`,`S`,`M`,`H` | Spec-documented, not verified here.                                                                                                                                |
-| `arm`, `disarm`                     | `<pin>`                                   | Satel alarm zones. Spec-documented, not verified here.                                                                                                             |
-| `setVolume`, `setInput`, `setSeek`  | radio module                              | Spec-documented, not verified here.                                                                                                                                |
-| `setText`                           | `<text>`                                  | Sets app-visible text on sensor objects. Spec-documented.                                                                                                          |
-| `setVirtualTemp`, `setVirtualValue` | virtual devices                           | Spec-documented, not verified here.                                                                                                                                |
+| Verb                                | Args                                      | Notes                                                                                                                     |
+| ----------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `turnOn`                            | -                                         | Verified. Full on (255).                                                                                                  |
+| `turnOff`                           | -                                         | Verified.                                                                                                                 |
+| `switch`                            | -                                         | Verified. Inverts current state.                                                                                          |
+| `open`                              | -                                         | Verified. Cover to 100.                                                                                                   |
+| `close`                             | -                                         | Verified. Cover to 0.                                                                                                     |
+| `setValue`                          | `<0-255>[/<time>]`                        | Verified. `time` is in 10 ms units and **reverts** the object afterwards - a timed pulse, not a fade.                     |
+| `setColors`                         | `<R>/<G>/<B>/<W>`                         | Verified. Also accepts one packed int (`R \| G<<8 \| B<<16 \| W<<24`), which is what object state reports back.           |
+| `setRollerPos`                      | `<position>/<lamella>`                    | Verified. Percent each; `101` on an axis means "leave it alone", so one command moves either axis alone or both together. |
+| `setColor`                          | 24-bit `R \| G<<8 \| B<<16`               | Spec-documented, not verified here.                                                                                       |
+| `setColorW`                         | `<rgb24>/<white>`                         | Spec-documented, not verified here.                                                                                       |
+| `setTemperature`, `setHeatingMode`  | regulator setpoint / mode `A`,`S`,`M`,`H` | Spec-documented, not verified here.                                                                                       |
+| `arm`, `disarm`                     | `<pin>`                                   | Satel alarm zones. Spec-documented, not verified here.                                                                    |
+| `setVolume`, `setInput`, `setSeek`  | radio module                              | Spec-documented, not verified here.                                                                                       |
+| `setText`                           | `<text>`                                  | Sets app-visible text on sensor objects. Spec-documented.                                                                 |
+| `setVirtualTemp`, `setVirtualValue` | virtual devices                           | Spec-documented, not verified here.                                                                                       |
 
 A `roleta_lamelki` object carries its lamella angle in a `lammel` field
 alongside `state` in its state payload; no other type emits it, so its
@@ -94,6 +94,12 @@ presence is a second, runtime signal that an object has slats.
 
 Covers stream intermediate positions in 5% steps while travelling, so a
 consumer sees the movement rather than one jump to the target.
+
+Moving a blind's position drags its slats along mechanically, and the
+`101` sentinel only means "send no angle" - not "hold the angle". The
+slats end wherever the travel leaves them: closed (`lammel` 0) after a
+downward move, open (100) after an upward one. Pass an explicit
+`lamella` in the same command to land on a chosen angle instead.
 
 ## Live state
 
