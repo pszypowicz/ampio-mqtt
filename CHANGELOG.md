@@ -14,6 +14,40 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.8.0
+
+Adds the write path (#39). Commands go to `ampio/control/<user>/api` as
+`/api/set/<id>/<verb>[/<arg>...]`; the verb vocabulary is the M-SERV's own HTTP
+control API, whose OpenAPI spec ships inside the M-SERV web app bundle. Both
+account tiers can command, so this completes the standard-user path.
+
+### Added
+
+- `AmpioClient.command(object_id, verb, *args)` - the generic, type-agnostic
+  write. Any verb the M-SERV accepts works through it.
+- Typed helpers for the verbs verified against live hardware: `turn_on`,
+  `turn_off`, `toggle`, `set_value` (with an optional `pulse_ms` auto-revert),
+  `set_color` (RGBW), `open_cover`, `close_cover`, `set_cover_position` (with
+  an optional lamella angle).
+- `tools/set_object.py` - command one object and watch the resulting state.
+- Command documentation in `docs/protocol.md`: the verb table, which entries
+  are live-verified, and the CAN-tree alternative in `docs/untapped-surfaces.md`.
+
+### Notes
+
+- **Commands are not grant-scoped.** The per-user grant filters reads only; a
+  non-admin account can command any object in the installation, including ones
+  absent from its catalogue. Verified live. The README states this where the
+  account tiers are described - it is the main caveat of the standard-user
+  path.
+- `setValue`'s second argument is an auto-revert timer in 10 ms units (a timed
+  pulse), not a transition/fade time. `set_value(..., pulse_ms=...)` takes
+  milliseconds and converts.
+- `setColors` accepts four channel arguments; object state reports the colour
+  back as one packed integer, `R | G<<8 | B<<16 | W<<24`.
+- The `ampio/to/<mac>/...` CAN write tree is admin-only (verified live), so the
+  library uses the `/api` surface, which works on both tiers.
+
 ## 0.7.1
 
 No library changes. The 0.7.0 tag never reached PyPI: its snapshot of the

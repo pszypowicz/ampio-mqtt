@@ -32,6 +32,14 @@ library itself is Home Assistant agnostic.
 >
 > `AmpioClient.access_tier` reports the detected tier once discovery
 > completes.
+>
+> **Commands are not restricted to granted objects.** The per-user grant
+> filters what an account can _read_ - its catalogue and state topics -
+> but the M-SERV applies no such filter to commands: any authenticated
+> account can control any object in the installation, including ones it
+> cannot see. A dedicated standard account limits what Home Assistant
+> displays, not what it could actuate, so treat its credentials as full
+> control authority over the installation.
 
 ## Status
 
@@ -70,6 +78,11 @@ room_name}`), backed by the M-SERV's MQTT `data/groups` + `data/group_devices`
   modules carry several flags (e.g. M-OC-4s = `{DIGITAL_OUTPUT, ANALOG_INPUT,
 RGBW_OUTPUT}`). Drives HA platform selection and bundle/split decisions in
   the integration.
+- object control via `AmpioClient.command()` plus typed helpers
+  (`turn_on`, `turn_off`, `toggle`, `set_value`, `set_color`,
+  `open_cover`, `close_cover`, `set_cover_position`). Works on both
+  account tiers. See the caution below and
+  [`docs/protocol.md`](docs/protocol.md),
 - input-object classification via `classify()` / `InputKind`
   (`AmpioObject.input_kind`, `is_input`, `is_on`): flags map to a generic
   boolean, motion detection to `binary_sensor.motion`. Live flag/button events

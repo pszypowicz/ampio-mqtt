@@ -6,21 +6,6 @@ PRs should reference.
 
 ## Reachable but not consumed
 
-### `/api` command surface - the write path
-
-Every state-changing command the app issues is one plain-text publish
-to `ampio/control/<user>/api` shaped `/api/set/<id>/<verb>/<arg>`
-(e.g. `/api/set/<id>/setValue/255` switches a relay on). Non-admin
-accounts can command objects granted to them in the app; the M-SERV
-republishes the resulting state into every account namespace holding
-the object, with a publish-to-echo round trip of roughly 190 ms. Scene
-action lists use the same vocabulary (`set/<id>/setColors/<int>`), so
-the verb inventory extends beyond `setValue` and needs per-type
-verification. A `set()` method plus typed helpers would give the HA
-integration its switch/light/cover write path.
-
-Tracked as: [#39](https://github.com/pszypowicz/ampio-mqtt/issues/39)
-
 ### `scenes` - the M-SERV scene catalogue
 
 Designer's "Scenes" view is a list of named multi-action presets. The
@@ -59,6 +44,21 @@ changed. Optimization, not a correctness fix - the current behaviour
 of re-fetching every time is correct, just chatty.
 
 Tracked as: [#24](https://github.com/pszypowicz/ampio-mqtt/issues/24)
+
+### CAN write tree (`ampio/to/...`) - admin-only control
+
+Ampio's own MQTT API note documents a second write path alongside the
+`/api` surface this library uses: per-channel `ampio/to/<mac>/<prefix>/
+<ch>/cmd` topics plus a `ampio/to/<mac>/raw` hex channel covering CCT
+(power and colour temperature with fade times), DALI addressing, exact
+blind position with lamella angle, timed output/flag pulses, M-DOT
+display drawing, and Satel partitions - none of which the `/api` verb
+list reaches. It is admin-only (a non-admin account's publishes there
+are dropped, verified live), so it can never back the standard-user
+path, but an admin-tier install could use it for the device classes
+`/api` cannot express.
+
+Tracked as: [#39](https://github.com/pszypowicz/ampio-mqtt/issues/39)
 
 ### `device_raw_api` RPC bridge - per-output `outLoc` resolution
 
