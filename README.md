@@ -35,11 +35,17 @@ library itself is Home Assistant agnostic.
 > full capability table, the measured latency difference, and when an
 > administrator account is worth it.
 >
-> **The grant bounds reads and writes alike.** An account can only read
-> and only command the objects it was granted in the app; a command aimed
-> at anything else is dropped, and no state for it reaches the account's
-> namespace. A dedicated standard account is therefore a real privilege
-> boundary, not just a narrower view.
+> **The grant bounds reads and object commands alike.** An account can
+> only read and only command the objects it was granted in the app; a
+> command aimed at anything else is dropped, and no state for it reaches
+> the account's namespace.
+>
+> **Bus events are not bounded that way.** Any account can raise any
+> event number, regardless of the per-event rights the app shows, and
+> the logic behind an event runs with full authority. A dedicated
+> standard account is a real boundary for direct object control, not for
+> whatever the installer wired to an event - see
+> [`docs/account-tiers.md`](docs/account-tiers.md).
 
 ## Status
 

@@ -133,13 +133,25 @@ injected through the command surface.
 
 The two directions are gated differently, which is verified live:
 
-- **Raising** works on both account tiers. Events carry their own
-  per-user rights in the Ampio app, separate from object grants, so an
-  account holding an event's right can raise it even when the logic
-  behind it drives objects that account cannot command directly.
+- **Raising** works on both account tiers and is bounded by nothing.
+  The Ampio app shows a per-user rights list per event, but that list is
+  not enforced here: a standard account raised an event it had no right
+  to, verified live against a control event created without it. Since
+  the logic behind an event can drive anything, this is how an account
+  reaches objects it cannot command directly.
 - **Receiving** is administrator-only. It rides the raw tree, and a
   standard account holding the event's right still sees nothing - not on
   the raw tree and not anywhere in its own namespace.
+
+On the CAN side an event is frame type `0x2B` carrying a 16-bit
+little-endian number, low byte first - `FE 2B BD 00` for 189 and
+`FE 2B BD BD` for 48573. A legacy 8-bit event is simply one whose high
+byte is zero. Module logic that matches on the first data byte alone
+would therefore see 189 and 48573 alike, so an installation mixing 8-bit
+and 16-bit event numbers can have a 16-bit event trip logic bound to the
+8-bit event sharing its low byte. The wire format is confirmed; whether
+a given module's matching is that loose has to be checked against the
+logic itself.
 
 **The M-SERV raises event 254 from its own MAC whenever a client asks for
 a discovery refresh**, so `start()` normally produces one. It is not
@@ -163,6 +175,6 @@ rather than treat every event as user intent.
 | `AmpioClient.start()`           | Connects, subscribes, publishes the six auto-discovery requests (`devicesDetails` and `devices` on `config`, `devices` and `params_devices` on `data`, plus the empty-payload `states` and `info` surfaces), waits for whichever catalogue answers, returns. See [`discovery-flow.md`](discovery-flow.md). |
 | `AmpioClient.fetch_rooms()`     | One-shot: publishes `groups` + `group_devices`, joins both responses into `{object_id: room_name}`. On-demand because the consumer decides when room hints are needed.                                                                                                                                     |
 | `AmpioClient.fetch_locations()` | One-shot: publishes `locations`, returns `{location_id: label}`. On-demand for the same reason.                                                                                                                                                                                                            |
-| `AmpioClient.send_event()`      | Raises a bus event; `add_event_listener()` reports the ones the bus raises (administrator-only). |
+| `AmpioClient.send_event()`      | Raises a bus event; `add_event_listener()` reports the ones the bus raises (administrator-only).                                                                                                                                                                                                           |
 | `AmpioClient.fetch_scenes()`    | One-shot: publishes `scenes`, returns `list[AmpioScene]`. Drive them with `run_scene()` / `turn_scene_off()` / `undo_scene()`.                                                                                                                                                                             |
 | `AmpioClient.last_payloads`     | `{endpoint_name: payload}` of the verbatim retained response per endpoint (`details`, `devices`, `states`, `info`, `data_devices`, `params_devices`, `groups`, `group_devices`, `locations`, `scenes`). Intended for the HA integration's diagnostics blob.                                                |

@@ -170,9 +170,9 @@ RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
 
 # Bus events are logical signals (1-65535) that Ampio logic raises and reacts
 # to - a wall-panel press can raise one, and a scenario can be bound to one.
-# Each event carries its own per-user rights in the app. Receiving them rides
-# the administrator-only raw tree regardless of those rights; raising one goes
-# to the command surface and works on both tiers.
+# Receiving them rides the administrator-only raw tree. Raising one goes to the
+# command surface, works on both tiers, and is bounded by nothing - not object
+# grants, and not the per-event rights the app displays.
 RAW_EVENT_WILDCARD = "ampio/from/+/event"
 
 

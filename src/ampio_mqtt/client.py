@@ -490,10 +490,11 @@ class AmpioClient:
     async def send_event(self, event_number: int) -> None:
         """Raise a bus event, running whatever Ampio logic is bound to it.
 
-        Works on both account tiers: events carry their own per-user rights in
-        the Ampio app, separate from object grants, so an account that holds
-        the right for an event can raise it even when the logic behind it
-        drives objects the account cannot command directly.
+        Works on both account tiers and is bounded by neither object grants
+        nor the per-event rights the Ampio app shows: a standard account
+        raises any event number it likes. Since the logic behind an event can
+        drive anything, this is the one way an account reaches objects it
+        cannot command directly.
         """
         _check_range("event_number", event_number, 1, 65535)
         if self._client is None:

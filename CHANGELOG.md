@@ -28,11 +28,14 @@ to, so a consumer can both drive Ampio scenarios and react to panel presses.
 
 ### Notes
 
-- The two directions are gated differently. Raising works on both tiers, since
-  events carry their own per-user rights in the app, separate from object
-  grants - so an event can drive objects the raising account cannot command
-  directly. Receiving is administrator-only: it rides the raw tree, and a
-  standard account holding the event's right still receives nothing anywhere.
+- The two directions are gated differently. Raising works on both tiers and is
+  bounded by nothing: the per-event rights the Ampio app displays are not
+  enforced on this surface, verified by a standard account raising an event it
+  had no right to. Since the logic behind an event runs with full authority,
+  this is how an account reaches objects it cannot command directly - the one
+  hole in the otherwise grant-scoped standard tier. Receiving is
+  administrator-only: it rides the raw tree, and a standard account holding the
+  event's right still receives nothing anywhere.
 - The M-SERV raises event 254 from its own mac whenever a client asks for a
   discovery refresh, so `start()` normally produces one. Filter on the
   originating mac to tell panel presses from the server's own signalling.
