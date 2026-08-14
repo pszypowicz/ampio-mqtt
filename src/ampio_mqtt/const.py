@@ -109,8 +109,8 @@ DISCOVERY_FALLBACK: tuple[str, ...] = ("data_devices", "params_devices")
 # M-SERV's own HTTP API, re-exposed over MQTT; see docs/protocol.md for the
 # table and which verbs are verified live.
 #
-# Unlike the read side, commands are NOT scoped to the objects an account was
-# granted in the app - any authenticated account can command any object.
+# The per-user grant bounds writes as it bounds reads: a command for an object
+# outside the account's grant is dropped with no effect and no reply.
 
 
 def command_topic(user: str) -> str:
@@ -124,8 +124,8 @@ def command_payload(object_id: int, verb: str, args: Sequence[object] = ()) -> s
 
 
 # `setRollerPos` takes a position and a lamella angle. 101 on either axis means
-# "leave this one where it is", so a position-only move does not disturb a
-# blind's lamella (and vice versa).
+# "leave this one where it is", so one command can move either axis alone or
+# both together.
 KEEP_POSITION = 101
 
 
@@ -204,6 +204,31 @@ class InputKind:
     device_class: BinarySensorDeviceClass | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class OutputKind:
+    """Neutral description of a controllable output object.
+
+    The flags say which command verbs the object answers, so a consumer can
+    pick a platform and feature set without a `typ_komponentu` table of its
+    own. Every output answers ``turnOn`` / ``turnOff`` / ``switch``.
+    """
+
+    key: str
+    name: str
+    # 0-255 level via `setValue`.
+    dimmable: bool = False
+    # Four RGBW channels via `setColors`.
+    color: bool = False
+    # `open` / `close` travel commands.
+    cover: bool = False
+    # Position axis of `setRollerPos`.
+    position: bool = False
+    # Lamella axis of `setRollerPos`, and a `lammel` field in the object's
+    # state payload. `setRollerPos` ignores the KEEP_POSITION sentinel on
+    # these, so the lamella argument must carry a real angle.
+    tilt: bool = False
+
+
 # lin_wej (analog input) measurement kind, keyed by `interpretacja`.
 # The M-SENS channel map (4=lux, 5=IAQ, 7=CO2).
 _LIN_WEJ_BY_INTERP: dict[int, SensorKind] = {
@@ -241,6 +266,8 @@ class TypeProfile:
     numeric: bool = False
     # Input side: the binary/flag kind, if this type is an input.
     input: InputKind | None = None
+    # Output side: the controllable kind, if this type accepts commands.
+    output: OutputKind | None = None
     # Raw ``ampio/from/<mac>/state/<prefix>/<ch>`` bridge prefix. Only known
     # prefixes are set; an input without one (symulacja) falls back to the
     # per-object topic.
@@ -257,10 +284,16 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     ),
     "lin_wej": TypeProfile(analog=True),
     "bit32": TypeProfile(numeric=True),
-    "przekaznik": TypeProfile(),
-    "rgbw": TypeProfile(),
-    "led": TypeProfile(),
-    "roleta_procenty": TypeProfile(),
+    "przekaznik": TypeProfile(output=OutputKind("relay", "Relay")),
+    "rgbw": TypeProfile(output=OutputKind("rgbw", "RGBW light", color=True)),
+    "led": TypeProfile(output=OutputKind("dimmer", "Dimmer", dimmable=True)),
+    "roleta": TypeProfile(output=OutputKind("cover", "Cover", cover=True)),
+    "roleta_procenty": TypeProfile(
+        output=OutputKind("cover_position", "Cover", cover=True, position=True)
+    ),
+    "roleta_lamelki": TypeProfile(
+        output=OutputKind("cover_tilt", "Blind", cover=True, position=True, tilt=True)
+    ),
     "flaga": TypeProfile(input=InputKind("flaga", "Flag", None), channel_prefix="f"),
     "detekcja": TypeProfile(
         input=InputKind("detekcja", "Detection", "motion"),
@@ -275,16 +308,17 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
 
 def classify(
     typ: str | None, interpretacja: int | None
-) -> tuple[SensorKind | None, InputKind | None]:
-    """Classify a DB object into ``(sensor_kind, input_kind)``; either may be None.
+) -> tuple[SensorKind | None, InputKind | None, OutputKind | None]:
+    """Classify a DB object into ``(sensor_kind, input_kind, output_kind)``.
 
-    ``typ`` is ``typ_komponentu``; ``interpretacja`` selects the lin_wej
-    measurement. A ``typ`` with no table entry (unknown or no metadata) returns
-    the generic value-only sensor so metadata-less objects still surface.
+    Any of the three may be None. ``typ`` is ``typ_komponentu``;
+    ``interpretacja`` selects the lin_wej measurement. A ``typ`` with no table
+    entry (unknown or no metadata) returns the generic value-only sensor so
+    metadata-less objects still surface.
     """
     profile = TYPE_PROFILES.get(typ) if typ is not None else None
     if profile is None:
-        return _GENERIC_SENSOR, None
+        return _GENERIC_SENSOR, None, None
     sensor = profile.sensor
     if profile.analog:
         if interpretacja in _LIN_WEJ_BY_INTERP:
@@ -293,7 +327,7 @@ def classify(
             sensor = SensorKind(f"analog_{interpretacja}", "Analog input", None, None)
     elif profile.numeric:
         sensor = SensorKind(f"value_{interpretacja}", "Measurement", None, None)
-    return sensor, profile.input
+    return sensor, profile.input, profile.output
 
 
 def is_system_type(typ: str | None) -> bool:

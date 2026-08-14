@@ -999,3 +999,52 @@ def test_hidden_overrides_leaf_id_visibility() -> None:
     # A system object the M-SERV explicitly hid (bit 4) is dropped too, even
     # though is_system would otherwise force it visible.
     assert AmpioObject(id=3, typ_komponentu="symulacja", params=16).visible is False
+
+
+# --- cover tilt state ------------------------------------------------------
+
+
+def test_lammel_is_parsed_into_tilt_position() -> None:
+    client = _client()
+    client._feed_message(
+        f"ampio/fromDB/{USER}/config/devicesDetails",
+        _details({"id": 66, "typ_komponentu": "roleta_lamelki", "interpretacja": 1}),
+    )
+    client._feed_message(
+        f"ampio/fromDB/{USER}/ob/66/state",
+        b'{ "state": "95","lammel": "65","block": "0" , "on": 1786723383804}',
+    )
+    obj = client.objects[66]
+    assert obj.value == "95"
+    assert obj.tilt_position == "65"
+    assert obj.supports_tilt is True
+    assert obj.is_output is True
+
+
+def test_plain_cover_reports_no_tilt() -> None:
+    client = _client()
+    client._feed_message(
+        f"ampio/fromDB/{USER}/config/devicesDetails",
+        _details({"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}),
+    )
+    client._feed_message(
+        f"ampio/fromDB/{USER}/ob/48/state", b'{ "state": "55","block": "0" }'
+    )
+    obj = client.objects[48]
+    assert obj.value == "55"
+    assert obj.tilt_position is None
+    assert obj.supports_tilt is False
+
+
+def test_states_snapshot_seeds_tilt_position() -> None:
+    client = _client()
+    client._feed_message(
+        f"ampio/fromDB/{USER}/data/states",
+        _states(
+            {
+                "id": 66,
+                "stan_json": '{"state": "100", "lammel": "100", "on": 1779560000000}',
+            }
+        ),
+    )
+    assert client.objects[66].tilt_position == "100"

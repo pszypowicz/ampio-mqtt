@@ -117,6 +117,48 @@ def test_classify_input_returns_none_for_non_inputs(typ) -> None:
 def test_input_and_sensor_classifications_are_disjoint() -> None:
     """An input type is never also a sensor, and vice versa."""
     for typ in ("flaga", "detekcja", "symulacja"):
-        sensor, inp = classify(typ, 1)
+        sensor, inp, _ = classify(typ, 1)
         assert sensor is None
         assert inp is not None
+
+
+# --- output classification -------------------------------------------------
+
+
+def _output(typ, interp=1):
+    return classify(typ, interp)[2]
+
+
+@pytest.mark.parametrize(
+    ("typ", "key", "dimmable", "color", "cover", "position", "tilt"),
+    [
+        ("przekaznik", "relay", False, False, False, False, False),
+        ("led", "dimmer", True, False, False, False, False),
+        ("rgbw", "rgbw", False, True, False, False, False),
+        ("roleta", "cover", False, False, True, False, False),
+        ("roleta_procenty", "cover_position", False, False, True, True, False),
+        ("roleta_lamelki", "cover_tilt", False, False, True, True, True),
+    ],
+)
+def test_output_kinds(typ, key, dimmable, color, cover, position, tilt) -> None:
+    out = _output(typ)
+    assert out is not None
+    assert out.key == key
+    assert (out.dimmable, out.color) == (dimmable, color)
+    assert (out.cover, out.position, out.tilt) == (cover, position, tilt)
+
+
+@pytest.mark.parametrize("typ", ["temp", "lin_wej", "bit32", "flaga", "detekcja", None])
+def test_non_outputs_have_no_output_kind(typ) -> None:
+    assert _output(typ) is None
+
+
+@pytest.mark.parametrize(
+    "typ", ["przekaznik", "led", "rgbw", "roleta", "roleta_procenty", "roleta_lamelki"]
+)
+def test_outputs_are_not_sensors(typ) -> None:
+    """An output must not fall through to the generic value sensor."""
+    sensor, inp, out = classify(typ, 1)
+    assert sensor is None
+    assert inp is None
+    assert out is not None

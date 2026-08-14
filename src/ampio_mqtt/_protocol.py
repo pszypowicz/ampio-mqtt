@@ -69,6 +69,7 @@ class StateUpdate:
     id: int
     value: str
     on_ms: int | float | None
+    tilt: str | None  # `lammel`, present only for tilt-capable covers
 
 
 @dataclass(slots=True)
@@ -77,6 +78,7 @@ class StanJsonSeed:
 
     value: str | None
     on_ms: int | float | None
+    tilt: str | None
 
 
 def is_auth_error(err: aiomqtt.MqttError) -> bool:
@@ -266,6 +268,7 @@ def parse_state_message(topic: str, payload: str) -> StateUpdate | None:
         return None
     value: str = payload
     on_ms: int | float | None = None
+    tilt: str | None = None
     try:
         data = json.loads(payload)
     except (ValueError, TypeError):
@@ -279,7 +282,14 @@ def parse_state_message(topic: str, payload: str) -> StateUpdate | None:
         raw_on = data.get("on")
         if isinstance(raw_on, (int, float)):
             on_ms = raw_on
-    return StateUpdate(id=oid, value=value, on_ms=on_ms)
+        tilt = _parse_lammel(data)
+    return StateUpdate(id=oid, value=value, on_ms=on_ms, tilt=tilt)
+
+
+def _parse_lammel(data: dict[str, Any]) -> str | None:
+    """Read the `lammel` lamella angle from a state payload."""
+    raw = data.get("lammel")
+    return str(raw) if raw is not None else None
 
 
 def parse_raw_channel_topic(topic: str) -> tuple[int, str, int] | None:
@@ -322,4 +332,5 @@ def parse_stan_json(stan_json: str) -> StanJsonSeed | None:
     return StanJsonSeed(
         value=str(raw_state) if raw_state is not None else None,
         on_ms=on_ms,
+        tilt=_parse_lammel(data),
     )

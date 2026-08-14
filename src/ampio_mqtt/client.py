@@ -564,9 +564,13 @@ class AmpioClient:
     ) -> None:
         """Drive a cover to ``position`` percent (0 closed, 100 open).
 
-        ``lamella`` is the slat angle for blinds that have one; left alone by
-        default. Position updates stream in as the cover travels, so a consumer
-        sees intermediate values rather than a single jump to the target.
+        ``lamella`` sets the slat angle of a blind that has one, in the same
+        command. Omitting it sends no angle, which is not the same as holding
+        one: travel drags the slats along mechanically and leaves them closed
+        after a downward move and open after an upward one, so pass
+        ``lamella`` to land on a chosen angle. Position updates stream in as
+        the cover travels, so a consumer sees the movement rather than one
+        jump to the target.
         """
         _check_range("position", position, 0, 100)
         if lamella is not None:
@@ -577,6 +581,11 @@ class AmpioClient:
             position,
             KEEP_POSITION if lamella is None else lamella,
         )
+
+    async def set_cover_tilt(self, object_id: int, lamella: int) -> None:
+        """Set a blind's slat angle percent, leaving its position alone."""
+        _check_range("lamella", lamella, 0, 100)
+        await self.command(object_id, "setRollerPos", KEEP_POSITION, lamella)
 
     async def _publish(self, ep: Endpoint) -> None:
         """Publish an endpoint's request keyword to its control topic."""
@@ -714,7 +723,9 @@ class AmpioClient:
             obj.leaf_id = meta.leaf_id
             obj.group_ids = meta.group_ids
             obj.params = meta.params
-            obj.kind, obj.input_kind = classify(meta.typ_komponentu, meta.interpretacja)
+            obj.kind, obj.input_kind, obj.output_kind = classify(
+                meta.typ_komponentu, meta.interpretacja
+            )
             if obj.value is None and meta.stan_json is not None:
                 self._apply_stan_json(obj, meta.stan_json)
             self.state.objects[meta.id] = obj
@@ -760,7 +771,9 @@ class AmpioClient:
             obj.leaf_id = meta.leaf_id
             if not obj.params:
                 obj.params = self._params_by_id.get(meta.id, 0)
-            obj.kind, obj.input_kind = classify(meta.typ_komponentu, meta.interpretacja)
+            obj.kind, obj.input_kind, obj.output_kind = classify(
+                meta.typ_komponentu, meta.interpretacja
+            )
             self.state.objects[meta.id] = obj
             self._notify(obj)
         self._rebuild_input_index()
@@ -822,6 +835,8 @@ class AmpioClient:
             obj = AmpioObject(id=update.id, kind=classify(None, None)[0])
             self.state.objects[update.id] = obj
         obj.value = update.value
+        if update.tilt is not None:
+            obj.tilt_position = update.tilt
         self._touch_module(obj.device_id, update.on_ms)
         self._notify(obj)
 
@@ -866,6 +881,8 @@ class AmpioClient:
             return
         if seed.value is not None:
             obj.value = seed.value
+        if seed.tilt is not None:
+            obj.tilt_position = seed.tilt
         self._touch_module(obj.device_id, seed.on_ms)
 
     def _touch_module(self, module_id: int | None, on_ms: float | None) -> None:
