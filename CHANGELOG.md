@@ -14,6 +14,28 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.10.0
+
+Surfaces the health each module broadcasts about itself, for a per-module
+diagnostics view in a consumer.
+
+### Added
+
+- `AmpioModule.supply_voltage` and `AmpioModule.temperature`, decoded from the
+  module's `ampio/from/<MAC>/b/4F` broadcast. Voltage is the CAN bus supply;
+  temperature is reported only by the modules that measure it and stays None
+  elsewhere. Each frame also refreshes `last_seen`, so a module with no objects
+  of its own still shows liveness.
+- `AmpioClient.add_module_listener()` - fires when a module's own report
+  updates it, mirroring `add_object_listener()`.
+
+### Notes
+
+- Administrator-only, like the rest of the raw tree: a standard account is not
+  served these broadcasts and both fields stay None.
+- The broadcasts are periodic rather than retained, so the fields fill in over
+  the first minute of a session rather than at connect.
+
 ## 0.9.0
 
 Classifies controllable objects, so a consumer no longer needs its own
