@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .const import InputKind, SensorKind, is_system_type
+from .const import InputKind, OutputKind, SensorKind, is_system_type
 from .device_types import Capability
 
 # Bit flags inside the `params` integer (`obiekty.params`). The semantics
@@ -64,7 +64,11 @@ class AmpioObject:
     params: int = 0
     kind: SensorKind | None = None  # set when classified as a sensor
     input_kind: InputKind | None = None  # set when classified as an input
+    output_kind: OutputKind | None = None  # set when the object accepts commands
     value: str | None = None
+    # Lamella angle percent, from the `lammel` state field. Only tilt-capable
+    # covers report it.
+    tilt_position: str | None = None
 
     @property
     def is_sensor(self) -> bool:
@@ -75,6 +79,16 @@ class AmpioObject:
     def is_input(self) -> bool:
         """Whether this object is exposed by the binary_sensor/input platform."""
         return self.input_kind is not None
+
+    @property
+    def is_output(self) -> bool:
+        """Whether this object accepts commands (switch/light/cover platforms)."""
+        return self.output_kind is not None
+
+    @property
+    def supports_tilt(self) -> bool:
+        """Whether this object has a lamella axis."""
+        return self.output_kind is not None and self.output_kind.tilt
 
     @property
     def is_on(self) -> bool:

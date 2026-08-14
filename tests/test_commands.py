@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from ampio_mqtt import AmpioClient, AmpioConnectionError
@@ -94,3 +96,47 @@ async def test_command_requires_a_connection() -> None:
     client = AmpioClient("host", username=USER)
     with pytest.raises(AmpioConnectionError):
         await client.turn_on(64)
+
+
+# --- cover tilt ------------------------------------------------------------
+
+
+def _cover(client: AmpioClient, oid: int, typ: str, tilt: str | None = None) -> None:
+    """Register a cover object of `typ` with an optional known lamella angle."""
+    client._feed_message(
+        f"ampio/fromDB/{USER}/config/devicesDetails",
+        json.dumps(
+            {"List": [{"id": oid, "typ_komponentu": typ, "interpretacja": 1}]}
+        ).encode(),
+    )
+    if tilt is not None:
+        client.objects[oid].tilt_position = tilt
+
+
+async def test_position_only_move_keeps_a_plain_cover_sentinel() -> None:
+    client, recorder = _connected_client()
+    _cover(client, 48, "roleta_procenty")
+    await client.set_cover_position(48, 55)
+    assert recorder.published == [(TOPIC, b"/api/set/48/setRollerPos/55/101")]
+
+
+async def test_position_only_move_resends_current_angle_on_a_blind() -> None:
+    """A tilt-capable object ignores the sentinel, so its own angle is re-sent."""
+    client, recorder = _connected_client()
+    _cover(client, 66, "roleta_lamelki", tilt="100")
+    await client.set_cover_position(66, 95)
+    assert recorder.published == [(TOPIC, b"/api/set/66/setRollerPos/95/100")]
+
+
+async def test_blind_without_a_known_angle_falls_back_to_the_sentinel() -> None:
+    client, recorder = _connected_client()
+    _cover(client, 66, "roleta_lamelki")
+    await client.set_cover_position(66, 95)
+    assert recorder.published == [(TOPIC, b"/api/set/66/setRollerPos/95/101")]
+
+
+async def test_explicit_lamella_always_wins() -> None:
+    client, recorder = _connected_client()
+    _cover(client, 66, "roleta_lamelki", tilt="100")
+    await client.set_cover_position(66, 95, lamella=20)
+    assert recorder.published == [(TOPIC, b"/api/set/66/setRollerPos/95/20")]

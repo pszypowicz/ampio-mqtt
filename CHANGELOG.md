@@ -14,6 +14,37 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.9.0
+
+Classifies controllable objects, so a consumer no longer needs its own
+`typ_komponentu` table to pick a platform, and corrects a wrong security claim
+made in 0.8.0.
+
+### Added
+
+- `OutputKind` and `AmpioObject.output_kind` / `is_output` / `supports_tilt`.
+  `classify()` now returns `(sensor_kind, input_kind, output_kind)` and covers
+  `przekaznik`, `led`, `rgbw`, `roleta`, `roleta_procenty`, and
+  `roleta_lamelki`. Each kind flags the verbs the object answers (dimmable,
+  color, cover, position, tilt). `roleta_lamelki` previously fell through to
+  the generic value sensor, so a slats blind surfaced as a text sensor.
+- `AmpioObject.tilt_position` from the `lammel` state field, which only
+  tilt-capable covers emit. It is also a runtime signal that an object has
+  slats, independent of `typ_komponentu`.
+
+### Fixed
+
+- `set_cover_position()` without a `lamella` argument silently did nothing on
+  a `roleta_lamelki` object: that type discards a command whose lamella axis
+  carries the `101` "leave it alone" sentinel. Tilt-capable objects are now
+  re-sent their current angle instead, and everything else keeps the sentinel.
+- **Corrected: commands are grant-scoped.** 0.8.0 documented the opposite, from
+  a test against an object that turned out to be inside the account's grant.
+  Re-verified against two non-granted objects of different types: the command
+  is dropped with no effect, while the same command from an administrator
+  succeeds. A dedicated standard account is a real privilege boundary for
+  writes as well as reads, so the README caveat is withdrawn.
+
 ## 0.8.0
 
 Adds the write path (#39). Commands go to `ampio/control/<user>/api` as

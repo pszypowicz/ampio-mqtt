@@ -33,13 +33,11 @@ library itself is Home Assistant agnostic.
 > `AmpioClient.access_tier` reports the detected tier once discovery
 > completes.
 >
-> **Commands are not restricted to granted objects.** The per-user grant
-> filters what an account can _read_ - its catalogue and state topics -
-> but the M-SERV applies no such filter to commands: any authenticated
-> account can control any object in the installation, including ones it
-> cannot see. A dedicated standard account limits what Home Assistant
-> displays, not what it could actuate, so treat its credentials as full
-> control authority over the installation.
+> **The grant bounds reads and writes alike.** An account can only read
+> and only command the objects it was granted in the app; a command aimed
+> at anything else is dropped, and no state for it reaches the account's
+> namespace. A dedicated standard account is therefore a real privilege
+> boundary, not just a narrower view.
 
 ## Status
 
@@ -81,8 +79,13 @@ RGBW_OUTPUT}`). Drives HA platform selection and bundle/split decisions in
 - object control via `AmpioClient.command()` plus typed helpers
   (`turn_on`, `turn_off`, `toggle`, `set_value`, `set_color`,
   `open_cover`, `close_cover`, `set_cover_position`). Works on both
-  account tiers. See the caution below and
-  [`docs/protocol.md`](docs/protocol.md),
+  account tiers - see [`docs/protocol.md`](docs/protocol.md),
+- output-object classification via `classify()` / `OutputKind`
+  (`AmpioObject.output_kind`, `is_output`, `supports_tilt`): relays,
+  dimmers, RGBW lights, and the three cover types, each flagged with the
+  command verbs it answers so a consumer picks a platform without its own
+  type table. Tilt-capable blinds also report their slat angle as
+  `AmpioObject.tilt_position`,
 - input-object classification via `classify()` / `InputKind`
   (`AmpioObject.input_kind`, `is_input`, `is_on`): flags map to a generic
   boolean, motion detection to `binary_sensor.motion`. Live flag/button events
