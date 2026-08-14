@@ -27,11 +27,13 @@ library itself is Home Assistant agnostic.
 >   administrator granted the account in the Ampio app, with names,
 >   classification metadata, visibility flags, rooms, and the server
 >   identity (`AmpioClient.server_info`). No module list (so `mserv_id`
->   stays `None`) and no raw input topics - input events arrive only
->   through the slower per-object republish.
+>   stays `None`) and no raw input topics - input events arrive about
+>   100-140 ms later, through the per-object republish.
 >
 > `AmpioClient.access_tier` reports the detected tier once discovery
-> completes.
+> completes. [`docs/account-tiers.md`](docs/account-tiers.md) has the
+> full capability table, the measured latency difference, and when an
+> administrator account is worth it.
 >
 > **The grant bounds reads and writes alike.** An account can only read
 > and only command the objects it was granted in the app; a command aimed

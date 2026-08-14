@@ -58,6 +58,11 @@ are dropped, verified live), so it can never back the standard-user
 path, but an admin-tier install could use it for the device classes
 `/api` cannot express.
 
+Reach for it only for those device classes, never for speed: the same
+command sent through `/api` and through this tree reaches the device in
+41 ms and 36 ms respectively, a difference inside per-trial noise. Unlike
+the read path, writes gain nothing from going raw.
+
 Tracked as: [#39](https://github.com/pszypowicz/ampio-mqtt/issues/39)
 
 ### `device_raw_api` RPC bridge - per-output `outLoc` resolution
