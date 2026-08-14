@@ -14,6 +14,14 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.7.1
+
+No library changes. The 0.7.0 tag never reached PyPI: its snapshot of the
+release workflow pinned a publish action whose bundled twine rejects the
+`Metadata-Version: 2.5` that current hatchling emits, and the tag is
+deletion-protected, so the 0.7.0 content ships as 0.7.1 with the fixed
+workflow.
+
 ## 0.7.0
 
 Makes non-admin accounts first-class. The M-SERV gates the `config` discovery
