@@ -28,7 +28,7 @@ an administrator account is laid out.
 Authoritative source:
 [`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py)
 (`RAW_INPUT_WILDCARDS`, `_INPUT_CHANNEL_PREFIX`) and the dispatcher in
-[`src/ampio_mqtt/client.py`](../src/ampio_mqtt/client.py)
+[`src/ampio_mqtt/_store.py`](../src/ampio_mqtt/_store.py)
 (`_handle_raw_channel`).
 
 ## What the library subscribes to

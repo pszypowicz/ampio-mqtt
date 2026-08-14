@@ -407,7 +407,7 @@ def test_devices_redelivery_preserves_last_seen() -> None:
         f"ampio/fromDB/{USER}/config/devices",
         _devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
     )
-    client.state.modules[17].last_seen = 1700000000.0
+    client._store.state.modules[17].last_seen = 1700000000.0
     # Re-deliver the devices list (e.g. on reconnect) - last_seen must persist.
     client._feed_message(
         f"ampio/fromDB/{USER}/config/devices",
@@ -457,9 +457,9 @@ def test_availability_listener() -> None:
     client = _client()
     events: list[bool] = []
     client.add_availability_listener(events.append)
-    client._set_available(True)
-    client._set_available(True)
-    client._set_available(False)
+    client._connection._set_available(True)
+    client._connection._set_available(True)
+    client._connection._set_available(False)
     assert events == [True, False]
 
 
@@ -480,11 +480,11 @@ async def test_start_raises_auth_error_on_credential_rejection() -> None:
     """A broker auth rejection during _run surfaces AmpioAuthError from start()."""
     client = AmpioClient("host", username="u", password="bad", reconnect_interval=0.0)
     with (
-        patch("ampio_mqtt.client.aiomqtt.Client", _AuthFailingClient),
+        patch("ampio_mqtt._connection.aiomqtt.Client", _AuthFailingClient),
         pytest.raises(AmpioAuthError),
     ):
         await client.start(timeout=2.0, discovery_timeout=0.1)
-    assert client._runner is None  # stop() ran during the raise
+    assert client._connection._runner is None  # stop() ran during the raise
 
 
 @pytest.mark.parametrize(
@@ -556,7 +556,7 @@ async def test_start_times_out_without_auth_error() -> None:
     from ampio_mqtt import AmpioConnectionError
 
     with (
-        patch("ampio_mqtt.client.aiomqtt.Client", _Stuck),
+        patch("ampio_mqtt._connection.aiomqtt.Client", _Stuck),
         pytest.raises(AmpioConnectionError),
     ):
         await client.start(timeout=0.5, discovery_timeout=0.1)
@@ -644,7 +644,7 @@ def test_flag_without_funkcja_is_not_indexed() -> None:
     client._feed_message(
         f"ampio/fromDB/{USER}/config/devicesDetails", _details(no_funkcja)
     )
-    assert client._input_index == {}
+    assert client._store._input_index == {}
 
 
 def test_per_object_echo_dropped_after_raw_seen() -> None:
@@ -710,7 +710,7 @@ def test_symulacja_classifies_but_is_not_bridged() -> None:
     }
     client._feed_message(f"ampio/fromDB/{USER}/config/devicesDetails", _details(sym))
     assert client.objects[61].is_input is True
-    assert client._input_index == {}  # symulacja prefix not bridged
+    assert client._store._input_index == {}  # symulacja prefix not bridged
 
 
 @pytest.mark.parametrize(
@@ -897,9 +897,9 @@ async def test_reconnect_count_increments_on_reconnect() -> None:
     runner_task: asyncio.Task[None]
 
     async def _run() -> None:
-        with patch("ampio_mqtt.client.aiomqtt.Client", _Flapping):
-            client._stop = False
-            await client._run()
+        with patch("ampio_mqtt._connection.aiomqtt.Client", _Flapping):
+            client._connection._stop = False
+            await client._connection._run()
 
     runner_task = asyncio.create_task(_run())
     # Wait for the second connection to land (reconnect_count incremented).
@@ -908,7 +908,7 @@ async def test_reconnect_count_increments_on_reconnect() -> None:
             break
         await asyncio.sleep(0.01)
     keep_running.set()
-    client._stop = True
+    client._connection._stop = True
     await runner_task
 
     assert client.stats.reconnect_count == 1

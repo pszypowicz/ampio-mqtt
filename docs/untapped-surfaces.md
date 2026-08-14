@@ -97,9 +97,10 @@ python tools/probe_config.py --keywords scenes,logs,resources
 Once the response shape is in hand, the implementation pattern is
 almost always the same as `fetch_rooms()` / `fetch_locations()`:
 
-1. Add the topic helper to `const.py`.
-2. Subscribe to it in the `start()` loop.
-3. Add a dispatch branch in `_dispatch` that stores the retained
-   payload and sets an `asyncio.Event`.
-4. Expose a `fetch_<name>()` method that publishes the request keyword
-   and awaits the event.
+1. Add a row to the `ENDPOINTS` table in `const.py`. Subscription,
+   response routing, the discovery latch and `refresh()` all derive
+   from it.
+2. If the reply mutates state, add a handler to `AmpioStore._handlers`
+   in `_store.py`; if it is pure request/response, skip this.
+3. Expose a `fetch_<name>()` on the client that calls
+   `_request_and_wait()` and parses the retained payload.

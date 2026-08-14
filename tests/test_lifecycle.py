@@ -110,7 +110,7 @@ async def test_connection_returns_server_info_on_happy_path() -> None:
     FakeMqttClient.scripted_messages = [
         _Message(info_topic, json.dumps({"Results": {"mac": 42}}).encode())
     ]
-    with patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient):
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
         info = await AmpioClient.test_connection("h", 1883, USER, "p", info_timeout=1)
     assert info.mac == 42
     assert info_topic in FakeMqttClient.subscribed
@@ -120,7 +120,7 @@ async def test_connection_returns_server_info_on_happy_path() -> None:
 
 async def test_connection_returns_empty_on_info_timeout() -> None:
     """A broker that connects but never replies returns an empty AmpioServerInfo."""
-    with patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient):
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
         info = await AmpioClient.test_connection("h", 1883, USER, "p", info_timeout=0.1)
     assert info.mac is None
     assert info.server_version is None
@@ -129,7 +129,7 @@ async def test_connection_returns_empty_on_info_timeout() -> None:
 async def test_connection_raises_auth_error_on_bad_credentials() -> None:
     FakeMqttClient.enter_error = aiomqtt.MqttError("Not authorized")
     with (
-        patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient),
+        patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient),
         pytest.raises(AmpioAuthError),
     ):
         await AmpioClient.test_connection("h", 1883, USER, "bad", info_timeout=0.1)
@@ -138,7 +138,7 @@ async def test_connection_raises_auth_error_on_bad_credentials() -> None:
 async def test_connection_raises_connection_error_on_transport_failure() -> None:
     FakeMqttClient.enter_error = aiomqtt.MqttError("Connection refused")
     with (
-        patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient),
+        patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient),
         pytest.raises(AmpioConnectionError),
     ):
         await AmpioClient.test_connection("h", 1883, USER, "p", info_timeout=0.1)
@@ -151,7 +151,7 @@ async def test_connection_ignores_unrelated_topics() -> None:
         _Message("unrelated/topic", b"junk"),
         _Message(info_topic, json.dumps({"Results": {"mac": 7}}).encode()),
     ]
-    with patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient):
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
         info = await AmpioClient.test_connection("h", 1883, USER, "p", info_timeout=1)
     assert info.mac == 7
 
@@ -182,9 +182,9 @@ async def test_stop_cancels_pending_runner() -> None:
         await asyncio.sleep(3600)
 
     client = AmpioClient("h", username=USER, reconnect_interval=3600)
-    client._runner = asyncio.create_task(_sleep_forever())
+    client._connection._runner = asyncio.create_task(_sleep_forever())
     await client.stop()
-    assert client._runner is None
+    assert client._connection._runner is None
 
 
 async def test_start_drives_full_discovery_through_mocked_broker() -> None:
@@ -196,7 +196,7 @@ async def test_start_drives_full_discovery_through_mocked_broker() -> None:
         _Message(INFO_TOPIC, json.dumps({"Results": {"mac": 99}}).encode()),
     ]
     client = AmpioClient("h", username=USER, reconnect_interval=0.0)
-    with patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient):
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
         await client.start(timeout=2.0, discovery_timeout=1.0)
     try:
         assert client.available is True
@@ -242,7 +242,7 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
         _Message(INFO_TOPIC, json.dumps({"Results": {"mac": 99}}).encode()),
     ]
     client = AmpioClient("h", username=USER, reconnect_interval=0.0)
-    with patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient):
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
         await client.start(timeout=2.0, discovery_timeout=1.0)
     try:
         assert await client.wait_for_initial_discovery(timeout=1.0) is True
@@ -288,7 +288,7 @@ async def test_restricted_account_completes_via_data_surface_fallback() -> None:
         _Message(INFO_TOPIC, json.dumps({"Results": {"mac": 99}}).encode()),
     ]
     client = AmpioClient("h", username=USER, reconnect_interval=0.0)
-    with patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient):
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
         await client.start(timeout=2.0, discovery_timeout=0.3)
     try:
         assert (
@@ -316,7 +316,7 @@ async def test_wait_for_initial_discovery_returns_false_on_timeout() -> None:
         _Message(STATES_TOPIC, json.dumps({"List": []}).encode()),
     ]
     client = AmpioClient("h", username=USER, reconnect_interval=0.0)
-    with patch("ampio_mqtt.client.aiomqtt.Client", FakeMqttClient):
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
         await client.start(timeout=2.0, discovery_timeout=0.1)
         try:
             assert await client.wait_for_initial_discovery(timeout=0.1) is False

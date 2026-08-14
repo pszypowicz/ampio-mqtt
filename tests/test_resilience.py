@@ -121,11 +121,11 @@ async def test_stop_reports_a_failed_runner_instead_of_raising() -> None:
     async def explode() -> None:
         raise RuntimeError("connection loop died")
 
-    client._runner = asyncio.create_task(explode())
+    client._connection._runner = asyncio.create_task(explode())
     await asyncio.sleep(0)
 
     await client.stop()  # must not raise
-    assert client._runner is None
+    assert client._connection._runner is None
 
 
 async def test_stop_is_idempotent() -> None:
@@ -138,7 +138,7 @@ def test_backoff_survives_a_long_outage() -> None:
     """Attempts are unbounded, so the exponent must not overflow the float."""
     client = AmpioClient("host", username=USER, reconnect_interval=5.0)
     for attempt in (0, 10, 1024, 100_000):
-        assert 0.0 <= client._backoff_seconds(attempt) <= 65.0
+        assert 0.0 <= client._connection._backoff_seconds(attempt) <= 65.0
 
 
 # --- reconnect resync -------------------------------------------------------
