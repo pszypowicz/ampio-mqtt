@@ -23,6 +23,7 @@ pass them through unchanged.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
@@ -99,6 +100,33 @@ class AccessTier(Enum):
 DISCOVERY_COMMON: tuple[str, ...] = ("states", "info")
 DISCOVERY_ADMIN: tuple[str, ...] = ("details", "devices")
 DISCOVERY_FALLBACK: tuple[str, ...] = ("data_devices", "params_devices")
+
+
+# --- Commands --------------------------------------------------------------
+#
+# Writes go to one control topic per account as plain text:
+# ``/api/set/<object_id>/<verb>[/<arg>...]``. The verb vocabulary is the
+# M-SERV's own HTTP API, re-exposed over MQTT; see docs/protocol.md for the
+# table and which verbs are verified live.
+#
+# Unlike the read side, commands are NOT scoped to the objects an account was
+# granted in the app - any authenticated account can command any object.
+
+
+def command_topic(user: str) -> str:
+    """Control topic that carries object commands for an account."""
+    return f"ampio/control/{user}/api"
+
+
+def command_payload(object_id: int, verb: str, args: Sequence[object] = ()) -> str:
+    """Build an ``/api/set`` command payload."""
+    return f"/api/set/{object_id}/{verb}" + "".join(f"/{a}" for a in args)
+
+
+# `setRollerPos` takes a position and a lamella angle. 101 on either axis means
+# "leave this one where it is", so a position-only move does not disturb a
+# blind's lamella (and vice versa).
+KEEP_POSITION = 101
 
 
 def request_topic(ep: Endpoint, user: str) -> str:

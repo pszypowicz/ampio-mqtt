@@ -25,10 +25,13 @@ from .const import (
     DISCOVERY_FALLBACK,
     ENDPOINT_BY_NAME,
     ENDPOINTS,
+    KEEP_POSITION,
     RAW_INPUT_WILDCARDS,
     AccessTier,
     Endpoint,
     classify,
+    command_payload,
+    command_topic,
     input_channel_prefix,
     ob_state_wildcard,
     request_topic,
@@ -480,6 +483,101 @@ class AmpioClient:
                 out[lid] = name
         return out
 
+    # --- commands ---------------------------------------------------------
+
+    async def command(self, object_id: int, verb: str, *args: object) -> None:
+        """Send ``verb`` (with any args) to an object on the command surface.
+
+        Publishes ``/api/set/<object_id>/<verb>[/<arg>...]`` and returns as soon
+        as the publish completes; the M-SERV applies it asynchronously and the
+        resulting state arrives through the normal object listeners (typically
+        within a few hundred ms). Nothing is echoed back for an unknown verb or
+        an object that cannot perform it - the M-SERV simply ignores it.
+
+        This is the escape hatch for the verbs the library does not wrap: the
+        vocabulary is the M-SERV's own, so anything its HTTP API accepts works
+        here (``setTemperature``, ``arm``, ``setVolume``, ``setText``, ...).
+        See docs/protocol.md.
+
+        Note the M-SERV does not restrict commands to the objects an account
+        was granted in the app; a non-admin account can command any object.
+        """
+        if self._client is None:
+            raise AmpioConnectionError("Not connected")
+        await self._client.publish(
+            command_topic(self._username),
+            command_payload(object_id, verb, args).encode(),
+        )
+
+    async def turn_on(self, object_id: int) -> None:
+        """Turn an object fully on."""
+        await self.command(object_id, "turnOn")
+
+    async def turn_off(self, object_id: int) -> None:
+        """Turn an object off."""
+        await self.command(object_id, "turnOff")
+
+    async def toggle(self, object_id: int) -> None:
+        """Invert an object's current on/off state."""
+        await self.command(object_id, "switch")
+
+    async def set_value(
+        self, object_id: int, value: int, *, pulse_ms: int | None = None
+    ) -> None:
+        """Set an object's 0-255 level (relay, flag, dimmer).
+
+        With ``pulse_ms`` the M-SERV reverts the object to its previous state
+        after that many milliseconds - a timed pulse, not a fade. The wire unit
+        is 10 ms, so the value is rounded down to the nearest 10 ms; a gate
+        pulse of 500 ms is ``pulse_ms=500``.
+        """
+        _check_range("value", value, 0, 255)
+        if pulse_ms is None:
+            await self.command(object_id, "setValue", value)
+            return
+        _check_range("pulse_ms", pulse_ms, 0, 655350)
+        await self.command(object_id, "setValue", value, pulse_ms // 10)
+
+    async def set_color(
+        self, object_id: int, red: int, green: int, blue: int, white: int = 0
+    ) -> None:
+        """Set an RGBW object's four channels, each 0-255."""
+        for name, channel in (
+            ("red", red),
+            ("green", green),
+            ("blue", blue),
+            ("white", white),
+        ):
+            _check_range(name, channel, 0, 255)
+        await self.command(object_id, "setColors", red, green, blue, white)
+
+    async def open_cover(self, object_id: int) -> None:
+        """Drive a cover to fully open (position 100)."""
+        await self.command(object_id, "open")
+
+    async def close_cover(self, object_id: int) -> None:
+        """Drive a cover to fully closed (position 0)."""
+        await self.command(object_id, "close")
+
+    async def set_cover_position(
+        self, object_id: int, position: int, *, lamella: int | None = None
+    ) -> None:
+        """Drive a cover to ``position`` percent (0 closed, 100 open).
+
+        ``lamella`` is the slat angle for blinds that have one; left alone by
+        default. Position updates stream in as the cover travels, so a consumer
+        sees intermediate values rather than a single jump to the target.
+        """
+        _check_range("position", position, 0, 100)
+        if lamella is not None:
+            _check_range("lamella", lamella, 0, 100)
+        await self.command(
+            object_id,
+            "setRollerPos",
+            position,
+            KEEP_POSITION if lamella is None else lamella,
+        )
+
     async def _publish(self, ep: Endpoint) -> None:
         """Publish an endpoint's request keyword to its control topic."""
         if self._client is None:
@@ -787,6 +885,12 @@ class AmpioClient:
     def _notify(self, obj: AmpioObject) -> None:
         for listener in list(self._object_listeners):
             listener(obj)
+
+
+def _check_range(name: str, value: int, low: int, high: int) -> None:
+    """Reject an out-of-range command argument before it reaches the wire."""
+    if not isinstance(value, int) or not low <= value <= high:
+        raise ValueError(f"{name} must be an int in {low}..{high}, got {value!r}")
 
 
 def _decode_payload(payload: object) -> str:

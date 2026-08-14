@@ -42,6 +42,55 @@ and independent of the account's app permissions). Everything on the
 | (empty)          | `ampio/control/<user>/states` | `ampio/fromDB/<user>/data/states`           | `{List: [{id, stan_json}]}` - bulk snapshot of the account's object states.                                                                               |
 | (empty)          | `ampio/control/<user>/info`   | `ampio/fromDB/<user>/data/info`             | `{Results: {mac, serverVersion, serverRevision, mqttVersion, local_ip, device_id, ...}}` - server self-report; retained in the account namespace.         |
 
+## Commands (write)
+
+One topic per account carries every write, as plain text:
+
+```
+ampio/control/<user>/api      /api/set/<object_id>/<verb>[/<arg>...]
+```
+
+The verb vocabulary is the M-SERV's own HTTP control API re-exposed over
+MQTT; its authoritative list is the OpenAPI spec embedded in the M-SERV
+web app bundle (`http://<host>/assets/index-*.js`). There is no reply
+topic - the object's normal state topic reports the result, typically
+within ~200 ms, and an unknown verb is silently ignored.
+
+**Commands are not grant-scoped.** The read side is filtered to the
+objects an account was granted in the app, but the write side is not: any
+authenticated account can command any object in the installation,
+including ones it cannot see. Verified live from a non-admin account
+against an object outside its grant. Treat a standard Ampio account as
+full control authority over the whole installation.
+
+The `ampio/to/<mac>/...` CAN tree is the other write path (documented in
+Ampio's own MQTT API note, with per-channel `cmd` topics and a `raw` hex
+channel covering CCT, DALI, blind angles, and display text). It is
+**admin-only** - a non-admin account's publishes there are dropped, which
+this library confirmed live - so the library uses the `/api` surface,
+which works on both tiers.
+
+| Verb                                | Args                                      | Notes                                                                                                           |
+| ----------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `turnOn`                            | -                                         | Verified. Full on (255).                                                                                        |
+| `turnOff`                           | -                                         | Verified.                                                                                                       |
+| `switch`                            | -                                         | Verified. Inverts current state.                                                                                |
+| `open`                              | -                                         | Verified. Cover to 100.                                                                                         |
+| `close`                             | -                                         | Verified. Cover to 0.                                                                                           |
+| `setValue`                          | `<0-255>[/<time>]`                        | Verified. `time` is in 10 ms units and **reverts** the object afterwards - a timed pulse, not a fade.           |
+| `setColors`                         | `<R>/<G>/<B>/<W>`                         | Verified. Also accepts one packed int (`R \| G<<8 \| B<<16 \| W<<24`), which is what object state reports back. |
+| `setRollerPos`                      | `<position>/<lamella>`                    | Verified. Percent each; `101` on an axis means "leave it alone".                                                |
+| `setColor`                          | 24-bit `R \| G<<8 \| B<<16`               | Spec-documented, not verified here.                                                                             |
+| `setColorW`                         | `<rgb24>/<white>`                         | Spec-documented, not verified here.                                                                             |
+| `setTemperature`, `setHeatingMode`  | regulator setpoint / mode `A`,`S`,`M`,`H` | Spec-documented, not verified here.                                                                             |
+| `arm`, `disarm`                     | `<pin>`                                   | Satel alarm zones. Spec-documented, not verified here.                                                          |
+| `setVolume`, `setInput`, `setSeek`  | radio module                              | Spec-documented, not verified here.                                                                             |
+| `setText`                           | `<text>`                                  | Sets app-visible text on sensor objects. Spec-documented.                                                       |
+| `setVirtualTemp`, `setVirtualValue` | virtual devices                           | Spec-documented, not verified here.                                                                             |
+
+Covers stream intermediate positions in 5% steps while travelling, so a
+consumer sees the movement rather than one jump to the target.
+
 ## Live state
 
 | Topic                                      | Payload                  | Notes                                                                                                            |
