@@ -19,9 +19,11 @@ button-press or flag toggle, the raw form is the right source.
 
 The raw tree is served only to **administrator** accounts: the broker
 ACL delivers nothing on `ampio/from/#` to a standard account, retained
-or live (live-verified, and independent of the account's app
-permissions). On the standard tier the bridge simply never fires and
-inputs update through the per-object topic at its higher latency.
+or live, and granting that account the object changes nothing. On the
+standard tier the bridge never fires and inputs update through the
+per-object topic instead, 100-140 ms later - measured in
+[`account-tiers.md`](account-tiers.md), which is also where the case for
+an administrator account is laid out.
 
 Authoritative source:
 [`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py)
