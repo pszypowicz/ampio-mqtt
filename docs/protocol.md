@@ -146,12 +146,14 @@ The two directions are gated differently, which is verified live:
 On the CAN side an event is frame type `0x2B` carrying a 16-bit
 little-endian number, low byte first - `FE 2B BD 00` for 189 and
 `FE 2B BD BD` for 48573. A legacy 8-bit event is simply one whose high
-byte is zero. Module logic that matches on the first data byte alone
-would therefore see 189 and 48573 alike, so an installation mixing 8-bit
-and 16-bit event numbers can have a 16-bit event trip logic bound to the
-8-bit event sharing its low byte. The wire format is confirmed; whether
-a given module's matching is that loose has to be checked against the
-logic itself.
+byte is zero.
+
+That layout invites a suspicion worth ruling out: that logic bound to an
+8-bit event also fires for a 16-bit event sharing one of its bytes.
+Tested against a module rule bound to event 189 (`0x00BD`), neither
+`0xBDBD` nor `0xBD00` moved it, while 189 itself toggled reliably and an
+unrelated event did nothing. Matching is on the full 16-bit value, at
+least on the M-DOT firmware this was run against.
 
 **The M-SERV raises event 254 from its own MAC whenever a client asks for
 a discovery refresh**, so `start()` normally produces one. It is not
