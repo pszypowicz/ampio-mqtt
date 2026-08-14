@@ -11,18 +11,19 @@ account granted every permission in the app is still a standard account.
 
 ## What each tier gets
 
-| Capability                                   | Administrator | Standard user                         |
-| -------------------------------------------- | ------------- | ------------------------------------- |
-| Object catalogue with full metadata          | all objects   | objects granted in the app            |
-| `params` bitfields (visibility, hidden flag) | yes           | yes (the table is not grant-filtered) |
-| Per-object live state                        | all objects   | granted objects                       |
-| Rooms (`fetch_rooms`)                        | yes           | yes                                   |
-| Server identity (`server_info`)              | yes           | yes                                   |
-| Commands                                     | all objects   | granted objects                       |
-| **Module list** (`modules`, `mserv_id`)      | yes           | **no**                                |
-| **Raw channel tree** (`ampio/from/#`)        | yes           | **no**                                |
-| **CAN write tree** (`ampio/to/#`)            | yes           | **no**                                |
-| Designer location table (`fetch_locations`)  | yes           | no                                    |
+| Capability                                    | Administrator | Standard user                         |
+| --------------------------------------------- | ------------- | ------------------------------------- |
+| Object catalogue with full metadata           | all objects   | objects granted in the app            |
+| `params` bitfields (visibility, hidden flag)  | yes           | yes (the table is not grant-filtered) |
+| Per-object live state                         | all objects   | granted objects                       |
+| Rooms (`fetch_rooms`)                         | yes           | yes                                   |
+| Server identity (`server_info`)               | yes           | yes                                   |
+| Commands                                      | all objects   | granted objects                       |
+| **Module list** (`modules`, `mserv_id`)       | yes           | **no**                                |
+| **Raw channel tree** (`ampio/from/#`)         | yes           | **no**                                |
+| **Module diagnostics** (voltage, temperature) | yes           | **no**                                |
+| **CAN write tree** (`ampio/to/#`)             | yes           | **no**                                |
+| Designer location table (`fetch_locations`)   | yes           | no                                    |
 
 Grants bound reads and writes alike. A command for an object outside a
 standard account's grant is dropped with no effect and no reply, and no
@@ -69,5 +70,9 @@ Prefer an administrator account when the install needs:
   itself classifies arrive as ordinary objects and need no admin.
 - **Module metadata** - per-module device entries, models, firmware
   versions, and `mserv_id` for a `via_device` hierarchy.
+- **Module health** - each module broadcasts its CAN supply voltage, and
+  the output modules their own temperature, as
+  `AmpioModule.supply_voltage` / `temperature`. Useful for spotting a
+  sagging bus or a hot module before it misbehaves.
 - **The CAN vocabulary** for device classes `/api` cannot express (CCT,
   DALI, display text); see [`untapped-surfaces.md`](untapped-surfaces.md).

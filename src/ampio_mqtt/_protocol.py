@@ -73,6 +73,14 @@ class StateUpdate:
 
 
 @dataclass(slots=True)
+class ModuleDiagnostics:
+    """A module's self-reported health from its `b/4F` broadcast."""
+
+    supply_voltage: float  # volts on the CAN bus
+    temperature: float | None  # °C, None on modules without the sensor
+
+
+@dataclass(slots=True)
 class StanJsonSeed:
     """Initial `state` value and server timestamp extracted from `stan_json`."""
 
@@ -314,6 +322,46 @@ def parse_raw_channel_topic(topic: str) -> tuple[int, str, int] | None:
     if channel is None:
         return None
     return mac, parts[4], channel
+
+
+def parse_diagnostics_mac(topic: str) -> int | None:
+    """Parse the MAC out of an `ampio/from/<MAC>/b/4F` diagnostics topic."""
+    parts = topic.split("/")
+    if len(parts) != 5 or parts[0] != "ampio" or parts[1] != "from":
+        return None
+    if parts[3] != "b" or parts[4].upper() != "4F":
+        return None
+    try:
+        return int(parts[2], 16)
+    except ValueError:
+        return None
+
+
+def parse_diagnostics(payload: str) -> ModuleDiagnostics | None:
+    """Parse a `b/4F` diagnostics frame into supply voltage and temperature.
+
+    The frame is `{"d": [0xFE, 0x4F, voltage, temperature], "m": mac}`.
+    Voltage is in 0.2 V steps; temperature is offset by 100 °C and reads 0 on
+    the modules that carry no temperature sensor. Returns None when the payload
+    is not a diagnostics frame.
+    """
+    try:
+        data = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    frame = data.get("d")
+    if not isinstance(frame, list) or len(frame) < 3:
+        return None
+    if frame[0] != 0xFE or frame[1] != 0x4F:
+        return None
+    voltage = frame[2] * 0.2
+    raw_temp = frame[3] if len(frame) > 3 else 0
+    return ModuleDiagnostics(
+        supply_voltage=round(voltage, 1),
+        temperature=float(raw_temp - 100) if raw_temp else None,
+    )
 
 
 def parse_stan_json(stan_json: str) -> StanJsonSeed | None:

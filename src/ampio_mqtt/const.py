@@ -152,6 +152,11 @@ def ob_state_wildcard(user: str) -> str:
 # excluded; those object types already arrive on the per-object topic.
 RAW_INPUT_WILDCARDS = ("ampio/from/+/state/f/+", "ampio/from/+/state/i/+")
 
+# Modules periodically broadcast a diagnostics frame on `ampio/from/<MAC>/b/4F`
+# carrying their CAN supply voltage and, on the modules that measure it, their
+# own temperature. Like the rest of the raw tree this is administrator-only.
+RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
+
 
 # --- Sensor classification -------------------------------------------------
 

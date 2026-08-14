@@ -36,10 +36,38 @@ Authoritative source:
 ```
 ampio/from/+/state/f/+   # flags  ("flaga")
 ampio/from/+/state/i/+   # digital inputs  ("detekcja")
+ampio/from/+/b/4F        # per-module diagnostics broadcast
 ```
 
-Both are bridged to the owning `AmpioObject` so listeners see the same
-push as for any other update.
+The two channel wildcards are bridged to the owning `AmpioObject` so
+listeners see the same push as for any other update.
+
+## Module diagnostics (`b/4F`)
+
+Alongside the per-channel `state/` topics, each module periodically
+broadcasts a frame on `ampio/from/<MAC>/b/<type>`, keyed by the CAN frame
+type. Type `4F` is the diagnostics frame:
+
+```json
+{ "d": [254, 79, 63, 142], "m": 51966 }
+```
+
+`d[0]` is `0xFE` (broadcast) and `d[1]` is `0x4F` (diagnostics). The two
+payload bytes decode as:
+
+| Byte   | Meaning                | Decoding                                         |
+| ------ | ---------------------- | ------------------------------------------------ |
+| `d[2]` | CAN bus supply voltage | `× 0.2` → V                                      |
+| `d[3]` | Module temperature     | `− 100` → °C, `0` means the module has no sensor |
+
+Landed on `AmpioModule.supply_voltage` and `AmpioModule.temperature`, and
+each frame refreshes the module's `last_seen`, so a module with no objects
+of its own still shows liveness. Register `add_module_listener()` to be
+told when a module updates.
+
+The broadcasts are periodic rather than retained, so the fields fill in
+over the first minute of a session rather than immediately, and modules
+without a temperature sensor (relays, panels) report voltage only.
 
 ## What the library deliberately does NOT subscribe to
 

@@ -1048,3 +1048,57 @@ def test_states_snapshot_seeds_tilt_position() -> None:
         ),
     )
     assert client.objects[66].tilt_position == "100"
+
+
+# --- module diagnostics ----------------------------------------------------
+
+
+def _diag_client() -> AmpioClient:
+    """Client that knows module 7 at mac 0xCAFE."""
+    client = _client()
+    client._feed_message(f"ampio/fromDB/{USER}/config/devices", _devices(_PANEL))
+    return client
+
+
+def test_diagnostics_sets_voltage_and_temperature() -> None:
+    client = _diag_client()
+    seen: list = []
+    client.add_module_listener(seen.append)
+
+    client._feed_message("ampio/from/CAFE/b/4F", b'{"d":[254,79,63,142],"m":51966}')
+
+    module = client.modules[7]
+    assert module.supply_voltage == 12.6
+    assert module.temperature == 42.0
+    assert module.last_seen is not None
+    assert seen == [module]
+
+
+def test_diagnostics_without_a_temperature_sensor_reports_none() -> None:
+    """`0` in the temperature byte marks the sensor as absent, not -100 C."""
+    client = _diag_client()
+    client._feed_message("ampio/from/CAFE/b/4F", b'{"d":[254,79,60,0],"m":51966}')
+    module = client.modules[7]
+    assert module.supply_voltage == 12.0
+    assert module.temperature is None
+
+
+def test_diagnostics_for_an_unknown_module_is_ignored() -> None:
+    client = _diag_client()
+    client._feed_message("ampio/from/BEEF/b/4F", b'{"d":[254,79,60,0],"m":48879}')
+    assert client.modules[7].supply_voltage is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b'{"d":[254,80,60,0]}',  # not the diagnostics frame type
+        b'{"d":[1,79,60,0]}',  # not a broadcast
+        b'{"d":[254,79]}',  # truncated
+        b"not json",
+    ],
+)
+def test_non_diagnostics_frames_are_ignored(payload: bytes) -> None:
+    client = _diag_client()
+    client._feed_message("ampio/from/CAFE/b/4F", payload)
+    assert client.modules[7].supply_voltage is None

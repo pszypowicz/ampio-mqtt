@@ -188,9 +188,15 @@ class AmpioModule:
     sw_version: int | None = None  # wersja_softu
     hw_version: int | None = None  # wersja_pcb
     # Epoch seconds of the last state message received for any of the module's
-    # objects. Source: the `on` field of the state payload (milliseconds epoch
-    # at the server), falling back to local receive time if absent.
+    # objects, or of its own diagnostics broadcast. Source: the `on` field of
+    # the state payload (milliseconds epoch at the server), falling back to
+    # local receive time if absent.
     last_seen: float | None = None
+    # Self-reported health from the module's `b/4F` broadcast. Both stay None
+    # on a standard account, which is not served the raw tree, and
+    # `temperature` stays None on modules without the sensor.
+    supply_voltage: float | None = None  # volts on the CAN bus
+    temperature: float | None = None  # °C
 
 
 @dataclass(slots=True)

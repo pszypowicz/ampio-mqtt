@@ -26,6 +26,7 @@ from .const import (
     ENDPOINT_BY_NAME,
     ENDPOINTS,
     KEEP_POSITION,
+    RAW_DIAGNOSTICS_WILDCARD,
     RAW_INPUT_WILDCARDS,
     AccessTier,
     Endpoint,
@@ -52,6 +53,7 @@ _LOGGER = logging.getLogger(__name__)
 _RECONNECT_BACKOFF_MAX = 60.0
 
 ObjectListener = Callable[[AmpioObject], None]
+ModuleListener = Callable[[AmpioModule], None]
 AvailabilityListener = Callable[[bool], None]
 
 
@@ -80,11 +82,14 @@ class AmpioClient:
 
         self.state = AmpioState()
         self._object_listeners: list[ObjectListener] = []
+        self._module_listeners: list[ModuleListener] = []
         self._availability_listeners: list[AvailabilityListener] = []
 
         # Raw-channel bridge: maps a decoded channel topic to the Designer
         # object that owns it. Key is (module.mac, prefix, channel) -> object_id.
         self._input_index: dict[tuple[int, str, int], int] = {}
+        # Effective bus mac -> module, for routing the module's own broadcasts.
+        self._module_by_mac: dict[int, AmpioModule] = {}
         # Object ids for which a raw-channel message has actually arrived. Once
         # an input is "raw-proven", the faster raw stream is authoritative and
         # its per-object echoes are suppressed; an input never seen on the raw
@@ -216,6 +221,15 @@ class AmpioClient:
         """Register a callback invoked on every object update (state/metadata)."""
         self._object_listeners.append(listener)
         return lambda: self._object_listeners.remove(listener)
+
+    def add_module_listener(self, listener: ModuleListener) -> Callable[[], None]:
+        """Register a callback invoked when a module's own report updates it.
+
+        Fires on the diagnostics broadcast, so it is administrator-only; a
+        standard account never receives the raw tree and this never fires.
+        """
+        self._module_listeners.append(listener)
+        return lambda: self._module_listeners.remove(listener)
 
     def add_availability_listener(
         self, listener: AvailabilityListener
@@ -645,6 +659,7 @@ class AmpioClient:
                     await client.subscribe(ob_state_wildcard(user))
                     for wildcard in RAW_INPUT_WILDCARDS:
                         await client.subscribe(wildcard)
+                    await client.subscribe(RAW_DIAGNOSTICS_WILDCARD)
                     if self.stats.started_at is None:
                         self.stats.started_at = time.time()
                     else:
@@ -707,6 +722,8 @@ class AmpioClient:
             self._handle_state(topic, payload)
         elif topic.startswith("ampio/from/") and "/state/" in topic:
             self._handle_raw_channel(topic, payload)
+        elif topic.startswith("ampio/from/") and "/b/" in topic:
+            self._handle_diagnostics(topic, payload)
 
     def _handle_details(self, payload: str) -> bool:
         items = _protocol.parse_details(payload)
@@ -730,7 +747,7 @@ class AmpioClient:
                 self._apply_stan_json(obj, meta.stan_json)
             self.state.objects[meta.id] = obj
             self._notify(obj)
-        self._rebuild_input_index()
+        self._rebuild_indexes()
         return True
 
     def _handle_devices(self, payload: str) -> bool:
@@ -743,7 +760,7 @@ class AmpioClient:
             if previous is not None:
                 module.last_seen = previous.last_seen
             self.state.modules[module.id] = module
-        self._rebuild_input_index()
+        self._rebuild_indexes()
         return True
 
     def _handle_data_devices(self, payload: str) -> bool:
@@ -776,7 +793,7 @@ class AmpioClient:
             )
             self.state.objects[meta.id] = obj
             self._notify(obj)
-        self._rebuild_input_index()
+        self._rebuild_indexes()
         return True
 
     def _handle_params_devices(self, payload: str) -> bool:
@@ -840,13 +857,15 @@ class AmpioClient:
         self._touch_module(obj.device_id, update.on_ms)
         self._notify(obj)
 
-    def _rebuild_input_index(self) -> None:
-        """Rebuild the (mac, prefix, channel) -> object_id routing table.
+    def _rebuild_indexes(self) -> None:
+        """Rebuild the routing tables for the raw tree.
 
-        Keyed on the module's effective bus address (`mac`, the Designer
-        override) - never `mac_global`, which diverges from the raw-topic MAC on
-        replaced modules. Only bridgeable input types with a known channel and a
-        known module mac are indexed.
+        Both are keyed on the module's effective bus address (`mac`, the
+        Designer override) - never `mac_global`, which diverges from the
+        raw-topic MAC on replaced modules. `(mac, prefix, channel)` routes an
+        input channel to its object, covering only bridgeable input types with
+        a known channel and module mac; `mac` alone routes a module's own
+        diagnostics broadcast.
         """
         index: dict[tuple[int, str, int], int] = {}
         for obj in self.state.objects.values():
@@ -858,6 +877,11 @@ class AmpioClient:
                 continue
             index[(module.mac, prefix, obj.funkcja)] = obj.id
         self._input_index = index
+        self._module_by_mac = {
+            module.mac: module
+            for module in self.state.modules.values()
+            if module.mac is not None
+        }
 
     def _handle_raw_channel(self, topic: str, payload: str) -> None:
         key = _protocol.parse_raw_channel_topic(topic)
@@ -873,6 +897,22 @@ class AmpioClient:
         obj.value = payload.strip()
         self._touch_module(obj.device_id, None)
         self._notify(obj)
+
+    def _handle_diagnostics(self, topic: str, payload: str) -> None:
+        mac = _protocol.parse_diagnostics_mac(topic)
+        if mac is None:
+            return
+        module = self._module_by_mac.get(mac)
+        if module is None:
+            return  # a module the catalogue does not list
+        diagnostics = _protocol.parse_diagnostics(payload)
+        if diagnostics is None:
+            return
+        module.supply_voltage = diagnostics.supply_voltage
+        module.temperature = diagnostics.temperature
+        module.last_seen = time.time()
+        for listener in list(self._module_listeners):
+            listener(module)
 
     def _apply_stan_json(self, obj: AmpioObject, stan_json: str) -> None:
         """Seed `obj.value` from `stan_json` and bump the module's last_seen."""

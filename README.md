@@ -62,6 +62,9 @@ stability note above). Currently supports:
 - classification of sensor objects (temperature and M-SENS environmental
   channels) with Home-Assistant-compatible device/state class hints,
 - M-SERV identification (mac, firmware versions, local IP),
+- per-module health on the admin tier (`AmpioModule.supply_voltage`,
+  `temperature`) from each module's own diagnostics broadcast, with
+  `add_module_listener()` for updates,
 - best-effort LAN discovery via `discover()` (explicit multicast DNS A-record
   lookup of `ampio.local` driven by `python-zeroconf`, followed by a TCP probe
   of the resolved address). Home Assistant integrations can pass their shared
