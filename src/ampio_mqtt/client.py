@@ -20,9 +20,13 @@ import aiomqtt
 
 from . import _protocol
 from .const import (
+    DISCOVERY_ADMIN,
+    DISCOVERY_COMMON,
+    DISCOVERY_FALLBACK,
     ENDPOINT_BY_NAME,
     ENDPOINTS,
     RAW_INPUT_WILDCARDS,
+    AccessTier,
     Endpoint,
     classify,
     input_channel_prefix,
@@ -109,7 +113,14 @@ class AmpioClient:
             "devices": self._handle_devices,
             "states": self._handle_states_snapshot,
             "info": self._handle_info,
+            "data_devices": self._handle_data_devices,
+            "params_devices": self._handle_params_devices,
         }
+        # Full-catalogue `{object_id: params}` table from `data/params_devices`
+        # (not grant-filtered). Consulted by `_handle_data_devices` because the
+        # app-sync catalogue rows carry no `params` column, and reply order
+        # between the two endpoints is not guaranteed.
+        self._params_by_id: dict[int, int] = {}
         # Last payload per endpoint as the broker sent it, retained for
         # downstream diagnostics so a tester report can include the actual JSON
         # the M-SERV emitted without re-deriving it.
@@ -168,14 +179,33 @@ class AmpioClient:
         return self._available
 
     @property
+    def access_tier(self) -> AccessTier:
+        """Detected account tier, derived from which discovery surface answered.
+
+        ``ADMIN`` once the ``config`` surface has answered (``devicesDetails``);
+        ``RESTRICTED`` when only the app-sync ``data/devices`` catalogue has;
+        ``UNKNOWN`` before either. Settled by the time
+        :meth:`wait_for_initial_discovery` returns True. The value can still
+        upgrade RESTRICTED -> ADMIN if a slow config reply lands later; it
+        never downgrades (the underlying signals latch). The tier reflects the
+        account's administrator bit only - per-user app permissions do not
+        move an account between tiers.
+        """
+        if self._received["details"].is_set():
+            return AccessTier.ADMIN
+        if self._received["data_devices"].is_set():
+            return AccessTier.RESTRICTED
+        return AccessTier.UNKNOWN
+
+    @property
     def last_payloads(self) -> dict[str, str]:
         """Verbatim last response payload per endpoint, keyed by endpoint name.
 
         Retained for the HA integration's diagnostics blob so a report can
         include the actual JSON the M-SERV emitted. Keys are endpoint names
-        (``details``, ``devices``, ``states``, ``info``, ``groups``,
-        ``group_devices``, ``locations``); an endpoint absent until its first
-        reply lands.
+        (``details``, ``devices``, ``states``, ``info``, ``data_devices``,
+        ``params_devices``, ``groups``, ``group_devices``, ``locations``); an
+        endpoint absent until its first reply lands.
         """
         return self._last_payloads
 
@@ -203,10 +233,11 @@ class AmpioClient:
         """Connect, request the server info, and return it.
 
         Raises ``AmpioAuthError`` on credential rejection, ``AmpioConnectionError``
-        on any other connection failure. If the connection succeeds but the
-        server info reply does not arrive within ``info_timeout`` (restricted
-        accounts, slow broker), returns an empty ``AmpioServerInfo`` rather
-        than raising - the caller can decide whether identity is required.
+        on any other connection failure. The info surface answers for every
+        account tier; if the connection succeeds but the reply does not arrive
+        within ``info_timeout`` (slow broker), returns an empty
+        ``AmpioServerInfo`` rather than raising - the caller can decide
+        whether identity is required.
         """
         user = username or ""
         info = ENDPOINT_BY_NAME["info"]
@@ -246,9 +277,11 @@ class AmpioClient:
         """Start the connection, wait for connect and initial discovery.
 
         After connecting, waits up to `discovery_timeout` for the initial
-        object and module lists so module names are known before entities are
-        created. Restricted accounts may never receive these; the wait then
-        simply times out and discovery continues opportunistically.
+        object catalogue so names and classification are known before entities
+        are created. Admin accounts complete via the `config` surface (objects
+        plus the module list); non-admin accounts complete via the app-sync
+        `data` surface fallback (grant-filtered objects, no modules). See
+        `access_tier` for which one answered.
 
         On return, the initial discovery cycle has been awaited up to
         `discovery_timeout`; see `wait_for_initial_discovery` for the explicit,
@@ -283,34 +316,76 @@ class AmpioClient:
 
         await self.wait_for_initial_discovery(timeout=discovery_timeout)
 
-    async def wait_for_initial_discovery(self, *, timeout: float = 8.0) -> bool:
+    async def wait_for_initial_discovery(
+        self, *, timeout: float = 8.0, admin_grace: float = 2.0
+    ) -> bool:
         """Block until the initial discovery cycle has populated the client.
 
-        Returns True once all four initial-discovery messages have been
-        received - devicesDetails (-> ``objects``), devices (-> ``modules``),
-        the states snapshot (seeds ``objects`` values), and info
-        (-> ``server_info``). Returns False if ``timeout`` elapses first.
+        Discovery is complete once the states snapshot and info replies have
+        arrived plus one full object catalogue: the admin ``config`` pair
+        (devicesDetails -> ``objects``, devices -> ``modules``) or the
+        restricted ``data`` pair (data/devices -> ``objects``,
+        data/params_devices -> visibility flags). Returns True on completion
+        and False if ``timeout`` elapses first; which pair completed is
+        reported by :pyattr:`access_tier`.
+
+        When the restricted pair completes and the admin pair has not, up to
+        ``admin_grace`` seconds of the remaining ``timeout`` budget are spent
+        waiting for the admin pair before returning, so ``access_tier`` is
+        settled on return: both requests were published at the same moment to
+        the same server, so continued config-surface silence after the data
+        surface answered means the account is not an administrator. The total
+        wait never exceeds ``timeout``.
 
         This is the contract a consumer relies on when it must read
-        ``modules``/``objects``/``server_info`` (e.g. to resolve ``mserv_id``
-        and pre-register the M-SERV device) before building anything on top of
-        the client. It never raises on timeout: restricted accounts may never
-        receive the full set, in which case discovery continues
-        opportunistically and this simply returns False.
+        ``objects``/``server_info`` (and, on the admin tier, ``modules``)
+        before building anything on top of the client. It never raises on
+        timeout - discovery continues opportunistically and this simply
+        returns False.
 
         Safe to call repeatedly and after reconnects - the underlying signals
         latch on first completion, so once discovery has happened this returns
         immediately.
         """
-        waiters = [
-            asyncio.create_task(self._received[ep.name].wait())
-            for ep in ENDPOINTS
-            if ep.initial
-        ]
-        _, pending = await asyncio.wait(waiters, timeout=timeout)
-        for task in pending:
-            task.cancel()
-        return not pending
+
+        def _complete(pair: tuple[str, ...]) -> bool:
+            return all(self._received[n].is_set() for n in DISCOVERY_COMMON + pair)
+
+        # Fast path: discovery already completed in an earlier cycle. Skips the
+        # admin grace, which a restricted account would otherwise re-pay on
+        # every call - by now the config surface has had far longer than the
+        # grace to answer, so its silence is conclusive.
+        if _complete(DISCOVERY_ADMIN) or _complete(DISCOVERY_FALLBACK):
+            return True
+
+        deadline = asyncio.get_running_loop().time() + timeout
+
+        async def _all(names: tuple[str, ...]) -> None:
+            await asyncio.gather(*(self._received[n].wait() for n in names))
+
+        admin_task = asyncio.create_task(_all(DISCOVERY_COMMON + DISCOVERY_ADMIN))
+        fallback_task = asyncio.create_task(_all(DISCOVERY_COMMON + DISCOVERY_FALLBACK))
+        try:
+            done, _ = await asyncio.wait(
+                {admin_task, fallback_task},
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                return False
+            if admin_task not in done:
+                remaining = deadline - asyncio.get_running_loop().time()
+                grace = min(admin_grace, max(0.0, remaining))
+                with suppress(TimeoutError):
+                    async with asyncio.timeout(grace):
+                        await admin_task
+            return True
+        finally:
+            for task in (admin_task, fallback_task):
+                if not task.done():
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
 
     async def stop(self) -> None:
         """Stop the connection."""
@@ -333,7 +408,8 @@ class AmpioClient:
         await self._publish(ENDPOINT_BY_NAME[name])
 
     async def refresh(self) -> None:
-        """Re-request the full initial-discovery set (objects, modules, states, info).
+        """Re-request the full initial-discovery set (both object catalogues,
+        modules, params, states, info).
 
         ``start()`` issues this once on every (re)connect; call it to force a
         fresh discovery cycle without reconnecting.
@@ -373,8 +449,8 @@ class AmpioClient:
         It is **per-output**, not per-module: each module's outputs can be
         assigned to different locations, and the per-output assignment lives
         in the device's CAN-resident description table (not exposed via
-        MQTT - see the comment in `_run` and the integration's docs for
-        the RPC route that would resolve it).
+        MQTT - see docs/untapped-surfaces.md for the RPC route that would
+        resolve it).
 
         This method returns only the *name table* - the integer ID -> human
         label mapping the Designer uses to populate its dropdown. A consumer
@@ -561,6 +637,57 @@ class AmpioClient:
         self._rebuild_input_index()
         return True
 
+    def _handle_data_devices(self, payload: str) -> bool:
+        """Apply the app-sync ``data/devices`` object catalogue.
+
+        Rows carry the ``devicesDetails`` columns except ``params``,
+        ``powiazane``, and ``stan_json``: params come from the
+        ``params_devices`` table (kept from whichever of the two replies
+        landed first), group membership from ``fetch_rooms()``, and values
+        from the states snapshot. On the admin tier the same objects also
+        arrive via ``devicesDetails`` with identical field values, so
+        re-applying is idempotent there.
+        """
+        items = _protocol.parse_details(payload)
+        if items is None:
+            _LOGGER.warning("Could not parse Ampio data/devices catalogue")
+            return False
+        for meta in items:
+            obj = self.state.objects.get(meta.id) or AmpioObject(id=meta.id)
+            obj.device_id = meta.device_id
+            obj.typ_komponentu = meta.typ_komponentu
+            obj.name = meta.name or obj.name
+            obj.interpretacja = meta.interpretacja
+            obj.funkcja = meta.funkcja
+            obj.leaf_id = meta.leaf_id
+            if not obj.params:
+                obj.params = self._params_by_id.get(meta.id, 0)
+            obj.kind, obj.input_kind = classify(meta.typ_komponentu, meta.interpretacja)
+            self.state.objects[meta.id] = obj
+            self._notify(obj)
+        self._rebuild_input_index()
+        return True
+
+    def _handle_params_devices(self, payload: str) -> bool:
+        """Apply the ``data/params_devices`` params table.
+
+        Stores the full table for catalogue rows that arrive later, and
+        updates objects already known. Ids with no known object create no
+        placeholder: the table is not grant-filtered, so on a restricted
+        account most of it refers to objects the account cannot otherwise see.
+        """
+        table = _protocol.parse_params_devices(payload)
+        if table is None:
+            _LOGGER.warning("Could not parse Ampio params_devices table")
+            return False
+        self._params_by_id = table
+        for oid, params in table.items():
+            obj = self.state.objects.get(oid)
+            if obj is not None and obj.params != params:
+                obj.params = params
+                self._notify(obj)
+        return True
+
     def _handle_info(self, payload: str) -> bool:
         self.state.server_info = _protocol.parse_server_info(payload)
         return True
@@ -592,7 +719,8 @@ class AmpioClient:
             return
         obj = self.state.objects.get(update.id)
         if obj is None:
-            # No metadata yet (e.g. restricted account) -> generic sensor.
+            # State raced ahead of the catalogues -> generic sensor until
+            # metadata lands.
             obj = AmpioObject(id=update.id, kind=classify(None, None)[0])
             self.state.objects[update.id] = obj
         obj.value = update.value
@@ -642,7 +770,7 @@ class AmpioClient:
             obj.value = seed.value
         self._touch_module(obj.device_id, seed.on_ms)
 
-    def _touch_module(self, module_id: int | None, on_ms: int | float | None) -> None:
+    def _touch_module(self, module_id: int | None, on_ms: float | None) -> None:
         """Mark the module as having reported now (or at `on_ms`, server time)."""
         if module_id is None:
             return

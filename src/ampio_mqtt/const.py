@@ -1,6 +1,6 @@
 """Constants and object classification for the Ampio DB-object MQTT protocol.
 
-Protocol (validated live): MQTT topics are namespaced by the connecting account:
+Protocol: MQTT topics are namespaced by the connecting account:
   state:     ampio/fromDB/<user>/ob/<id>/state   -> {"state","desc","on"}
   objects:   publish ampio/control/<user>/config = "devicesDetails"
              -> ampio/fromDB/<user>/config/devicesDetails = {"Status":0,"List":[...]}
@@ -9,7 +9,12 @@ Protocol (validated live): MQTT topics are namespaced by the connecting account:
                 nazwa_urzadzenia,typ_urzadzenia,wersja_softu,...}]}
 
 The same ampio/control/<user>/config topic carries every discovery request; the
-payload keyword selects what the server publishes back.
+payload keyword selects what the server publishes back. The `config` surface
+answers only for administrator accounts. Non-admin accounts are served the
+app-sync `data` surface instead: `data/devices` (objects, grant-filtered to
+what the account can see in the app; same row shape as `devicesDetails` minus
+`params`/`stan_json`) and `data/params_devices` (the `params` bitfields,
+unfiltered). See `AccessTier` and the discovery groups below.
 
 This module is Home Assistant agnostic; device/state class strings match Home
 Assistant's SensorDeviceClass / SensorStateClass enum values so consumers can
@@ -19,6 +24,7 @@ pass them through unchanged.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Literal
 
 # --- Endpoint table --------------------------------------------------------
@@ -52,12 +58,47 @@ ENDPOINTS: tuple[Endpoint, ...] = (
     Endpoint("devices", "config", "devices", "config", "devices", True),
     Endpoint("states", "states", "", "data", "states", True),
     Endpoint("info", "info", "", "data", "info", True),
+    # App-sync object catalogue. Same wire keyword as the module list above but
+    # on the `data` surface, and a different payload: DB objects (the
+    # `devicesDetails` row shape minus `params`/`stan_json`), filtered to the
+    # objects the account was granted in the Ampio app. Unlike the `config`
+    # surface it answers for every account, so it is the discovery fallback
+    # for non-admin accounts.
+    Endpoint("data_devices", "data", "devices", "data", "devices", True),
+    # Per-object `params` bitfields for the app-sync catalogue. NOT
+    # grant-filtered: every account receives the full table, which is what
+    # lets a restricted account apply the hidden-flag visibility rule.
+    Endpoint(
+        "params_devices", "data", "params_devices", "data", "params_devices", True
+    ),
     Endpoint("groups", "data", "groups", "data", "groups"),
     Endpoint("group_devices", "data", "group_devices", "data", "group_devices"),
     Endpoint("locations", "config", "locations", "config", "locations"),
 )
 
 ENDPOINT_BY_NAME: dict[str, Endpoint] = {ep.name: ep for ep in ENDPOINTS}
+
+
+class AccessTier(Enum):
+    """Account tier, detected from which discovery surface answers.
+
+    The M-SERV gates the ``config`` surface (and the raw ``ampio/from/#``
+    channel tree) on the account's administrator bit; the per-user app
+    permissions do not affect it. A non-admin account, however permissioned,
+    is served only the app-sync ``data`` surface.
+    """
+
+    UNKNOWN = "unknown"  # neither surface has answered yet
+    ADMIN = "admin"  # the config surface answered: full catalogue + modules
+    RESTRICTED = "restricted"  # only the data surface answered: app-sync view
+
+
+# Initial-discovery endpoint groups by tier. Discovery is complete when the
+# common pair plus either tier's catalogue pair have latched; which pair
+# answered determines `AmpioClient.access_tier`.
+DISCOVERY_COMMON: tuple[str, ...] = ("states", "info")
+DISCOVERY_ADMIN: tuple[str, ...] = ("details", "devices")
+DISCOVERY_FALLBACK: tuple[str, ...] = ("data_devices", "params_devices")
 
 
 def request_topic(ep: Endpoint, user: str) -> str:
@@ -136,7 +177,7 @@ class InputKind:
 
 
 # lin_wej (analog input) measurement kind, keyed by `interpretacja`.
-# Matches the M-SENS channel map confirmed live (4=lux, 5=IAQ, 7=CO2).
+# The M-SENS channel map (4=lux, 5=IAQ, 7=CO2).
 _LIN_WEJ_BY_INTERP: dict[int, SensorKind] = {
     1: SensorKind("humidity", "Humidity", "%", "humidity"),
     2: SensorKind("pressure_abs", "Pressure (absolute)", "hPa", "atmospheric_pressure"),
@@ -147,10 +188,10 @@ _LIN_WEJ_BY_INTERP: dict[int, SensorKind] = {
     7: SensorKind("co2", "CO2", "ppm", "carbon_dioxide", precision=0),
 }
 
-# Generic value-only sensor for an object with no usable metadata (e.g. a
-# restricted account that never receives `devicesDetails`). The value may be
-# non-numeric, so it claims neither a state class nor a precision - both would
-# make Home Assistant reject a text value.
+# Generic value-only sensor for an object with no usable metadata (a state
+# push that raced ahead of the catalogues, or a `typ_komponentu` missing from
+# TYPE_PROFILES). The value may be non-numeric, so it claims neither a state
+# class nor a precision - both would make Home Assistant reject a text value.
 _GENERIC_SENSOR = SensorKind(
     "value", "Value", None, None, state_class=None, precision=None
 )
@@ -160,10 +201,8 @@ _GENERIC_SENSOR = SensorKind(
 class TypeProfile:
     """Everything the library derives from one ``typ_komponentu``.
 
-    One row per known component type, replacing the former overlapping
-    SENSOR_TYPES / NON_SENSOR_TYPES / INPUT_TYPES / SYSTEM_TYPES sets and the
-    channel-prefix map. A type absent from the table is unknown metadata and
-    classifies as the generic value sensor.
+    One row per known component type. A type absent from the table is unknown
+    metadata and classifies as the generic value sensor.
     """
 
     # Sensor side - at most one applies. ``sensor`` is a fixed kind; ``analog``
@@ -174,7 +213,7 @@ class TypeProfile:
     numeric: bool = False
     # Input side: the binary/flag kind, if this type is an input.
     input: InputKind | None = None
-    # Raw ``ampio/from/<mac>/state/<prefix>/<ch>`` bridge prefix. Only verified
+    # Raw ``ampio/from/<mac>/state/<prefix>/<ch>`` bridge prefix. Only known
     # prefixes are set; an input without one (symulacja) falls back to the
     # per-object topic.
     channel_prefix: str | None = None
@@ -213,7 +252,7 @@ def classify(
 
     ``typ`` is ``typ_komponentu``; ``interpretacja`` selects the lin_wej
     measurement. A ``typ`` with no table entry (unknown or no metadata) returns
-    the generic value-only sensor so restricted accounts still surface sensors.
+    the generic value-only sensor so metadata-less objects still surface.
     """
     profile = TYPE_PROFILES.get(typ) if typ is not None else None
     if profile is None:

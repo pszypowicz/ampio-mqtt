@@ -6,6 +6,21 @@ PRs should reference.
 
 ## Reachable but not consumed
 
+### `/api` command surface - the write path
+
+Every state-changing command the app issues is one plain-text publish
+to `ampio/control/<user>/api` shaped `/api/set/<id>/<verb>/<arg>`
+(e.g. `/api/set/<id>/setValue/255` switches a relay on). Non-admin
+accounts can command objects granted to them in the app; the M-SERV
+republishes the resulting state into every account namespace holding
+the object, with a publish-to-echo round trip of roughly 190 ms. Scene
+action lists use the same vocabulary (`set/<id>/setColors/<int>`), so
+the verb inventory extends beyond `setValue` and needs per-type
+verification. A `set()` method plus typed helpers would give the HA
+integration its switch/light/cover write path.
+
+Tracked as: [#39](https://github.com/pszypowicz/ampio-mqtt/issues/39)
+
 ### `scenes` - the M-SERV scene catalogue
 
 Designer's "Scenes" view is a list of named multi-action presets. The

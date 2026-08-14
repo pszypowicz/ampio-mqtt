@@ -14,6 +14,51 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.7.0
+
+Makes non-admin accounts first-class. The M-SERV gates the `config` discovery
+surface and the raw `ampio/from/#` channel tree on the account's administrator
+bit; a standard user, whatever its app permissions, is served the app-sync
+`data` surface instead, filtered to the objects the administrator granted it
+in the app. The library now discovers through whichever surface answers,
+reports which one did, and recommends a unique-id scheme that is identical on
+both tiers. All wire behaviour was verified against a live M-SERV with an
+administrator account and a fully-permissioned standard account side by side.
+
+### Added
+
+- `data_devices` / `params_devices` endpoints: the app-sync object catalogue
+  (`data/devices` - the `devicesDetails` row shape minus `params` and
+  `stan_json`, grant-filtered per account) and the full-catalogue `params`
+  table (`data/params_devices` - not grant-filtered, which is what lets a
+  standard account apply the hidden-flag visibility rule). Both join the
+  initial-discovery set; on the admin tier they merge additively and never
+  degrade the richer `devicesDetails` reply.
+- `AmpioClient.access_tier` (`AccessTier.ADMIN` / `RESTRICTED` / `UNKNOWN`),
+  detected from which surface answered. Settled by the time
+  `wait_for_initial_discovery()` returns True; it can upgrade
+  RESTRICTED -> ADMIN if a slow `config` reply lands later and never
+  downgrades.
+- `AmpioObject.stable_key` (`leaf_<leaf_id>`) - the recommended
+  replacement-stable per-object unique id, identical on both tiers. The
+  decision record, including why it replaces the module-mac composite, is in
+  [docs/identity.md](docs/identity.md).
+
+### Changed
+
+- `wait_for_initial_discovery()` completes on the states snapshot and info
+  plus either catalogue pair (`config` `devicesDetails`+`devices`, or `data`
+  `devices`+`params_devices`) rather than requiring the `config` pair, so
+  standard accounts now finish discovery instead of timing out. A new
+  `admin_grace` parameter (default 2.0 s, spent from the same `timeout`
+  budget) keeps waiting briefly for the `config` pair after the `data` pair
+  completes, so `access_tier` is settled on return.
+- README account requirements rewritten for the two tiers. The old text
+  claimed a restricted account gets no server identity and no discovery;
+  live verification shows it gets the full grant-filtered object catalogue,
+  rooms, visibility flags, and `data/info` identity, and lacks the module
+  list and the raw input topics.
+
 ## 0.6.0
 
 Surfaces the `devicesDetails` `params` bitfield and uses its hidden flag as the

@@ -26,22 +26,47 @@ globally.
 | `id` / `device_id`        | **No** - DB autoincrement, change with the module.                                                                                                                       |
 | `funkcja` (channel index) | **Yes** - part of the reloaded Designer config. Not unique: multiple objects can share one `funkcja` if the same physical signal is exposed as several Designer objects. |
 | `typ_komponentu`          | **Yes** - the type vocabulary (`temp`, `lin_wej`, `flaga`, ...).                                                                                                         |
-| `leaf_id`                 | **Yes**, when set. The wire-side visibility marker - see below.                                                                                                          |
+| `leaf_id`                 | **Yes**, when set. The wire-side visibility marker and the stable unique-id source - see below.                                                                          |
 
-A replacement-stable composite the HA integration uses for `unique_id`:
+## Stable unique id: `leaf_id` (`AmpioObject.stable_key`)
+
+The recommended per-object unique id is the Designer `leafId`, exposed
+as `AmpioObject.stable_key` (`leaf_<leaf_id>`) and scoped per server by
+the consumer:
 
 ```
-{prefix}_obj_{module.mac}_{typ_komponentu}_{funkcja}
+{prefix}_leaf_{leaf_id}
 ```
 
-`prefix` is the M-SERV's own CAN mac (from `AmpioServerInfo.mac`).
-The composite is collision-free **once hidden objects are filtered out**
-(see Visibility below). The collision it closes - the same physical
-channel materialised as both a phantom stub and a labelled object sharing
-one `leaf_id` - is resolved because the phantom carries the `params`
-hidden flag, so `visible` drops it. (Live installs can carry several such
-pairs at once, all on M-SENS analog channels.) #15 tracks the history;
-the hidden flag is the replacement-stable discriminator that closes it.
+`prefix` is a per-M-SERV scope, e.g. the server's own CAN mac from
+`AmpioServerInfo.mac` (which every account tier receives). Why `leaf_id`
+rather than the module-mac composite
+(`{prefix}_obj_{module.mac}_{typ_komponentu}_{funkcja}`):
+
+- **Available on both account tiers.** The composite needs `module.mac`,
+  which only administrator accounts receive (`config/devices` does not
+  answer for standard accounts, and the app-sync catalogue carries no
+  module list). `leafId` ships in both the `config` and app-sync `data`
+  catalogues with identical values (live-verified), so an install that
+  upgrades a standard account to an administrator keeps every unique id.
+- **Replacement-stable.** `leafId` is part of the reloaded Designer
+  config, like `funkcja` and the `mac` override.
+- **Unique among visible objects.** Live-verified across a full admin
+  catalogue: no duplicate `leafId` once `visible` filtering is applied.
+  The known collision - a hidden phantom stub sharing its labelled
+  twin's `leaf_id` - is exactly what the `hidden` flag removes; filter
+  on `visible` before keying. (Live installs can carry several such
+  pairs at once, all on M-SENS analog channels.) #15 tracks the history.
+  If a user deliberately exposes one physical signal as several visible
+  Designer objects, those would share a `leafId` - and the same shape
+  collides the composite too (same mac, typ, and funkcja), so
+  `leaf_id` is never worse.
+
+Objects with an empty `leaf_id` still need a fallback key: system
+objects (`symulacja`, `detekcja`) are visible without one. On the admin
+tier the module-mac composite above still covers them; on the standard
+tier only the DB `id` is available, with its replacement instability
+accepted and documented.
 
 ## Visibility (`AmpioObject.visible`)
 
@@ -58,9 +83,10 @@ visible = not hidden and (bool(leaf_id) or bool(group_ids) or is_system)
   Designer channel (same `leaf_id`, no value) and on objects the user
   hid - exactly the rows the `leaf_id` test alone wrongly keeps. It is a
   Designer config flag, so unlike the DB `id` it is replacement-stable.
-  When `params` is absent (older firmware / restricted account) it is
-  `0`, so `hidden` is False and the rule degrades to the former
-  leaf_id heuristic. This is the same gate the M-SERV's Matter bridge
+  When `params` is absent (older firmware) it is `0`, so `hidden` is
+  False and the `leaf_id` test alone decides. Every account tier
+  receives `params` (via `devicesDetails` or `data/params_devices`).
+  This is the same gate the M-SERV's Matter bridge
   uses (`(params & 2**37) && !(params & 16)`); see
   [`matter-bridge.md`](matter-bridge.md). Bit 37 (`matter_exposed`) is a
   Matter-only opt-in and is deliberately **not** used for filtering.

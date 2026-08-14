@@ -14,15 +14,16 @@ Two orthogonal layers are exercised:
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Self
 from unittest.mock import patch
 
 import pytest
-from zeroconf.asyncio import AsyncZeroconf  # noqa: F401  (re-exported by signatures below)
+from zeroconf.asyncio import (
+    AsyncZeroconf,
+)
 
 from ampio_mqtt import DiscoveryResult, discover
 from ampio_mqtt import discovery as discovery_mod
-
 
 # --- discover() / _probe_host orchestration --------------------------------
 
@@ -86,7 +87,6 @@ async def test_external_zeroconf_is_passed_through_to_resolver() -> None:
 
     async def _resolve(host: str, timeout: float, zc: object) -> None:
         seen.append(zc)
-        return None
 
     with patch.object(discovery_mod, "_resolve_mdns", _resolve):
         await discover(timeout=0.5, zeroconf=sentinel)  # type: ignore[arg-type]
@@ -115,7 +115,7 @@ class _FakeAsyncZeroconf:
         self.zeroconf = object()
         self.closed = False
 
-    async def __aenter__(self) -> _FakeAsyncZeroconf:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *_exc: object) -> None:

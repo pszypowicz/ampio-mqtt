@@ -14,7 +14,6 @@ from ampio_mqtt.device_types import (
     _capabilities_for,
 )
 
-
 # --- module_model ---------------------------------------------------------
 
 

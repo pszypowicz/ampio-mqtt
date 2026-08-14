@@ -10,7 +10,7 @@ from unittest.mock import patch
 import aiomqtt
 import pytest
 
-from ampio_mqtt import AmpioAuthError, AmpioClient, AmpioObject
+from ampio_mqtt import AccessTier, AmpioAuthError, AmpioClient, AmpioObject
 
 USER = "u"
 
@@ -489,7 +489,13 @@ async def test_start_raises_auth_error_on_credential_rejection() -> None:
 
 @pytest.mark.parametrize(
     "topic_suffix",
-    ["config/devicesDetails", "config/devices", "data/states"],
+    [
+        "config/devicesDetails",
+        "config/devices",
+        "data/states",
+        "data/devices",
+        "data/params_devices",
+    ],
 )
 def test_handlers_log_and_skip_unparseable_payloads(
     caplog: pytest.LogCaptureFixture, topic_suffix: str
@@ -750,6 +756,103 @@ def test_groups_payloads_are_retained() -> None:
     client._feed_message(f"ampio/fromDB/{USER}/data/group_devices", group_devices)
     assert client.last_payloads["groups"] == groups.decode()
     assert client.last_payloads["group_devices"] == group_devices.decode()
+
+
+# --- app-sync data-surface fallback (non-admin accounts) --------------------
+
+DATA_DEVICES_TOPIC = f"ampio/fromDB/{USER}/data/devices"
+PARAMS_DEVICES_TOPIC = f"ampio/fromDB/{USER}/data/params_devices"
+
+
+def _app_row(oid: int, leaf: str, name: str = "Air quality", interp: int = 5) -> dict:
+    """One `data/devices` row: the devicesDetails shape minus params/stan_json."""
+    return {
+        "id": oid,
+        "id_urzadzenia": 20,
+        "typ_komponentu": "lin_wej",
+        "interpretacja": interp,
+        "funkcja": 5,
+        "leafId": leaf,
+        "opis_menu": name,
+    }
+
+
+def test_data_devices_populate_and_classify() -> None:
+    client = _client()
+    client._feed_message(
+        DATA_DEVICES_TOPIC, _devices(_app_row(24, "0_cb9b_74_0_1", interp=7))
+    )
+    obj = client.objects[24]
+    assert obj.name == "Air quality"
+    assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
+    assert obj.device_id == 20 and obj.funkcja == 5
+    assert obj.leaf_id == "0_cb9b_74_0_1"
+
+
+def test_params_table_before_catalogue_supplies_hidden_flag() -> None:
+    """A params table that arrives first is applied when the catalogue lands."""
+    client = _client()
+    client._feed_message(
+        PARAMS_DEVICES_TOPIC,
+        _devices({"id": 24, "params": 17}, {"id": 25, "params": 1}),
+    )
+    # The table is not grant-filtered; unknown ids create no placeholders.
+    assert client.objects == {}
+
+    client._feed_message(
+        DATA_DEVICES_TOPIC,
+        _devices(_app_row(24, "0_cb9b_74_0_1"), _app_row(25, "0_cb9b_74_0_2")),
+    )
+    assert client.objects[24].hidden is True and client.objects[24].visible is False
+    assert client.objects[25].hidden is False and client.objects[25].visible is True
+
+
+def test_params_table_after_catalogue_updates_objects_and_notifies() -> None:
+    client = _client()
+    client._feed_message(DATA_DEVICES_TOPIC, _devices(_app_row(24, "0_cb9b_74_0_1")))
+    received: list = []
+    client.add_object_listener(received.append)
+
+    client._feed_message(
+        PARAMS_DEVICES_TOPIC,
+        _devices({"id": 24, "params": 17}, {"id": 999, "params": 1}),
+    )
+    assert client.objects[24].hidden is True
+    assert received == [client.objects[24]]
+    assert 999 not in client.objects
+
+
+def test_data_devices_does_not_degrade_details() -> None:
+    """On the admin tier both catalogues arrive; the poorer one must not clobber."""
+    client = _client()
+    row = _app_row(24, "0_cb9b_74_0_1", name="Named")
+    client._feed_message(
+        f"ampio/fromDB/{USER}/config/devicesDetails",
+        _details({**row, "params": (1 << 37) | 1}),
+    )
+    client._feed_message(DATA_DEVICES_TOPIC, _devices(row))
+    obj = client.objects[24]
+    assert obj.params == (1 << 37) | 1
+    assert obj.matter_exposed is True
+    assert obj.name == "Named"
+
+
+def test_access_tier_follows_answering_surface() -> None:
+    client = _client()
+    assert client.access_tier is AccessTier.UNKNOWN
+    client._feed_message(DATA_DEVICES_TOPIC, _devices())
+    assert client.access_tier is AccessTier.RESTRICTED
+    # A (late) config reply upgrades the tier; it never downgrades.
+    client._feed_message(f"ampio/fromDB/{USER}/config/devicesDetails", _details())
+    assert client.access_tier is AccessTier.ADMIN
+
+
+@pytest.mark.parametrize(
+    ("leaf_id", "expected"),
+    [("0_cb9b_74_0_1", "leaf_0_cb9b_74_0_1"), ("", None)],
+)
+def test_stable_key_from_leaf_id(leaf_id: str, expected: str | None) -> None:
+    assert AmpioObject(id=1, leaf_id=leaf_id).stable_key == expected
 
 
 def test_dispatch_updates_last_message_at() -> None:
