@@ -324,6 +324,7 @@ class AmpioClient:
         should call that method rather than relying on `start()`'s timing.
         """
         self._stop = False
+        self._connected.clear()
         self._auth_failed.clear()
         self._auth_error_message = None
         self._runner = asyncio.create_task(self._run())
@@ -422,13 +423,23 @@ class AmpioClient:
                         await task
 
     async def stop(self) -> None:
-        """Stop the connection."""
+        """Stop the connection.
+
+        Safe to call at any point, including when the connection loop has
+        already failed: whatever it died of is logged rather than raised, so a
+        consumer can always tear the client down.
+        """
         self._stop = True
-        if self._runner:
-            self._runner.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._runner
-            self._runner = None
+        runner, self._runner = self._runner, None
+        if runner is None:
+            return
+        runner.cancel()
+        try:
+            await runner
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            _LOGGER.exception("Ampio connection loop failed")
 
     async def request(self, name: str) -> None:
         """Publish the request keyword for endpoint ``name``.
@@ -765,15 +776,16 @@ class AmpioClient:
         thunder-herd the broker on recovery.
         """
         base = self._reconnect_interval
-        capped = min(_RECONNECT_BACKOFF_MAX, base * (2.0**attempt))
+        # The exponent is clamped because attempts are unbounded: a broker down
+        # overnight would otherwise overflow the float and kill the retry loop.
+        capped = min(_RECONNECT_BACKOFF_MAX, base * (2.0 ** min(attempt, 16)))
         return float(capped + random.uniform(0.0, base))
 
     def _set_available(self, available: bool) -> None:
         if available == self._available:
             return
         self._available = available
-        for listener in list(self._availability_listeners):
-            listener(available)
+        _emit(self._availability_listeners, available, "availability")
 
     def _dispatch(self, topic: str, payload: str) -> None:
         """Route a received MQTT message to the appropriate handler."""
@@ -811,11 +823,12 @@ class AmpioClient:
             obj.funkcja = meta.funkcja
             obj.leaf_id = meta.leaf_id
             obj.group_ids = meta.group_ids
-            obj.params = meta.params
+            if meta.params is not None:
+                obj.params = meta.params
             obj.kind, obj.input_kind, obj.output_kind = classify(
                 meta.typ_komponentu, meta.interpretacja
             )
-            if obj.value is None and meta.stan_json is not None:
+            if meta.stan_json is not None:
                 self._apply_stan_json(obj, meta.stan_json)
             self.state.objects[meta.id] = obj
             self._notify(obj)
@@ -858,8 +871,7 @@ class AmpioClient:
             obj.interpretacja = meta.interpretacja
             obj.funkcja = meta.funkcja
             obj.leaf_id = meta.leaf_id
-            if not obj.params:
-                obj.params = self._params_by_id.get(meta.id, 0)
+            obj.params = self._params_by_id.get(meta.id, obj.params)
             obj.kind, obj.input_kind, obj.output_kind = classify(
                 meta.typ_komponentu, meta.interpretacja
             )
@@ -903,7 +915,7 @@ class AmpioClient:
                 # Metadata not yet known (e.g. snapshot arrived before details).
                 obj = AmpioObject(id=entry.id, kind=classify(None, None)[0])
                 self.state.objects[entry.id] = obj
-            if obj.value is None and entry.stan_json is not None:
+            if entry.stan_json is not None:
                 self._apply_stan_json(obj, entry.stan_json)
             self._notify(obj)
         return True
@@ -926,6 +938,7 @@ class AmpioClient:
         obj.value = update.value
         if update.tilt is not None:
             obj.tilt_position = update.tilt
+        obj.updated_at = float(update.on_ms) / 1000.0 if update.on_ms else time.time()
         self._touch_module(obj.device_id, update.on_ms)
         self._notify(obj)
 
@@ -967,6 +980,7 @@ class AmpioClient:
             return
         self._raw_seen_ids.add(oid)
         obj.value = payload.strip()
+        obj.updated_at = time.time()
         self._touch_module(obj.device_id, None)
         self._notify(obj)
 
@@ -974,8 +988,7 @@ class AmpioClient:
         event = _protocol.parse_event(topic, payload)
         if event is None:
             return
-        for listener in list(self._event_listeners):
-            listener(event)
+        _emit(self._event_listeners, event, "event")
 
     def _handle_diagnostics(self, topic: str, payload: str) -> None:
         mac = _protocol.parse_diagnostics_mac(topic)
@@ -990,19 +1003,41 @@ class AmpioClient:
         module.supply_voltage = diagnostics.supply_voltage
         module.temperature = diagnostics.temperature
         module.last_seen = time.time()
-        for listener in list(self._module_listeners):
-            listener(module)
+        _emit(self._module_listeners, module, "module")
 
     def _apply_stan_json(self, obj: AmpioObject, stan_json: str) -> None:
-        """Seed `obj.value` from `stan_json` and bump the module's last_seen."""
+        """Apply a bulk-snapshot value to `obj` when it is not older than what it holds.
+
+        The per-object topics are not retained, so this snapshot is the only
+        resync after a reconnect - during which the object may well have
+        changed. It must therefore be able to correct a stale value, while
+        still losing to the live push that can arrive first on a fresh
+        connection.
+        """
         seed = _protocol.parse_stan_json(stan_json)
         if seed is None:
             return
-        if seed.value is not None:
+        reported_at = None if seed.on_ms is None else float(seed.on_ms) / 1000.0
+        if seed.value is not None and self._supersedes(obj, reported_at):
             obj.value = seed.value
-        if seed.tilt is not None:
-            obj.tilt_position = seed.tilt
+            if seed.tilt is not None:
+                obj.tilt_position = seed.tilt
+            obj.updated_at = reported_at
         self._touch_module(obj.device_id, seed.on_ms)
+
+    @staticmethod
+    def _supersedes(obj: AmpioObject, reported_at: float | None) -> bool:
+        """Whether a snapshot report should replace what `obj` already holds.
+
+        Undated reports only fill a gap; a dated one wins from the same instant
+        onwards. Both sides are wall-clock epochs - the M-SERV's `on` field and,
+        for the undated raw channel, local receive time.
+        """
+        if obj.value is None:
+            return True
+        if reported_at is None or obj.updated_at is None:
+            return False
+        return reported_at >= obj.updated_at
 
     def _touch_module(self, module_id: int | None, on_ms: float | None) -> None:
         """Mark the module as having reported now (or at `on_ms`, server time)."""
@@ -1019,8 +1054,21 @@ class AmpioClient:
             module.last_seen = ts
 
     def _notify(self, obj: AmpioObject) -> None:
-        for listener in list(self._object_listeners):
-            listener(obj)
+        _emit(self._object_listeners, obj, "object")
+
+
+def _emit(listeners: list[Any], payload: Any, kind: str) -> None:
+    """Hand `payload` to each listener, surviving any that raises.
+
+    Listeners are consumer code. One that raises must not take down the
+    connection that feeds every other entity, so the failure is logged and the
+    remaining listeners still run.
+    """
+    for listener in list(listeners):
+        try:
+            listener(payload)
+        except Exception:
+            _LOGGER.exception("Ampio %s listener raised", kind)
 
 
 def _check_range(name: str, value: int, low: int, high: int) -> None:

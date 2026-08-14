@@ -14,6 +14,43 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.13.0
+
+Keeps the connection alive through the things that used to end it silently.
+Each fix below is a way the runner task could die, after which nothing
+reconnected, every entity froze at its last value, and `stop()` re-raised the
+failure so a consumer could not even tear the client down.
+
+### Fixed
+
+- A listener that raises no longer kills the connection. Listeners are consumer
+  code; one failing is logged and the rest still run. Previously a single
+  raising callback ended the client during the first discovery notify, before
+  any value had been delivered.
+- Replies of the wrong shape (`null`, a bare list, a non-list `List`, rows that
+  are not objects) are rejected by the parsers instead of raising. The five
+  catalogue parsers now share one guarded envelope helper, and the diagnostics
+  frame validates its bytes - that one arrives off the CAN bus.
+- `stop()` logs whatever the connection loop died of rather than re-raising it,
+  so a consumer can always shut down, and it is safe to call twice.
+- `start()` clears the connected latch, so restarting a stopped client waits
+  for a real connection instead of returning immediately while offline.
+- The reconnect backoff clamps its exponent. Attempts are unbounded and the
+  float overflowed after ~1024 of them, killing the retry loop during a long
+  outage.
+- The bulk snapshot can now correct a value that changed while the connection
+  was down. Per-object topics are not retained, so that snapshot is the only
+  resync; it is compared against `AmpioObject.updated_at` rather than applied
+  only when the value is unset, so it still loses to a newer live push.
+- A catalogue reply carrying no `params` column no longer erases the flags
+  `params_devices` supplied, which had exposed hidden phantom rows as entities.
+  `ObjectMetadata.params` is `int | None` so an absent column is distinct from
+  "no flags set".
+
+### Added
+
+- `AmpioObject.updated_at` - epoch seconds of the report a value came from.
+
 ## 0.12.0
 
 Adds bus events, the logical 1-65535 signals Ampio's own logic raises and reacts

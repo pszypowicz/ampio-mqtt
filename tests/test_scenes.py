@@ -52,10 +52,19 @@ def test_parses_the_catalogue() -> None:
     assert second.object_ids == frozenset({64, 48})
 
 
-@pytest.mark.parametrize("payload", ["not json", "{}", '{"List": []}'])
-def test_unparseable_or_empty_payloads(payload: str) -> None:
-    scenes = parse_scenes(payload)
-    assert scenes is None if payload == "not json" else scenes == []
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ("not json", None),
+        ("null", None),
+        ("[]", None),  # a reply of the wrong shape is not an empty catalogue
+        ("{}", None),  # no List key either
+        ('{"List": []}', []),  # this is what an empty catalogue looks like
+        ('{"List": [1, "x"]}', []),  # rows that are not objects are skipped
+    ],
+)
+def test_unparseable_or_empty_payloads(payload: str, expected: list | None) -> None:
+    assert parse_scenes(payload) == expected
 
 
 class _RecordingClient:

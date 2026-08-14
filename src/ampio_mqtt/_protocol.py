@@ -50,7 +50,10 @@ class ObjectMetadata:
     funkcja: int | None  # physical channel index within the module
     leaf_id: str  # `leafId`; empty for ghost rows and for system objects
     group_ids: frozenset[int]  # parsed `powiazane` GROUP_CONCAT (rare in practice)
-    params: int  # `params` bitfield; bit 4 = hidden/stub, bit 37 = matter-exposed
+    # `params` bitfield; bit 4 = hidden/stub, bit 37 = matter-exposed. None
+    # when the reply carried no such column, which the app-sync catalogue never
+    # does - the client then keeps whatever `params_devices` supplied.
+    params: int | None
     stan_json: str | None  # raw seed for the initial value, applied by the client
 
 
@@ -95,6 +98,23 @@ def is_auth_error(err: aiomqtt.MqttError) -> bool:
     return any(marker in msg for marker in _AUTH_ERROR_MARKERS)
 
 
+def _rows(payload: str) -> list[Any] | None:
+    """Rows of a ``{"List": [...]}`` reply, or None if the payload is not one.
+
+    The M-SERV is the only expected publisher on these topics, but nothing on
+    the broker enforces that, and a reply of the wrong shape must not reach the
+    row loops - they index and attribute-access every row.
+    """
+    try:
+        data = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    rows = data.get("List")
+    return rows if isinstance(rows, list) else None
+
+
 def to_int(value: Any) -> int | None:
     """Best-effort int coercion that returns None on bad input."""
     try:
@@ -112,12 +132,13 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
     Returns None when the payload is not parseable JSON; an empty list is a
     valid (empty) response.
     """
-    try:
-        data = json.loads(payload)
-    except (ValueError, TypeError):
+    rows = _rows(payload)
+    if rows is None:
         return None
     out: list[ObjectMetadata] = []
-    for item in data.get("List", []):
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
         oid = to_int(item.get("id"))
         if oid is None:
             continue
@@ -131,10 +152,9 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
                 funkcja=to_int(item.get("funkcja")),
                 leaf_id=_parse_leaf_id(item.get("leafId")),
                 group_ids=_parse_powiazane(item.get("powiazane")),
-                # Absent / non-numeric -> 0 (no flags); `params` can exceed 32
-                # bits (the matter-exposed flag is bit 37), which Python ints
-                # handle natively.
-                params=to_int(item.get("params")) or 0,
+                # `params` can exceed 32 bits (the matter-exposed flag is bit
+                # 37), which Python ints handle natively.
+                params=to_int(item.get("params")),
                 stan_json=item.get("stan_json") or None,
             )
         )
@@ -177,12 +197,13 @@ def parse_devices(payload: str) -> list[AmpioModule] | None:
     Returned modules have `last_seen=None`; the caller preserves any existing
     `last_seen` from a prior discovery.
     """
-    try:
-        data = json.loads(payload)
-    except (ValueError, TypeError):
+    rows = _rows(payload)
+    if rows is None:
         return None
     out: list[AmpioModule] = []
-    for item in data.get("List", []):
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
         mid = to_int(item.get("id"))
         if mid is None:
             continue
@@ -209,12 +230,13 @@ def parse_params_devices(payload: str) -> dict[int, int] | None:
     The table covers the full object catalogue regardless of the account's
     grants. Returns None when the payload is not parseable JSON.
     """
-    try:
-        data = json.loads(payload)
-    except (ValueError, TypeError):
+    rows = _rows(payload)
+    if rows is None:
         return None
     out: dict[int, int] = {}
-    for item in data.get("List", []):
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
         oid = to_int(item.get("id"))
         if oid is None:
             continue
@@ -229,12 +251,13 @@ def parse_scenes(payload: str) -> list[AmpioScene] | None:
     and `Infos` as their structured form. Only the object ids are kept, since
     the M-SERV replays the actions itself when a scene is run.
     """
-    try:
-        data = json.loads(payload)
-    except (ValueError, TypeError):
+    rows = _rows(payload)
+    if rows is None:
         return None
     out: list[AmpioScene] = []
-    for item in data.get("List", []):
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
         sid = to_int(item.get("id"))
         if sid is None:
             continue
@@ -281,12 +304,13 @@ def parse_server_info(payload: str) -> AmpioServerInfo:
 
 def parse_states_snapshot(payload: str) -> list[SnapshotEntry] | None:
     """Parse a bulk `data/states` snapshot."""
-    try:
-        data = json.loads(payload)
-    except (ValueError, TypeError):
+    rows = _rows(payload)
+    if rows is None:
         return None
     out: list[SnapshotEntry] = []
-    for item in data.get("List", []):
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
         oid = to_int(item.get("id"))
         if oid is None:
             continue
@@ -407,8 +431,11 @@ def parse_diagnostics(payload: str) -> ModuleDiagnostics | None:
         return None
     if frame[0] != 0xFE or frame[1] != 0x4F:
         return None
-    voltage = frame[2] * 0.2
-    raw_temp = frame[3] if len(frame) > 3 else 0
+    voltage_byte = to_int(frame[2])
+    if voltage_byte is None:
+        return None
+    voltage = voltage_byte * 0.2
+    raw_temp = to_int(frame[3]) or 0 if len(frame) > 3 else 0
     return ModuleDiagnostics(
         supply_voltage=round(voltage, 1),
         temperature=float(raw_temp - 100) if raw_temp else None,
