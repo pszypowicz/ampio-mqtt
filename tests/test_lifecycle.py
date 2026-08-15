@@ -5,7 +5,9 @@ path can be exercised without a real broker. They cover:
 - the ``AmpioClient.test_connection`` config-flow helper,
 - ``request_*`` raising when disconnected,
 - ``stop()`` cancelling the runner cleanly,
-- ``start()`` driving a successful discovery via mocked broker messages.
+- ``start()`` driving a successful discovery via mocked broker messages,
+- a runtime credential rejection reaching the auth-failure listener while a
+  transient outage does not.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from unittest.mock import patch
 import aiomqtt
 import pytest
 
-from ampio_mqtt import AccessTier, AmpioClient, AmpioConnectionError
+from ampio_mqtt import AccessTier, AmpioClient, AmpioConnectionError, AmpioTimeoutError
 from ampio_mqtt.errors import AmpioAuthError
 
 USER = "u"
@@ -49,7 +51,14 @@ class FakeMqttClient:
     """
 
     enter_error: BaseException | None = None
+    # Per-attempt connect outcomes, consumed left to right; None connects
+    # fine. Lets a test script "first connect works, the reconnect is
+    # rejected". Falls back to `enter_error` once exhausted.
+    enter_errors: ClassVar[list[BaseException | None]] = []
     enter_delay: float = 0.0
+    # Raised from the message stream once the scripted messages are consumed,
+    # simulating the broker dropping an established connection.
+    stream_error: BaseException | None = None
     scripted_messages: ClassVar[list[_Message]] = []
     published: ClassVar[list[tuple[str, bytes]]] = []
     subscribed: ClassVar[list[str]] = []
@@ -57,7 +66,9 @@ class FakeMqttClient:
     @classmethod
     def reset(cls) -> None:
         cls.enter_error = None
+        cls.enter_errors = []
         cls.enter_delay = 0.0
+        cls.stream_error = None
         cls.scripted_messages = []
         cls.published = []
         cls.subscribed = []
@@ -68,8 +79,13 @@ class FakeMqttClient:
     async def __aenter__(self) -> Self:
         if self.enter_delay:
             await asyncio.sleep(self.enter_delay)
-        if self.enter_error is not None:
-            raise self.enter_error
+        error = (
+            FakeMqttClient.enter_errors.pop(0)
+            if FakeMqttClient.enter_errors
+            else self.enter_error
+        )
+        if error is not None:
+            raise error
         for msg in self.scripted_messages:
             await self._messages_queue.put(msg)
         return self
@@ -91,6 +107,8 @@ class FakeMqttClient:
         return self
 
     async def __anext__(self) -> _Message:
+        if FakeMqttClient.stream_error is not None and self._messages_queue.empty():
+            raise FakeMqttClient.stream_error
         try:
             return await asyncio.wait_for(self._messages_queue.get(), timeout=5.0)
         except TimeoutError as err:
@@ -118,10 +136,29 @@ async def test_connection_returns_server_info_on_happy_path() -> None:
     assert (f"ampio/control/{USER}/info", b"") in FakeMqttClient.published
 
 
-async def test_connection_returns_empty_on_info_timeout() -> None:
-    """A broker that connects but never replies returns an empty AmpioServerInfo."""
+async def test_connection_raises_timeout_when_info_never_arrives() -> None:
+    """A broker that connects but never replies raises AmpioTimeoutError.
+
+    The timeout error subclasses AmpioConnectionError, so a consumer that
+    lumps all connection problems together keeps working while one that wants
+    "try again" semantics can catch the subclass first (#54).
+    """
+    with (
+        patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient),
+        pytest.raises(AmpioTimeoutError),
+    ):
+        await AmpioClient.test_connection("h", 1883, USER, "p", info_timeout=0.1)
+    assert issubclass(AmpioTimeoutError, AmpioConnectionError)
+
+
+async def test_connection_returns_info_without_identity_as_is() -> None:
+    """A reply that arrives without identity fields returns, not raises (#54)."""
+    info_topic = f"ampio/fromDB/{USER}/data/info"
+    FakeMqttClient.scripted_messages = [
+        _Message(info_topic, json.dumps({"Results": {}}).encode())
+    ]
     with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
-        info = await AmpioClient.test_connection("h", 1883, USER, "p", info_timeout=0.1)
+        info = await AmpioClient.test_connection("h", 1883, USER, "p", info_timeout=1)
     assert info.mac is None
     assert info.server_version is None
 
@@ -305,6 +342,67 @@ async def test_restricted_account_completes_via_data_surface_fallback() -> None:
         assert client.server_info is not None and client.server_info.mac == 99
     finally:
         await client.stop()
+
+
+async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
+    """A credential rejection on reconnect reaches the auth-failure listener.
+
+    Sequence: connect fine, the broker drops the link, the reconnect attempt
+    is rejected as unauthorized - the shape a credential change on the broker
+    produces. The consumer must learn the loop stopped for good rather than
+    seeing only the availability drop a transient outage also produces (#53).
+    """
+    FakeMqttClient.stream_error = aiomqtt.MqttError("connection lost")
+    FakeMqttClient.enter_errors = [None, aiomqtt.MqttError("[code:135] Not authorized")]
+    client = AmpioClient("h", username=USER, reconnect_interval=0.05)
+    availability: list[bool] = []
+    failures: list[str] = []
+    client.add_availability_listener(availability.append)
+    client.add_auth_failure_listener(failures.append)
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        try:
+            async with asyncio.timeout(2.0):
+                while client.auth_failure is None:
+                    await asyncio.sleep(0.01)
+        finally:
+            await client.stop()
+    assert failures == ["[code:135] Not authorized"]
+    assert client.auth_failure == "[code:135] Not authorized"
+    assert availability == [True, False]
+
+
+async def test_initial_auth_rejection_raises_without_firing_listener() -> None:
+    """A rejection during start() raises AmpioAuthError; the listener is for
+    the runtime path only, so a config flow does not get a double signal."""
+    FakeMqttClient.enter_error = aiomqtt.MqttError("Not authorized")
+    client = AmpioClient("h", username=USER)
+    failures: list[str] = []
+    client.add_auth_failure_listener(failures.append)
+    with (
+        patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient),
+        pytest.raises(AmpioAuthError),
+    ):
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+    assert failures == []
+    assert client.auth_failure == "Not authorized"
+
+
+async def test_transient_outage_leaves_auth_failure_unset() -> None:
+    """An outage with recovery keeps auth_failure None while the loop retries."""
+    FakeMqttClient.stream_error = aiomqtt.MqttError("connection lost")
+    client = AmpioClient("h", username=USER, reconnect_interval=0.05)
+    availability: list[bool] = []
+    client.add_availability_listener(availability.append)
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        try:
+            async with asyncio.timeout(2.0):
+                while availability.count(True) < 2:
+                    await asyncio.sleep(0.01)
+            assert client.auth_failure is None
+        finally:
+            await client.stop()
 
 
 async def test_wait_for_initial_discovery_returns_false_on_timeout() -> None:

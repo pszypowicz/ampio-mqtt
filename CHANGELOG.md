@@ -14,6 +14,40 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.16.0
+
+Surfaces two failure modes a consumer could not previously see: a credential
+rejection after startup (#53) and a server-info request that times out (#54).
+Both were reported from the Home Assistant integration, where the first
+blocks a reauthentication flow and the second produced a misleading "check
+account permissions" message for what is in practice always a slow broker.
+
+### Added
+
+- `AmpioTimeoutError`, raised when the broker is reachable but an expected
+  reply never arrives. It subclasses `AmpioConnectionError`, so handlers that
+  treat every connection problem alike keep working.
+- `AmpioClient.add_auth_failure_listener(listener)`: invoked with the
+  broker's reason string when a reconnect attempt is rejected as unauthorized
+  after `start()` has succeeded. By the time it fires the availability
+  listeners have reported False and the connection loop has stopped for good,
+  so it is the signal to drive reauthentication. A rejection during `start()`
+  still raises `AmpioAuthError` there and does not invoke the listener.
+- `AmpioClient.auth_failure`: the rejection reason once the loop has stopped
+  because the broker rejected the credentials, `None` otherwise (including
+  through outages the client is still retrying).
+
+### Changed
+
+- `AmpioClient.test_connection` raises `AmpioTimeoutError` when no info reply
+  arrives within `info_timeout` instead of returning an empty
+  `AmpioServerInfo`. A reply that arrives without identity fields is still
+  returned as-is; live checks show every account tier gets full identity, so
+  a missing reply had been the only source of empty results in practice.
+- The on-demand fetches (`fetch_rooms`, `fetch_scenes`, `fetch_locations`)
+  raise `AmpioTimeoutError` rather than the bare `AmpioConnectionError` when
+  a reply does not arrive in time.
+
 ## 0.15.0
 
 Splits the client into the two things it was doing. No behaviour change - the
