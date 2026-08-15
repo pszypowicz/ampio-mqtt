@@ -25,10 +25,12 @@ from .models import ConnectionStats
 _LOGGER = logging.getLogger(__name__)
 
 _RECONNECT_BACKOFF_MAX = 60.0
+_AUTH_REJECTED = "Authentication rejected by Ampio broker"
 
 MessageHandler = Callable[[str, str], None]
 AvailabilityHandler = Callable[[bool], None]
 ConnectedHandler = Callable[[], Awaitable[None]]
+AuthFailureHandler = Callable[[str], None]
 
 
 class Connection:
@@ -47,6 +49,7 @@ class Connection:
         on_message: MessageHandler,
         on_availability: AvailabilityHandler,
         on_connected: ConnectedHandler,
+        on_auth_failure: AuthFailureHandler,
     ) -> None:
         self._host = host
         self._port = port
@@ -58,6 +61,7 @@ class Connection:
         self._on_message = on_message
         self._on_availability = on_availability
         self._on_connected = on_connected
+        self._on_auth_failure = on_auth_failure
 
         # Reusing one client id across reconnects keeps the broker from seeing
         # parallel "ghost" sessions while the previous one expires.
@@ -73,6 +77,13 @@ class Connection:
     @property
     def available(self) -> bool:
         return self._available
+
+    @property
+    def auth_failure(self) -> str | None:
+        """The broker's rejection reason once the loop has stopped for auth."""
+        if not self._auth_failed.is_set():
+            return None
+        return self._auth_error_message or _AUTH_REJECTED
 
     async def open(self, timeout: float) -> None:
         """Start the loop and wait for the first connection.
@@ -103,9 +114,7 @@ class Connection:
             raise AmpioConnectionError("Timed out connecting to Ampio")
         if self._auth_failed.is_set():
             await self.close()
-            raise AmpioAuthError(
-                self._auth_error_message or "Authentication rejected by Ampio broker"
-            )
+            raise AmpioAuthError(self._auth_error_message or _AUTH_REJECTED)
 
     async def close(self) -> None:
         """Stop the loop, reporting rather than raising whatever ended it."""
@@ -165,6 +174,15 @@ class Connection:
             finally:
                 self._client = None
                 self._set_available(False)
+            if self._auth_failed.is_set() and self._connected.is_set():
+                # A rejection after a successful open(): the loop is stopping
+                # for good and no exception will reach the caller, so this
+                # callback is the only way a consumer learns it should
+                # reauthenticate. Fired after the availability drop so the
+                # consumer observes the connection already down. A rejection
+                # on the initial connect leaves _connected unset and is
+                # raised from open() instead.
+                self._on_auth_failure(self._auth_error_message or _AUTH_REJECTED)
             if not self._stop:
                 await asyncio.sleep(self._backoff_seconds(attempt))
                 attempt += 1

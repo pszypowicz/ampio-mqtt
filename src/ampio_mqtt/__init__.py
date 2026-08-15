@@ -13,7 +13,12 @@ from .const import (
 )
 from .device_types import Capability, module_capabilities, module_model
 from .discovery import DiscoveryResult, discover
-from .errors import AmpioAuthError, AmpioConnectionError, AmpioError
+from .errors import (
+    AmpioAuthError,
+    AmpioConnectionError,
+    AmpioError,
+    AmpioTimeoutError,
+)
 from .models import (
     AmpioEvent,
     AmpioModule,
@@ -34,6 +39,7 @@ __all__ = [
     "AmpioObject",
     "AmpioScene",
     "AmpioServerInfo",
+    "AmpioTimeoutError",
     "Capability",
     "ConnectionStats",
     "DiscoveryResult",
@@ -47,4 +53,4 @@ __all__ = [
     "module_model",
 ]
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"

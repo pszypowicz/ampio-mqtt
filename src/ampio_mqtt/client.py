@@ -37,7 +37,7 @@ from .const import (
     scene_payload,
 )
 from .device_types import Capability
-from .errors import AmpioConnectionError
+from .errors import AmpioTimeoutError
 from .models import (
     AmpioEvent,
     AmpioModule,
@@ -54,6 +54,7 @@ ObjectListener = Callable[[AmpioObject], None]
 ModuleListener = Callable[[AmpioModule], None]
 EventListener = Callable[[AmpioEvent], None]
 AvailabilityListener = Callable[[bool], None]
+AuthFailureListener = Callable[[str], None]
 
 
 class AmpioClient:
@@ -83,12 +84,14 @@ class AmpioClient:
             on_message=self._handle_message,
             on_availability=self._handle_availability,
             on_connected=self.refresh,
+            on_auth_failure=self._handle_auth_failure,
         )
 
         self._object_listeners: list[ObjectListener] = []
         self._module_listeners: list[ModuleListener] = []
         self._event_listeners: list[EventListener] = []
         self._availability_listeners: list[AvailabilityListener] = []
+        self._auth_failure_listeners: list[AuthFailureListener] = []
 
         # Per-endpoint latch, set the first time each reply lands. Derived from
         # the endpoint table so a new endpoint needs no new field here.
@@ -129,6 +132,9 @@ class AmpioClient:
 
     def _handle_availability(self, available: bool) -> None:
         _emit(self._availability_listeners, available, "availability")
+
+    def _handle_auth_failure(self, message: str) -> None:
+        _emit(self._auth_failure_listeners, message, "auth failure")
 
     # --- public API -------------------------------------------------------
 
@@ -178,6 +184,17 @@ class AmpioClient:
     def available(self) -> bool:
         """Whether the broker connection is up."""
         return self._connection.available
+
+    @property
+    def auth_failure(self) -> str | None:
+        """Why the connection stopped, if the broker rejected the credentials.
+
+        ``None`` while the credentials are accepted, including through outages
+        the client is still trying to reconnect across. Once set, the
+        connection loop has stopped for good and only a fresh ``start()`` -
+        presumably with new credentials - clears it.
+        """
+        return self._connection.auth_failure
 
     @property
     def access_tier(self) -> AccessTier:
@@ -241,6 +258,24 @@ class AmpioClient:
         self._availability_listeners.append(listener)
         return lambda: self._availability_listeners.remove(listener)
 
+    def add_auth_failure_listener(
+        self, listener: AuthFailureListener
+    ) -> Callable[[], None]:
+        """Register a callback for a fatal credential rejection after start.
+
+        Invoked with the broker's reason string when a reconnect attempt is
+        rejected as unauthorized after ``start()`` has succeeded - the shape a
+        credential change on the broker produces. By the time it fires the
+        availability listeners have reported False and the connection loop has
+        stopped for good, so this is the signal to drive a reauthentication
+        flow; without it a dead loop is indistinguishable from an outage the
+        client is still retrying. A rejection during ``start()`` itself raises
+        ``AmpioAuthError`` there instead and does not invoke this listener.
+        The reason is also queryable as :pyattr:`auth_failure`.
+        """
+        self._auth_failure_listeners.append(listener)
+        return lambda: self._auth_failure_listeners.remove(listener)
+
     @staticmethod
     async def test_connection(
         host: str,
@@ -252,12 +287,14 @@ class AmpioClient:
     ) -> AmpioServerInfo:
         """Connect, request the server info, and return it.
 
-        Raises ``AmpioAuthError`` on credential rejection, ``AmpioConnectionError``
-        on any other connection failure. The info surface answers for every
-        account tier; if the connection succeeds but the reply does not arrive
-        within ``info_timeout`` (slow broker), returns an empty
-        ``AmpioServerInfo`` rather than raising - the caller can decide
-        whether identity is required.
+        Raises ``AmpioAuthError`` on credential rejection, ``AmpioTimeoutError``
+        when the connection succeeds but no info reply arrives within
+        ``info_timeout`` (slow or overloaded broker - worth retrying), and
+        ``AmpioConnectionError`` on any other connection failure. The info
+        surface answers with full identity for every account tier, so a reply
+        that arrives without identity fields is returned as-is rather than
+        raised: it means the server is answering but has nothing to say, not
+        that the request was too slow.
         """
         user = username or ""
         info = ENDPOINT_BY_NAME["info"]
@@ -271,11 +308,11 @@ class AmpioClient:
             reply_topic=response_topic(info, user),
             timeout=info_timeout,
         )
-        return (
-            AmpioServerInfo()
-            if payload is None
-            else _protocol.parse_server_info(payload)
-        )
+        if payload is None:
+            raise AmpioTimeoutError(
+                f"No server-info reply from the Ampio broker within {info_timeout}s"
+            )
+        return _protocol.parse_server_info(payload)
 
     async def start(
         self, *, timeout: float = 15.0, discovery_timeout: float = 8.0
@@ -410,8 +447,8 @@ class AmpioClient:
         Assistant allows one area per device).
 
         Requires ``start()`` to have completed. Raises ``AmpioConnectionError``
-        if the broker is not connected or either response does not arrive
-        within ``timeout``.
+        if the broker is not connected and ``AmpioTimeoutError`` if either
+        response does not arrive within ``timeout``.
         """
         await self._request_and_wait(
             ("groups", "group_devices"),
@@ -427,8 +464,8 @@ class AmpioClient:
         """Return the scene catalogue defined in the Ampio app.
 
         Requires ``start()`` to have completed. Raises ``AmpioConnectionError``
-        if the broker is not connected or the response does not arrive within
-        ``timeout``.
+        if the broker is not connected and ``AmpioTimeoutError`` if the
+        response does not arrive within ``timeout``.
         """
         await self._request_and_wait(
             ("scenes",), timeout, "Timed out fetching scenes from Ampio broker"
@@ -491,8 +528,8 @@ class AmpioClient:
         Publishes ``locations`` to ``ampio/control/<user>/config`` and awaits
         the response on ``ampio/fromDB/<user>/config/locations``. Requires
         ``start()`` to have completed. Raises ``AmpioConnectionError`` if the
-        broker is not connected or the response does not arrive within
-        ``timeout``.
+        broker is not connected and ``AmpioTimeoutError`` if the response does
+        not arrive within ``timeout``.
         """
         await self._request_and_wait(
             ("locations",),
@@ -635,7 +672,7 @@ class AmpioClient:
             async with asyncio.timeout(timeout):
                 await asyncio.gather(*(self._received[n].wait() for n in names))
         except TimeoutError as err:
-            raise AmpioConnectionError(timeout_message) from err
+            raise AmpioTimeoutError(timeout_message) from err
 
     def _feed_message(self, topic: str, payload: str | bytes) -> None:
         """Inject a message directly into the routing logic.
