@@ -6,12 +6,16 @@ PRs should reference.
 
 ## Reachable but not consumed
 
-### `resources` - icons, media, possibly cameras
+### `resources` - settings table, served on both tiers
 
-Designer's "Resources" view groups static assets (icons), media
-references, and what looks like camera/intercom entries. Concrete
-shape needs to be confirmed on the wire before deciding which HA
-platforms this maps to.
+Live-verified: the `resources` keyword answers on the app-sync `data`
+surface for **both account tiers** (admins additionally get a
+`config`-surface variant). Rows are shaped
+`{id, opis, type, wartoscB, wartoscN, wartoscS}` and on the probed
+install hold settings-like entries (currency and similar), with no
+camera/intercom rows observed. A companion `icons` keyword answers on
+`data` as well (empty list on the probed install). Whether media or
+camera entries appear on installs that have them is still to confirm.
 
 Tracked as: [#22](https://github.com/pszypowicz/ampio-mqtt/issues/22)
 
@@ -21,6 +25,13 @@ The M-SERV keeps its own ring of recent events. Plausible consumers:
 the HA integration's diagnostics blob (so a "broker keeps
 disconnecting" report includes the broker's view of why), or a future
 HA `event` platform forwarding select log lines.
+
+Live-probed negative: a `logs` keyword answers on neither the `config`
+nor the `data` surface, even for an administrator. The `data` surface
+serves a `logging` keyword on both tiers, but that is per-object
+logging _configuration_ (`{id_obiektu, typ_logowania}` over the full,
+non-grant-filtered catalogue), not the event log. If the event ring is
+reachable over MQTT it hides behind some other keyword.
 
 Tracked as: [#23](https://github.com/pszypowicz/ampio-mqtt/issues/23)
 
@@ -32,6 +43,11 @@ the hashes in `AmpioClient` lets `fetch_rooms()`, `fetch_locations()`,
 and future `fetch_*` helpers no-op on reconnect when nothing has
 changed. Optimization, not a correctness fix - the current behaviour
 of re-fetching every time is correct, just chatty.
+
+Live-verified on both tiers: a standard account's namespace retains
+`md5/devices`, `md5/groups`, `md5/group_devices`, `md5/params_devices`,
+`md5/scenes`, `md5/resources`, `md5/icons`, and `md5/logging` on
+subscribe, so the cache would help the standard tier too.
 
 Tracked as: [#24](https://github.com/pszypowicz/ampio-mqtt/issues/24)
 

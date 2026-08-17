@@ -27,12 +27,24 @@ reject an account whose tier will not support what the consumer needs
 | Per-object live state                         | all objects   | granted objects                       |
 | Rooms (`fetch_rooms`)                         | yes           | yes                                   |
 | Server identity (`server_info`)               | yes           | yes                                   |
+| Scenes (`fetch_scenes`, scene commands)       | yes           | yes                                   |
+| `resources` / `icons` tables (`data` surface) | yes           | yes                                   |
+| `logging` config table (`data` surface)       | yes           | yes (the table is not grant-filtered) |
+| md5 change-detection tree                     | yes           | yes                                   |
 | Commands                                      | all objects   | granted objects                       |
 | **Module list** (`modules`, `mserv_id`)       | yes           | **no**                                |
 | **Raw channel tree** (`ampio/from/#`)         | yes           | **no**                                |
 | **Module diagnostics** (voltage, temperature) | yes           | **no**                                |
 | **CAN write tree** (`ampio/to/#`)             | yes           | **no**                                |
 | Designer location table (`fetch_locations`)   | yes           | no                                    |
+
+Two of the gaps are narrower than the table suggests. The `data/devices`
+rows carry `id_urzadzenia`, so a standard account still learns the module
+ids that own its granted objects - without names, macs, or models, but
+enough to group entities by physical module. And the M-SERV's own
+identity needs no module list at all: `server_info` is served fully on
+both tiers, so a consumer can anchor its hub device on
+`AmpioServerInfo.mac` instead of `mserv_id`.
 
 Grants bound reads and object writes alike. A command for an object
 outside a standard account's grant is dropped with no effect and no
