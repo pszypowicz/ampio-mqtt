@@ -13,7 +13,7 @@ The tier is read from the account id the `info` reply reports on every
 tier: `-1` for the admin pseudo-user, the users-table row id for an app
 user - see `AmpioServerInfo.access_tier` (live-verified against both
 account shapes). `AmpioClient.access_tier` exposes it on a running client,
-settled by the time `wait_for_initial_discovery()` returns, and
+settled by the time `wait_for_initial_discovery()` returns True, and
 `test_connection()` reports it at validation time, so a config flow can
 reject an account whose tier will not support what the consumer needs
 (e.g. `modules`/`mserv_id`, which the standard tier never receives).
@@ -99,11 +99,11 @@ Prefer an administrator account when the install needs:
 - **Module metadata** - per-module device entries, models, firmware
   versions, and `mserv_id` for a `via_device` hierarchy.
 - **Bus events** - panel presses and other Ampio logic signals only
-  arrive on the admin tier. A standard account can still raise events it
-  holds the right for, so automation _into_ Ampio works either way; it is
-  reacting _to_ Ampio's own events that needs admin.
+  arrive on the admin tier. A standard account can still raise events
+  (see the exception above), so automation _into_ Ampio works either
+  way; it is reacting _to_ Ampio's own events that needs admin.
 - **Module health** - each module broadcasts its CAN supply voltage, and
-  the output modules their own temperature, as
+  those with a temperature sensor their temperature, as
   `AmpioModule.supply_voltage` / `temperature`. Useful for spotting a
   sagging bus or a hot module before it misbehaves.
 - **The CAN vocabulary** for device classes `/api` cannot express (CCT,

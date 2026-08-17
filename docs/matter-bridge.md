@@ -23,7 +23,7 @@ is that the bridge's own production gate uses them.
   `id`, and `nodeLabel` to `opis_menu` (truncated to 32 chars). Identity is the
   volatile DB `id` - fine for the bridge (re-derived every boot, co-located with
   the DB), but not replacement-stable, which is why this library keys on
-  `{mac, typ_komponentu, funkcja}` instead.
+  `leaf_id` (`AmpioObject.stable_key`) instead.
 
 ## The selection gate (origin of `params` bit 4 / bit 37)
 
@@ -63,9 +63,10 @@ function ARe(t) {
 whose `deviceType` equals the object's numeric `type` field. `type` is a Matter
 device-type ID **hand-set in Designer**, so an object carries one only where the
 user assigned it. On the live reference install relays (`256`/`266`), lights
-(`257`/`269`), flags (`266`), air-quality (`44`), and temperature (`770`)
-objects carry one; most analog/environmental channels (humidity, pressure,
-loudness, illuminance, CO2) leave it empty.
+(`257`/`269`), flags (`266`), air-quality (`44`), and some temperature
+(`770`) objects carry one; most analog/environmental channels (humidity,
+pressure, loudness, illuminance, CO2) and most temperature objects leave
+it empty.
 
 ### `RRe(typ_komponentu, leafId)` - "findDeviceByComponent" (fallback)
 
@@ -123,7 +124,8 @@ The `75` branch returns an AirQualitySensor decorated with a
   `typ_komponentu === "temp"` and a hand-set `type=770` both catch it first, so
   temperature is the one environmental channel that is triple-covered.
 - **`przekaznik`/`flaga` -> OnOffLight (256)**, not a generic on/off plug, and
-  **`wej` -> OnOffSensor (2128)**. Relays therefore appear in Matter as lights.
+  **`wej` -> OnOffSensor (2128)**. A relay with no hand-set `type` therefore
+  appears in Matter as a light.
 
 ## What the bridge actually exposes (live reference install: 39 modules, 134 objects)
 

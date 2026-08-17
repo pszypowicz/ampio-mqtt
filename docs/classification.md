@@ -3,8 +3,8 @@
 The `devicesDetails` payload returns one row per logical object. The
 library classifies each row into exactly one kind - a `SensorKind`
 (sensor-side platforms), an `InputKind` (binary/boolean platforms), or an
-`OutputKind` (controllable platforms). `classify(typ_komponentu,
-interpretacja)` returns it, keying on `typ_komponentu` (the object type)
+`OutputKind` (controllable platforms). `classify(typ, interpretacja)`
+returns it, keying on the object type (the wire's `typ_komponentu`)
 and `interpretacja` (a refinement for analog inputs). A component type is
 a measurement, a boolean input, or something controllable, never two, so
 the three are alternatives rather than optional slots on the object.
@@ -26,8 +26,8 @@ is added.
 | `lin_wej`                                     | yes     | no     | no      | Analog input - kind set by `interpretacja` (see below).                                                                                    |
 | `bit32`                                       | yes     | no     | no      | Generic 32-bit measurement (units unknown).                                                                                                |
 | `flaga`                                       | no      | yes    | no      | Generic boolean flag (logic flag, button-press hold, etc.).                                                                                |
-| `detekcja`                                    | no      | yes    | yes     | Motion-style detection. Always visible.                                                                                                    |
-| `symulacja`                                   | no      | yes    | yes     | Presence simulation. Always visible. Raw-channel prefix not yet bridged.                                                                   |
+| `detekcja`                                    | no      | yes    | yes     | Motion-style detection. Visible even without `leafId` (unless hidden).                                                                     |
+| `symulacja`                                   | no      | yes    | yes     | Presence simulation. Visible even without `leafId` (unless hidden). Raw-channel prefix not yet bridged.                                    |
 | `przekaznik`                                  | no      | no     | no      | Relay output - see the output table below.                                                                                                 |
 | `rgbw`, `led`                                 | no      | no     | no      | Light outputs - see the output table below.                                                                                                |
 | `roleta`, `roleta_procenty`, `roleta_lamelki` | no      | no     | no      | Cover outputs - see the output table below.                                                                                                |

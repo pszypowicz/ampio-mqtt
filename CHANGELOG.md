@@ -32,7 +32,8 @@ account tier being unknowable at validation time (#59).
   froze the entity at its previous value (#57).
 - `AmpioClient.colliding_macs`: the effective bus macs the devices catalogue
   reports on more than one module, plus a warning naming the affected
-  modules when the set changes. Nothing on the wire enforces mac
+  modules when a collision appears (one that resolves clears the set
+  silently). Nothing on the wire enforces mac
   uniqueness, and a consumer keying devices on `AmpioModule.mac` - the
   recommended replacement-stable module key - would otherwise silently
   merge two modules into one (#58).
@@ -110,8 +111,8 @@ account permissions" message for what is in practice always a slow broker.
 ## 0.15.0
 
 Splits the client into the two things it was doing. No behaviour change - the
-same 366 tests and a live install produce the same objects, modules, rooms,
-scenes and events as before.
+pre-split test suite and a live install produce the same objects, modules,
+rooms, scenes and events as before.
 
 ### Changed
 

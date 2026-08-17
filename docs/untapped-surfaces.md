@@ -69,7 +69,7 @@ command sent through `/api` and through this tree reaches the device in
 41 ms and 36 ms respectively, a difference inside per-trial noise. Unlike
 the read path, writes gain nothing from going raw.
 
-Tracked as: [#39](https://github.com/pszypowicz/ampio-mqtt/issues/39)
+Tracked as: [#60](https://github.com/pszypowicz/ampio-mqtt/issues/60)
 
 ### `device_raw_api` RPC bridge - per-output `outLoc` resolution
 
@@ -107,7 +107,7 @@ exactly this - it publishes each candidate keyword on
 on the matching `fromDB` topic:
 
 ```
-python tools/probe_config.py --keywords scenes,logs,resources
+python tools/probe_config.py --keywords logs,resources
 ```
 
 Once the response shape is in hand, the implementation pattern is

@@ -71,23 +71,23 @@ channel covering CCT, DALI, blind angles, and display text). It is
 this library confirmed live - so the library uses the `/api` surface,
 which works on both tiers.
 
-| Verb                                | Args                                      | Notes                                                                                                                     |
-| ----------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `turnOn`                            | -                                         | Verified. Full on (255).                                                                                                  |
-| `turnOff`                           | -                                         | Verified.                                                                                                                 |
-| `switch`                            | -                                         | Verified. Inverts current state.                                                                                          |
-| `open`                              | -                                         | Verified. Cover to 100.                                                                                                   |
-| `close`                             | -                                         | Verified. Cover to 0.                                                                                                     |
-| `setValue`                          | `<0-255>[/<time>]`                        | Verified. `time` is in 10 ms units and **reverts** the object afterwards - a timed pulse, not a fade.                     |
-| `setColors`                         | `<R>/<G>/<B>/<W>`                         | Verified. Also accepts one packed int (`R \| G<<8 \| B<<16 \| W<<24`), which is what object state reports back.           |
-| `setRollerPos`                      | `<position>/<lamella>`                    | Verified. Percent each; `101` on an axis means "leave it alone", so one command moves either axis alone or both together. |
-| `setColor`                          | 24-bit `R \| G<<8 \| B<<16`               | Spec-documented, not verified here.                                                                                       |
-| `setColorW`                         | `<rgb24>/<white>`                         | Spec-documented, not verified here.                                                                                       |
-| `setTemperature`, `setHeatingMode`  | regulator setpoint / mode `A`,`S`,`M`,`H` | Spec-documented, not verified here.                                                                                       |
-| `arm`, `disarm`                     | `<pin>`                                   | Satel alarm zones. Spec-documented, not verified here.                                                                    |
-| `setVolume`, `setInput`, `setSeek`  | radio module                              | Spec-documented, not verified here.                                                                                       |
-| `setText`                           | `<text>`                                  | Sets app-visible text on sensor objects. Spec-documented.                                                                 |
-| `setVirtualTemp`, `setVirtualValue` | virtual devices                           | Spec-documented, not verified here.                                                                                       |
+| Verb                                | Args                                      | Notes                                                                                                                                |
+| ----------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `turnOn`                            | -                                         | Verified. Full on (255).                                                                                                             |
+| `turnOff`                           | -                                         | Verified.                                                                                                                            |
+| `switch`                            | -                                         | Verified. Inverts current state.                                                                                                     |
+| `open`                              | -                                         | Verified. Cover to 100.                                                                                                              |
+| `close`                             | -                                         | Verified. Cover to 0.                                                                                                                |
+| `setValue`                          | `<0-255>[/<time>]`                        | Verified. `time` is in 10 ms units and **reverts** the object afterwards - a timed pulse, not a fade.                                |
+| `setColors`                         | `<R>/<G>/<B>/<W>`                         | Verified. Also accepts one packed int (`R \| G<<8 \| B<<16 \| W<<24`), which is what object state reports back.                      |
+| `setRollerPos`                      | `<position>/<lamella>`                    | Verified. Percent each; `101` omits an axis (see the slat-drag note below), so one command moves either axis alone or both together. |
+| `setColor`                          | 24-bit `R \| G<<8 \| B<<16`               | Spec-documented, not verified here.                                                                                                  |
+| `setColorW`                         | `<rgb24>/<white>`                         | Spec-documented, not verified here.                                                                                                  |
+| `setTemperature`, `setHeatingMode`  | regulator setpoint / mode `A`,`S`,`M`,`H` | Spec-documented, not verified here.                                                                                                  |
+| `arm`, `disarm`                     | `<pin>`                                   | Satel alarm zones. Spec-documented, not verified here.                                                                               |
+| `setVolume`, `setInput`, `setSeek`  | radio module                              | Spec-documented, not verified here.                                                                                                  |
+| `setText`                           | `<text>`                                  | Sets app-visible text on sensor objects. Spec-documented.                                                                            |
+| `setVirtualTemp`, `setVirtualValue` | virtual devices                           | Spec-documented, not verified here.                                                                                                  |
 
 Scenes are driven by their own payloads on the same topic, addressing the
 scene rather than an object:

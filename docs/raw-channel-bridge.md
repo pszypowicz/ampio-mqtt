@@ -27,7 +27,8 @@ an administrator account is laid out.
 
 Authoritative source:
 [`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py)
-(`RAW_INPUT_WILDCARDS`, `_INPUT_CHANNEL_PREFIX`) and the dispatcher in
+(`RAW_INPUT_WILDCARDS`, the `channel_prefix` field on the
+`TYPE_PROFILES` rows) and the dispatcher in
 [`src/ampio_mqtt/_store.py`](../src/ampio_mqtt/_store.py)
 (`_handle_raw_channel`).
 
@@ -37,10 +38,13 @@ Authoritative source:
 ampio/from/+/state/f/+   # flags  ("flaga")
 ampio/from/+/state/i/+   # digital inputs  ("detekcja")
 ampio/from/+/b/4F        # per-module diagnostics broadcast
+ampio/from/+/event       # bus events
 ```
 
 The two channel wildcards are bridged to the owning `AmpioObject` so
-listeners see the same push as for any other update.
+listeners see the same push as for any other update. The event
+wildcard feeds `add_event_listener()` - a different surface with its
+own semantics, described in [`protocol.md`](protocol.md).
 
 ## Module diagnostics (`b/4F`)
 
@@ -63,7 +67,9 @@ payload bytes decode as:
 Landed on `AmpioModule.supply_voltage` and `AmpioModule.temperature`, and
 each frame refreshes the module's `last_seen`, so a module with no objects
 of its own still shows liveness. Register `add_module_listener()` to be
-told when a module updates.
+told when a module updates. The frame is attributed by its `mac`, so a
+colliding mac (see the routing key below) suspends this for the affected
+modules.
 
 The broadcasts are periodic rather than retained, so the fields fill in
 over the first minute of a session rather than immediately, and modules
@@ -83,9 +89,15 @@ without a temperature sensor (relays, panels) report voltage only.
 
 Raw-channel topics carry the module's effective MAC, not the user
 namespace. The dispatcher's lookup table is keyed on
-`(module.mac, prefix, channel)` and resolves to an `object_id` by
-walking `client.objects` once at discovery time. This is why `mac`
-(the Designer override) and not `mac_global` (the factory id) is the
-right module key here: a replacement module re-uses the override, so
-the routing table stays valid across a hardware swap without a
-rebuild.
+`(module.mac, prefix, channel)`, precomputed from the catalogue rather
+than resolved per message, and rebuilt on every catalogue apply. This
+is why `mac` (the Designer override) and not `mac_global` (the factory
+id) is the right module key here: a replacement module re-uses the
+override, so the routing keeps working across a hardware swap.
+
+A `mac` the catalogue reports on two or more modules routes nothing:
+the sender of a raw-tree message on it is unknowable, so the input
+bridge and the diagnostics handler both skip it rather than attribute
+the message to an arbitrary module. Affected inputs still update
+through the per-object path, and `AmpioClient.colliding_macs` names
+the offending macs (see [`identity.md`](identity.md)).

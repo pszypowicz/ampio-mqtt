@@ -2,7 +2,8 @@
 
 `AmpioClient.start()` runs the bring-up sequence: connect, subscribe,
 publish the auto-discovery keywords, wait for the responses, return.
-By the time `start()` returns, `client.objects` and
+By the time `start()` returns - unless the `discovery_timeout`
+elapsed first - `client.objects` and
 `client.server_info` are populated and ready to consult
 (`client.modules` too on the admin tier - see below). Live state
 arrives via push from that point on.
@@ -31,10 +32,10 @@ for the `start()` / `stop()` lifecycle that joins them.
 ## Sequence
 
 1. **Connect** - TCP to the broker; authenticate; start the
-   capped-exponential reconnect loop. Each successful (re)connect bumps
-   `stats.reconnect_count` and stamps `stats.started_at` on the first
-   one.
-2. **Subscribe** - the per-user topics (`ob/+/state`, the nine
+   capped-exponential reconnect loop. The first successful connect
+   stamps `stats.started_at`; each subsequent one bumps
+   `stats.reconnect_count`.
+2. **Subscribe** - the per-user topics (`ob/+/state`, the ten
    response topics) plus the global raw-channel wildcards. See
    [`protocol.md`](protocol.md) and
    [`raw-channel-bridge.md`](raw-channel-bridge.md) for the full
@@ -69,25 +70,30 @@ for the `start()` / `stop()` lifecycle that joins them.
 
 ## What runs on demand, not automatically
 
-Two helpers are not part of the auto sequence because the consumer
+Three helpers are not part of the auto sequence because the consumer
 decides when - and whether - to call them:
 
 - **`fetch_rooms()`** - the `groups` + `group_devices` join. The HA
   integration calls it once at setup to seed `DeviceInfo.suggested_area`.
   A non-HA consumer may not want it at all.
+- **`fetch_scenes()`** - the scene catalogue, driven with
+  `run_scene()` / `turn_scene_off()` / `undo_scene()`. Same rationale:
+  a consumer that surfaces no scenes never pays for the fetch.
 - **`fetch_locations()`** - the Designer "Location" name table. Same
   rationale; today it is consumed only for the diagnostics blob since
   the per-output pointer half is not on MQTT
   (see [`untapped-surfaces.md`](untapped-surfaces.md)).
 
-Both helpers accept an explicit `timeout` (default 5.0 s) and raise
-`AmpioConnectionError` on timeout, so a flaky broker fails loud rather
-than silently returning an empty dict.
+All three helpers accept an explicit `timeout` (default 5.0 s) and raise
+`AmpioTimeoutError` on timeout, so a flaky broker fails loud rather
+than silently returning an empty result.
 
 ## Liveness counters
 
-`client.stats` (a `ConnectionStats` dataclass) is the single source the
-HA integration's diagnostics blob reads from. The four fields are:
+`client.stats` (a `ConnectionStats` dataclass) is what the HA
+integration's diagnostics blob reads for connection health
+(the blob also carries `last_payloads` and the location table).
+The four fields are:
 
 - `reconnect_count` - monotonic; useful for a "works intermittently"
   report.
