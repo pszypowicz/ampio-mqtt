@@ -14,6 +14,21 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## Unreleased
+
+### Changed
+
+- Every subscription now asks for QoS 1, both in the connection loop and in
+  the config-flow probe. The M-SERV publishes everything at QoS 1 (verified
+  against a live install: live pushes and retained replies alike), but the
+  previous QoS 0 subscriptions let the broker downgrade its delivery leg to
+  at-most-once, and per-object state topics are not retained, so a state
+  push lost in transit stayed lost until the next change. At QoS 1 the
+  broker redelivers unacknowledged messages, keeping the at-least-once
+  guarantee the server already provides (#65). Sessions stay clean, so this
+  protects delivery only while the connection is up. Messages missed while
+  disconnected are still recovered by the reconnect refresh.
+
 ## 0.17.0
 
 Addresses feedback from the Home Assistant integration: the numeric half of

@@ -905,7 +905,7 @@ async def test_reconnect_count_increments_on_reconnect() -> None:
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def subscribe(self, _topic):  # pragma: no cover - trivial
+        async def subscribe(self, _topic, qos=0):  # pragma: no cover - trivial
             return None
 
         async def publish(self, _topic, _payload=b""):
