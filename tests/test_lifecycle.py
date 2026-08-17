@@ -62,6 +62,7 @@ class FakeMqttClient:
     scripted_messages: ClassVar[list[_Message]] = []
     published: ClassVar[list[tuple[str, bytes]]] = []
     subscribed: ClassVar[list[str]] = []
+    subscribed_qos: ClassVar[list[int]] = []
 
     @classmethod
     def reset(cls) -> None:
@@ -72,6 +73,7 @@ class FakeMqttClient:
         cls.scripted_messages = []
         cls.published = []
         cls.subscribed = []
+        cls.subscribed_qos = []
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._messages_queue: asyncio.Queue[_Message] = asyncio.Queue()
@@ -93,8 +95,9 @@ class FakeMqttClient:
     async def __aexit__(self, *exc: object) -> bool:
         return False
 
-    async def subscribe(self, topic: str) -> None:
+    async def subscribe(self, topic: str, qos: int = 0) -> None:
         FakeMqttClient.subscribed.append(topic)
+        FakeMqttClient.subscribed_qos.append(qos)
 
     async def publish(self, topic: str, payload: bytes = b"") -> None:
         FakeMqttClient.published.append((topic, payload))
@@ -135,6 +138,9 @@ async def test_connection_returns_server_info_on_happy_path() -> None:
     assert info.mac == 42
     assert info.access_tier is AccessTier.ADMIN
     assert info_topic in FakeMqttClient.subscribed
+    # The M-SERV publishes at QoS 1; a QoS 0 subscription would let the
+    # broker downgrade its delivery leg to at-most-once (#65).
+    assert FakeMqttClient.subscribed_qos == [1]
     # The info request publish was sent with an empty body.
     assert (f"ampio/control/{USER}/info", b"") in FakeMqttClient.published
 
@@ -270,6 +276,8 @@ async def test_start_drives_full_discovery_through_mocked_broker() -> None:
             INFO_TOPIC,
             f"ampio/fromDB/{USER}/ob/+/state",
         }.issubset(set(FakeMqttClient.subscribed))
+        # Every runtime subscription asks for QoS 1 (#65).
+        assert set(FakeMqttClient.subscribed_qos) == {1}
     finally:
         await client.stop()
 

@@ -26,6 +26,11 @@ _LOGGER = logging.getLogger(__name__)
 
 _RECONNECT_BACKOFF_MAX = 60.0
 _AUTH_REJECTED = "Authentication rejected by Ampio broker"
+# The M-SERV publishes everything at QoS 1, and per-object state topics are
+# not retained, so a push lost in transit is gone until the next change.
+# Subscribing at QoS 1 keeps the broker's at-least-once delivery leg; the
+# default QoS 0 would downgrade it to at-most-once (#65).
+_SUBSCRIBE_QOS = 1
 
 MessageHandler = Callable[[str, str], None]
 AvailabilityHandler = Callable[[bool], None]
@@ -161,7 +166,7 @@ class Connection:
                 ) as client:
                     self._client = client
                     for topic in self._topics:
-                        await client.subscribe(topic)
+                        await client.subscribe(topic, qos=_SUBSCRIBE_QOS)
                     if self._stats.started_at is None:
                         self._stats.started_at = time.time()
                     else:
@@ -245,7 +250,7 @@ async def probe(
             identifier=f"ampio_mqtt_test_{uuid.uuid4().hex}",
             timeout=10,
         ) as client:
-            await client.subscribe(reply_topic)
+            await client.subscribe(reply_topic, qos=_SUBSCRIBE_QOS)
             await client.publish(request_topic, request_payload.encode())
             with suppress(TimeoutError):
                 async with asyncio.timeout(timeout):
