@@ -47,6 +47,21 @@ upgrade path.
 
 ### Fixed
 
+- The on-demand fetches (`fetch_rooms()`, `fetch_scenes()`,
+  `fetch_locations()`) now correlate each caller with its reply through a
+  per-call future instead of clearing shared latches and reading a shared
+  payload dict back. Two defects close. Concurrent fetches no longer race:
+  a second caller entering between a reply landing and the first caller's
+  wakeup used to pop the first caller's payloads, handing it a silently
+  empty result (reproduced live: two concurrent `fetch_rooms()` returned
+  `{}` for one caller and the real map for the other). And a reply that
+  does not parse no longer completes a fetch: the endpoints without a
+  state-mutating handler previously latched on any payload, so a corrupt
+  reply made `fetch_rooms()` return `{}` immediately; it now ends in the
+  same retryable `AmpioTimeoutError` as no reply at all. `last_payloads`
+  is append-only as a side effect - entries no longer vanish transiently
+  while a fetch is in flight, and an unparseable reply is retained
+  verbatim for diagnostics.
 - Raised the `zeroconf` floor from `>=0.131` to `>=0.142`. The
   `AddressResolverIPv4` class that `discover()` is built on was added in
   python-zeroconf 0.142.0, so the declared range admitted versions on which

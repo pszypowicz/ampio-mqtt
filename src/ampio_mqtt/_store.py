@@ -93,7 +93,18 @@ class AmpioStore:
         if endpoint is not None:
             self._applied.endpoint = endpoint
             handler = self._handlers.get(endpoint.name)
-            self._applied.parsed = handler is None or handler(payload)
+            if handler is not None:
+                self._applied.parsed = handler(payload)
+            else:
+                # Pure request/response endpoints mutate nothing here, but
+                # their parseability still gates the reply signal - a corrupt
+                # reply must not complete a fetch. Every one of them answers
+                # with a {"List": [...]} document, so that shape check stands
+                # in for a handler; an endpoint with a different reply shape
+                # needs its own _handlers entry.
+                self._applied.parsed = _protocol._rows(payload) is not None
+                if not self._applied.parsed:
+                    _LOGGER.warning("Could not parse Ampio %s reply", endpoint.name)
         elif topic.endswith("/state") and "/ob/" in topic:
             self._handle_state(topic, payload)
         elif topic.startswith("ampio/from/") and "/state/" in topic:

@@ -288,3 +288,24 @@ def test_a_baseline_server_does_not_warn(caplog: pytest.LogCaptureFixture) -> No
             '{"Results": {"mac": 1, "serverVersion": "1865"}}',
         )
     assert caplog.records == []
+
+
+def test_on_demand_reply_parseability_gates_parsed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Endpoints with no mutating handler still report whether their reply
+    parsed, so a corrupt reply cannot complete a fetch (it is List-shaped
+    or it does not count)."""
+    store = _store()
+    topic = f"ampio/fromDB/{USER}/data/groups"
+    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
+        bad = store.apply(topic, "{not json !!")
+    assert bad.endpoint is not None and bad.endpoint.name == "groups"
+    assert bad.parsed is False
+    assert any("groups" in r.getMessage() for r in caplog.records)
+
+    not_a_list_reply = store.apply(topic, "[]")
+    assert not_a_list_reply.parsed is False
+
+    good = store.apply(topic, '{"List": []}')
+    assert good.parsed is True

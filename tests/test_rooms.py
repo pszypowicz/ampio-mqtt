@@ -19,7 +19,7 @@ import json
 import aiomqtt
 import pytest
 
-from ampio_mqtt import AmpioClient, AmpioConnectionError
+from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioTimeoutError
 from ampio_mqtt.rooms import join_rooms
 
 # --- join_rooms() pure tests ----------------------------------------------
@@ -164,8 +164,10 @@ async def test_fetch_rooms_times_out_when_response_missing() -> None:
         await delivery
 
 
-async def test_fetch_rooms_recovers_from_malformed_response() -> None:
-    """A garbage payload yields an empty join, not a crash."""
+async def test_fetch_rooms_treats_malformed_response_as_no_response() -> None:
+    """A corrupt reply must end in the retryable timeout, not a fake-valid
+    empty map - the same failure contract as a reply that never arrives.
+    The raw bytes are still retained for diagnostics."""
     client = AmpioClient("host", username="u", password="p")
     client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
 
@@ -176,10 +178,63 @@ async def test_fetch_rooms_recovers_from_malformed_response() -> None:
 
     delivery = asyncio.create_task(_deliver_garbage())
     try:
-        result = await client.fetch_rooms(timeout=1.0)
+        with pytest.raises(AmpioTimeoutError):
+            await client.fetch_rooms(timeout=0.1)
     finally:
         await delivery
-    assert result == {}
+    assert client.last_payloads["groups"] == "not-json"
+
+
+async def test_concurrent_fetch_does_not_steal_the_first_callers_reply() -> None:
+    """Regression for the latch-clear race: caller B entering between the
+    replies landing and caller A's wakeup used to pop A's payloads, handing A
+    a silently empty map. Each caller now correlates through its own future."""
+    client = AmpioClient("host", username="u", password="p")
+    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
+    groups = json.dumps({"List": [{"id": 8, "opis_menu": "Salon"}]})
+    group_devices = json.dumps({"List": [{"id_grupy": 8, "id_obiektu": 31}]})
+
+    task_a = asyncio.create_task(client.fetch_rooms(timeout=1.0))
+    await asyncio.sleep(0)  # A publishes its requests and starts waiting
+    # B is queued to run after the replies below are dispatched but before
+    # A's wakeup callback - exactly the defective interleaving.
+    task_b = asyncio.create_task(client.fetch_rooms(timeout=1.0))
+    client._feed_message("ampio/fromDB/u/data/groups", groups)
+    client._feed_message("ampio/fromDB/u/data/group_devices", group_devices)
+    assert await task_a == {31: "Salon"}
+    # B asked after the first replies were dispatched, so the next pair
+    # answers it.
+    client._feed_message("ampio/fromDB/u/data/groups", groups)
+    client._feed_message("ampio/fromDB/u/data/group_devices", group_devices)
+    assert await task_b == {31: "Salon"}
+
+
+async def test_late_reply_after_timeout_resolves_nothing_stale() -> None:
+    """A timed-out fetch leaves no waiter behind; the late reply is a no-op
+    and a fresh call still works."""
+    client = AmpioClient("host", username="u", password="p")
+    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
+    groups = json.dumps({"List": [{"id": 1, "opis_menu": "A"}]})
+    group_devices = json.dumps({"List": [{"id_grupy": 1, "id_obiektu": 10}]})
+
+    with pytest.raises(AmpioTimeoutError):
+        await client.fetch_rooms(timeout=0.05)
+    assert client._pending == {}
+
+    # The replies to the timed-out request arrive now - nobody is waiting.
+    client._feed_message("ampio/fromDB/u/data/groups", groups)
+    client._feed_message("ampio/fromDB/u/data/group_devices", group_devices)
+
+    async def _deliver() -> None:
+        await asyncio.sleep(0)
+        client._feed_message("ampio/fromDB/u/data/groups", groups)
+        client._feed_message("ampio/fromDB/u/data/group_devices", group_devices)
+
+    delivery = asyncio.create_task(_deliver())
+    try:
+        assert await client.fetch_rooms(timeout=1.0) == {10: "A"}
+    finally:
+        await delivery
 
 
 async def test_fetch_rooms_clears_state_between_calls() -> None:
