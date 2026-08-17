@@ -26,8 +26,8 @@ upgrade path.
   push lost in transit stayed lost until the next change. At QoS 1 the
   broker redelivers unacknowledged messages, keeping the at-least-once
   guarantee the server already provides (#65). Sessions stay clean, so this
-  covers loss on a live connection, not messages missed while disconnected;
-  the reconnect refresh continues to handle those.
+  protects delivery only while the connection is up. Messages missed while
+  disconnected are still recovered by the reconnect refresh.
 
 ## 0.17.0
 
