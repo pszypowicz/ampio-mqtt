@@ -19,11 +19,22 @@ from unittest.mock import patch
 
 import aiomqtt
 import pytest
+from paho.mqtt.enums import MQTTErrorCode
+from paho.mqtt.packettypes import PacketTypes
+from paho.mqtt.reasoncodes import ReasonCode
 
 from ampio_mqtt import AccessTier, AmpioClient, AmpioConnectionError, AmpioTimeoutError
+from ampio_mqtt._connection import _is_auth_error
 from ampio_mqtt.errors import AmpioAuthError
 
 USER = "u"
+
+
+def _auth_rejection(name: str = "Not authorized") -> aiomqtt.MqttCodeError:
+    """A CONNACK rejection the way aiomqtt >= 2.2 raises it: a coded error
+    carrying the v5 ReasonCode paho's VERSION2 callbacks normalize to."""
+    return aiomqtt.MqttCodeError(ReasonCode(PacketTypes.CONNACK, name))
+
 
 # Discovery response topics the M-SERV publishes after the auto-discovery
 # keywords are sent; shared by the start()/discovery lifecycle tests.
@@ -192,7 +203,7 @@ async def test_connection_returns_info_without_identity_as_is() -> None:
 
 
 async def test_connection_raises_auth_error_on_bad_credentials() -> None:
-    FakeMqttClient.enter_error = aiomqtt.MqttError("Not authorized")
+    FakeMqttClient.enter_error = _auth_rejection()
     with (
         patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient),
         pytest.raises(AmpioAuthError),
@@ -386,7 +397,7 @@ async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
     seeing only the availability drop a transient outage also produces (#53).
     """
     FakeMqttClient.stream_error = aiomqtt.MqttError("connection lost")
-    FakeMqttClient.enter_errors = [None, aiomqtt.MqttError("[code:135] Not authorized")]
+    FakeMqttClient.enter_errors = [None, _auth_rejection()]
     client = AmpioClient("h", username=USER, reconnect_interval=0.05)
     availability: list[bool] = []
     failures: list[str] = []
@@ -408,7 +419,7 @@ async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
 async def test_initial_auth_rejection_raises_without_firing_listener() -> None:
     """A rejection during start() raises AmpioAuthError; the listener is for
     the runtime path only, so a config flow does not get a double signal."""
-    FakeMqttClient.enter_error = aiomqtt.MqttError("Not authorized")
+    FakeMqttClient.enter_error = _auth_rejection()
     client = AmpioClient("h", username=USER)
     failures: list[str] = []
     client.add_auth_failure_listener(failures.append)
@@ -418,7 +429,7 @@ async def test_initial_auth_rejection_raises_without_firing_listener() -> None:
     ):
         await client.start(timeout=2.0, discovery_timeout=0.05)
     assert failures == []
-    assert client.auth_failure == "Not authorized"
+    assert client.auth_failure == "[code:135] Not authorized"
 
 
 async def test_transient_outage_leaves_auth_failure_unset() -> None:
@@ -486,3 +497,41 @@ async def test_wait_for_initial_discovery_returns_false_on_timeout() -> None:
             assert await client.wait_for_initial_discovery(timeout=0.1) is False
         finally:
             await client.stop()
+
+
+# --- auth-failure classification ------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["Not authorized", "Bad user name or password"])
+def test_is_auth_error_matches_the_v5_reason_codes(name: str) -> None:
+    assert _is_auth_error(_auth_rejection(name))
+
+
+def test_is_auth_error_accepts_a_plain_int_code() -> None:
+    assert _is_auth_error(aiomqtt.MqttCodeError(135, "rejected"))
+
+
+def test_is_auth_error_walks_the_cause_chain() -> None:
+    """The mid-iteration drop shape: aiomqtt raises a bare MqttError with the
+    coded disconnect error attached as its ``__cause__``. The error text alone
+    carries no code, so only the chain walk can classify it."""
+    outer = aiomqtt.MqttError("Disconnected during message iteration")
+    outer.__cause__ = aiomqtt.MqttCodeError(
+        ReasonCode(PacketTypes.DISCONNECT, "Not authorized"),
+        "Unexpected disconnection",
+    )
+    assert _is_auth_error(outer)
+
+
+def test_is_auth_error_rejects_transport_failures() -> None:
+    # MQTTErrorCode.MQTT_ERR_CONN_REFUSED is 5 - an auth code in raw MQTT
+    # 3.1.1 CONNACK numbering, a plain transport failure in paho's own enum.
+    # Matching only the v5 codes keeps the two namespaces apart.
+    assert not _is_auth_error(
+        aiomqtt.MqttCodeError(MQTTErrorCode.MQTT_ERR_CONN_REFUSED)
+    )
+    assert not _is_auth_error(aiomqtt.MqttCodeError(None, "no code at all"))
+    assert not _is_auth_error(aiomqtt.MqttError("Not authorized"))
+    assert not _is_auth_error(
+        aiomqtt.MqttCodeError(ReasonCode(PacketTypes.CONNACK, "Server unavailable"))
+    )

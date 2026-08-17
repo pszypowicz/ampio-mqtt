@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import aiomqtt
 import pytest
+from paho.mqtt.packettypes import PacketTypes
+from paho.mqtt.reasoncodes import ReasonCode
 
 from ampio_mqtt import AccessTier, AmpioAuthError, AmpioClient, AmpioObject
 
@@ -470,7 +472,7 @@ class _AuthFailingClient:
         self.messages = self  # any iterable - won't be reached
 
     async def __aenter__(self):
-        raise aiomqtt.MqttError("Not authorized")
+        raise aiomqtt.MqttCodeError(ReasonCode(PacketTypes.CONNACK, "Not authorized"))
 
     async def __aexit__(self, exc_type, exc, tb):
         return False

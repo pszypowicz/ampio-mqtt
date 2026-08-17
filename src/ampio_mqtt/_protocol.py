@@ -9,31 +9,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from .const import BASELINE_SERVER_VERSION
 from .device_types import module_capabilities, module_model
 from .models import AmpioEvent, AmpioModule, AmpioScene, AmpioServerInfo
-
-if TYPE_CHECKING:
-    import aiomqtt
-
-
-# CONNACK reason strings that indicate an auth failure rather than a network
-# or transport problem. aiomqtt surfaces the broker text in the `MqttError`
-# message; paho 2.x maps CONNACK rejections to the MQTT 5 reason codes
-# whatever protocol version is on the wire, so only the v5 codes (134/135)
-# and their texts appear. The match runs over `MqttError.__str__`, so
-# revisit this table if aiomqtt changes its error formatting (or when
-# bumping to aiomqtt v3).
-_AUTH_ERROR_MARKERS = (
-    "not authorized",
-    "bad user name",
-    "bad username",
-    "unauthorized",
-    "[code:134]",
-    "[code:135]",
-)
 
 
 @dataclass(slots=True)
@@ -87,12 +67,6 @@ class StanJsonSeed:
     value: str | None
     on_ms: int | float | None
     tilt: int | None
-
-
-def is_auth_error(err: aiomqtt.MqttError) -> bool:
-    """Return True if the MQTT error looks like an authentication failure."""
-    msg = str(err).lower()
-    return any(marker in msg for marker in _AUTH_ERROR_MARKERS)
 
 
 def server_below_baseline(version: str | None) -> bool:

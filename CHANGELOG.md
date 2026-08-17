@@ -28,6 +28,22 @@ upgrade path.
   guarantee the server already provides (#65). Sessions stay clean, so this
   protects delivery only while the connection is up. Messages missed while
   disconnected are still recovered by the reconnect refresh.
+- Auth-failure detection now reads the structured MQTT reason code
+  (`MqttCodeError.rc`, 134 "bad user name or password" / 135 "not
+  authorized") instead of substring-matching the error text, and walks the
+  exception cause chain so a rejection that surfaces mid-iteration (a bare
+  `MqttError` carrying the coded disconnect as `__cause__`) is classified
+  too - a path the text markers could never see. Both misclassification
+  directions close: a transport error whose text happened to contain a
+  marker no longer kills the reconnect loop for good, and an auth rejection
+  no longer depends on aiomqtt's message formatting. The aiomqtt floor
+  rises from `>=2.0.0` to `>=2.5`: 2.2.0 is where aiomqtt adopted paho's
+  VERSION2 callbacks (which normalize CONNACK rejections to the v5 codes on
+  every wire protocol - older versions surface plain-int 3.1.1 codes the
+  check would miss), and 2.5.0 fixes `__aexit__` exception handling and the
+  payload type contract.
+
+> > > > > > > b7c7dbd (auth detection: read the reason code, not the error text)
 
 ### Fixed
 
