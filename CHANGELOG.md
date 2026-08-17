@@ -14,7 +14,7 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
-## Unreleased
+## 0.18.0 (unreleased)
 
 ### Changed
 
@@ -28,6 +28,16 @@ upgrade path.
   guarantee the server already provides (#65). Sessions stay clean, so this
   protects delivery only while the connection is up. Messages missed while
   disconnected are still recovered by the reconnect refresh.
+
+### Fixed
+
+- Raised the `zeroconf` floor from `>=0.131` to `>=0.142`. The
+  `AddressResolverIPv4` class that `discover()` is built on was added in
+  python-zeroconf 0.142.0, so the declared range admitted versions on which
+  importing the library raises `ImportError`. The gap was masked wherever
+  pip resolved the latest zeroconf, but any environment pinning inside
+  `[0.131, 0.142)` (Home Assistant 2025.1 ships 0.136.2) satisfied the old
+  constraint and then failed at import.
 
 ## 0.17.0
 
