@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ampio-mqtt"
-version = "0.17.0"
+version = "0.18.0"
 description = "Async client for the Ampio Smart Home MQTT protocol"
 readme = "README.md"
 license = { text = "MIT" }

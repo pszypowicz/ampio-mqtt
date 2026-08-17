@@ -14,7 +14,18 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
-## 0.18.0 (unreleased)
+## 0.18.0
+
+A debt-payoff release from a clean-sheet review of the whole library,
+with every fix reproduced and re-verified at runtime - locally against a
+scripted broker and, where it mattered, against a live M-SERV. The
+correctness fixes close a concurrent-fetch race, a clock-skew path that
+let stale snapshots overwrite fresh input edges, and the store never
+forgetting deleted objects. The broker conversation gets structured:
+auth failures classify by reason code, subscriptions go out as one QoS 1
+SUBSCRIBE whose SUBACK verdicts are read (#65), and both dependency
+floors now reflect reality. Internal layout is reshuffled so each
+concern has one home.
 
 ### Added
 
