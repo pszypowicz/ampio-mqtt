@@ -66,7 +66,9 @@ stability note above). Currently supports:
 - live push of object state changes via per-object MQTT topics, plus a bulk
   states snapshot at startup,
 - classification of sensor objects (temperature and M-SENS environmental
-  channels) with Home-Assistant-compatible device/state class hints,
+  channels) with Home-Assistant-compatible device/state class hints, and the
+  parsed reading as `AmpioObject.numeric_value` (None when the value is
+  missing, unparseable, or non-finite),
 - M-SERV identification (mac, firmware versions, local IP),
 - bus events: `send_event()` raises one on either tier, and
   `add_event_listener()` reports the ones Ampio's own logic raises (panel

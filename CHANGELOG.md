@@ -14,6 +14,22 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.17.0
+
+Adds the numeric interpretation of `value` next to the boolean `is_on`, so
+consumers no longer parse `obj.value` with a bare `float()` themselves.
+Reported from the Home Assistant integration (#57), where a `nan` state push
+made the entity write raise and froze the entity at its previous value,
+because HA rejects non-finite sensor states.
+
+### Added
+
+- `AmpioObject.numeric_value`: the reading as a float, or `None` when
+  `value` is missing, unparseable, or non-finite. A bare `float()` accepts
+  `"nan"`, `"inf"` and overflowing forms like `"1e999"`, which a sensor
+  reading should never produce, so the guard lives here with the rest of the
+  protocol-value interpretation.
+
 ## 0.16.0
 
 Surfaces two failure modes a consumer could not previously see: a credential

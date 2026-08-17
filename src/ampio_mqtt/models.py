@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from .const import InputKind, ObjectKind, OutputKind, SensorKind, is_system_type
@@ -94,6 +95,23 @@ class AmpioObject:
         channel form (`"1"`) and the per-object form (`"255"`) read as on.
         """
         return self.value not in (None, "", "0")
+
+    @property
+    def numeric_value(self) -> float | None:
+        """Numeric interpretation of `value`, meaningful for sensor objects.
+
+        None when `value` is missing, not parseable as a number, or not
+        finite - `float()` alone accepts forms like `"nan"`, `"inf"` and the
+        overflowing `"1e999"`, which for a sensor reading are glitches rather
+        than measurements.
+        """
+        if self.value is None:
+            return None
+        try:
+            parsed = float(self.value)
+        except ValueError:
+            return None
+        return parsed if math.isfinite(parsed) else None
 
     @property
     def is_system(self) -> bool:
