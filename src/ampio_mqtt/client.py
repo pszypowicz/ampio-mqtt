@@ -166,7 +166,7 @@ class AmpioClient:
         routes no raw-channel input events or diagnostics broadcasts for it
         (the sender is unknowable); affected inputs still update through the
         per-object state path. A warning naming the modules is logged when
-        the set changes.
+        a collision appears; one that resolves clears the set silently.
         """
         return self._store.colliding_macs
 
@@ -237,8 +237,8 @@ class AmpioClient:
         Retained for the HA integration's diagnostics blob so a report can
         include the actual JSON the M-SERV emitted. Keys are endpoint names
         (``details``, ``devices``, ``states``, ``info``, ``data_devices``,
-        ``params_devices``, ``groups``, ``group_devices``, ``locations``); an
-        endpoint absent until its first reply lands.
+        ``params_devices``, ``groups``, ``group_devices``, ``locations``,
+        ``scenes``); an endpoint absent until its first reply lands.
         """
         return self._last_payloads
 

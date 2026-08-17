@@ -21,9 +21,10 @@ if TYPE_CHECKING:
 
 # CONNACK reason strings that indicate an auth failure rather than a network
 # or transport problem. aiomqtt surfaces the broker text in the `MqttError`
-# message; the baseline broker speaks MQTT 5, so only the v5 reason codes
-# (134/135) and their texts appear. The match runs over `MqttError.__str__`,
-# so revisit this table if aiomqtt changes its error formatting (or when
+# message; paho 2.x maps CONNACK rejections to the MQTT 5 reason codes
+# whatever protocol version is on the wire, so only the v5 codes (134/135)
+# and their texts appear. The match runs over `MqttError.__str__`, so
+# revisit this table if aiomqtt changes its error formatting (or when
 # bumping to aiomqtt v3).
 _AUTH_ERROR_MARKERS = (
     "not authorized",

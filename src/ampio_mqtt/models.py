@@ -57,7 +57,7 @@ class AmpioObject:
     leaf_id: str = ""
     # `params` bitfield from `devicesDetails` (admin tier) or the
     # `data/params_devices` table (every tier). Replacement-stable Designer
-    # config flags; see `_HIDDEN_FLAG` / `_MATTER_EXPOSED_FLAG`, `hidden`, and
+    # config flags; see `_HIDDEN_FLAG`, `hidden`, and `visible`.
     # Defaults to 0 so a payload without the column reads as
     # "nothing hidden" and the visibility rule falls back to the leaf_id
     # heuristic alone.
