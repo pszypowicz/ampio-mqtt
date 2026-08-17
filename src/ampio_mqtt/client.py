@@ -16,6 +16,7 @@ from typing import Any
 from . import _connection, _protocol
 from ._store import AmpioStore
 from .const import (
+    BASELINE_SERVER_VERSION,
     DISCOVERY_ADMIN,
     DISCOVERY_COMMON,
     DISCOVERY_FALLBACK,
@@ -219,8 +220,8 @@ class AmpioClient:
         The info surface answers for every tier and reports the account's
         own id: ``-1`` for the reserved ``admin`` login, the users-table row
         id for an app-created (always non-admin) user. ``UNKNOWN`` until the
-        info reply arrives, or when it carries no account id (firmware
-        predating the field). Settled by the time
+        info reply arrives, or when it carries no account id (a
+        below-baseline server, warned at discovery). Settled by the time
         :meth:`wait_for_initial_discovery` returns True; a config flow can
         read the same answer from :meth:`test_connection`'s result before
         any client exists. Per-user app permissions do not move an account
@@ -341,7 +342,15 @@ class AmpioClient:
             raise AmpioTimeoutError(
                 f"No server-info reply from the Ampio broker within {info_timeout}s"
             )
-        return _protocol.parse_server_info(payload)
+        parsed = _protocol.parse_server_info(payload)
+        if _protocol.server_below_baseline(parsed.server_version):
+            _LOGGER.warning(
+                "Ampio server reports version %s, below the tested baseline %s; "
+                "behavior on this server is untested - upgrade the M-SERV",
+                parsed.server_version or "(none)",
+                ".".join(map(str, BASELINE_SERVER_VERSION)),
+            )
+        return parsed
 
     async def start(
         self, *, timeout: float = 15.0, discovery_timeout: float = 8.0

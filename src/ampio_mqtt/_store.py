@@ -16,6 +16,7 @@ from functools import partial
 
 from . import _protocol
 from .const import (
+    BASELINE_SERVER_VERSION,
     ENDPOINTS,
     Endpoint,
     classify,
@@ -192,7 +193,20 @@ class AmpioStore:
         return True
 
     def _handle_info(self, payload: str) -> bool:
-        self.state.server_info = _protocol.parse_server_info(payload)
+        previous = self.state.server_info
+        info = _protocol.parse_server_info(payload)
+        self.state.server_info = info
+        # Warn when the version first becomes known or changes, not on the
+        # re-request every reconnect issues.
+        if (
+            previous is None or previous.server_version != info.server_version
+        ) and _protocol.server_below_baseline(info.server_version):
+            _LOGGER.warning(
+                "Ampio server reports version %s, below the tested baseline %s; "
+                "behavior on this server is untested - upgrade the M-SERV",
+                info.server_version or "(none)",
+                ".".join(map(str, BASELINE_SERVER_VERSION)),
+            )
         return True
 
     def _handle_states_snapshot(self, payload: str) -> bool:

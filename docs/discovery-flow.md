@@ -56,9 +56,10 @@ for the `start()` / `stop()` lifecycle that joins them.
    (`AmpioServerInfo.access_tier` - see
    [`account-tiers.md`](account-tiers.md)), then awaits that tier's
    catalogue pair: the `config` pair for the administrator, the `data`
-   pair otherwise. A tier the info reply does not settle (firmware
-   predating the `userId` field) also waits on the `data` pair, which
-   answers for every account. Each dispatched message bumps
+   pair otherwise. A tier the info reply does not settle (a
+   below-baseline server - see the README's supported versions) also
+   waits on the `data` pair, which answers for every account. Each
+   dispatched message bumps
    `stats.last_message_at`. The signals latch, so a later
    `wait_for_initial_discovery()` call returns immediately once its
    set has fired (and stays correct across reconnects).

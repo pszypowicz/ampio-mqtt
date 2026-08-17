@@ -81,6 +81,16 @@ ENDPOINTS: tuple[Endpoint, ...] = (
 ENDPOINT_BY_NAME: dict[str, Endpoint] = {ep.name: ep for ep in ENDPOINTS}
 
 
+# The M-SERV software baseline this library is developed and live-tested
+# against, as the server self-reports it on the info surface. This is the
+# compatibility floor, not a promise about anything older: a lower (or
+# missing) serverVersion logs a warning at discovery and behavior on such a
+# server is undefined - the fix is upgrading the M-SERV. The baseline server
+# also reported serverRevision 409 and mqttVersion 5.133.11, recorded in the
+# README; only serverVersion is compared.
+BASELINE_SERVER_VERSION = (1865,)
+
+
 class AccessTier(Enum):
     """Account tier, derived from the account id in the server-info reply.
 
@@ -90,7 +100,7 @@ class AccessTier(Enum):
     permissioned, is served only the app-sync ``data`` surface.
     """
 
-    UNKNOWN = "unknown"  # no info reply yet, or one without an account id
+    UNKNOWN = "unknown"  # no info reply yet (a baseline server always ids it)
     ADMIN = "admin"  # the reserved `admin` login: full catalogue + modules
     RESTRICTED = "restricted"  # an app-created user: app-sync view only
 

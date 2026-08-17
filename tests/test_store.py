@@ -265,3 +265,26 @@ def test_a_colliding_mac_routes_no_raw_edges_but_per_object_still_updates() -> N
     applied = store.apply(f"ampio/fromDB/{USER}/ob/301/state", '{"state":"1"}')
     assert [o.id for o in applied.objects] == [301]
     assert store.objects[301].value == "1"
+
+
+def test_a_below_baseline_server_warns_once(caplog: pytest.LogCaptureFixture) -> None:
+    store = _store()
+    topic = f"ampio/fromDB/{USER}/data/info"
+    payload = '{"Results": {"mac": 1, "serverVersion": "409"}}'
+    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
+        store.apply(topic, payload)
+        # The re-request every reconnect issues repeats the same version.
+        store.apply(topic, payload)
+    warnings = [r for r in caplog.records if "baseline" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "409" in warnings[0].getMessage()
+
+
+def test_a_baseline_server_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    store = _store()
+    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
+        store.apply(
+            f"ampio/fromDB/{USER}/data/info",
+            '{"Results": {"mac": 1, "serverVersion": "1865"}}',
+        )
+    assert caplog.records == []

@@ -369,28 +369,6 @@ async def test_restricted_account_completes_via_data_surface_fallback() -> None:
         await client.stop()
 
 
-async def test_discovery_without_an_account_id_completes_via_the_data_pair() -> None:
-    """Firmware predating `userId` leaves the tier UNKNOWN but still completes.
-
-    The data pair answers for every account, so waiting on it needs no tier
-    knowledge; only the admin-tier `modules` guarantee is lost.
-    """
-    FakeMqttClient.scripted_messages = [
-        _Message(DATA_DEVICES_TOPIC, json.dumps({"List": []}).encode()),
-        _Message(PARAMS_DEVICES_TOPIC, json.dumps({"List": []}).encode()),
-        _Message(STATES_TOPIC, json.dumps({"List": []}).encode()),
-        _Message(INFO_TOPIC, json.dumps({"Results": {"mac": 99}}).encode()),
-    ]
-    client = AmpioClient("h", username=USER, reconnect_interval=0.0)
-    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
-        await client.start(timeout=2.0, discovery_timeout=1.0)
-    try:
-        assert await client.wait_for_initial_discovery(timeout=1.0) is True
-        assert client.access_tier is AccessTier.UNKNOWN
-    finally:
-        await client.stop()
-
-
 async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
     """A credential rejection on reconnect reaches the auth-failure listener.
 

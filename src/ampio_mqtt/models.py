@@ -261,7 +261,8 @@ class AmpioServerInfo:
         users-table row id and are always the standard tier - the app offers
         no administrator toggle for them, and their per-object permissions
         never open the admin-only surfaces. ``UNKNOWN`` when the reply
-        carried no ``userId`` (firmware predating the field).
+        carried no ``userId``, which no baseline server produces (see the
+        supported-versions policy in the README).
         """
         if self.user_id is None:
             return AccessTier.UNKNOWN

@@ -61,9 +61,17 @@ account tier being unknowable at validation time (#59).
   exact the moment the info reply arrives. `wait_for_initial_discovery`
   waits linearly for the tier's own catalogue pair and drops the
   `admin_grace` parameter along with the surface race - config-surface
-  silence no longer needs a grace window to be conclusive (#59). Firmware
-  whose info reply predates `userId` reads as `UNKNOWN` and completes
+  silence no longer needs a grace window to be conclusive (#59). A server
+  whose info reply carries no `userId` reads as `UNKNOWN` and completes
   discovery via the `data` pair, which answers for every account.
+- A supported-versions baseline replaces open-ended compatibility with
+  older M-SERV firmware. The library is developed and live-tested against
+  `serverVersion` 1865 (`serverRevision` 409, `mqttVersion` 5.133.11); the
+  info handler and `test_connection` log a warning when the server
+  self-reports a lower or missing `serverVersion`, and the version-hedged
+  code paths are gone: the MQTT 3.1.1 auth markers (the baseline broker
+  speaks MQTT 5) and the tolerance for an info reply without the `Results`
+  wrapper.
 
 ## 0.16.0
 

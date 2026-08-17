@@ -118,6 +118,15 @@ Protocol reference notes live under [`docs/`](docs/README.md);
 [`src/ampio_mqtt/const.py`](src/ampio_mqtt/const.py) remains the
 canonical source for the topic helpers.
 
+## Supported M-SERV versions
+
+The library is developed and live-tested against an M-SERV self-reporting
+`serverVersion` 1865 (`serverRevision` 409, `mqttVersion` 5.133.11). That
+baseline is the compatibility floor. Older servers are not supported, and
+the library logs a warning when the connected server reports a lower or
+missing `serverVersion`. If something misbehaves on an older server,
+upgrade the M-SERV first.
+
 ## Installation
 
 ```
