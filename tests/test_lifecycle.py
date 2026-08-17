@@ -14,16 +14,28 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any, ClassVar, Self
 from unittest.mock import patch
 
 import aiomqtt
 import pytest
+from paho.mqtt.enums import MQTTErrorCode
+from paho.mqtt.packettypes import PacketTypes
+from paho.mqtt.reasoncodes import ReasonCode
 
 from ampio_mqtt import AccessTier, AmpioClient, AmpioConnectionError, AmpioTimeoutError
+from ampio_mqtt._connection import _is_auth_error
 from ampio_mqtt.errors import AmpioAuthError
 
 USER = "u"
+
+
+def _auth_rejection(name: str = "Not authorized") -> aiomqtt.MqttCodeError:
+    """A CONNACK rejection the way aiomqtt >= 2.2 raises it: a coded error
+    carrying the v5 ReasonCode paho's VERSION2 callbacks normalize to."""
+    return aiomqtt.MqttCodeError(ReasonCode(PacketTypes.CONNACK, name))
+
 
 # Discovery response topics the M-SERV publishes after the auto-discovery
 # keywords are sent; shared by the start()/discovery lifecycle tests.
@@ -63,6 +75,8 @@ class FakeMqttClient:
     published: ClassVar[list[tuple[str, bytes]]] = []
     subscribed: ClassVar[list[str]] = []
     subscribed_qos: ClassVar[list[int]] = []
+    # Per-topic SUBACK reason codes; topics absent here are granted (0).
+    suback_codes: ClassVar[dict[str, int]] = {}
 
     @classmethod
     def reset(cls) -> None:
@@ -74,6 +88,7 @@ class FakeMqttClient:
         cls.published = []
         cls.subscribed = []
         cls.subscribed_qos = []
+        cls.suback_codes = {}
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._messages_queue: asyncio.Queue[_Message] = asyncio.Queue()
@@ -95,9 +110,14 @@ class FakeMqttClient:
     async def __aexit__(self, *exc: object) -> bool:
         return False
 
-    async def subscribe(self, topic: str, qos: int = 0) -> None:
-        FakeMqttClient.subscribed.append(topic)
-        FakeMqttClient.subscribed_qos.append(qos)
+    async def subscribe(
+        self, topic: str | list[tuple[str, int]], qos: int = 0
+    ) -> list[int]:
+        entries = topic if isinstance(topic, list) else [(topic, qos)]
+        for t, q in entries:
+            FakeMqttClient.subscribed.append(t)
+            FakeMqttClient.subscribed_qos.append(q)
+        return [FakeMqttClient.suback_codes.get(t, 0) for t, _q in entries]
 
     async def publish(self, topic: str, payload: bytes = b"") -> None:
         FakeMqttClient.published.append((topic, payload))
@@ -192,7 +212,7 @@ async def test_connection_returns_info_without_identity_as_is() -> None:
 
 
 async def test_connection_raises_auth_error_on_bad_credentials() -> None:
-    FakeMqttClient.enter_error = aiomqtt.MqttError("Not authorized")
+    FakeMqttClient.enter_error = _auth_rejection()
     with (
         patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient),
         pytest.raises(AmpioAuthError),
@@ -386,7 +406,7 @@ async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
     seeing only the availability drop a transient outage also produces (#53).
     """
     FakeMqttClient.stream_error = aiomqtt.MqttError("connection lost")
-    FakeMqttClient.enter_errors = [None, aiomqtt.MqttError("[code:135] Not authorized")]
+    FakeMqttClient.enter_errors = [None, _auth_rejection()]
     client = AmpioClient("h", username=USER, reconnect_interval=0.05)
     availability: list[bool] = []
     failures: list[str] = []
@@ -408,7 +428,7 @@ async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
 async def test_initial_auth_rejection_raises_without_firing_listener() -> None:
     """A rejection during start() raises AmpioAuthError; the listener is for
     the runtime path only, so a config flow does not get a double signal."""
-    FakeMqttClient.enter_error = aiomqtt.MqttError("Not authorized")
+    FakeMqttClient.enter_error = _auth_rejection()
     client = AmpioClient("h", username=USER)
     failures: list[str] = []
     client.add_auth_failure_listener(failures.append)
@@ -418,7 +438,7 @@ async def test_initial_auth_rejection_raises_without_firing_listener() -> None:
     ):
         await client.start(timeout=2.0, discovery_timeout=0.05)
     assert failures == []
-    assert client.auth_failure == "Not authorized"
+    assert client.auth_failure == "[code:135] Not authorized"
 
 
 async def test_transient_outage_leaves_auth_failure_unset() -> None:
@@ -486,3 +506,78 @@ async def test_wait_for_initial_discovery_returns_false_on_timeout() -> None:
             assert await client.wait_for_initial_discovery(timeout=0.1) is False
         finally:
             await client.stop()
+
+
+# --- subscription verdicts -------------------------------------------------
+
+
+async def test_rejected_subscriptions_are_warned_and_recorded(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A SUBACK failure code must surface in the log and in the stats while
+    the connection stays up - a denied raw-tree topic is expected for a
+    standard account, and silence would read as a mysteriously dead topic."""
+    denied = "ampio/from/+/state/f/+"
+    FakeMqttClient.suback_codes = {denied: 0x87}
+    client = AmpioClient("h", username=USER, reconnect_interval=0.05)
+    with (
+        patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient),
+        caplog.at_level(logging.WARNING, logger="ampio_mqtt._connection"),
+    ):
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        try:
+            assert client.available is True
+            assert client.stats.subscribe_failures == {denied: 0x87}
+        finally:
+            await client.stop()
+    assert any(
+        denied in r.getMessage() and "135" in r.getMessage() for r in caplog.records
+    )
+
+
+async def test_granted_subscriptions_leave_no_failures() -> None:
+    client = AmpioClient("h", username=USER, reconnect_interval=0.05)
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        try:
+            assert client.stats.subscribe_failures == {}
+        finally:
+            await client.stop()
+
+
+# --- auth-failure classification ------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["Not authorized", "Bad user name or password"])
+def test_is_auth_error_matches_the_v5_reason_codes(name: str) -> None:
+    assert _is_auth_error(_auth_rejection(name))
+
+
+def test_is_auth_error_accepts_a_plain_int_code() -> None:
+    assert _is_auth_error(aiomqtt.MqttCodeError(135, "rejected"))
+
+
+def test_is_auth_error_walks_the_cause_chain() -> None:
+    """The mid-iteration drop shape: aiomqtt raises a bare MqttError with the
+    coded disconnect error attached as its ``__cause__``. The error text alone
+    carries no code, so only the chain walk can classify it."""
+    outer = aiomqtt.MqttError("Disconnected during message iteration")
+    outer.__cause__ = aiomqtt.MqttCodeError(
+        ReasonCode(PacketTypes.DISCONNECT, "Not authorized"),
+        "Unexpected disconnection",
+    )
+    assert _is_auth_error(outer)
+
+
+def test_is_auth_error_rejects_transport_failures() -> None:
+    # MQTTErrorCode.MQTT_ERR_CONN_REFUSED is 5 - an auth code in raw MQTT
+    # 3.1.1 CONNACK numbering, a plain transport failure in paho's own enum.
+    # Matching only the v5 codes keeps the two namespaces apart.
+    assert not _is_auth_error(
+        aiomqtt.MqttCodeError(MQTTErrorCode.MQTT_ERR_CONN_REFUSED)
+    )
+    assert not _is_auth_error(aiomqtt.MqttCodeError(None, "no code at all"))
+    assert not _is_auth_error(aiomqtt.MqttError("Not authorized"))
+    assert not _is_auth_error(
+        aiomqtt.MqttCodeError(ReasonCode(PacketTypes.CONNACK, "Server unavailable"))
+    )

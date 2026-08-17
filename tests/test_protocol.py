@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import json
 
-import aiomqtt
 import pytest
 
 from ampio_mqtt import AccessTier, AmpioModule, AmpioServerInfo
 from ampio_mqtt._protocol import (
-    is_auth_error,
     parse_details,
     parse_devices,
     parse_raw_channel_topic,
@@ -35,35 +33,6 @@ from ampio_mqtt._protocol import (
 )
 def test_to_int(value: object, expected: int | None) -> None:
     assert to_int(value) == expected
-
-
-@pytest.mark.parametrize(
-    "marker",
-    [
-        # Every entry of `_protocol._AUTH_ERROR_MARKERS` is exercised here so a
-        # silent removal during an aiomqtt version bump fails loudly.
-        "not authorized",
-        "bad user name or password",
-        "bad username",
-        "unauthorized",
-        "[code:134]",
-        "[code:135]",
-    ],
-)
-def test_is_auth_error_true(marker: str) -> None:
-    assert is_auth_error(aiomqtt.MqttError(marker))
-
-
-@pytest.mark.parametrize(
-    "marker",
-    [
-        "connection refused",
-        "timeout",
-        "host unreachable",
-    ],
-)
-def test_is_auth_error_false(marker: str) -> None:
-    assert not is_auth_error(aiomqtt.MqttError(marker))
 
 
 def test_parse_details_returns_metadata() -> None:

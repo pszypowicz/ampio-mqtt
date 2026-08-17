@@ -112,10 +112,20 @@ RGBW_OUTPUT}`). Drives HA platform selection and bundle/split decisions in
   boolean, motion detection to `binary_sensor.motion`. Live flag/button events
   are delivered with minimal latency through the same `add_object_listener()`
   pipeline by routing the decoded raw per-channel topics (which fire ahead of
-  the per-object republish) to the owning object.
+  the per-object republish) to the owning object,
+- eviction of objects and modules the authoritative catalogue stops
+  listing, surfaced through `add_object_removal_listener()` /
+  `add_module_removal_listener()` so a consumer can drop the entities it
+  built. Objects deleted in the Ampio app soft-delete on the admin
+  catalogue instead (the `params` hidden bit) and disappear through the
+  `visible` filter - see the changelog for the observed server behavior,
+- per-connect subscription diagnostics via
+  `ConnectionStats.subscribe_failures`: filters the broker rejected in
+  the SUBACK, which on the baseline server doubles as confirmation of a
+  standard account's raw-tree denial.
 
 Protocol reference notes live under [`docs/`](docs/README.md);
-[`src/ampio_mqtt/const.py`](src/ampio_mqtt/const.py) remains the
+[`src/ampio_mqtt/endpoints.py`](src/ampio_mqtt/endpoints.py) remains the
 canonical source for the topic helpers.
 
 ## Supported M-SERV versions

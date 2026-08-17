@@ -7,15 +7,16 @@ runs automatically vs on demand.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from collections.abc import Callable
 from typing import Any
 
 from . import _connection, _protocol
+from ._connection import _decode_payload
 from ._store import AmpioStore
-from .const import (
+from .device_types import Capability
+from .endpoints import (
     BASELINE_SERVER_VERSION,
     DISCOVERY_ADMIN,
     DISCOVERY_COMMON,
@@ -36,7 +37,6 @@ from .const import (
     response_topic,
     scene_payload,
 )
-from .device_types import Capability
 from .errors import AmpioTimeoutError
 from .models import (
     AmpioEvent,
@@ -46,7 +46,6 @@ from .models import (
     AmpioServerInfo,
     ConnectionStats,
 )
-from .rooms import join_rooms
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -92,16 +91,24 @@ class AmpioClient:
         self._event_listeners: list[EventListener] = []
         self._availability_listeners: list[AvailabilityListener] = []
         self._auth_failure_listeners: list[AuthFailureListener] = []
+        self._object_removal_listeners: list[ObjectListener] = []
+        self._module_removal_listeners: list[ModuleListener] = []
 
         # Per-endpoint latch, set the first time each reply lands. Derived from
         # the endpoint table so a new endpoint needs no new field here.
         self._received: dict[str, asyncio.Event] = {
             ep.name: asyncio.Event() for ep in ENDPOINTS
         }
-        # Last payload per endpoint as the broker sent it: the on-demand
-        # fetches parse theirs out of here, and a consumer can put the verbatim
-        # JSON into a diagnostics report without re-deriving it.
+        # Last payload per endpoint as the broker sent it, so a consumer can
+        # put the verbatim JSON into a diagnostics report without re-deriving
+        # it. Append-only, and retained even when the payload fails to parse -
+        # the bad bytes are exactly what a diagnostics report needs.
         self._last_payloads: dict[str, str] = {}
+        # Callers of the on-demand fetches, awaiting the next parseable reply
+        # per endpoint. Fetch correlation lives here, in futures; the
+        # _received latches above answer only "has this endpoint ever
+        # answered" for discovery.
+        self._pending: dict[str, list[asyncio.Future[str]]] = {}
 
     def _subscriptions(self) -> list[str]:
         """Every topic the client needs on each (re)connect."""
@@ -119,16 +126,25 @@ class AmpioClient:
         applied = self._store.apply(topic, payload)
         if applied.endpoint is not None:
             self._last_payloads[applied.endpoint.name] = payload
-            # Latch only on a payload that parsed, so a malformed reply does
-            # not falsely complete discovery.
+            # Latch and resolve waiters only on a payload that parsed, so a
+            # malformed reply neither falsely completes discovery nor hands a
+            # fetch garbage - the fetch keeps waiting for a good reply and
+            # times out into the same retryable error as silence.
             if applied.parsed:
                 self._received[applied.endpoint.name].set()
+                for future in self._pending.pop(applied.endpoint.name, ()):
+                    if not future.done():
+                        future.set_result(payload)
         for obj in applied.objects:
             _emit(self._object_listeners, obj, "object")
         for module in applied.modules:
             _emit(self._module_listeners, module, "module")
         for event in applied.events:
             _emit(self._event_listeners, event, "event")
+        for obj in applied.removed_objects:
+            _emit(self._object_removal_listeners, obj, "object removal")
+        for module in applied.removed_modules:
+            _emit(self._module_removal_listeners, module, "module removal")
 
     def _handle_availability(self, available: bool) -> None:
         _emit(self._availability_listeners, available, "availability")
@@ -255,6 +271,35 @@ class AmpioClient:
         """
         self._module_listeners.append(listener)
         return lambda: self._module_listeners.remove(listener)
+
+    def add_object_removal_listener(
+        self, listener: ObjectListener
+    ) -> Callable[[], None]:
+        """Register a callback invoked when an object leaves the catalogue.
+
+        Fires once per removed object with its final state; by callback time
+        the id is already gone from :pyattr:`objects`. Removal is noticed
+        when the account's authoritative catalogue answers without the
+        object: a Designer delete (whose save restarts the M-SERV, so the
+        reconnect refresh picks it up) or, on the restricted tier, a grant
+        revocation. This is the signal to remove whatever entity was built
+        on the object. An empty catalogue reply never mass-removes - see the
+        store's eviction guard.
+        """
+        self._object_removal_listeners.append(listener)
+        return lambda: self._object_removal_listeners.remove(listener)
+
+    def add_module_removal_listener(
+        self, listener: ModuleListener
+    ) -> Callable[[], None]:
+        """Register a callback invoked when a module leaves the module list.
+
+        Fires once per removed module with its final state, after the store
+        has dropped it. The module list is administrator-only, so this never
+        fires on a standard account.
+        """
+        self._module_removal_listeners.append(listener)
+        return lambda: self._module_removal_listeners.remove(listener)
 
     def add_event_listener(self, listener: EventListener) -> Callable[[], None]:
         """Register a callback invoked when a bus event is raised.
@@ -454,15 +499,12 @@ class AmpioClient:
         if the broker is not connected and ``AmpioTimeoutError`` if either
         response does not arrive within ``timeout``.
         """
-        await self._request_and_wait(
+        payloads = await self._fetch(
             ("groups", "group_devices"),
             timeout,
             "Timed out fetching room map from Ampio broker",
         )
-        return join_rooms(
-            _safe_json_object(self._last_payloads.get("groups")),
-            _safe_json_object(self._last_payloads.get("group_devices")),
-        )
+        return _protocol.parse_rooms(payloads["groups"], payloads["group_devices"])
 
     async def fetch_scenes(self, timeout: float = 5.0) -> list[AmpioScene]:
         """Return the scene catalogue defined in the Ampio app.
@@ -471,10 +513,10 @@ class AmpioClient:
         if the broker is not connected and ``AmpioTimeoutError`` if the
         response does not arrive within ``timeout``.
         """
-        await self._request_and_wait(
+        payloads = await self._fetch(
             ("scenes",), timeout, "Timed out fetching scenes from Ampio broker"
         )
-        return _protocol.parse_scenes(self._last_payloads.get("scenes") or "") or []
+        return _protocol.parse_scenes(payloads["scenes"]) or []
 
     async def send_event(self, event_number: int) -> None:
         """Raise a bus event, running whatever Ampio logic is bound to it.
@@ -535,21 +577,12 @@ class AmpioClient:
         broker is not connected and ``AmpioTimeoutError`` if the response does
         not arrive within ``timeout``.
         """
-        await self._request_and_wait(
+        payloads = await self._fetch(
             ("locations",),
             timeout,
             "Timed out fetching locations table from Ampio broker",
         )
-        data = _safe_json_object(self._last_payloads.get("locations"))
-        out: dict[int, str] = {}
-        for item in data.get("List", []):
-            if not isinstance(item, dict):
-                continue
-            lid = item.get("id")
-            name = item.get("opis_menu")
-            if isinstance(lid, int) and isinstance(name, str) and name:
-                out[lid] = name
-        return out
+        return _protocol.parse_locations(payloads["locations"])
 
     # --- commands ---------------------------------------------------------
 
@@ -660,24 +693,45 @@ class AmpioClient:
             request_topic(ep, self._username), ep.req_payload.encode()
         )
 
-    async def _request_and_wait(
+    async def _fetch(
         self, names: tuple[str, ...], timeout: float, timeout_message: str
-    ) -> None:
-        """Re-request the given endpoints and block until each reply latches.
+    ) -> dict[str, str]:
+        """Request the given endpoints and return each reply payload by name.
 
-        Clears each endpoint's latch and retained payload first so a stale prior
-        reply can't satisfy the wait, then publishes and awaits all of them.
+        One future per endpoint correlates this caller with the next parseable
+        reply, so concurrent fetches never disturb each other and the
+        discovery latches stay untouched; every concurrent caller of the same
+        endpoint receives the same reply. The wire carries no correlation
+        ids - a reply already in flight from an earlier request can satisfy a
+        later ask, which for these idempotent read endpoints is the intended
+        semantics. A reply that does not parse resolves nothing (see
+        ``_handle_message``), so a corrupt reply ends in the same retryable
+        ``AmpioTimeoutError`` as no reply at all.
         """
-        for name in names:
-            self._received[name].clear()
-            self._last_payloads.pop(name, None)
-        for name in names:
-            await self._publish(ENDPOINT_BY_NAME[name])
+        loop = asyncio.get_running_loop()
+        futures: dict[str, asyncio.Future[str]] = {
+            name: loop.create_future() for name in names
+        }
+        for name, future in futures.items():
+            self._pending.setdefault(name, []).append(future)
         try:
+            for name in names:
+                await self._publish(ENDPOINT_BY_NAME[name])
             async with asyncio.timeout(timeout):
-                await asyncio.gather(*(self._received[n].wait() for n in names))
+                await asyncio.gather(*futures.values())
         except TimeoutError as err:
             raise AmpioTimeoutError(timeout_message) from err
+        finally:
+            # A resolved future was already dropped by the dispatcher; on
+            # timeout, cancellation, or a failed publish, remove this call's
+            # own waiters so a late reply resolves nothing stale.
+            for name, future in futures.items():
+                waiters = self._pending.get(name)
+                if waiters is not None and future in waiters:
+                    waiters.remove(future)
+                    if not waiters:
+                        del self._pending[name]
+        return {name: future.result() for name, future in futures.items()}
 
     def _feed_message(self, topic: str, payload: str | bytes) -> None:
         """Inject a message directly into the routing logic.
@@ -686,8 +740,6 @@ class AmpioClient:
         drives the same path through the connection.
         """
         self._handle_message(topic, _decode_payload(payload))
-
-    # --- internal ---------------------------------------------------------
 
 
 def _emit(listeners: list[Any], payload: Any, kind: str) -> None:
@@ -708,23 +760,3 @@ def _check_range(name: str, value: int, low: int, high: int) -> None:
     """Reject an out-of-range command argument before it reaches the wire."""
     if not isinstance(value, int) or not low <= value <= high:
         raise ValueError(f"{name} must be an int in {low}..{high}, got {value!r}")
-
-
-def _decode_payload(payload: object) -> str:
-    """Coerce an aiomqtt payload (`str | bytes | bytearray | None`) to text."""
-    if isinstance(payload, (bytes, bytearray)):
-        return bytes(payload).decode("utf-8", "replace")
-    if isinstance(payload, str):
-        return payload
-    return ""
-
-
-def _safe_json_object(text: str | None) -> dict[str, Any]:
-    """Parse `text` as a JSON object; return an empty dict on any failure."""
-    if not text:
-        return {}
-    try:
-        data = json.loads(text)
-    except (ValueError, TypeError):
-        return {}
-    return data if isinstance(data, dict) else {}

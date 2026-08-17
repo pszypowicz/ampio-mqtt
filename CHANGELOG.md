@@ -14,7 +14,26 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
-## Unreleased
+## 0.18.0
+
+A debt-payoff release from a clean-sheet review of the whole library,
+with every fix reproduced and re-verified at runtime - locally against a
+scripted broker and, where it mattered, against a live M-SERV. The
+correctness fixes close a concurrent-fetch race, a clock-skew path that
+let stale snapshots overwrite fresh input edges, and the store never
+forgetting deleted objects. The broker conversation gets structured:
+auth failures classify by reason code, subscriptions go out as one QoS 1
+SUBSCRIBE whose SUBACK verdicts are read (#65), and both dependency
+floors now reflect reality. Internal layout is reshuffled so each
+concern has one home.
+
+### Added
+
+- `AmpioClient.add_object_removal_listener()` and
+  `add_module_removal_listener()`: callbacks fired once per object/module
+  the authoritative catalogue stopped listing, with the removed item's
+  final state, after the store has dropped it. The signal for a consumer
+  to remove the entity or device it built.
 
 ### Changed
 
@@ -28,6 +47,116 @@ upgrade path.
   guarantee the server already provides (#65). Sessions stay clean, so this
   protects delivery only while the connection is up. Messages missed while
   disconnected are still recovered by the reconnect refresh.
+- Auth-failure detection now reads the structured MQTT reason code
+  (`MqttCodeError.rc`, 134 "bad user name or password" / 135 "not
+  authorized") instead of substring-matching the error text, and walks the
+  exception cause chain so a rejection that surfaces mid-iteration (a bare
+  `MqttError` carrying the coded disconnect as `__cause__`) is classified
+  too - a path the text markers could never see. Both misclassification
+  directions close: a transport error whose text happened to contain a
+  marker no longer kills the reconnect loop for good, and an auth rejection
+  no longer depends on aiomqtt's message formatting. The aiomqtt floor
+  rises from `>=2.0.0` to `>=2.5`: 2.2.0 is where aiomqtt adopted paho's
+  VERSION2 callbacks (which normalize CONNACK rejections to the v5 codes on
+  every wire protocol - older versions surface plain-int 3.1.1 codes the
+  check would miss), and 2.5.0 fixes `__aexit__` exception handling and the
+  payload type contract.
+
+- Internal layout: `const.py` split into `endpoints.py` (endpoint table,
+  topics, command payloads, `AccessTier`, server baseline) and
+  `classification.py` (the kind types, `TYPE_PROFILES`, `classify`);
+  `rooms.py` folded into `_protocol` as `parse_rooms()`, joined by
+  `parse_locations()`, so every payload parser lives in one module and
+  the fetch helpers are publish-await-parse three-liners. The public
+  package surface (`ampio_mqtt` top-level exports) is unchanged; imports
+  of the removed module paths break, per the 0.x policy.
+
+- All subscriptions go out in one SUBSCRIBE packet per (re)connect instead
+  of fifteen sequential round trips, and the SUBACK verdicts are read
+  instead of discarded: a filter the broker rejects logs a warning naming
+  the topic and reason code and lands in the new
+  `ConnectionStats.subscribe_failures` (topic to code, replaced on every
+  connect), while the connection stays up - a standard account being
+  denied the admin-only raw tree is expected and already degrades to the
+  per-object path. Previously a rejected topic produced a "successful"
+  connection that was silently deaf on it. Live-verified against the
+  baseline server: a standard account receives reason code 128 for all
+  four `ampio/from/...` filters (the Ampio broker rejects unauthorized
+  filters in the SUBACK even over MQTT 3.1.1, where stock mosquitto
+  grants silently), so `subscribe_failures` doubles as per-connect
+  confirmation of the account's raw-tree access.
+
+- `AmpioModule.last_seen` is now one clock: the local receive time of the
+  last live message evidencing the module (a state push or raw edge for one
+  of its objects, or its own diagnostics broadcast). It previously
+  preferred the server's `on` date and fell back to the local clock, so on
+  an M-SERV with a skewed RTC it could read hours off, and snapshot seeds
+  could stamp it with dates for modules that had not actually spoken.
+  Snapshot and catalogue seeds no longer touch it - they replay DB state
+  that may be arbitrarily old, which says nothing about whether the module
+  is alive - so it stays `None` until the first live message after
+  `start()`.
+
+### Fixed
+
+- Objects and modules deleted in Designer (or revoked from a restricted
+  account's grant) are now evicted when the next catalogue reply stops
+  listing them, instead of surviving as zombies until process restart.
+  Eviction authority follows completeness: the admin `config` catalogue
+  and module list always evict (the M-SERV serves them to administrators
+  only, so their arrival is the proof), while the app-sync `data/devices`
+  catalogue evicts only on the restricted tier, where the grant bounds
+  everything the store could hold. An empty reply against a populated
+  store never evicts - it logs a warning instead, so a server hiccup can
+  not tell a consumer to drop every entity it has. Evicted objects also
+  release their raw-channel routing, params, and clock bookkeeping.
+  Eviction lands on the next catalogue reply, whichever event triggers it:
+  the refresh a reconnect issues, or an explicit `refresh()` (live-verified
+  that a Designer module deletion can commit without restarting the M-SERV,
+  where only a fresh catalogue request notices). How the baseline server
+  deletes, observed live: a module deletion hard-removes the row from
+  `devices` (evicted), but object deletions soft-delete on the `config`
+  catalogue - the row stays with the `params` hidden bit set, flipping
+  `visible` to False through the normal metadata merge - while
+  hard-removing from the app-sync surfaces (so the restricted tier does
+  evict). An admin-tier consumer therefore drops deleted objects via the
+  `visible` filter, and eviction covers whatever hard-removes rows.
+- A bulk-snapshot value can no longer regress a fresh raw-channel edge on
+  an M-SERV whose clock disagrees with the local one. `updated_at` used to
+  mix two clocks - the server's `on` date on snapshot and push paths, the
+  local receive time on the undated raw path - and supersession compared
+  them directly, so with the server clock ahead a reconnect snapshot
+  carrying the pre-edge value could overwrite a fresh input edge
+  (reproduced live: a 2-hour skew flipped a just-raised flag back off).
+  The store now tracks which clock stamped each object and never compares
+  across them: a server-dated report is rejected while an object is
+  local-anchored, and the per-object echo that follows every raw edge by
+  ~150 ms - dropped as a notification, as before - now donates its server
+  `on` date to re-anchor the object, so post-outage resync keeps working
+  through same-clock comparisons that cancel any RTC skew. A dated report
+  now also beats an undated seeded value.
+- The on-demand fetches (`fetch_rooms()`, `fetch_scenes()`,
+  `fetch_locations()`) now correlate each caller with its reply through a
+  per-call future instead of clearing shared latches and reading a shared
+  payload dict back. Two defects close. Concurrent fetches no longer race:
+  a second caller entering between a reply landing and the first caller's
+  wakeup used to pop the first caller's payloads, handing it a silently
+  empty result (reproduced live: two concurrent `fetch_rooms()` returned
+  `{}` for one caller and the real map for the other). And a reply that
+  does not parse no longer completes a fetch: the endpoints without a
+  state-mutating handler previously latched on any payload, so a corrupt
+  reply made `fetch_rooms()` return `{}` immediately; it now ends in the
+  same retryable `AmpioTimeoutError` as no reply at all. `last_payloads`
+  is append-only as a side effect - entries no longer vanish transiently
+  while a fetch is in flight, and an unparseable reply is retained
+  verbatim for diagnostics.
+- Raised the `zeroconf` floor from `>=0.131` to `>=0.142`. The
+  `AddressResolverIPv4` class that `discover()` is built on was added in
+  python-zeroconf 0.142.0, so the declared range admitted versions on which
+  importing the library raises `ImportError`. The gap was masked wherever
+  pip resolved the latest zeroconf, but any environment pinning inside
+  `[0.131, 0.142)` (Home Assistant 2025.1 ships 0.136.2) satisfied the old
+  constraint and then failed at import.
 
 ## 0.17.0
 

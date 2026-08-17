@@ -18,7 +18,6 @@ from contextlib import suppress
 
 import aiomqtt
 
-from . import _protocol
 from .errors import AmpioAuthError, AmpioConnectionError
 from .models import ConnectionStats
 
@@ -31,6 +30,13 @@ _AUTH_REJECTED = "Authentication rejected by Ampio broker"
 # Subscribing at QoS 1 keeps the broker's at-least-once delivery leg; the
 # default QoS 0 would downgrade it to at-most-once (#65).
 _SUBSCRIBE_QOS = 1
+# MQTT 5 reason codes for a credential rejection: 134 "bad user name or
+# password", 135 "not authorized". paho's VERSION2 callbacks (aiomqtt >= 2.2,
+# hence the pyproject floor) normalize CONNACK rejections to these codes
+# whatever protocol version is on the wire, so they are the only auth shapes.
+# A tuple, not a set: paho's ReasonCode compares equal to its integer value
+# but is unhashable.
+_AUTH_REASON_CODES = (134, 135)
 
 MessageHandler = Callable[[str, str], None]
 AvailabilityHandler = Callable[[bool], None]
@@ -165,8 +171,26 @@ class Connection:
                     timeout=10,
                 ) as client:
                     self._client = client
-                    for topic in self._topics:
-                        await client.subscribe(topic, qos=_SUBSCRIBE_QOS)
+                    # One SUBSCRIBE packet for the whole set - and the SUBACK
+                    # verdicts are read: a broker may reject individual
+                    # filters (the Ampio raw tree is admin-only), and a
+                    # rejected topic that is never diagnosed reads as a
+                    # mysteriously silent connection.
+                    codes = await client.subscribe(
+                        [(t, _SUBSCRIBE_QOS) for t in self._topics]
+                    )
+                    self._stats.subscribe_failures = {
+                        topic: _code_value(code)
+                        for topic, code in zip(self._topics, codes, strict=True)
+                        if _code_value(code) >= 0x80
+                    }
+                    for topic, code in self._stats.subscribe_failures.items():
+                        _LOGGER.warning(
+                            "Ampio broker rejected subscription to %s "
+                            "(reason code %d); no messages will arrive on it",
+                            topic,
+                            code,
+                        )
                     if self._stats.started_at is None:
                         self._stats.started_at = time.time()
                     else:
@@ -181,7 +205,7 @@ class Connection:
                         )
             except aiomqtt.MqttError as err:
                 self._stats.last_error = str(err)
-                if _protocol.is_auth_error(err):
+                if _is_auth_error(err):
                     # Reconnecting will not help; surface it and stop.
                     self._auth_error_message = str(err)
                     self._auth_failed.set()
@@ -258,10 +282,45 @@ async def probe(
                         if str(message.topic) == reply_topic:
                             return _decode_payload(message.payload)
     except aiomqtt.MqttError as err:
-        if _protocol.is_auth_error(err):
+        if _is_auth_error(err):
             raise AmpioAuthError(str(err)) from err
         raise AmpioConnectionError(str(err)) from err
     return None
+
+
+def _is_auth_error(err: BaseException) -> bool:
+    """Whether an MQTT failure is a credential rejection rather than transport.
+
+    Reads the structured reason code off ``MqttCodeError`` instead of matching
+    error text. The cause chain is walked because a drop that surfaces during
+    message iteration arrives as a bare ``MqttError`` with the coded
+    disconnect error chained as its ``__cause__``. Codes outside
+    ``_AUTH_REASON_CODES`` never false-match: paho's own ``MQTTErrorCode``
+    ints stay in single digits (where 5 is "connection refused", an auth code
+    only in raw MQTT 3.1.1 CONNACK numbering, which VERSION2 callbacks never
+    surface).
+    """
+    current: BaseException | None = err
+    while current is not None:
+        if (
+            isinstance(current, aiomqtt.MqttCodeError)
+            and current.rc in _AUTH_REASON_CODES
+        ):
+            return True
+        current = current.__cause__
+    return False
+
+
+def _code_value(code: object) -> int:
+    """A SUBACK entry as an int, whichever shape paho handed over.
+
+    VERSION2 callbacks deliver ``ReasonCode`` (v5-normalized on every wire
+    protocol); older paths deliver plain granted-QoS ints. Both put the
+    failure bit at 0x80. An unreadable entry counts as failed rather than
+    granted.
+    """
+    value = getattr(code, "value", code)
+    return value if isinstance(value, int) else 0x80
 
 
 def _decode_payload(payload: object) -> str:

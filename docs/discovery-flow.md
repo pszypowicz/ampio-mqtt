@@ -36,8 +36,12 @@ for the `start()` / `stop()` lifecycle that joins them.
    stamps `stats.started_at`; each subsequent one bumps
    `stats.reconnect_count`.
 2. **Subscribe** - the per-user topics (`ob/+/state`, the ten
-   response topics) plus the global raw-channel wildcards. See
-   [`protocol.md`](protocol.md) and
+   response topics) plus the global raw-channel wildcards, sent as one
+   QoS 1 SUBSCRIBE packet. The SUBACK verdicts are read: a filter the
+   broker rejects logs a warning and lands in
+   `stats.subscribe_failures` while the connection stays up - on the
+   baseline server a standard account is denied the four raw-tree
+   filters this way. See [`protocol.md`](protocol.md) and
    [`raw-channel-bridge.md`](raw-channel-bridge.md) for the full
    subscribe list.
 3. **Publish the auto-discovery keywords** on the matching control
@@ -68,6 +72,17 @@ for the `start()` / `stop()` lifecycle that joins them.
    catalogues; live state arrives via push on the per-object topic
    (and, for inputs, the raw-channel topics).
 
+Every catalogue reply also evicts what it stopped listing (the admin
+`config` catalogue and module list always; the app-sync `data/devices`
+only on the restricted tier, where the grant bounds the store), fired
+to consumers through `add_object_removal_listener()` /
+`add_module_removal_listener()`. Since catalogues are request/response,
+a server-side deletion is noticed at the next reply - the refresh a
+reconnect issues, or an explicit `refresh()`; a Designer module
+deletion can commit without restarting the M-SERV, so a consumer that
+wants prompt removals refreshes on its own schedule. An empty reply
+never mass-evicts a populated store.
+
 ## What runs on demand, not automatically
 
 Three helpers are not part of the auto sequence because the consumer
@@ -93,7 +108,7 @@ than silently returning an empty result.
 `client.stats` (a `ConnectionStats` dataclass) is what the HA
 integration's diagnostics blob reads for connection health
 (the blob also carries `last_payloads` and the location table).
-The four fields are:
+The fields are:
 
 - `reconnect_count` - monotonic; useful for a "works intermittently"
   report.
@@ -101,6 +116,9 @@ The four fields are:
 - `started_at` - epoch seconds of the first successful connect.
 - `last_message_at` - epoch seconds of the most recently dispatched
   inbound message (any topic).
+- `subscribe_failures` - filters the broker rejected in the latest
+  connect's SUBACK, topic to reason code; empty when everything was
+  granted.
 
 These are intentionally cheap to read and cheap to update - on the
 dispatch hot path, only `last_message_at` is touched.

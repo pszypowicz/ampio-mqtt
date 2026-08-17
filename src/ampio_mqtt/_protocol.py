@@ -1,39 +1,19 @@
 """Pure parsers for the Ampio DB-object MQTT protocol.
 
 These helpers turn raw MQTT payloads into typed structures with no I/O and no
-state mutation - the `AmpioClient` is the only thing that applies them to
-`AmpioState`. Keeping the parsing isolated makes it trivially unit-testable.
+state mutation - the `AmpioStore` is what applies them to `AmpioState`.
+Keeping the parsing isolated makes it trivially unit-testable.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from .const import BASELINE_SERVER_VERSION
 from .device_types import module_capabilities, module_model
+from .endpoints import BASELINE_SERVER_VERSION
 from .models import AmpioEvent, AmpioModule, AmpioScene, AmpioServerInfo
-
-if TYPE_CHECKING:
-    import aiomqtt
-
-
-# CONNACK reason strings that indicate an auth failure rather than a network
-# or transport problem. aiomqtt surfaces the broker text in the `MqttError`
-# message; paho 2.x maps CONNACK rejections to the MQTT 5 reason codes
-# whatever protocol version is on the wire, so only the v5 codes (134/135)
-# and their texts appear. The match runs over `MqttError.__str__`, so
-# revisit this table if aiomqtt changes its error formatting (or when
-# bumping to aiomqtt v3).
-_AUTH_ERROR_MARKERS = (
-    "not authorized",
-    "bad user name",
-    "bad username",
-    "unauthorized",
-    "[code:134]",
-    "[code:135]",
-)
 
 
 @dataclass(slots=True)
@@ -87,12 +67,6 @@ class StanJsonSeed:
     value: str | None
     on_ms: int | float | None
     tilt: int | None
-
-
-def is_auth_error(err: aiomqtt.MqttError) -> bool:
-    """Return True if the MQTT error looks like an authentication failure."""
-    msg = str(err).lower()
-    return any(marker in msg for marker in _AUTH_ERROR_MARKERS)
 
 
 def server_below_baseline(version: str | None) -> bool:
@@ -270,6 +244,56 @@ def parse_scenes(payload: str) -> list[AmpioScene] | None:
                 object_ids=frozenset(objects),
             )
         )
+    return out
+
+
+def parse_rooms(groups_payload: str, group_devices_payload: str) -> dict[int, str]:
+    """Join `data/groups` and `data/group_devices` replies into a room map.
+
+    Returns ``{ampio_object_id: room_name}``. Objects assigned to multiple
+    groups map to the first room encountered - the join table has no
+    "primary group" marker, and the intended consumer (a Home Assistant
+    integration forwarding the value as ``DeviceInfo.suggested_area``)
+    allows one area per device. Mistyped rows are skipped.
+    """
+    group_names: dict[int, str] = {}
+    for row in _rows(groups_payload) or []:
+        if not isinstance(row, dict):
+            continue
+        gid = row.get("id")
+        name = row.get("opis_menu")
+        if isinstance(gid, int) and isinstance(name, str) and name:
+            group_names[gid] = name
+    room_map: dict[int, str] = {}
+    for row in _rows(group_devices_payload) or []:
+        if not isinstance(row, dict):
+            continue
+        oid = row.get("id_obiektu")
+        gid = row.get("id_grupy")
+        if not isinstance(oid, int) or not isinstance(gid, int):
+            continue
+        if oid in room_map:
+            continue  # first match wins; HA allows one area per device
+        name = group_names.get(gid)
+        if name:
+            room_map[oid] = name
+    return room_map
+
+
+def parse_locations(payload: str) -> dict[int, str]:
+    """``{location_id: name}`` from a `config/locations` reply.
+
+    The name table behind the Designer's "Lokalizacja" dropdown; rows with
+    a missing id or an empty name are skipped.
+    """
+    out: dict[int, str] = {}
+    for row in _rows(payload) or []:
+        if not isinstance(row, dict):
+            continue
+        lid = row.get("id")
+        name = row.get("opis_menu")
+        if isinstance(lid, int) and isinstance(name, str) and name:
+            out[lid] = name
     return out
 
 

@@ -46,6 +46,12 @@ listeners see the same push as for any other update. The event
 wildcard feeds `add_event_listener()` - a different surface with its
 own semantics, described in [`protocol.md`](protocol.md).
 
+The whole tree is administrator-only, and the broker says so
+explicitly: on a standard account all four filters are rejected in the
+SUBACK with reason code 128 (live-verified; the client logs the
+rejections and records them in `ConnectionStats.subscribe_failures`,
+then degrades to the per-object path as designed).
+
 ## Module diagnostics (`b/4F`)
 
 Alongside the per-channel `state/` topics, each module periodically

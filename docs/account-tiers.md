@@ -38,6 +38,14 @@ reject an account whose tier will not support what the consumer needs
 | **CAN write tree** (`ampio/to/#`)             | yes           | **no**                                |
 | Designer location table (`fetch_locations`)   | yes           | no                                    |
 
+The raw-tree denial is enforced in the SUBACK, live-verified: a
+standard account's subscriptions to the four `ampio/from/...` filters
+come back with reason code 128 even over MQTT 3.1.1 (where stock
+mosquitto would grant silently and just filter delivery). The library
+records those verdicts in `ConnectionStats.subscribe_failures`, so a
+diagnostics blob carries the broker's own statement of the account's
+raw-tree access on every connect.
+
 Two of the gaps are narrower than the table suggests. The `data/devices`
 rows carry `id_urzadzenia`, so a standard account still learns the module
 ids that own its granted objects - without names, macs, or models, but

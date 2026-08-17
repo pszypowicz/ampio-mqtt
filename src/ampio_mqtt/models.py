@@ -5,8 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from .const import (
-    AccessTier,
+from .classification import (
     InputKind,
     ObjectKind,
     OutputKind,
@@ -14,6 +13,7 @@ from .const import (
     is_system_type,
 )
 from .device_types import Capability
+from .endpoints import AccessTier
 
 # Bit flags inside the `params` integer (`obiekty.params`). The semantics
 # match the M-SERV's own Matter bridge, which selects exposable objects with
@@ -66,9 +66,12 @@ class AmpioObject:
     kind: ObjectKind | None = None
     value: str | None = None
     # Epoch seconds of the report `value` came from - the `on` field when the
-    # M-SERV supplied one, local receive time for the raw channel, which sends
-    # none. Lets a later bulk snapshot be compared against what is already
-    # held instead of being applied or dropped blind.
+    # M-SERV supplied one, local receive time for the raw channel, which
+    # sends none (the object's own per-object echo, due ~150 ms after a raw
+    # edge, re-anchors it to the M-SERV's clock). Lets a later bulk snapshot
+    # be compared against what is already held instead of being applied or
+    # dropped blind; the library never compares the two clocks against each
+    # other.
     updated_at: float | None = None
     # Slat angle percent, from the `lammel` state field. Only tilt-capable
     # covers report it.
@@ -197,10 +200,11 @@ class AmpioModule:
     capabilities: frozenset[Capability] = field(default_factory=frozenset)
     sw_version: int | None = None  # wersja_softu
     hw_version: int | None = None  # wersja_pcb
-    # Epoch seconds of the last state message received for any of the module's
-    # objects, or of its own diagnostics broadcast. Source: the `on` field of
-    # the state payload (milliseconds epoch at the server), falling back to
-    # local receive time if absent.
+    # Local epoch seconds when this process last received live evidence of
+    # the module: a state push or raw edge for one of its objects, or its own
+    # diagnostics broadcast. One clock only - snapshot and catalogue seeds do
+    # not count, since they replay DB state that may be arbitrarily old. None
+    # until the first live message after start().
     last_seen: float | None = None
     # Self-reported health from the module's `b/4F` broadcast. Both stay None
     # on a standard account, which is not served the raw tree, and
@@ -297,3 +301,9 @@ class ConnectionStats:
     last_error: str | None = None
     started_at: float | None = None  # epoch seconds of first successful connect
     last_message_at: float | None = None  # epoch seconds of last MQTT message in
+    # Subscriptions the broker rejected in the SUBACK of the latest
+    # (re)connect: topic -> reason code. Replaced wholesale on every connect,
+    # so an empty dict means the current session got everything it asked for.
+    # A rejection does not fail the connection - the admin-only raw tree is
+    # expected to be denied to a standard account on brokers that enforce it.
+    subscribe_failures: dict[str, int] = field(default_factory=dict)

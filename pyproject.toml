@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ampio-mqtt"
-version = "0.17.0"
+version = "0.18.0"
 description = "Async client for the Ampio Smart Home MQTT protocol"
 readme = "README.md"
 license = { text = "MIT" }
@@ -12,11 +12,20 @@ requires-python = ">=3.13"
 authors = [{ name = "pszypowicz" }]
 keywords = ["ampio", "mqtt", "home-assistant", "smart-home"]
 dependencies = [
-  "aiomqtt>=2.0.0,<3",
+  # Floor: 2.2.0 moved aiomqtt to paho's VERSION2 callbacks, which normalize
+  # CONNACK rejections to MQTT 5 reason codes on every wire protocol - the
+  # auth detection in _connection.py reads those codes and would miss the
+  # plain-int 3.1.1 codes older aiomqtt surfaces. 2.5.0 additionally makes
+  # `Message.payload` always bytes and stops `__aexit__` swallowing
+  # exceptions. `<3`: aiomqtt 3 drops paho (and with it the MqttError
+  # hierarchy) and speaks MQTT 5 only.
+  "aiomqtt>=2.5,<3",
   # Home Assistant always provides `zeroconf`, and `discover()` accepts an
   # externally-managed instance so the HA integration can pass its shared one.
   # Standalone callers get a per-call instance for free, with no extra to opt in.
-  "zeroconf>=0.131",
+  # Floor: the `AddressResolver*` classes discovery.py imports exist since
+  # 0.142.0 (python-zeroconf#1499); anything older fails at import.
+  "zeroconf>=0.142",
 ]
 
 [project.urls]

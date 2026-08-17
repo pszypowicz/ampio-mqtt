@@ -1,0 +1,201 @@
+"""Object classification for the Ampio DB-object protocol.
+
+One `TypeProfile` row per known ``typ_komponentu`` drives everything the
+library derives from a component type: its sensor/input/output kind, the
+raw-channel bridge prefix, and the system-object marker. This module is
+Home Assistant agnostic; device/state class strings match Home Assistant's
+SensorDeviceClass / SensorStateClass enum values so consumers can pass
+them through unchanged.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+# Device-class strings the library can emit. Values match Home Assistant's
+# SensorDeviceClass enum so consumers may pass them through directly.
+DeviceClass = Literal[
+    "atmospheric_pressure",
+    "aqi",
+    "carbon_dioxide",
+    "humidity",
+    "illuminance",
+    "pressure",
+    "sound_pressure",
+    "temperature",
+]
+
+# State-class strings. Values match Home Assistant's SensorStateClass.
+StateClass = Literal["measurement", "total", "total_increasing"]
+
+
+@dataclass(frozen=True, slots=True)
+class SensorKind:
+    """Neutral description of a sensor measurement."""
+
+    key: str
+    name: str
+    unit: str | None
+    device_class: DeviceClass | None
+    state_class: StateClass | None = "measurement"
+    # Display precision hint. The protocol reports float32 noise (e.g. 2702.7
+    # arrives as "2702.699951"); 1 decimal matches the device's own `desc`
+    # field. 0 for quantities conventionally shown as integers.
+    precision: int | None = 1
+
+
+# binary_sensor device-class strings the library can emit. Only "motion" is
+# mapped today; extend this Literal when a new input mapping is added. Values
+# match Home Assistant's BinarySensorDeviceClass enum.
+BinarySensorDeviceClass = Literal["motion"]
+
+
+@dataclass(frozen=True, slots=True)
+class InputKind:
+    """Neutral description of a binary / flag-shaped input object."""
+
+    key: str
+    name: str
+    # HA binary_sensor device class, or None for a generic boolean where the
+    # consumer decides how to model it (binary_sensor vs switch).
+    device_class: BinarySensorDeviceClass | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OutputKind:
+    """Neutral description of a controllable output object.
+
+    The flags say which command verbs the object answers, so a consumer can
+    pick a platform and feature set without a `typ_komponentu` table of its
+    own. Every output answers ``turnOn`` / ``turnOff`` / ``switch``.
+    """
+
+    key: str
+    name: str
+    # 0-255 level via `setValue`.
+    dimmable: bool = False
+    # Four RGBW channels via `setColors`.
+    color: bool = False
+    # `open` / `close` travel commands.
+    cover: bool = False
+    # Position axis of `setRollerPos`.
+    position: bool = False
+    # Lamella axis of `setRollerPos`, and a `lammel` field in the object's
+    # state payload. `setRollerPos` ignores the KEEP_POSITION sentinel on
+    # these, so the lamella argument must carry a real angle.
+    tilt: bool = False
+
+
+# lin_wej (analog input) measurement kind, keyed by `interpretacja`.
+# The M-SENS channel map (4=lux, 5=IAQ, 7=CO2).
+_LIN_WEJ_BY_INTERP: dict[int, SensorKind] = {
+    1: SensorKind("humidity", "Humidity", "%", "humidity"),
+    2: SensorKind("pressure_abs", "Pressure (absolute)", "hPa", "atmospheric_pressure"),
+    3: SensorKind("loudness", "Loudness", "dB", "sound_pressure"),
+    4: SensorKind("illuminance", "Illuminance", "lx", "illuminance", precision=0),
+    5: SensorKind("iaq", "Air quality index", None, "aqi", precision=0),
+    6: SensorKind("pressure_rel", "Pressure (relative)", "hPa", "pressure"),
+    7: SensorKind("co2", "CO2", "ppm", "carbon_dioxide", precision=0),
+}
+
+# Generic value-only sensor for an object with no usable metadata (a state
+# push that raced ahead of the catalogues, or a `typ_komponentu` missing from
+# TYPE_PROFILES). The value may be non-numeric, so it claims neither a state
+# class nor a precision - both would make Home Assistant reject a text value.
+_GENERIC_SENSOR = SensorKind(
+    "value", "Value", None, None, state_class=None, precision=None
+)
+
+
+# What an object is. Exactly one of the three applies - a component type is a
+# measurement, a boolean input, or something controllable, never two - so the
+# kinds are alternatives rather than a set of optional slots.
+ObjectKind = SensorKind | InputKind | OutputKind
+
+
+@dataclass(frozen=True, slots=True)
+class TypeProfile:
+    """Everything the library derives from one ``typ_komponentu``.
+
+    One row per known component type. A type absent from the table is unknown
+    metadata and classifies as the generic value sensor.
+    """
+
+    # Sensor side. ``sensor`` is a fixed kind; ``analog`` selects the
+    # interpretacja-keyed lin_wej map; ``numeric`` is a generic bit32
+    # measurement. A type with none of these is not a sensor.
+    sensor: SensorKind | None = None
+    analog: bool = False
+    numeric: bool = False
+    # Input side: the binary/flag kind, if this type is an input.
+    input: InputKind | None = None
+    # Output side: the controllable kind, if this type accepts commands.
+    output: OutputKind | None = None
+    # Raw ``ampio/from/<mac>/state/<prefix>/<ch>`` bridge prefix. Only known
+    # prefixes are set; an input without one (symulacja) falls back to the
+    # per-object topic.
+    channel_prefix: str | None = None
+    # System objects (presence simulation / detection) live outside the
+    # room/group hierarchy; the M-SERV always exposes them, so they read as
+    # visible even with an empty leafId and no group membership.
+    system: bool = False
+
+
+TYPE_PROFILES: dict[str, TypeProfile] = {
+    "temp": TypeProfile(
+        sensor=SensorKind("temperature", "Temperature", "°C", "temperature")
+    ),
+    "lin_wej": TypeProfile(analog=True),
+    "bit32": TypeProfile(numeric=True),
+    "przekaznik": TypeProfile(output=OutputKind("relay", "Relay")),
+    "rgbw": TypeProfile(output=OutputKind("rgbw", "RGBW light", color=True)),
+    "led": TypeProfile(output=OutputKind("dimmer", "Dimmer", dimmable=True)),
+    "roleta": TypeProfile(output=OutputKind("cover", "Cover", cover=True)),
+    "roleta_procenty": TypeProfile(
+        output=OutputKind("cover_position", "Cover", cover=True, position=True)
+    ),
+    "roleta_lamelki": TypeProfile(
+        output=OutputKind("cover_tilt", "Blind", cover=True, position=True, tilt=True)
+    ),
+    "flaga": TypeProfile(input=InputKind("flaga", "Flag", None), channel_prefix="f"),
+    "detekcja": TypeProfile(
+        input=InputKind("detekcja", "Detection", "motion"),
+        channel_prefix="i",
+        system=True,
+    ),
+    "symulacja": TypeProfile(
+        input=InputKind("symulacja", "Simulation", None), system=True
+    ),
+}
+
+
+def classify(typ: str | None, interpretacja: int | None) -> ObjectKind:
+    """Classify a DB object into the one kind it is.
+
+    ``typ`` is ``typ_komponentu``; ``interpretacja`` selects the lin_wej
+    measurement. A ``typ`` with no table entry (unknown, or no metadata yet)
+    is the generic value-only sensor, so such an object still surfaces.
+    """
+    profile = TYPE_PROFILES.get(typ) if typ is not None else None
+    if profile is None:
+        return _GENERIC_SENSOR
+    if profile.analog:
+        if interpretacja in _LIN_WEJ_BY_INTERP:
+            return _LIN_WEJ_BY_INTERP[interpretacja]
+        return SensorKind(f"analog_{interpretacja}", "Analog input", None, None)
+    if profile.numeric:
+        return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
+    return profile.sensor or profile.input or profile.output or _GENERIC_SENSOR
+
+
+def is_system_type(typ: str | None) -> bool:
+    """Whether ``typ`` is a system component the M-SERV always exposes."""
+    profile = TYPE_PROFILES.get(typ) if typ is not None else None
+    return profile.system if profile is not None else False
+
+
+def input_channel_prefix(typ: str | None) -> str | None:
+    """Raw-channel bridge prefix for ``typ``, or None if it bridges no channel."""
+    profile = TYPE_PROFILES.get(typ) if typ is not None else None
+    return profile.channel_prefix if profile is not None else None

@@ -16,7 +16,7 @@ import json
 import aiomqtt
 import pytest
 
-from ampio_mqtt import AmpioClient, AmpioConnectionError
+from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioTimeoutError
 
 
 class _FakeMqttClient:
@@ -102,8 +102,9 @@ async def test_fetch_locations_skips_malformed_entries() -> None:
     assert result == {1: "OK", 5: "Used"}
 
 
-async def test_fetch_locations_recovers_from_malformed_response() -> None:
-    """A garbage payload yields an empty dict, not a crash."""
+async def test_fetch_locations_treats_malformed_response_as_no_response() -> None:
+    """A corrupt reply must end in the retryable timeout, not a fake-valid
+    empty table."""
     client = AmpioClient("host", username="u", password="p")
     client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
 
@@ -113,10 +114,10 @@ async def test_fetch_locations_recovers_from_malformed_response() -> None:
 
     delivery = asyncio.create_task(_deliver())
     try:
-        result = await client.fetch_locations(timeout=1.0)
+        with pytest.raises(AmpioTimeoutError):
+            await client.fetch_locations(timeout=0.1)
     finally:
         await delivery
-    assert result == {}
 
 
 async def test_fetch_locations_clears_state_between_calls() -> None:
