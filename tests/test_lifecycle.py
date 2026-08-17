@@ -300,8 +300,9 @@ async def test_start_drives_full_discovery_through_mocked_broker() -> None:
     ]
     client = AmpioClient("h", username=USER, reconnect_interval=0.0)
     with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
-        await client.start(timeout=2.0, discovery_timeout=1.0)
+        completed = await client.start(timeout=2.0, discovery_timeout=1.0)
     try:
+        assert completed is True
         assert client.available is True
         assert client.server_info is not None and client.server_info.mac == 99
         # The five expected subscriptions were issued.
@@ -472,6 +473,19 @@ async def test_transient_outage_leaves_auth_failure_unset() -> None:
                 while availability.count(True) < 2:
                     await asyncio.sleep(0.01)
             assert client.auth_failure is None
+        finally:
+            await client.stop()
+
+
+async def test_start_reports_discovery_timeout() -> None:
+    """start() returns False when discovery does not complete in time; the
+    connection stays up and discovery continues opportunistically."""
+    client = AmpioClient("h", username=USER, reconnect_interval=0.05)
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
+        completed = await client.start(timeout=2.0, discovery_timeout=0.05)
+        try:
+            assert completed is False
+            assert client.available is True
         finally:
             await client.stop()
 

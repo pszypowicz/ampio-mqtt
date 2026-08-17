@@ -27,6 +27,13 @@ upgrade path.
   that. Discovery requests are included deliberately: they share the one
   publish path, their replies already surface loss through timeouts, and
   the broker ack costs one packet.
+- `start()` now returns the discovery outcome it always awaited: True when
+  the initial discovery cycle completed within `discovery_timeout`, False
+  when the timeout elapsed first. The result was previously discarded, so
+  a `start()`-only caller could not tell whether `objects`/`server_info`
+  were populated without a second call to `wait_for_initial_discovery()`.
+  A False still leaves the connection up with discovery continuing
+  opportunistically.
 
 ### Fixed
 

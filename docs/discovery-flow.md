@@ -16,7 +16,8 @@ detail. It should call `await client.wait_for_initial_discovery()`
 (default `timeout=8.0`) explicitly. That method returns `True` once
 discovery is complete for the account's tier and `False` if the timeout
 elapses; it never raises. `start()` itself delegates its discovery wait
-to this method, so the two share one definition of "discovery is done."
+to this method and returns its result, so the two share one definition
+of "discovery is done."
 Expressing the dependency explicitly keeps `start()` free to return
 earlier in a future revision without silently breaking that ordering -
 the library's own accessors degrade gracefully when nothing is known

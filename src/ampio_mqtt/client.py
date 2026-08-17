@@ -399,7 +399,7 @@ class AmpioClient:
 
     async def start(
         self, *, timeout: float = 15.0, discovery_timeout: float = 8.0
-    ) -> None:
+    ) -> bool:
         """Start the connection, wait for connect and initial discovery.
 
         After connecting, waits up to `discovery_timeout` for the initial
@@ -409,14 +409,17 @@ class AmpioClient:
         `data` surface (grant-filtered objects, no modules). See `access_tier`
         for the detected tier.
 
-        On return, the initial discovery cycle has been awaited up to
-        `discovery_timeout`; see `wait_for_initial_discovery` for the explicit,
-        opt-in form of that guarantee. A consumer that must read
-        `modules`/`objects`/`server_info` before building on top of the client
-        should call that method rather than relying on `start()`'s timing.
+        Returns True when that discovery cycle completed in time and False
+        when `discovery_timeout` elapsed first. A False leaves the connection
+        up and discovery continuing opportunistically, so the caller can
+        await :meth:`wait_for_initial_discovery` (the explicit form of the
+        same guarantee) rather than restarting. A consumer that must read
+        `modules`/`objects`/`server_info` before building on top of the
+        client should check this result or call that method rather than
+        relying on `start()`'s timing.
         """
         await self._connection.open(timeout)
-        await self.wait_for_initial_discovery(timeout=discovery_timeout)
+        return await self.wait_for_initial_discovery(timeout=discovery_timeout)
 
     async def wait_for_initial_discovery(self, *, timeout: float = 8.0) -> bool:
         """Block until the initial discovery cycle has populated the client.
