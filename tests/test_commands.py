@@ -17,9 +17,11 @@ class _RecordingClient:
 
     def __init__(self) -> None:
         self.published: list[tuple[str, bytes]] = []
+        self.published_qos: list[int] = []
 
-    async def publish(self, topic: str, payload: bytes = b"") -> None:
+    async def publish(self, topic: str, payload: bytes = b"", qos: int = 0) -> None:
         self.published.append((topic, payload))
+        self.published_qos.append(qos)
 
 
 def _connected_client() -> tuple[AmpioClient, _RecordingClient]:
@@ -33,6 +35,9 @@ async def test_command_builds_payload_on_the_account_topic() -> None:
     client, recorder = _connected_client()
     await client.command(64, "setValue", 255)
     assert recorder.published == [(TOPIC, b"/api/set/64/setValue/255")]
+    # Commands publish at QoS 1 so returning means the broker accepted the
+    # command (#68).
+    assert recorder.published_qos == [1]
 
 
 async def test_command_without_args_omits_trailing_slash() -> None:

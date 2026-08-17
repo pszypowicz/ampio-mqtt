@@ -14,6 +14,37 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## Unreleased
+
+### Changed
+
+- Every publish now goes out at QoS 1, so an awaited publish completes on the
+  broker's PUBACK: a returned `command()` (or scene/event publish, or
+  discovery request) means the broker accepted it, where QoS 0 meant only
+  that the payload left the socket (#68). This hardens the client-to-broker
+  hop; it is not device-level confirmation - the M-SERV still applies
+  commands asynchronously, and #67 tracks the opt-in state-echo API for
+  that. Discovery requests are included deliberately: they share the one
+  publish path, their replies already surface loss through timeouts, and
+  the broker ack costs one packet.
+
+### Fixed
+
+- Publish-path failures no longer leak `aiomqtt.MqttError` through the
+  public API. `command()`, the typed command helpers, `send_event()`, the
+  scene commands, and the `fetch_*` request publishes now raise
+  `AmpioConnectionError` on a transport failure (the aiomqtt original
+  preserved as `__cause__`) and `AmpioTimeoutError` when the broker accepts
+  the session but the PUBACK does not arrive within 5 s - so an
+  `except AmpioError` handler finally covers every failure a call can
+  produce, and consumers never import aiomqtt. The PUBACK deadline is owned
+  by the library because aiomqtt reports its own timeout as a bare
+  `MqttError` distinguishable only by message text; a local deadline keeps
+  the retryable-vs-transport classification structural. The connection
+  loop treats the wrapped form like any transport drop, so a publish
+  failure inside the on-connect refresh recycles the session instead of
+  killing the reconnect loop.
+
 ## 0.18.0
 
 A debt-payoff release from a clean-sheet review of the whole library,

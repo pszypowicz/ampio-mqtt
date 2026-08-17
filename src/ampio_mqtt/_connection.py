@@ -18,7 +18,7 @@ from contextlib import suppress
 
 import aiomqtt
 
-from .errors import AmpioAuthError, AmpioConnectionError
+from .errors import AmpioAuthError, AmpioConnectionError, AmpioTimeoutError
 from .models import ConnectionStats
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,6 +30,17 @@ _AUTH_REJECTED = "Authentication rejected by Ampio broker"
 # Subscribing at QoS 1 keeps the broker's at-least-once delivery leg; the
 # default QoS 0 would downgrade it to at-most-once (#65).
 _SUBSCRIBE_QOS = 1
+# Publishes go out at QoS 1 too: the awaited publish then completes on the
+# broker's PUBACK, so a returned command means "the broker accepted it"
+# rather than "the payload left the socket" (#68). Every publish rides the
+# same path, so commands, scene/event publishes, and discovery requests all
+# get the acknowledged leg.
+_PUBLISH_QOS = 1
+# The PUBACK deadline for a QoS 1 publish. Owned here rather than left to
+# aiomqtt's per-client operation timeout: aiomqtt reports its own timeout as
+# a bare MqttError distinguishable only by message text, while a local
+# deadline maps the case structurally to the retryable AmpioTimeoutError.
+_PUBLISH_TIMEOUT = 5.0
 # MQTT 5 reason codes for a credential rejection: 134 "bad user name or
 # password", 135 "not authorized". paho's VERSION2 callbacks (aiomqtt >= 2.2,
 # hence the pyproject floor) normalize CONNACK rejections to these codes
@@ -154,9 +165,26 @@ class Connection:
             _LOGGER.exception("Ampio connection loop failed")
 
     async def publish(self, topic: str, payload: bytes) -> None:
+        """Publish at QoS 1, returning once the broker acknowledges it.
+
+        Raises ``AmpioConnectionError`` when no session is up or the
+        transport fails mid-publish (the aiomqtt error chained as
+        ``__cause__``), and ``AmpioTimeoutError`` when the broker accepts
+        the session but the PUBACK does not arrive in time - the retryable
+        shape. A consumer never sees an aiomqtt exception type.
+        """
         if self._client is None:
             raise AmpioConnectionError("Not connected")
-        await self._client.publish(topic, payload)
+        try:
+            async with asyncio.timeout(_PUBLISH_TIMEOUT):
+                await self._client.publish(topic, payload, qos=_PUBLISH_QOS)
+        except TimeoutError as err:
+            raise AmpioTimeoutError(
+                f"Broker did not acknowledge publish to {topic} "
+                f"within {_PUBLISH_TIMEOUT}s"
+            ) from err
+        except aiomqtt.MqttError as err:
+            raise AmpioConnectionError(str(err)) from err
 
     async def _run(self) -> None:
         attempt = 0
@@ -203,7 +231,12 @@ class Connection:
                         self._on_message(
                             str(message.topic), _decode_payload(message.payload)
                         )
-            except aiomqtt.MqttError as err:
+            except (aiomqtt.MqttError, AmpioConnectionError) as err:
+                # AmpioConnectionError is publish()'s wrapped form: a failure
+                # inside the on-connected refresh arrives here as one and
+                # recycles the session like any transport drop.
+                # _is_auth_error walks the cause chain, so a wrapped auth
+                # rejection still classifies.
                 self._stats.last_error = str(err)
                 if _is_auth_error(err):
                     # Reconnecting will not help; surface it and stop.
@@ -275,7 +308,9 @@ async def probe(
             timeout=10,
         ) as client:
             await client.subscribe(reply_topic, qos=_SUBSCRIBE_QOS)
-            await client.publish(request_topic, request_payload.encode())
+            await client.publish(
+                request_topic, request_payload.encode(), qos=_PUBLISH_QOS
+            )
             with suppress(TimeoutError):
                 async with asyncio.timeout(timeout):
                     async for message in client.messages:

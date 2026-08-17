@@ -589,11 +589,13 @@ class AmpioClient:
     async def command(self, object_id: int, verb: str, *args: object) -> None:
         """Send ``verb`` (with any args) to an object on the command surface.
 
-        Publishes ``/api/set/<object_id>/<verb>[/<arg>...]`` and returns as soon
-        as the publish completes; the M-SERV applies it asynchronously and the
-        resulting state arrives through the normal object listeners (typically
-        within a few hundred ms). Nothing is echoed back for an unknown verb or
-        an object that cannot perform it - the M-SERV simply ignores it.
+        Publishes ``/api/set/<object_id>/<verb>[/<arg>...]`` at QoS 1 and
+        returns once the broker acknowledges it - "the broker accepted the
+        command", not "the M-SERV applied it". The M-SERV applies it
+        asynchronously and the resulting state arrives through the normal
+        object listeners (typically within a few hundred ms). Nothing is echoed
+        back for an unknown verb or an object that cannot perform it - the
+        M-SERV simply ignores it.
 
         This is the escape hatch for the verbs the library does not wrap: the
         vocabulary is the M-SERV's own, so anything its HTTP API accepts works
@@ -603,6 +605,10 @@ class AmpioClient:
         Commands are grant-scoped exactly as reads are: on a standard
         account a command for an object outside the grant is dropped with
         no effect and no reply, while an administrator commands any object.
+
+        Raises ``AmpioConnectionError`` when the broker is unreachable and
+        ``AmpioTimeoutError`` when it fails to acknowledge in time; never an
+        aiomqtt exception type.
         """
         await self._connection.publish(
             command_topic(self._username),

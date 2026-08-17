@@ -14,7 +14,7 @@ class _RecordingClient:
     def __init__(self) -> None:
         self.published: list[tuple[str, bytes]] = []
 
-    async def publish(self, topic: str, payload: bytes = b"") -> None:
+    async def publish(self, topic: str, payload: bytes = b"", qos: int = 0) -> None:
         self.published.append((topic, payload))
 
 

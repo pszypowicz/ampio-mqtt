@@ -71,8 +71,12 @@ class FakeMqttClient:
     # Raised from the message stream once the scripted messages are consumed,
     # simulating the broker dropping an established connection.
     stream_error: BaseException | None = None
+    # Per-publish outcomes consumed left to right; None publishes fine. Lets
+    # a test script "the first refresh publish fails mid-session".
+    publish_errors: ClassVar[list[BaseException | None]] = []
     scripted_messages: ClassVar[list[_Message]] = []
     published: ClassVar[list[tuple[str, bytes]]] = []
+    published_qos: ClassVar[list[int]] = []
     subscribed: ClassVar[list[str]] = []
     subscribed_qos: ClassVar[list[int]] = []
     # Per-topic SUBACK reason codes; topics absent here are granted (0).
@@ -84,8 +88,10 @@ class FakeMqttClient:
         cls.enter_errors = []
         cls.enter_delay = 0.0
         cls.stream_error = None
+        cls.publish_errors = []
         cls.scripted_messages = []
         cls.published = []
+        cls.published_qos = []
         cls.subscribed = []
         cls.subscribed_qos = []
         cls.suback_codes = {}
@@ -119,8 +125,16 @@ class FakeMqttClient:
             FakeMqttClient.subscribed_qos.append(q)
         return [FakeMqttClient.suback_codes.get(t, 0) for t, _q in entries]
 
-    async def publish(self, topic: str, payload: bytes = b"") -> None:
+    async def publish(self, topic: str, payload: bytes = b"", qos: int = 0) -> None:
+        error = (
+            FakeMqttClient.publish_errors.pop(0)
+            if FakeMqttClient.publish_errors
+            else None
+        )
+        if error is not None:
+            raise error
         FakeMqttClient.published.append((topic, payload))
+        FakeMqttClient.published_qos.append(qos)
 
     @property
     def messages(self) -> FakeMqttClient:
@@ -161,8 +175,10 @@ async def test_connection_returns_server_info_on_happy_path() -> None:
     # The M-SERV publishes at QoS 1; a QoS 0 subscription would let the
     # broker downgrade its delivery leg to at-most-once (#65).
     assert FakeMqttClient.subscribed_qos == [1]
-    # The info request publish was sent with an empty body.
+    # The info request publish was sent with an empty body, acknowledged by
+    # the broker (QoS 1, #68).
     assert (f"ampio/control/{USER}/info", b"") in FakeMqttClient.published
+    assert FakeMqttClient.published_qos == [1]
 
 
 async def test_connection_reports_a_restricted_account_before_setup() -> None:
@@ -296,8 +312,10 @@ async def test_start_drives_full_discovery_through_mocked_broker() -> None:
             INFO_TOPIC,
             f"ampio/fromDB/{USER}/ob/+/state",
         }.issubset(set(FakeMqttClient.subscribed))
-        # Every runtime subscription asks for QoS 1 (#65).
+        # Every runtime subscription asks for QoS 1 (#65), and every
+        # discovery request publish goes out at QoS 1 (#68).
         assert set(FakeMqttClient.subscribed_qos) == {1}
+        assert set(FakeMqttClient.published_qos) == {1}
     finally:
         await client.stop()
 
@@ -456,6 +474,40 @@ async def test_transient_outage_leaves_auth_failure_unset() -> None:
             assert client.auth_failure is None
         finally:
             await client.stop()
+
+
+async def test_publish_failure_during_refresh_recycles_the_session() -> None:
+    """A broker failure inside the on-connect refresh reconnects instead of
+    killing the loop: publish() wraps aiomqtt errors, and the runner treats
+    the wrapped form like any transport drop."""
+    FakeMqttClient.publish_errors = [aiomqtt.MqttError("broken pipe")]
+    client = AmpioClient("h", username=USER, reconnect_interval=0.0)
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        try:
+            async with asyncio.timeout(2.0):
+                while not (client.available and client.stats.reconnect_count >= 1):
+                    await asyncio.sleep(0.01)
+            assert client.stats.last_error == "broken pipe"
+            assert client.auth_failure is None
+        finally:
+            await client.stop()
+
+
+async def test_unacknowledged_publish_raises_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PUBACK that never arrives surfaces as the retryable AmpioTimeoutError."""
+
+    class _HangingClient:
+        async def publish(self, topic: str, payload: bytes = b"", qos: int = 0) -> None:
+            await asyncio.sleep(3600)
+
+    monkeypatch.setattr("ampio_mqtt._connection._PUBLISH_TIMEOUT", 0.05)
+    client = AmpioClient("h", username=USER)
+    client._connection._client = _HangingClient()  # type: ignore[assignment]
+    with pytest.raises(AmpioTimeoutError):
+        await client.send_event(9)
 
 
 async def test_consumer_stop_is_not_an_availability_event() -> None:

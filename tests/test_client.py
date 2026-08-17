@@ -331,7 +331,7 @@ async def test_reconnect_count_increments_on_reconnect() -> None:
         async def subscribe(self, topic, qos=0):  # pragma: no cover - trivial
             return [0 for _ in topic] if isinstance(topic, list) else [0]
 
-        async def publish(self, _topic, _payload=b""):
+        async def publish(self, _topic, _payload=b"", qos=0):
             return None
 
         def __aiter__(self):

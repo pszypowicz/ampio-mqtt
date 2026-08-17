@@ -25,7 +25,7 @@ class _FakeMqttClient:
     def __init__(self) -> None:
         self.published: list[tuple[str, bytes]] = []
 
-    async def publish(self, topic: str, payload: bytes) -> None:
+    async def publish(self, topic: str, payload: bytes, qos: int = 0) -> None:
         self.published.append((topic, payload))
 
 
@@ -143,12 +143,13 @@ async def test_fetch_locations_clears_state_between_calls() -> None:
     assert r2 == {2: "B"}
 
 
-async def test_fetch_locations_propagates_publish_failure() -> None:
+async def test_fetch_locations_wraps_publish_failure() -> None:
     class _RaisingClient:
-        async def publish(self, topic: str, payload: bytes) -> None:
+        async def publish(self, topic: str, payload: bytes, qos: int = 0) -> None:
             raise aiomqtt.MqttError("publish failed")
 
     client = AmpioClient("host", username="u", password="p")
     client._connection._client = _RaisingClient()  # type: ignore[assignment]
-    with pytest.raises(aiomqtt.MqttError):
+    with pytest.raises(AmpioConnectionError) as excinfo:
         await client.fetch_locations(timeout=1.0)
+    assert isinstance(excinfo.value.__cause__, aiomqtt.MqttError)

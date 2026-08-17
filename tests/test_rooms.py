@@ -107,7 +107,7 @@ class _FakeMqttClient:
     def __init__(self) -> None:
         self.published: list[tuple[str, bytes]] = []
 
-    async def publish(self, topic: str, payload: bytes) -> None:
+    async def publish(self, topic: str, payload: bytes, qos: int = 0) -> None:
         self.published.append((topic, payload))
 
 
@@ -274,15 +274,17 @@ async def test_fetch_rooms_clears_state_between_calls() -> None:
     assert r2 == {20: "B"}
 
 
-async def test_fetch_rooms_propagates_publish_failure() -> None:
-    """If the broker raises while publishing the request, we surface it."""
+async def test_fetch_rooms_wraps_publish_failure() -> None:
+    """A broker failure during the request publish surfaces as the library's
+    own error type, with the aiomqtt original preserved as the cause."""
 
     class _RaisingClient:
-        async def publish(self, topic: str, payload: bytes) -> None:
+        async def publish(self, topic: str, payload: bytes, qos: int = 0) -> None:
             raise aiomqtt.MqttError("publish failed")
 
     client = AmpioClient("host", username="u", password="p")
     client._connection._client = _RaisingClient()  # type: ignore[assignment]
 
-    with pytest.raises(aiomqtt.MqttError):
+    with pytest.raises(AmpioConnectionError) as excinfo:
         await client.fetch_rooms(timeout=1.0)
+    assert isinstance(excinfo.value.__cause__, aiomqtt.MqttError)
