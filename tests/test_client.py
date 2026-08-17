@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import fields
 from unittest.mock import patch
 
@@ -126,7 +127,9 @@ def test_devices_populate_modules_with_model_and_versions() -> None:
     assert client.modules[99].model is None
 
 
-def test_state_updates_module_last_seen_from_on_field() -> None:
+def test_state_updates_module_last_seen_with_local_receive_time() -> None:
+    """A live push marks the module seen at local receive time - the server's
+    `on` date is state provenance, never liveness evidence (one clock only)."""
     client = _client()
     client._feed_message(
         f"ampio/fromDB/{USER}/config/devices",
@@ -146,24 +149,21 @@ def test_state_updates_module_last_seen_from_on_field() -> None:
     )
     assert client.modules[17].last_seen is None
 
+    before = time.time()
     client._feed_message(
         f"ampio/fromDB/{USER}/ob/41/state",
         b'{"state": "22.5", "on": 1779565263813}',
     )
-    # 1779565263813 ms -> 1779565263.813 s
-    assert client.modules[17].last_seen == 1779565263.813
+    first_seen = client.modules[17].last_seen
+    assert first_seen is not None and before <= first_seen <= time.time()
 
-    # A later push moves last_seen forward; an older one does not regress it.
-    client._feed_message(
-        f"ampio/fromDB/{USER}/ob/41/state",
-        b'{"state": "23.0", "on": 1779565999000}',
-    )
-    assert client.modules[17].last_seen == 1779565999.0
+    # Another push refreshes it, regardless of its server date being older.
     client._feed_message(
         f"ampio/fromDB/{USER}/ob/41/state",
         b'{"state": "21.0", "on": 1779560000000}',
     )
-    assert client.modules[17].last_seen == 1779565999.0
+    later_seen = client.modules[17].last_seen
+    assert later_seen is not None and later_seen >= first_seen
 
 
 def test_state_push_with_numeric_state_is_stored_as_string() -> None:
@@ -194,8 +194,10 @@ def test_state_push_with_numeric_state_is_stored_as_string() -> None:
     assert isinstance(value, str)
 
 
-def test_states_snapshot_seeds_value_and_last_seen() -> None:
-    """The bulk states reply seeds value and bumps module last_seen."""
+def test_states_snapshot_seeds_value_without_touching_last_seen() -> None:
+    """The bulk states reply seeds the value but is not liveness evidence:
+    it replays DB state that may be arbitrarily old, so last_seen stays
+    None until a live message arrives."""
     client = _client()
     client._feed_message(
         f"ampio/fromDB/{USER}/config/devices",
@@ -227,7 +229,8 @@ def test_states_snapshot_seeds_value_and_last_seen() -> None:
         ),
     )
     assert client.objects[41].value == "22.5"
-    assert client.modules[17].last_seen == 1779560000.0
+    assert client.objects[41].updated_at == 1779560000.0
+    assert client.modules[17].last_seen is None
 
 
 def test_states_snapshot_does_not_overwrite_live_value() -> None:
@@ -265,8 +268,9 @@ def test_states_snapshot_creates_placeholder_for_unknown_object() -> None:
     assert client.objects[999].kind.key == "value"
 
 
-def test_details_seeds_module_last_seen_from_stan_json() -> None:
-    """The `on` timestamp inside stan_json seeds the module's last_seen."""
+def test_details_stan_json_seed_does_not_touch_last_seen() -> None:
+    """The catalogue's stan_json seed carries state, not liveness - like the
+    bulk snapshot, it replays DB rows and leaves last_seen alone."""
     client = _client()
     client._feed_message(
         f"ampio/fromDB/{USER}/config/devices",
@@ -286,7 +290,7 @@ def test_details_seeds_module_last_seen_from_stan_json() -> None:
         ),
     )
     assert client.objects[41].value == "22.5"
-    assert client.modules[17].last_seen == 1779560000.0
+    assert client.modules[17].last_seen is None
 
 
 def test_info_parses_only_safe_fields() -> None:

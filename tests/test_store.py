@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 import pytest
 
@@ -309,3 +310,99 @@ def test_on_demand_reply_parseability_gates_parsed(
 
     good = store.apply(topic, '{"List": []}')
     assert good.parsed is True
+
+
+def _raw_proven_flag(store: AmpioStore, mac: int = 0xCAFE) -> None:
+    """Discover one flaga (ob/10 on module 1, channel f/3) and land a raw edge."""
+    store.apply(DEVICES_TOPIC, _devices(mac))
+    store.apply(DETAILS_TOPIC, _flaga_details((10, 1)))
+    store.apply(f"ampio/from/{mac:X}/state/f/3", "1")
+
+
+def _snapshot(state: str, on_ms: int | None) -> str:
+    stan: dict[str, object] = {"state": state}
+    if on_ms is not None:
+        stan["on"] = on_ms
+    return json.dumps({"List": [{"id": 10, "stan_json": json.dumps(stan)}]})
+
+
+STATES_TOPIC = f"ampio/fromDB/{USER}/data/states"
+
+
+def test_server_dated_snapshot_never_regresses_a_local_dated_raw_edge() -> None:
+    """The raw tree is undated, so a raw edge is stamped with the local
+    clock. A snapshot's server date is incomparable to that - on an unsynced
+    M-SERV the skew is unbounded - so it must never decide against the edge,
+    however far in the future it reads."""
+    store = _store()
+    _raw_proven_flag(store)
+    far_future = int((time.time() + 7200) * 1000)
+    applied = store.apply(STATES_TOPIC, _snapshot("0", far_future))
+    assert applied.objects == []
+    assert store.objects[10].value == "1"
+
+
+def test_echo_anchors_a_raw_edge_to_the_server_clock() -> None:
+    """The per-object echo of a raw edge carries the server `on` date. It is
+    dropped as a notification (the raw value is authoritative) but its date
+    re-anchors the object, after which snapshot supersession is a same-clock
+    comparison: older server dates lose, newer ones win - resync intact."""
+    store = _store()
+    _raw_proven_flag(store)
+    echo_on = int((time.time() + 7200) * 1000)  # skewed server clock
+    applied = store.apply(
+        f"ampio/fromDB/{USER}/ob/10/state",
+        json.dumps({"state": "255", "on": echo_on}),
+    )
+    assert applied.objects == []  # no re-notify
+    obj = store.objects[10]
+    assert obj.value == "1"  # raw form kept
+    assert obj.updated_at == echo_on / 1000.0  # anchored
+
+    stale = store.apply(STATES_TOPIC, _snapshot("0", echo_on - 10_000))
+    assert stale.objects == [] and obj.value == "1"
+
+    resync = store.apply(STATES_TOPIC, _snapshot("0", echo_on + 10_000))
+    assert [o.id for o in resync.objects] == [10]
+    assert obj.value == "0"
+
+
+def test_a_dated_snapshot_beats_an_undated_seed() -> None:
+    store = _store()
+    store.apply(STATES_TOPIC, _snapshot("5", None))
+    assert store.objects[10].value == "5"
+    assert store.objects[10].updated_at is None
+    applied = store.apply(STATES_TOPIC, _snapshot("7", 1779560000000))
+    assert [o.id for o in applied.objects] == [10]
+    assert store.objects[10].value == "7"
+
+
+def test_echo_of_an_earlier_edge_does_not_disturb_a_fast_toggle() -> None:
+    """Edge 1, edge 2, then the echo of edge 1: the value must stay edge 2's
+    and nothing may notify - the echo contributes only its timestamp."""
+    store = _store()
+    _raw_proven_flag(store)
+    store.apply(f"ampio/from/{0xCAFE:X}/state/f/3", "0")  # edge 2
+    echo_on = int(time.time() * 1000)
+    applied = store.apply(
+        f"ampio/fromDB/{USER}/ob/10/state",
+        json.dumps({"state": "255", "on": echo_on}),  # echo of edge 1
+    )
+    assert applied.objects == []
+    assert store.objects[10].value == "0"
+    assert store.objects[10].updated_at == echo_on / 1000.0
+
+
+def test_live_messages_touch_last_seen_snapshots_do_not() -> None:
+    store = _store()
+    store.apply(DEVICES_TOPIC, _devices(0xCAFE))
+    store.apply(DETAILS_TOPIC, _flaga_details((10, 1)))
+    assert store.modules[1].last_seen is None
+
+    store.apply(STATES_TOPIC, _snapshot("1", 1779560000000))
+    assert store.modules[1].last_seen is None
+
+    before = time.time()
+    store.apply(f"ampio/from/{0xCAFE:X}/state/f/3", "1")
+    seen = store.modules[1].last_seen
+    assert seen is not None and before <= seen <= time.time()

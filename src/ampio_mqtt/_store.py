@@ -33,6 +33,13 @@ from .models import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Clock domains for `AmpioObject.updated_at`: the M-SERV's own clock (`on`
+# fields) or the local receive clock (the undated raw tree). Supersession
+# only ever compares timestamps within one domain - the two clocks can
+# disagree by an arbitrary RTC error on an unsynced M-SERV.
+_SERVER = "server"
+_LOCAL = "local"
+
 
 @dataclass(slots=True)
 class Applied:
@@ -67,6 +74,10 @@ class AmpioStore:
         # leads the per-object echo, so once an input is raw-proven the slower
         # echo is dropped rather than re-notifying with a stale value.
         self._raw_seen_ids: set[int] = set()
+        # Which clock each object's `updated_at` came from (_SERVER/_LOCAL).
+        # Entries follow the objects; whatever removes an object must drop
+        # its entry here too.
+        self._clock_by_id: dict[int, str] = {}
         # Full-catalogue `{object_id: params}` from `data/params_devices`, kept
         # because the app-sync catalogue carries no params column and the two
         # replies arrive in no fixed order.
@@ -243,9 +254,22 @@ class AmpioStore:
         if update is None:
             return
         if update.id in self._raw_seen_ids:
-            # The faster raw-channel path is authoritative for this input; drop
-            # the slower per-object echo to avoid a double notify and a stale
-            # echo clobbering a fresh raw edge.
+            # The faster raw-channel path is authoritative for this input, so
+            # the echo's value must neither re-notify nor clobber a newer
+            # edge. Its server timestamp is still harvested: the raw tree is
+            # undated, so the echo is what anchors a raw-proven object to the
+            # server clock and makes snapshot supersession comparable.
+            obj = self.state.objects.get(update.id)
+            if obj is not None and update.on_ms:
+                reported_at = float(update.on_ms) / 1000.0
+                if (
+                    self._clock_by_id.get(update.id) == _LOCAL
+                    or obj.updated_at is None
+                    or reported_at >= obj.updated_at
+                ):
+                    obj.updated_at = reported_at
+                    self._clock_by_id[update.id] = _SERVER
+                self._touch_module(obj.device_id)
             return
         obj = self.state.objects.get(update.id)
         if obj is None:
@@ -256,8 +280,13 @@ class AmpioStore:
         obj.value = update.value
         if update.tilt is not None:
             obj.tilt_position = update.tilt
-        obj.updated_at = float(update.on_ms) / 1000.0 if update.on_ms else time.time()
-        self._touch_module(obj.device_id, update.on_ms)
+        if update.on_ms:
+            obj.updated_at = float(update.on_ms) / 1000.0
+            self._clock_by_id[update.id] = _SERVER
+        else:
+            obj.updated_at = time.time()
+            self._clock_by_id[update.id] = _LOCAL
+        self._touch_module(obj.device_id)
         self._record(obj)
 
     def _handle_raw_channel(self, topic: str, payload: str) -> None:
@@ -271,7 +300,8 @@ class AmpioStore:
         self._raw_seen_ids.add(oid)
         obj.value = payload.strip()
         obj.updated_at = time.time()
-        self._touch_module(obj.device_id, None)
+        self._clock_by_id[oid] = _LOCAL
+        self._touch_module(obj.device_id)
         self._record(obj)
 
     def _handle_diagnostics(self, topic: str, payload: str) -> None:
@@ -308,7 +338,6 @@ class AmpioStore:
         seed = _protocol.parse_stan_json(stan_json)
         if seed is None:
             return False
-        self._touch_module(obj.device_id, seed.on_ms)
         reported_at = None if seed.on_ms is None else float(seed.on_ms) / 1000.0
         if seed.value is None or not self._supersedes(obj, reported_at):
             return False
@@ -319,32 +348,47 @@ class AmpioStore:
         if seed.tilt is not None:
             obj.tilt_position = seed.tilt
         obj.updated_at = reported_at
+        if reported_at is None:
+            self._clock_by_id.pop(obj.id, None)
+        else:
+            self._clock_by_id[obj.id] = _SERVER
         return changed
 
-    @staticmethod
-    def _supersedes(obj: AmpioObject, reported_at: float | None) -> bool:
-        """Whether a snapshot report should replace what `obj` already holds.
+    def _supersedes(self, obj: AmpioObject, reported_at: float | None) -> bool:
+        """Whether a server-dated snapshot report should replace what `obj` holds.
 
-        Undated reports only fill a gap; a dated one wins from the same instant
-        onwards. Both sides are wall-clock epochs - the M-SERV's `on` field and,
-        for the undated raw channel, local receive time.
+        Undated reports only fill a gap. A dated report beats an undated
+        value, and beats a server-dated one from the same instant onwards -
+        both sides are then the M-SERV's own clock, so RTC skew cancels out.
+        A locally-dated value (a raw edge whose anchoring echo has not
+        arrived yet) is never compared against the server clock: the two can
+        disagree by an arbitrary RTC error, so the report is rejected and
+        the echo, due within ~150 ms, re-anchors the object for the next
+        comparison.
         """
         if obj.value is None:
             return True
-        if reported_at is None or obj.updated_at is None:
+        if reported_at is None:
+            return False
+        if obj.updated_at is None:
+            return True
+        if self._clock_by_id.get(obj.id) == _LOCAL:
             return False
         return reported_at >= obj.updated_at
 
-    def _touch_module(self, module_id: int | None, on_ms: float | None) -> None:
-        """Mark the module as having reported now (or at `on_ms`, server time)."""
+    def _touch_module(self, module_id: int | None) -> None:
+        """Mark the module as having produced live evidence just now.
+
+        One clock only: the local receive time, because a live message is by
+        definition received "now". Snapshot and catalogue seeds do not touch
+        this - they replay DB state that may be arbitrarily old, which says
+        nothing about whether the module is alive.
+        """
         if module_id is None:
             return
         module = self.state.modules.get(module_id)
-        if module is None:
-            return
-        ts = float(on_ms) / 1000.0 if on_ms is not None and on_ms > 0 else time.time()
-        if module.last_seen is None or ts > module.last_seen:
-            module.last_seen = ts
+        if module is not None:
+            module.last_seen = time.time()
 
     def _rebuild_indexes(self) -> None:
         """Rebuild the routing tables for the raw tree.

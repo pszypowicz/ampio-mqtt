@@ -43,10 +43,33 @@ upgrade path.
   check would miss), and 2.5.0 fixes `__aexit__` exception handling and the
   payload type contract.
 
-> > > > > > > b7c7dbd (auth detection: read the reason code, not the error text)
+- `AmpioModule.last_seen` is now one clock: the local receive time of the
+  last live message evidencing the module (a state push or raw edge for one
+  of its objects, or its own diagnostics broadcast). It previously
+  preferred the server's `on` date and fell back to the local clock, so on
+  an M-SERV with a skewed RTC it could read hours off, and snapshot seeds
+  could stamp it with dates for modules that had not actually spoken.
+  Snapshot and catalogue seeds no longer touch it - they replay DB state
+  that may be arbitrarily old, which says nothing about whether the module
+  is alive - so it stays `None` until the first live message after
+  `start()`.
 
 ### Fixed
 
+- A bulk-snapshot value can no longer regress a fresh raw-channel edge on
+  an M-SERV whose clock disagrees with the local one. `updated_at` used to
+  mix two clocks - the server's `on` date on snapshot and push paths, the
+  local receive time on the undated raw path - and supersession compared
+  them directly, so with the server clock ahead a reconnect snapshot
+  carrying the pre-edge value could overwrite a fresh input edge
+  (reproduced live: a 2-hour skew flipped a just-raised flag back off).
+  The store now tracks which clock stamped each object and never compares
+  across them: a server-dated report is rejected while an object is
+  local-anchored, and the per-object echo that follows every raw edge by
+  ~150 ms - dropped as a notification, as before - now donates its server
+  `on` date to re-anchor the object, so post-outage resync keeps working
+  through same-clock comparisons that cancel any RTC skew. A dated report
+  now also beats an undated seeded value.
 - The on-demand fetches (`fetch_rooms()`, `fetch_scenes()`,
   `fetch_locations()`) now correlate each caller with its reply through a
   per-call future instead of clearing shared latches and reading a shared
