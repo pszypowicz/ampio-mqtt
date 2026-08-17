@@ -51,6 +51,21 @@ upgrade path.
   check would miss), and 2.5.0 fixes `__aexit__` exception handling and the
   payload type contract.
 
+- All subscriptions go out in one SUBSCRIBE packet per (re)connect instead
+  of fifteen sequential round trips, and the SUBACK verdicts are read
+  instead of discarded: a filter the broker rejects logs a warning naming
+  the topic and reason code and lands in the new
+  `ConnectionStats.subscribe_failures` (topic to code, replaced on every
+  connect), while the connection stays up - a standard account being
+  denied the admin-only raw tree is expected and already degrades to the
+  per-object path. Previously a rejected topic produced a "successful"
+  connection that was silently deaf on it. Live-verified against the
+  baseline server: a standard account receives reason code 128 for all
+  four `ampio/from/...` filters (the Ampio broker rejects unauthorized
+  filters in the SUBACK even over MQTT 3.1.1, where stock mosquitto
+  grants silently), so `subscribe_failures` doubles as per-connect
+  confirmation of the account's raw-tree access.
+
 - `AmpioModule.last_seen` is now one clock: the local receive time of the
   last live message evidencing the module (a state push or raw edge for one
   of its objects, or its own diagnostics broadcast). It previously

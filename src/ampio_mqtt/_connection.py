@@ -171,8 +171,26 @@ class Connection:
                     timeout=10,
                 ) as client:
                     self._client = client
-                    for topic in self._topics:
-                        await client.subscribe(topic, qos=_SUBSCRIBE_QOS)
+                    # One SUBSCRIBE packet for the whole set - and the SUBACK
+                    # verdicts are read: a broker may reject individual
+                    # filters (the Ampio raw tree is admin-only), and a
+                    # rejected topic that is never diagnosed reads as a
+                    # mysteriously silent connection.
+                    codes = await client.subscribe(
+                        [(t, _SUBSCRIBE_QOS) for t in self._topics]
+                    )
+                    self._stats.subscribe_failures = {
+                        topic: _code_value(code)
+                        for topic, code in zip(self._topics, codes, strict=True)
+                        if _code_value(code) >= 0x80
+                    }
+                    for topic, code in self._stats.subscribe_failures.items():
+                        _LOGGER.warning(
+                            "Ampio broker rejected subscription to %s "
+                            "(reason code %d); no messages will arrive on it",
+                            topic,
+                            code,
+                        )
                     if self._stats.started_at is None:
                         self._stats.started_at = time.time()
                     else:
@@ -291,6 +309,18 @@ def _is_auth_error(err: BaseException) -> bool:
             return True
         current = current.__cause__
     return False
+
+
+def _code_value(code: object) -> int:
+    """A SUBACK entry as an int, whichever shape paho handed over.
+
+    VERSION2 callbacks deliver ``ReasonCode`` (v5-normalized on every wire
+    protocol); older paths deliver plain granted-QoS ints. Both put the
+    failure bit at 0x80. An unreadable entry counts as failed rather than
+    granted.
+    """
+    value = getattr(code, "value", code)
+    return value if isinstance(value, int) else 0x80
 
 
 def _decode_payload(payload: object) -> str:

@@ -301,3 +301,9 @@ class ConnectionStats:
     last_error: str | None = None
     started_at: float | None = None  # epoch seconds of first successful connect
     last_message_at: float | None = None  # epoch seconds of last MQTT message in
+    # Subscriptions the broker rejected in the SUBACK of the latest
+    # (re)connect: topic -> reason code. Replaced wholesale on every connect,
+    # so an empty dict means the current session got everything it asked for.
+    # A rejection does not fail the connection - the admin-only raw tree is
+    # expected to be denied to a standard account on brokers that enforce it.
+    subscribe_failures: dict[str, int] = field(default_factory=dict)

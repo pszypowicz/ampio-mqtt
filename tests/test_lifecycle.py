@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any, ClassVar, Self
 from unittest.mock import patch
 
@@ -74,6 +75,8 @@ class FakeMqttClient:
     published: ClassVar[list[tuple[str, bytes]]] = []
     subscribed: ClassVar[list[str]] = []
     subscribed_qos: ClassVar[list[int]] = []
+    # Per-topic SUBACK reason codes; topics absent here are granted (0).
+    suback_codes: ClassVar[dict[str, int]] = {}
 
     @classmethod
     def reset(cls) -> None:
@@ -85,6 +88,7 @@ class FakeMqttClient:
         cls.published = []
         cls.subscribed = []
         cls.subscribed_qos = []
+        cls.suback_codes = {}
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._messages_queue: asyncio.Queue[_Message] = asyncio.Queue()
@@ -106,9 +110,14 @@ class FakeMqttClient:
     async def __aexit__(self, *exc: object) -> bool:
         return False
 
-    async def subscribe(self, topic: str, qos: int = 0) -> None:
-        FakeMqttClient.subscribed.append(topic)
-        FakeMqttClient.subscribed_qos.append(qos)
+    async def subscribe(
+        self, topic: str | list[tuple[str, int]], qos: int = 0
+    ) -> list[int]:
+        entries = topic if isinstance(topic, list) else [(topic, qos)]
+        for t, q in entries:
+            FakeMqttClient.subscribed.append(t)
+            FakeMqttClient.subscribed_qos.append(q)
+        return [FakeMqttClient.suback_codes.get(t, 0) for t, _q in entries]
 
     async def publish(self, topic: str, payload: bytes = b"") -> None:
         FakeMqttClient.published.append((topic, payload))
@@ -495,6 +504,43 @@ async def test_wait_for_initial_discovery_returns_false_on_timeout() -> None:
         await client.start(timeout=2.0, discovery_timeout=0.1)
         try:
             assert await client.wait_for_initial_discovery(timeout=0.1) is False
+        finally:
+            await client.stop()
+
+
+# --- subscription verdicts -------------------------------------------------
+
+
+async def test_rejected_subscriptions_are_warned_and_recorded(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A SUBACK failure code must surface in the log and in the stats while
+    the connection stays up - a denied raw-tree topic is expected for a
+    standard account, and silence would read as a mysteriously dead topic."""
+    denied = "ampio/from/+/state/f/+"
+    FakeMqttClient.suback_codes = {denied: 0x87}
+    client = AmpioClient("h", username=USER, reconnect_interval=0.05)
+    with (
+        patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient),
+        caplog.at_level(logging.WARNING, logger="ampio_mqtt._connection"),
+    ):
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        try:
+            assert client.available is True
+            assert client.stats.subscribe_failures == {denied: 0x87}
+        finally:
+            await client.stop()
+    assert any(
+        denied in r.getMessage() and "135" in r.getMessage() for r in caplog.records
+    )
+
+
+async def test_granted_subscriptions_leave_no_failures() -> None:
+    client = AmpioClient("h", username=USER, reconnect_interval=0.05)
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        try:
+            assert client.stats.subscribe_failures == {}
         finally:
             await client.stop()
 
