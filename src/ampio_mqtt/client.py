@@ -154,6 +154,23 @@ class AmpioClient:
         return self._store.server_info
 
     @property
+    def colliding_macs(self) -> frozenset[int]:
+        """Effective bus macs the devices catalogue reports on 2+ modules.
+
+        Empty on a correctly commissioned install; nothing on the wire
+        enforces uniqueness, so a misconfigured or mid-commissioning install
+        can collide. A colliding mac makes `AmpioModule.mac` - the
+        recommended replacement-stable module key - ambiguous: a consumer
+        keying devices on it should skip or disambiguate these modules
+        instead of silently merging them. While a mac collides the library
+        routes no raw-channel input events or diagnostics broadcasts for it
+        (the sender is unknowable); affected inputs still update through the
+        per-object state path. A warning naming the modules is logged when
+        the set changes.
+        """
+        return self._store.colliding_macs
+
+    @property
     def mserv_id(self) -> int | None:
         """Resolve the module id of the M-SERV server.
 

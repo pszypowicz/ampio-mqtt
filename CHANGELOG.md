@@ -16,11 +16,9 @@ upgrade path.
 
 ## 0.17.0
 
-Adds the numeric interpretation of `value` next to the boolean `is_on`, so
-consumers no longer parse `obj.value` with a bare `float()` themselves.
-Reported from the Home Assistant integration (#57), where a `nan` state push
-made the entity write raise and froze the entity at its previous value,
-because HA rejects non-finite sensor states.
+Addresses feedback from the Home Assistant integration: the numeric half of
+value interpretation (#57) and module mac collisions being kept silently
+(#58).
 
 ### Added
 
@@ -28,7 +26,23 @@ because HA rejects non-finite sensor states.
   `value` is missing, unparseable, or non-finite. A bare `float()` accepts
   `"nan"`, `"inf"` and overflowing forms like `"1e999"`, which a sensor
   reading should never produce, so the guard lives here with the rest of the
-  protocol-value interpretation.
+  protocol-value interpretation. Reported from the Home Assistant
+  integration, where a `nan` state push made the entity write raise and
+  froze the entity at its previous value (#57).
+- `AmpioClient.colliding_macs`: the effective bus macs the devices catalogue
+  reports on more than one module, plus a warning naming the affected
+  modules when the set changes. Nothing on the wire enforces mac
+  uniqueness, and a consumer keying devices on `AmpioModule.mac` - the
+  recommended replacement-stable module key - would otherwise silently
+  merge two modules into one (#58).
+
+### Changed
+
+- A colliding mac no longer routes raw-channel input events or diagnostics
+  broadcasts: the sender is unknowable, and last-writer-wins attribution
+  silently corrupted an arbitrary module's supply voltage, temperature, and
+  input state. Affected inputs still update through the per-object state
+  path, exactly as they do on the standard account tier (#58).
 
 ## 0.16.0
 

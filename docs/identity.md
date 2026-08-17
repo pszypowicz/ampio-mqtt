@@ -19,6 +19,15 @@ The M-SERV's default `mac` is `1`, which is not unique. Treat `mac` as
 unique _within a single install_ (the user assigns the overrides), not
 globally.
 
+Nothing on the wire enforces that uniqueness, so a misconfigured or
+mid-commissioning install can deliver a catalogue where two modules share
+a `mac`. `AmpioClient.colliding_macs` reports the affected values and a
+warning naming the modules is logged when the set changes; a consumer
+keying devices on `mac` should skip or disambiguate those modules rather
+than merge them. While a `mac` collides the library routes no raw-channel
+input events or diagnostics broadcasts for it - the sender is unknowable -
+and affected inputs update through the per-object state path instead.
+
 ## Objects
 
 | Field                     | Stable across module replacement?                                                                                                                                        | Notes |
