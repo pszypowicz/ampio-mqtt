@@ -18,6 +18,7 @@ from . import _protocol
 from .const import (
     BASELINE_SERVER_VERSION,
     ENDPOINTS,
+    AccessTier,
     Endpoint,
     classify,
     input_channel_prefix,
@@ -52,6 +53,10 @@ class Applied:
     objects: list[AmpioObject] = field(default_factory=list)
     modules: list[AmpioModule] = field(default_factory=list)
     events: list[AmpioEvent] = field(default_factory=list)
+    # Rows the authoritative catalogue stopped listing, in their final state.
+    # By the time the caller sees these they are gone from the store.
+    removed_objects: list[AmpioObject] = field(default_factory=list)
+    removed_modules: list[AmpioModule] = field(default_factory=list)
 
 
 class AmpioStore:
@@ -143,8 +148,45 @@ class AmpioStore:
         touched = False
         for meta in items:
             touched |= self._merge_metadata(meta)
-        if touched:
+        evicted = self._evict_missing_objects(surface, {meta.id for meta in items})
+        if touched or evicted:
             self._rebuild_indexes()
+        return True
+
+    def _evict_missing_objects(self, surface: str, present: set[int]) -> bool:
+        """Drop objects the authoritative catalogue no longer lists.
+
+        A reply proves absence only when it is complete for the account. The
+        ``config`` catalogue always is - the M-SERV serves it to
+        administrators only, so its arrival is itself the proof. The
+        app-sync catalogue is complete only for a RESTRICTED account (its
+        grant bounds everything the store could ever hold); on the admin
+        tier it is a second, differently-scoped view and must not evict. An
+        empty reply against a populated store is refused outright: no
+        observed server produces one, and honoring it would tell a consumer
+        to drop every entity it has.
+        """
+        if surface == "data/devices":
+            info = self.state.server_info
+            if info is None or info.access_tier is not AccessTier.RESTRICTED:
+                return False
+        missing = [oid for oid in self.state.objects if oid not in present]
+        if not missing:
+            return False
+        if not present:
+            _LOGGER.warning(
+                "Ampio %s catalogue reply is empty while %d objects are known; "
+                "refusing to evict them",
+                surface,
+                len(missing),
+            )
+            return False
+        for oid in missing:
+            obj = self.state.objects.pop(oid)
+            self._params_by_id.pop(oid, None)
+            self._clock_by_id.pop(oid, None)
+            self._raw_seen_ids.discard(oid)
+            self._applied.removed_objects.append(obj)
         return True
 
     def _merge_metadata(self, meta: _protocol.ObjectMetadata) -> bool:
@@ -191,6 +233,20 @@ class AmpioStore:
                 module.supply_voltage = previous.supply_voltage
                 module.temperature = previous.temperature
             self.state.modules[module.id] = module
+        # The module list is admin-only and complete, so its arrival is the
+        # authority to evict what it stopped listing - with the same
+        # empty-reply guard the object catalogues apply.
+        present = {module.id for module in modules}
+        missing = [mid for mid in self.state.modules if mid not in present]
+        if missing and not present:
+            _LOGGER.warning(
+                "Ampio devices reply is empty while %d modules are known; "
+                "refusing to evict them",
+                len(missing),
+            )
+        else:
+            for mid in missing:
+                self._applied.removed_modules.append(self.state.modules.pop(mid))
         self._rebuild_indexes()
         return True
 

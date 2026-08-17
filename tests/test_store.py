@@ -393,6 +393,78 @@ def test_echo_of_an_earlier_edge_does_not_disturb_a_fast_toggle() -> None:
     assert store.objects[10].updated_at == echo_on / 1000.0
 
 
+def test_the_config_catalogue_evicts_what_it_stopped_listing() -> None:
+    store = _store()
+    store.apply(DEVICES_TOPIC, _devices(0xCAFE, 0xBEEF))
+    store.apply(DETAILS_TOPIC, _flaga_details((10, 1), (11, 2)))
+    assert set(store.objects) == {10, 11}
+
+    applied = store.apply(DETAILS_TOPIC, _flaga_details((10, 1)))
+    assert [o.id for o in applied.removed_objects] == [11]
+    assert set(store.objects) == {10}
+
+    # The unchanged catalogue on the next refresh removes nothing further.
+    again = store.apply(DETAILS_TOPIC, _flaga_details((10, 1)))
+    assert again.removed_objects == []
+
+
+def test_the_devices_reply_evicts_missing_modules() -> None:
+    store = _store()
+    store.apply(DEVICES_TOPIC, _devices(0xCAFE, 0xBEEF))
+    applied = store.apply(DEVICES_TOPIC, _devices(0xCAFE))
+    assert [m.id for m in applied.removed_modules] == [2]
+    assert set(store.modules) == {1}
+
+
+def test_an_evicted_objects_raw_channel_no_longer_routes() -> None:
+    store = _store()
+    store.apply(DEVICES_TOPIC, _devices(0xCAFE, 0xBEEF))
+    store.apply(DETAILS_TOPIC, _flaga_details((10, 1), (11, 2)))
+    store.apply(f"ampio/from/{0xBEEF:X}/state/f/3", "1")
+    assert store.objects[11].value == "1"
+
+    store.apply(DETAILS_TOPIC, _flaga_details((10, 1)))
+    applied = store.apply(f"ampio/from/{0xBEEF:X}/state/f/3", "0")
+    assert applied.objects == []
+    assert 11 not in store.objects
+
+
+def test_the_app_sync_catalogue_evicts_only_on_the_restricted_tier() -> None:
+    data_topic = f"ampio/fromDB/{USER}/data/devices"
+    info_topic = f"ampio/fromDB/{USER}/data/info"
+
+    # Admin tier: data/devices is a second view, not the authority.
+    store = _store()
+    store.apply(info_topic, '{"Results": {"mac": 1, "userId": "-1"}}')
+    store.apply(data_topic, _flaga_details((10, 1), (11, 1)))
+    applied = store.apply(data_topic, _flaga_details((10, 1)))
+    assert applied.removed_objects == []
+    assert set(store.objects) == {10, 11}
+
+    # Restricted tier: the grant bounds the store, so the reply is complete
+    # for the account and a vanished row is a revocation.
+    store = _store()
+    store.apply(info_topic, '{"Results": {"mac": 1, "userId": "4"}}')
+    store.apply(data_topic, _flaga_details((10, 1), (11, 1)))
+    applied = store.apply(data_topic, _flaga_details((10, 1)))
+    assert [o.id for o in applied.removed_objects] == [11]
+    assert set(store.objects) == {10}
+
+
+def test_an_empty_catalogue_reply_never_mass_evicts(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = _store()
+    store.apply(DEVICES_TOPIC, _devices(0xCAFE))
+    store.apply(DETAILS_TOPIC, _flaga_details((10, 1)))
+    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
+        details = store.apply(DETAILS_TOPIC, json.dumps({"Status": 0, "List": []}))
+        devices = store.apply(DEVICES_TOPIC, json.dumps({"List": []}))
+    assert details.removed_objects == [] and devices.removed_modules == []
+    assert set(store.objects) == {10} and set(store.modules) == {1}
+    assert sum("refusing to evict" in r.getMessage() for r in caplog.records) == 2
+
+
 def test_live_messages_touch_last_seen_snapshots_do_not() -> None:
     store = _store()
     store.apply(DEVICES_TOPIC, _devices(0xCAFE))

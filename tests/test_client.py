@@ -459,6 +459,22 @@ def test_state_without_metadata_creates_generic_sensor() -> None:
     assert obj.value == "187.6"
 
 
+def test_object_removal_listener_fires_after_eviction() -> None:
+    client = _client()
+    removed: list[int] = []
+    unsubscribe = client.add_object_removal_listener(lambda o: removed.append(o.id))
+    topic = f"ampio/fromDB/{USER}/config/devicesDetails"
+    client._feed_message(topic, _details(_flaga(41, 3), _flaga(42, 4)))
+    client._feed_message(topic, _details(_flaga(41, 3)))
+    assert removed == [42]
+    assert 42 not in client.objects
+
+    unsubscribe()
+    client._feed_message(topic, _details(_flaga(41, 3), _flaga(42, 4)))
+    client._feed_message(topic, _details(_flaga(41, 3)))
+    assert removed == [42]
+
+
 def test_availability_listener() -> None:
     client = _client()
     events: list[bool] = []

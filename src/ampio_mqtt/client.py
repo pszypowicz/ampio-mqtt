@@ -92,6 +92,8 @@ class AmpioClient:
         self._event_listeners: list[EventListener] = []
         self._availability_listeners: list[AvailabilityListener] = []
         self._auth_failure_listeners: list[AuthFailureListener] = []
+        self._object_removal_listeners: list[ObjectListener] = []
+        self._module_removal_listeners: list[ModuleListener] = []
 
         # Per-endpoint latch, set the first time each reply lands. Derived from
         # the endpoint table so a new endpoint needs no new field here.
@@ -140,6 +142,10 @@ class AmpioClient:
             _emit(self._module_listeners, module, "module")
         for event in applied.events:
             _emit(self._event_listeners, event, "event")
+        for obj in applied.removed_objects:
+            _emit(self._object_removal_listeners, obj, "object removal")
+        for module in applied.removed_modules:
+            _emit(self._module_removal_listeners, module, "module removal")
 
     def _handle_availability(self, available: bool) -> None:
         _emit(self._availability_listeners, available, "availability")
@@ -266,6 +272,35 @@ class AmpioClient:
         """
         self._module_listeners.append(listener)
         return lambda: self._module_listeners.remove(listener)
+
+    def add_object_removal_listener(
+        self, listener: ObjectListener
+    ) -> Callable[[], None]:
+        """Register a callback invoked when an object leaves the catalogue.
+
+        Fires once per removed object with its final state; by callback time
+        the id is already gone from :pyattr:`objects`. Removal is noticed
+        when the account's authoritative catalogue answers without the
+        object: a Designer delete (whose save restarts the M-SERV, so the
+        reconnect refresh picks it up) or, on the restricted tier, a grant
+        revocation. This is the signal to remove whatever entity was built
+        on the object. An empty catalogue reply never mass-removes - see the
+        store's eviction guard.
+        """
+        self._object_removal_listeners.append(listener)
+        return lambda: self._object_removal_listeners.remove(listener)
+
+    def add_module_removal_listener(
+        self, listener: ModuleListener
+    ) -> Callable[[], None]:
+        """Register a callback invoked when a module leaves the module list.
+
+        Fires once per removed module with its final state, after the store
+        has dropped it. The module list is administrator-only, so this never
+        fires on a standard account.
+        """
+        self._module_removal_listeners.append(listener)
+        return lambda: self._module_removal_listeners.remove(listener)
 
     def add_event_listener(self, listener: EventListener) -> Callable[[], None]:
         """Register a callback invoked when a bus event is raised.

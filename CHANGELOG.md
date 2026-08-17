@@ -16,6 +16,14 @@ upgrade path.
 
 ## 0.18.0 (unreleased)
 
+### Added
+
+- `AmpioClient.add_object_removal_listener()` and
+  `add_module_removal_listener()`: callbacks fired once per object/module
+  the authoritative catalogue stopped listing, with the removed item's
+  final state, after the store has dropped it. The signal for a consumer
+  to remove the entity or device it built.
+
 ### Changed
 
 - Every subscription now asks for QoS 1, both in the connection loop and in
@@ -56,6 +64,28 @@ upgrade path.
 
 ### Fixed
 
+- Objects and modules deleted in Designer (or revoked from a restricted
+  account's grant) are now evicted when the next catalogue reply stops
+  listing them, instead of surviving as zombies until process restart.
+  Eviction authority follows completeness: the admin `config` catalogue
+  and module list always evict (the M-SERV serves them to administrators
+  only, so their arrival is the proof), while the app-sync `data/devices`
+  catalogue evicts only on the restricted tier, where the grant bounds
+  everything the store could hold. An empty reply against a populated
+  store never evicts - it logs a warning instead, so a server hiccup can
+  not tell a consumer to drop every entity it has. Evicted objects also
+  release their raw-channel routing, params, and clock bookkeeping.
+  Eviction lands on the next catalogue reply, whichever event triggers it:
+  the refresh a reconnect issues, or an explicit `refresh()` (live-verified
+  that a Designer module deletion can commit without restarting the M-SERV,
+  where only a fresh catalogue request notices). How the baseline server
+  deletes, observed live: a module deletion hard-removes the row from
+  `devices` (evicted), but object deletions soft-delete on the `config`
+  catalogue - the row stays with the `params` hidden bit set, flipping
+  `visible` to False through the normal metadata merge - while
+  hard-removing from the app-sync surfaces (so the restricted tier does
+  evict). An admin-tier consumer therefore drops deleted objects via the
+  `visible` filter, and eviction covers whatever hard-removes rows.
 - A bulk-snapshot value can no longer regress a fresh raw-channel edge on
   an M-SERV whose clock disagrees with the local one. `updated_at` used to
   mix two clocks - the server's `on` date on snapshot and push paths, the
