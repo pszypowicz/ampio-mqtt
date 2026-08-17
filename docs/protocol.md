@@ -52,10 +52,15 @@ ampio/control/<user>/api      /api/set/<object_id>/<verb>[/<arg>...]
 ```
 
 The verb vocabulary is the M-SERV's own HTTP control API re-exposed over
-MQTT; its authoritative list is the OpenAPI spec embedded in the M-SERV
-web app bundle (`http://<host>/assets/index-*.js`). There is no reply
-topic - the object's normal state topic reports the result, typically
-within ~200 ms, and an unknown verb is silently ignored.
+MQTT; the OpenAPI spec embedded in the M-SERV web app bundle
+(`http://<host>/assets/index-*.js`) lists it, but the enum is advisory
+in both directions: `setColor`/`setColorW` are listed yet ignored on the
+wire, while `setColors` and `setFakeValue` work without being listed.
+There is no reply topic - the object's normal state topic reports the
+result, typically within ~200 ms, and an unknown verb is silently
+ignored. Every row below states observed behavior on the baseline
+server; where the reference install lacks the hardware to exercise a
+verb, the row says so.
 
 **Commands are grant-scoped.** The per-user grant bounds writes exactly
 as it bounds reads: a command for an object outside the account's grant
@@ -71,32 +76,36 @@ channel covering CCT, DALI, blind angles, and display text). It is
 this library confirmed live - so the library uses the `/api` surface,
 which works on both tiers.
 
-| Verb                                | Args                                      | Notes                                                                                                                                |
-| ----------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `turnOn`                            | -                                         | Verified. Full on (255).                                                                                                             |
-| `turnOff`                           | -                                         | Verified.                                                                                                                            |
-| `switch`                            | -                                         | Verified. Inverts current state.                                                                                                     |
-| `open`                              | -                                         | Verified. Cover to 100.                                                                                                              |
-| `close`                             | -                                         | Verified. Cover to 0.                                                                                                                |
-| `setValue`                          | `<0-255>[/<time>]`                        | Verified. `time` is in 10 ms units and **reverts** the object afterwards - a timed pulse, not a fade.                                |
-| `setColors`                         | `<R>/<G>/<B>/<W>`                         | Verified. Also accepts one packed int (`R \| G<<8 \| B<<16 \| W<<24`), which is what object state reports back.                      |
-| `setRollerPos`                      | `<position>/<lamella>`                    | Verified. Percent each; `101` omits an axis (see the slat-drag note below), so one command moves either axis alone or both together. |
-| `setColor`                          | 24-bit `R \| G<<8 \| B<<16`               | Spec-documented, not verified here.                                                                                                  |
-| `setColorW`                         | `<rgb24>/<white>`                         | Spec-documented, not verified here.                                                                                                  |
-| `setTemperature`, `setHeatingMode`  | regulator setpoint / mode `A`,`S`,`M`,`H` | Spec-documented, not verified here.                                                                                                  |
-| `arm`, `disarm`                     | `<pin>`                                   | Satel alarm zones. Spec-documented, not verified here.                                                                               |
-| `setVolume`, `setInput`, `setSeek`  | radio module                              | Spec-documented, not verified here.                                                                                                  |
-| `setText`                           | `<text>`                                  | Sets app-visible text on sensor objects. Spec-documented.                                                                            |
-| `setVirtualTemp`, `setVirtualValue` | virtual devices                           | Spec-documented, not verified here.                                                                                                  |
+| Verb                               | Args                        | Notes                                                                                                                                                                        |
+| ---------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `turnOn`                           | -                           | Full on (255).                                                                                                                                                               |
+| `turnOff`                          | -                           | Off. Ignored by `rgbw` objects (no effect, no reply) - turn those off with `setColors 0/0/0/0`.                                                                              |
+| `switch`                           | -                           | Inverts current state.                                                                                                                                                       |
+| `open`                             | -                           | Cover to 100.                                                                                                                                                                |
+| `close`                            | -                           | Cover to 0.                                                                                                                                                                  |
+| `stop`                             | -                           | In the spec's verb enum; untested - needs a cover caught mid-travel to observe.                                                                                              |
+| `setValue`                         | `<0-255>[/<time>]`          | `time` is in 10 ms units and **reverts** the object afterwards - a timed pulse, not a fade.                                                                                  |
+| `setColors`                        | `<R>/<G>/<B>/<W>`           | Also accepts one packed int (`R \| G<<8 \| B<<16 \| W<<24`), which is what object state reports back. Absent from the spec enum - undocumented but real.                     |
+| `setRollerPos`                     | `<position>/<lamella>`      | Percent each; `101` omits an axis (see the slat-drag note below), so one command moves either axis alone or both together.                                                   |
+| `setColor`                         | 24-bit `R \| G<<8 \| B<<16` | Dead on the baseline server: in the spec enum, but a live send to an `rgbw` object had no effect and no reply. Use `setColors`.                                              |
+| `setColorW`                        | `<rgb24>/<white>`           | Dead on the baseline server, same observation as `setColor`. Use `setColors`.                                                                                                |
+| `setTemperature`                   | `<°C>`                      | Regulator (`reg`) setpoint; echoed as `setTemperature` in the reg state push (see Live state). Absent from the spec enum (Ampio's MQTT API note only), yet works.            |
+| `setHeatingMode`                   | mode letter                 | `M` switched a regulator from Schedule to Manual (state push `mode` went `S` -> `M`); sending `S` back was silently ignored, so only `M` is mapped of the claimed `A,S,M,H`. |
+| `arm`, `disarm`                    | `<pin>`                     | Satel alarm zones. Absent from the baseline server's spec (Ampio's MQTT API note only). Untestable here - no Satel integration.                                              |
+| `setVolume`, `setInput`, `setSeek` | radio module                | In the spec enum. Untestable here - no radio module.                                                                                                                         |
+| `setText`                          | `<text>`                    | Sets the `desc` field of the object's state push (`state` unchanged), fanned out to every user namespace.                                                                    |
+| `setVirtualTemp`                   | `<°C>`                      | Drives a virtual temperature channel: plain decimal, echoed as the object's state (`21.5`; zero echoes `0.0`).                                                               |
+| `setVirtualValue`                  | `<0-255>`                   | Drives a virtual sensor channel, echoed as state. Works from the standard tier on a granted object.                                                                          |
+| `setFakeValue`                     | `<0-255>`                   | Undocumented alias of `setVirtualValue`: absent from the spec enum (the server changelog names it), drives the virtual channel identically.                                  |
 
 Scenes are driven by their own payloads on the same topic, addressing the
 scene rather than an object:
 
-| Payload                | Effect                                                                                                                |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `/api/run/scene/<id>`  | Verified. Applies the scene's actions.                                                                                |
-| `/api/off/scene/<id>`  | Verified. Turns off the objects the scene drives.                                                                     |
-| `/api/undo/scene/<id>` | Verified. Restores those objects to the state they held before the run - distinct from `off`, which drives them to 0. |
+| Payload                | Effect                                                                                                      |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `/api/run/scene/<id>`  | Applies the scene's actions.                                                                                |
+| `/api/off/scene/<id>`  | Turns off the objects the scene drives.                                                                     |
+| `/api/undo/scene/<id>` | Restores those objects to the state they held before the run - distinct from `off`, which drives them to 0. |
 
 The M-SERV replays the scene's own actions, so a consumer never sends
 them itself. Scene commands are grant-scoped like any other: a scene
@@ -163,12 +172,12 @@ rather than treat every event as user intent.
 
 ## Live state
 
-| Topic                                      | Payload                  | Notes                                                                                                            |
-| ------------------------------------------ | ------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `ampio/fromDB/<user>/ob/<id>/state`        | `{state, desc, on}`      | One per object. `state` is the value (string), `desc` is the M-SERV's pretty form, `on` is server-side ms epoch. |
-| `ampio/from/<MAC>/state/f/<ch>`            | plain text (`"0"`/`"1"`) | Flag input channel; bridged to the owning object.                                                                |
-| `ampio/from/<MAC>/state/i/<ch>`            | plain text (`"0"`/`"1"`) | Digital input channel; bridged to the owning object.                                                             |
-| `ampio/from/<MAC>/state/{a,t,rgbw,o}/<ch>` | varies                   | NOT subscribed by the library - the per-object topic is sufficient for these prefixes.                           |
+| Topic                                      | Payload                  | Notes                                                                                                                                                                                                                                                                          |
+| ------------------------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ampio/fromDB/<user>/ob/<id>/state`        | `{state, desc, on}`      | One per object. `state` is the value (string), `desc` is the M-SERV's pretty form, `on` is server-side ms epoch. Regulator (`reg`) objects push a richer shape instead: `{state, cooling, mode, measureTemp, setTemperature, on}` - the library surfaces only `state` from it. |
+| `ampio/from/<MAC>/state/f/<ch>`            | plain text (`"0"`/`"1"`) | Flag input channel; bridged to the owning object.                                                                                                                                                                                                                              |
+| `ampio/from/<MAC>/state/i/<ch>`            | plain text (`"0"`/`"1"`) | Digital input channel; bridged to the owning object.                                                                                                                                                                                                                           |
+| `ampio/from/<MAC>/state/{a,t,rgbw,o}/<ch>` | varies                   | NOT subscribed by the library - the per-object topic is sufficient for these prefixes.                                                                                                                                                                                         |
 
 ## Library helpers
 

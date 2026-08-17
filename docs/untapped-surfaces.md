@@ -31,7 +31,10 @@ nor the `data` surface, even for an administrator. The `data` surface
 serves a `logging` keyword on both tiers, but that is per-object
 logging _configuration_ (`{id_obiektu, typ_logowania}` over the full,
 non-grant-filtered catalogue), not the event log. If the event ring is
-reachable over MQTT it hides behind some other keyword.
+reachable over MQTT it hides behind some other keyword. Next lead: the
+REST half of the server's OpenAPI spec exposes
+`/api/json/logbook/{type}/{objectType}/{fromTime}/{toTime}/{objectId}/{requestSize}/{requestOffset}`;
+whether the MQTT `/api` bridge accepts logbook paths is unprobed.
 
 Tracked as: [#23](https://github.com/pszypowicz/ampio-mqtt/issues/23)
 

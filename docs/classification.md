@@ -56,9 +56,11 @@ it is set to "blinds - percentage". Only the slats variant reports a
 `AmpioObject.tilt_position`.
 
 Ampio's own vocabulary also carries `rgb`, `rgbww`, `ledww`, `reg`, `ac`,
-`radio`, and `ip_radio`. They are absent from `TYPE_PROFILES` because no
-live install has confirmed their behaviour, so they classify as the
-generic value sensor until one does.
+`radio`, and `ip_radio`, and virtual devices add `bit8` (an 8-bit sensor
+channel). Two are confirmed live: `reg` (a temperature controller riding
+the M-SERV, with a state shape of its own - see `protocol.md`) and
+`bit8`. All are absent from `TYPE_PROFILES`, so they classify as the
+generic value sensor.
 
 ## `lin_wej` interpretation table
 
