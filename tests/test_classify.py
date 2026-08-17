@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from ampio_mqtt import classify
-from ampio_mqtt.const import InputKind, OutputKind, SensorKind
+from ampio_mqtt.classification import InputKind, OutputKind, SensorKind
 
 
 def _sensor(typ: str | None, interp: int | None) -> SensorKind | None:

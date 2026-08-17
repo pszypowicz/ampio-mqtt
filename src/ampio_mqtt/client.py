@@ -7,15 +7,16 @@ runs automatically vs on demand.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from collections.abc import Callable
 from typing import Any
 
 from . import _connection, _protocol
+from ._connection import _decode_payload
 from ._store import AmpioStore
-from .const import (
+from .device_types import Capability
+from .endpoints import (
     BASELINE_SERVER_VERSION,
     DISCOVERY_ADMIN,
     DISCOVERY_COMMON,
@@ -36,7 +37,6 @@ from .const import (
     response_topic,
     scene_payload,
 )
-from .device_types import Capability
 from .errors import AmpioTimeoutError
 from .models import (
     AmpioEvent,
@@ -46,7 +46,6 @@ from .models import (
     AmpioServerInfo,
     ConnectionStats,
 )
-from .rooms import join_rooms
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -505,10 +504,7 @@ class AmpioClient:
             timeout,
             "Timed out fetching room map from Ampio broker",
         )
-        return join_rooms(
-            _safe_json_object(payloads["groups"]),
-            _safe_json_object(payloads["group_devices"]),
-        )
+        return _protocol.parse_rooms(payloads["groups"], payloads["group_devices"])
 
     async def fetch_scenes(self, timeout: float = 5.0) -> list[AmpioScene]:
         """Return the scene catalogue defined in the Ampio app.
@@ -586,16 +582,7 @@ class AmpioClient:
             timeout,
             "Timed out fetching locations table from Ampio broker",
         )
-        data = _safe_json_object(payloads["locations"])
-        out: dict[int, str] = {}
-        for item in data.get("List", []):
-            if not isinstance(item, dict):
-                continue
-            lid = item.get("id")
-            name = item.get("opis_menu")
-            if isinstance(lid, int) and isinstance(name, str) and name:
-                out[lid] = name
-        return out
+        return _protocol.parse_locations(payloads["locations"])
 
     # --- commands ---------------------------------------------------------
 
@@ -754,8 +741,6 @@ class AmpioClient:
         """
         self._handle_message(topic, _decode_payload(payload))
 
-    # --- internal ---------------------------------------------------------
-
 
 def _emit(listeners: list[Any], payload: Any, kind: str) -> None:
     """Hand `payload` to each listener, surviving any that raises.
@@ -775,23 +760,3 @@ def _check_range(name: str, value: int, low: int, high: int) -> None:
     """Reject an out-of-range command argument before it reaches the wire."""
     if not isinstance(value, int) or not low <= value <= high:
         raise ValueError(f"{name} must be an int in {low}..{high}, got {value!r}")
-
-
-def _decode_payload(payload: object) -> str:
-    """Coerce an aiomqtt payload (`str | bytes | bytearray | None`) to text."""
-    if isinstance(payload, (bytes, bytearray)):
-        return bytes(payload).decode("utf-8", "replace")
-    if isinstance(payload, str):
-        return payload
-    return ""
-
-
-def _safe_json_object(text: str | None) -> dict[str, Any]:
-    """Parse `text` as a JSON object; return an empty dict on any failure."""
-    if not text:
-        return {}
-    try:
-        data = json.loads(text)
-    except (ValueError, TypeError):
-        return {}
-    return data if isinstance(data, dict) else {}

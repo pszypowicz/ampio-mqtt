@@ -5,8 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from .const import (
-    AccessTier,
+from .classification import (
     InputKind,
     ObjectKind,
     OutputKind,
@@ -14,6 +13,7 @@ from .const import (
     is_system_type,
 )
 from .device_types import Capability
+from .endpoints import AccessTier
 
 # Bit flags inside the `params` integer (`obiekty.params`). The semantics
 # match the M-SERV's own Matter bridge, which selects exposable objects with

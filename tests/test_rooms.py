@@ -2,8 +2,8 @@
 
 Two orthogonal layers:
 
-- `join_rooms()` in `ampio_mqtt.rooms` - pure join of the two M-SERV
-  payloads. Tested directly with synthetic dicts.
+- `parse_rooms()` in `ampio_mqtt._protocol` - pure join of the two M-SERV
+  reply payloads.
 - `AmpioClient.fetch_rooms()` - the MQTT request/response orchestration.
   Exercised with the same `_FakeAiomqtt` helpers the existing client tests
   use: messages are fed into the client via the private `_feed_message`
@@ -20,56 +20,61 @@ import aiomqtt
 import pytest
 
 from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioTimeoutError
-from ampio_mqtt.rooms import join_rooms
+from ampio_mqtt._protocol import parse_rooms
 
-# --- join_rooms() pure tests ----------------------------------------------
+# --- parse_rooms() pure tests ----------------------------------------------
 
 
-def test_join_rooms_happy_path() -> None:
-    groups = {
-        "List": [
+def _payload(rows: list[object]) -> str:
+    return json.dumps({"List": rows})
+
+
+def test_parse_rooms_happy_path() -> None:
+    groups = _payload(
+        [
             {"id": 8, "id_rodzica": 4, "opis_menu": "Salon"},
             {"id": 7, "id_rodzica": 4, "opis_menu": "Jadalnia"},
         ]
-    }
-    group_devices = {
-        "List": [
+    )
+    group_devices = _payload(
+        [
             {"id_grupy": 8, "id_obiektu": 31},
             {"id_grupy": 7, "id_obiektu": 28},
         ]
-    }
-    assert join_rooms(groups, group_devices) == {31: "Salon", 28: "Jadalnia"}
+    )
+    assert parse_rooms(groups, group_devices) == {31: "Salon", 28: "Jadalnia"}
 
 
-def test_join_rooms_first_match_wins_for_multi_group_objects() -> None:
+def test_parse_rooms_first_match_wins_for_multi_group_objects() -> None:
     """Object 50 appears in groups 15 (Schody) and 11 (Korytarz) - first wins."""
-    groups = {
-        "List": [
+    groups = _payload(
+        [
             {"id": 15, "opis_menu": "Schody"},
             {"id": 11, "opis_menu": "Korytarz"},
         ]
-    }
-    group_devices = {
-        "List": [
+    )
+    group_devices = _payload(
+        [
             {"id_grupy": 15, "id_obiektu": 50},
             {"id_grupy": 11, "id_obiektu": 50},
         ]
-    }
-    assert join_rooms(groups, group_devices) == {50: "Schody"}
+    )
+    assert parse_rooms(groups, group_devices) == {50: "Schody"}
 
 
-def test_join_rooms_skips_malformed_entries() -> None:
-    groups = {
-        "List": [
+def test_parse_rooms_skips_malformed_entries() -> None:
+    groups = _payload(
+        [
             {"id": 1, "opis_menu": "OK"},
             {"id": None, "opis_menu": "Missing id"},
             {"id": 2, "opis_menu": ""},
             {"id": 3, "opis_menu": None},
+            "not an object",
             {"id": 4, "opis_menu": "Used"},
         ]
-    }
-    group_devices = {
-        "List": [
+    )
+    group_devices = _payload(
+        [
             {"id_grupy": 1, "id_obiektu": 100},
             {"id_grupy": 2, "id_obiektu": 101},
             {"id_grupy": 3, "id_obiektu": 102},
@@ -77,19 +82,20 @@ def test_join_rooms_skips_malformed_entries() -> None:
             {"id_grupy": None, "id_obiektu": 103},
             {"id_grupy": 4, "id_obiektu": 104},
         ]
-    }
-    assert join_rooms(groups, group_devices) == {100: "OK", 104: "Used"}
+    )
+    assert parse_rooms(groups, group_devices) == {100: "OK", 104: "Used"}
 
 
-def test_join_rooms_ignores_devices_pointing_at_unknown_groups() -> None:
-    groups = {"List": [{"id": 1, "opis_menu": "OK"}]}
-    group_devices = {"List": [{"id_grupy": 99, "id_obiektu": 5}]}
-    assert join_rooms(groups, group_devices) == {}
+def test_parse_rooms_ignores_devices_pointing_at_unknown_groups() -> None:
+    groups = _payload([{"id": 1, "opis_menu": "OK"}])
+    group_devices = _payload([{"id_grupy": 99, "id_obiektu": 5}])
+    assert parse_rooms(groups, group_devices) == {}
 
 
-def test_join_rooms_empty_inputs() -> None:
-    assert join_rooms({}, {}) == {}
-    assert join_rooms({"List": []}, {"List": []}) == {}
+def test_parse_rooms_tolerates_empty_and_unparseable_payloads() -> None:
+    assert parse_rooms("", "") == {}
+    assert parse_rooms("not json", "[]") == {}
+    assert parse_rooms(_payload([]), _payload([])) == {}
 
 
 # --- AmpioClient.fetch_rooms() MQTT orchestration -------------------------

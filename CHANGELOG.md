@@ -51,6 +51,15 @@ upgrade path.
   check would miss), and 2.5.0 fixes `__aexit__` exception handling and the
   payload type contract.
 
+- Internal layout: `const.py` split into `endpoints.py` (endpoint table,
+  topics, command payloads, `AccessTier`, server baseline) and
+  `classification.py` (the kind types, `TYPE_PROFILES`, `classify`);
+  `rooms.py` folded into `_protocol` as `parse_rooms()`, joined by
+  `parse_locations()`, so every payload parser lives in one module and
+  the fetch helpers are publish-await-parse three-liners. The public
+  package surface (`ampio_mqtt` top-level exports) is unchanged; imports
+  of the removed module paths break, per the 0.x policy.
+
 - All subscriptions go out in one SUBSCRIBE packet per (re)connect instead
   of fifteen sequential round trips, and the SUBACK verdicts are read
   instead of discarded: a filter the broker rejects logs a warning naming

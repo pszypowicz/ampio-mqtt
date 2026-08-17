@@ -15,13 +15,12 @@ from dataclasses import dataclass, field
 from functools import partial
 
 from . import _protocol
-from .const import (
+from .classification import classify, input_channel_prefix
+from .endpoints import (
     BASELINE_SERVER_VERSION,
     ENDPOINTS,
     AccessTier,
     Endpoint,
-    classify,
-    input_channel_prefix,
     response_topic,
 )
 from .models import (
