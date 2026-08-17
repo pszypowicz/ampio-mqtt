@@ -1,13 +1,22 @@
 # Account tiers
 
 Every Ampio account reaches the same broker, but the M-SERV serves two
-different surfaces depending on the account's **administrator bit**. The
-per-user app permissions do not move an account between tiers: a standard
-account granted every permission in the app is still a standard account.
+different surfaces depending on the account: the reserved **`admin` login
+is the administrator**, and every app-created user is a standard account.
+The app offers no administrator toggle for its users (it refuses to create
+a user named `admin` altogether - both verified in the Designer web app),
+and per-user app permissions do not move an account between tiers: a
+standard account granted every permission in the app is still a standard
+account.
 
-`AmpioClient.access_tier` reports which tier answered, settled by the time
-`wait_for_initial_discovery()` returns. See
-[`discovery-flow.md`](discovery-flow.md) for how it is detected.
+The tier is read from the account id the `info` reply reports on every
+tier: `-1` for the admin pseudo-user, the users-table row id for an app
+user - see `AmpioServerInfo.access_tier` (live-verified against both
+account shapes). `AmpioClient.access_tier` exposes it on a running client,
+settled by the time `wait_for_initial_discovery()` returns True, and
+`test_connection()` reports it at validation time, so a config flow can
+reject an account whose tier will not support what the consumer needs
+(e.g. `modules`/`mserv_id`, which the standard tier never receives).
 
 ## What each tier gets
 
@@ -18,12 +27,24 @@ account granted every permission in the app is still a standard account.
 | Per-object live state                         | all objects   | granted objects                       |
 | Rooms (`fetch_rooms`)                         | yes           | yes                                   |
 | Server identity (`server_info`)               | yes           | yes                                   |
+| Scenes (`fetch_scenes`, scene commands)       | yes           | yes                                   |
+| `resources` / `icons` tables (`data` surface) | yes           | yes                                   |
+| `logging` config table (`data` surface)       | yes           | yes (the table is not grant-filtered) |
+| md5 change-detection tree                     | yes           | yes                                   |
 | Commands                                      | all objects   | granted objects                       |
 | **Module list** (`modules`, `mserv_id`)       | yes           | **no**                                |
 | **Raw channel tree** (`ampio/from/#`)         | yes           | **no**                                |
 | **Module diagnostics** (voltage, temperature) | yes           | **no**                                |
 | **CAN write tree** (`ampio/to/#`)             | yes           | **no**                                |
 | Designer location table (`fetch_locations`)   | yes           | no                                    |
+
+Two of the gaps are narrower than the table suggests. The `data/devices`
+rows carry `id_urzadzenia`, so a standard account still learns the module
+ids that own its granted objects - without names, macs, or models, but
+enough to group entities by physical module. And the M-SERV's own
+identity needs no module list at all: `server_info` is served fully on
+both tiers, so a consumer can anchor its hub device on
+`AmpioServerInfo.mac` instead of `mserv_id`.
 
 Grants bound reads and object writes alike. A command for an object
 outside a standard account's grant is dropped with no effect and no
@@ -78,11 +99,11 @@ Prefer an administrator account when the install needs:
 - **Module metadata** - per-module device entries, models, firmware
   versions, and `mserv_id` for a `via_device` hierarchy.
 - **Bus events** - panel presses and other Ampio logic signals only
-  arrive on the admin tier. A standard account can still raise events it
-  holds the right for, so automation *into* Ampio works either way; it is
-  reacting *to* Ampio's own events that needs admin.
+  arrive on the admin tier. A standard account can still raise events
+  (see the exception above), so automation _into_ Ampio works either
+  way; it is reacting _to_ Ampio's own events that needs admin.
 - **Module health** - each module broadcasts its CAN supply voltage, and
-  the output modules their own temperature, as
+  those with a temperature sensor their temperature, as
   `AmpioModule.supply_voltage` / `temperature`. Useful for spotting a
   sagging bus or a hot module before it misbehaves.
 - **The CAN vocabulary** for device classes `/api` cannot express (CCT,

@@ -3,8 +3,8 @@
 The `devicesDetails` payload returns one row per logical object. The
 library classifies each row into exactly one kind - a `SensorKind`
 (sensor-side platforms), an `InputKind` (binary/boolean platforms), or an
-`OutputKind` (controllable platforms). `classify(typ_komponentu,
-interpretacja)` returns it, keying on `typ_komponentu` (the object type)
+`OutputKind` (controllable platforms). `classify(typ, interpretacja)`
+returns it, keying on the object type (the wire's `typ_komponentu`)
 and `interpretacja` (a refinement for analog inputs). A component type is
 a measurement, a boolean input, or something controllable, never two, so
 the three are alternatives rather than optional slots on the object.
@@ -26,8 +26,8 @@ is added.
 | `lin_wej`                                     | yes     | no     | no      | Analog input - kind set by `interpretacja` (see below).                                                                                    |
 | `bit32`                                       | yes     | no     | no      | Generic 32-bit measurement (units unknown).                                                                                                |
 | `flaga`                                       | no      | yes    | no      | Generic boolean flag (logic flag, button-press hold, etc.).                                                                                |
-| `detekcja`                                    | no      | yes    | yes     | Motion-style detection. Always visible.                                                                                                    |
-| `symulacja`                                   | no      | yes    | yes     | Presence simulation. Always visible. Raw-channel prefix not yet bridged.                                                                   |
+| `detekcja`                                    | no      | yes    | yes     | Motion-style detection. Visible even without `leafId` (unless hidden).                                                                     |
+| `symulacja`                                   | no      | yes    | yes     | Presence simulation. Visible even without `leafId` (unless hidden). Raw-channel prefix not yet bridged.                                    |
 | `przekaznik`                                  | no      | no     | no      | Relay output - see the output table below.                                                                                                 |
 | `rgbw`, `led`                                 | no      | no     | no      | Light outputs - see the output table below.                                                                                                |
 | `roleta`, `roleta_procenty`, `roleta_lamelki` | no      | no     | no      | Cover outputs - see the output table below.                                                                                                |
@@ -56,9 +56,13 @@ it is set to "blinds - percentage". Only the slats variant reports a
 `AmpioObject.tilt_position`.
 
 Ampio's own vocabulary also carries `rgb`, `rgbww`, `ledww`, `reg`, `ac`,
-`radio`, and `ip_radio`. They are absent from `TYPE_PROFILES` because no
-live install has confirmed their behaviour, so they classify as the
-generic value sensor until one does.
+`radio`, `ip_radio`, and `satel_alarm`, and virtual devices add `bit8`
+(an 8-bit sensor channel). Three are confirmed live: `reg` (a
+temperature controller riding the M-SERV, with a state shape of its
+own - see `protocol.md`), `satel_alarm` (armed/alarmed flags of an alarm
+integration - a Jablotron behind an M-CON, so the prefix is not
+Satel-specific), and `bit8`. All are absent from `TYPE_PROFILES`, so
+they classify as the generic value sensor.
 
 ## `lin_wej` interpretation table
 

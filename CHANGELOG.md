@@ -14,6 +14,66 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.17.0
+
+Addresses feedback from the Home Assistant integration: the numeric half of
+value interpretation (#57), module mac collisions being kept silently
+(#58), a deliberate `stop()` being reported like an outage (#56), and the
+account tier being unknowable at validation time (#59).
+
+### Added
+
+- `AmpioObject.numeric_value`: the reading as a float, or `None` when
+  `value` is missing, unparseable, or non-finite. A bare `float()` accepts
+  `"nan"`, `"inf"` and overflowing forms like `"1e999"`, which a sensor
+  reading should never produce, so the guard lives here with the rest of the
+  protocol-value interpretation. Reported from the Home Assistant
+  integration, where a `nan` state push made the entity write raise and
+  froze the entity at its previous value (#57).
+- `AmpioClient.colliding_macs`: the effective bus macs the devices catalogue
+  reports on more than one module, plus a warning naming the affected
+  modules when a collision appears (one that resolves clears the set
+  silently). Nothing on the wire enforces mac
+  uniqueness, and a consumer keying devices on `AmpioModule.mac` - the
+  recommended replacement-stable module key - would otherwise silently
+  merge two modules into one (#58).
+- `AmpioServerInfo.user_id` and `AmpioServerInfo.access_tier`: the asking
+  account's id from the info reply (`-1` for the reserved `admin` login,
+  the users-table row id for an app-created user) and the tier derived
+  from it. Since `test_connection` returns this object, a config flow now
+  learns the tier at validation time and can reject a restricted account
+  up front instead of failing at setup when `mserv_id` turns out to be
+  None (#59).
+
+### Changed
+
+- A colliding mac no longer routes raw-channel input events or diagnostics
+  broadcasts: the sender is unknowable, and last-writer-wins attribution
+  silently corrupted an arbitrary module's supply voltage, temperature, and
+  input state. Affected inputs still update through the per-object state
+  path, exactly as they do on the standard account tier (#58).
+- A consumer-initiated `stop()` no longer invokes the availability
+  listeners: the drop it causes is not news to the consumer, and reporting
+  it made every orderly shutdown look like a lost connection. Outages and
+  the fatal auth-failure stop keep reporting False, and `available` still
+  reads False after a stop (#56).
+- `AmpioClient.access_tier` is now read off the info reply's account id
+  instead of inferred from which discovery surface answered, so it is
+  exact the moment the info reply arrives. `wait_for_initial_discovery`
+  waits linearly for the tier's own catalogue pair and drops the
+  `admin_grace` parameter along with the surface race - config-surface
+  silence no longer needs a grace window to be conclusive (#59). A server
+  whose info reply carries no `userId` reads as `UNKNOWN` and completes
+  discovery via the `data` pair, which answers for every account.
+- A supported-versions baseline replaces open-ended compatibility with
+  older M-SERV firmware. The library is developed and live-tested against
+  `serverVersion` 1865 (`serverRevision` 409, `mqttVersion` 5.133.11); the
+  info handler and `test_connection` log a warning when the server
+  self-reports a lower or missing `serverVersion`, and the version-hedged
+  code paths are gone: the MQTT 3.1.1 auth markers (the baseline broker
+  speaks MQTT 5) and the tolerance for an info reply without the `Results`
+  wrapper.
+
 ## 0.16.0
 
 Surfaces two failure modes a consumer could not previously see: a credential
@@ -51,8 +111,8 @@ account permissions" message for what is in practice always a slow broker.
 ## 0.15.0
 
 Splits the client into the two things it was doing. No behaviour change - the
-same 366 tests and a live install produce the same objects, modules, rooms,
-scenes and events as before.
+pre-split test suite and a live install produce the same objects, modules,
+rooms, scenes and events as before.
 
 ### Changed
 

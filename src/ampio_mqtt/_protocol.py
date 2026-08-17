@@ -11,6 +11,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from .const import BASELINE_SERVER_VERSION
 from .device_types import module_capabilities, module_model
 from .models import AmpioEvent, AmpioModule, AmpioScene, AmpioServerInfo
 
@@ -18,21 +19,18 @@ if TYPE_CHECKING:
     import aiomqtt
 
 
-# CONNACK return codes / reason strings that indicate an auth failure rather
-# than a network or transport problem. aiomqtt surfaces the broker text in the
-# `MqttError` message; matching is heuristic but covers MQTT 3.1.1 (rc 4/5) and
-# MQTT 5 (`not authorized`, `bad user name or password`). The match runs over
-# `MqttError.__str__`, so revisit this table if aiomqtt changes its error
-# formatting (or when bumping to aiomqtt v3).
+# CONNACK reason strings that indicate an auth failure rather than a network
+# or transport problem. aiomqtt surfaces the broker text in the `MqttError`
+# message; paho 2.x maps CONNACK rejections to the MQTT 5 reason codes
+# whatever protocol version is on the wire, so only the v5 codes (134/135)
+# and their texts appear. The match runs over `MqttError.__str__`, so
+# revisit this table if aiomqtt changes its error formatting (or when
+# bumping to aiomqtt v3).
 _AUTH_ERROR_MARKERS = (
     "not authorized",
     "bad user name",
     "bad username",
     "unauthorized",
-    "rc=4",
-    "rc=5",
-    "[code:4]",
-    "[code:5]",
     "[code:134]",
     "[code:135]",
 )
@@ -95,6 +93,22 @@ def is_auth_error(err: aiomqtt.MqttError) -> bool:
     """Return True if the MQTT error looks like an authentication failure."""
     msg = str(err).lower()
     return any(marker in msg for marker in _AUTH_ERROR_MARKERS)
+
+
+def server_below_baseline(version: str | None) -> bool:
+    """Whether a self-reported ``serverVersion`` is below the tested baseline.
+
+    Missing or unparseable versions count as below - every baseline server
+    reports one. Handles the observed plain build-number form (``"1865"``)
+    and dotted forms, compared numerically part by part.
+    """
+    if not version:
+        return True
+    try:
+        parts = tuple(int(p) for p in version.split("."))
+    except ValueError:
+        return True
+    return parts < BASELINE_SERVER_VERSION
 
 
 def _rows(payload: str) -> list[Any] | None:
@@ -262,18 +276,21 @@ def parse_scenes(payload: str) -> list[AmpioScene] | None:
 def parse_server_info(payload: str) -> AmpioServerInfo:
     """Parse a server-info payload, keeping only the safe fields.
 
-    Returns an empty `AmpioServerInfo` on parse failure - callers treat that as
-    "info not available yet" rather than an error.
+    The baseline server wraps the fields in a ``Results`` object; anything
+    else parses as empty. Returns an empty `AmpioServerInfo` on parse
+    failure - callers treat that as "info not available yet" rather than an
+    error.
     """
     try:
         outer = json.loads(payload)
     except (ValueError, TypeError):
         return AmpioServerInfo()
-    data = outer.get("Results", outer) if isinstance(outer, dict) else {}
+    data = outer.get("Results") if isinstance(outer, dict) else None
     if not isinstance(data, dict):
         return AmpioServerInfo()
     return AmpioServerInfo(
         mac=to_int(data.get("mac")),
+        user_id=to_int(data.get("userId")),
         server_version=data.get("serverVersion") or None,
         server_revision=data.get("serverRevision") or None,
         mqtt_version=data.get("mqttVersion") or None,

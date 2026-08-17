@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
 
 from . import _protocol
 from .const import (
+    BASELINE_SERVER_VERSION,
     ENDPOINTS,
     Endpoint,
     classify,
@@ -57,6 +59,10 @@ class AmpioStore:
         self._input_index: dict[tuple[int, str, int], int] = {}
         # Effective bus mac -> module, for routing a module's own broadcasts.
         self._module_by_mac: dict[int, AmpioModule] = {}
+        # Macs the devices catalogue reports on more than one module. Nothing
+        # on the wire enforces uniqueness, so this is the signal a consumer
+        # keying devices on mac needs to avoid silently merging two modules.
+        self._colliding_macs: frozenset[int] = frozenset()
         # Objects a raw-channel message has actually arrived for. The raw form
         # leads the per-object echo, so once an input is raw-proven the slower
         # echo is dropped rather than re-notifying with a stale value.
@@ -187,7 +193,20 @@ class AmpioStore:
         return True
 
     def _handle_info(self, payload: str) -> bool:
-        self.state.server_info = _protocol.parse_server_info(payload)
+        previous = self.state.server_info
+        info = _protocol.parse_server_info(payload)
+        self.state.server_info = info
+        # Warn when the version first becomes known or changes, not on the
+        # re-request every reconnect issues.
+        if (
+            previous is None or previous.server_version != info.server_version
+        ) and _protocol.server_below_baseline(info.server_version):
+            _LOGGER.warning(
+                "Ampio server reports version %s, below the tested baseline %s; "
+                "behavior on this server is untested - upgrade the M-SERV",
+                info.server_version or "(none)",
+                ".".join(map(str, BASELINE_SERVER_VERSION)),
+            )
         return True
 
     def _handle_states_snapshot(self, payload: str) -> bool:
@@ -325,7 +344,13 @@ class AmpioStore:
         input channel to its object, covering only bridgeable input types with
         a known channel and module mac; `mac` alone routes a module's own
         diagnostics broadcast.
+
+        A mac the catalogue reports on more than one module routes nothing:
+        the sender of a raw-tree message on it is unknowable, and attributing
+        it to an arbitrary module would silently corrupt that module's state.
+        Affected inputs still update through the per-object state path.
         """
+        self._refresh_colliding_macs()
         index: dict[tuple[int, str, int], int] = {}
         for obj in self.state.objects.values():
             prefix = input_channel_prefix(obj.typ_komponentu)
@@ -334,16 +359,49 @@ class AmpioStore:
             module = self.state.modules.get(obj.device_id)
             if module is None or module.mac is None:
                 continue
+            if module.mac in self._colliding_macs:
+                continue
             index[(module.mac, prefix, obj.funkcja)] = obj.id
         self._input_index = index
         self._module_by_mac = {
             module.mac: module
             for module in self.state.modules.values()
-            if module.mac is not None
+            if module.mac is not None and module.mac not in self._colliding_macs
         }
         # An object the index no longer covers must go back to its per-object
         # updates, or a mac change in Designer would freeze it for good.
         self._raw_seen_ids &= set(index.values())
+
+    def _refresh_colliding_macs(self) -> None:
+        """Recompute the colliding-mac set, warning when it changes.
+
+        Warns only on a change, not on every catalogue parse - the catalogue
+        is re-requested on every reconnect, and repeating a standing collision
+        each time would drown the log in old news. A collision that resolves
+        clears the set silently.
+        """
+        counts = Counter(
+            module.mac
+            for module in self.state.modules.values()
+            if module.mac is not None
+        )
+        colliding = frozenset(mac for mac, n in counts.items() if n > 1)
+        if colliding and colliding != self._colliding_macs:
+            details = "; ".join(
+                f"mac {mac} shared by "
+                + ", ".join(
+                    f"module {module.id} ({module.name or 'unnamed'})"
+                    for module in self.state.modules.values()
+                    if module.mac == mac
+                )
+                for mac in sorted(colliding)
+            )
+            _LOGGER.warning(
+                "Ampio devices catalogue reports colliding module macs; "
+                "raw-channel and diagnostics routing for them is disabled: %s",
+                details,
+            )
+        self._colliding_macs = colliding
 
     def _record(self, obj: AmpioObject) -> None:
         self._applied.objects.append(obj)
@@ -357,6 +415,10 @@ class AmpioStore:
     @property
     def modules(self) -> dict[int, AmpioModule]:
         return self.state.modules
+
+    @property
+    def colliding_macs(self) -> frozenset[int]:
+        return self._colliding_macs
 
     @property
     def server_info(self) -> AmpioServerInfo | None:

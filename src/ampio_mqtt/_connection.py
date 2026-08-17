@@ -73,6 +73,10 @@ class Connection:
         self._auth_error_message: str | None = None
         self._available = False
         self._stop = False
+        # Set by close() before it cancels the runner, so the teardown's
+        # availability drop is recognizably consumer-initiated however the
+        # cancellation surfaces through aiomqtt's cleanup.
+        self._closing = False
 
     @property
     def available(self) -> bool:
@@ -92,6 +96,7 @@ class Connection:
         ``AmpioConnectionError`` if nothing comes up within ``timeout``.
         """
         self._stop = False
+        self._closing = False
         self._connected.clear()
         self._auth_failed.clear()
         self._auth_error_message = None
@@ -117,7 +122,14 @@ class Connection:
             raise AmpioAuthError(self._auth_error_message or _AUTH_REJECTED)
 
     async def close(self) -> None:
-        """Stop the loop, reporting rather than raising whatever ended it."""
+        """Stop the loop, reporting rather than raising whatever ended it.
+
+        A deliberate stop is not an availability event: the consumer asked
+        for it, so the availability listeners are not invoked, unlike every
+        other way the connection goes down. ``available`` still reads False
+        afterwards.
+        """
+        self._closing = True
         self._stop = True
         runner, self._runner = self._runner, None
         if runner is None:
@@ -173,7 +185,7 @@ class Connection:
                     _LOGGER.debug("Ampio MQTT connection error: %s", err)
             finally:
                 self._client = None
-                self._set_available(False)
+                self._set_available(False, notify=not self._closing)
             if self._auth_failed.is_set() and self._connected.is_set():
                 # A rejection after a successful open(): the loop is stopping
                 # for good and no exception will reach the caller, so this
@@ -199,11 +211,12 @@ class Connection:
         capped = min(_RECONNECT_BACKOFF_MAX, base * (2.0 ** min(attempt, 16)))
         return float(capped + random.uniform(0.0, base))
 
-    def _set_available(self, available: bool) -> None:
+    def _set_available(self, available: bool, *, notify: bool = True) -> None:
         if available == self._available:
             return
         self._available = available
-        self._on_availability(available)
+        if notify:
+            self._on_availability(available)
 
 
 async def probe(

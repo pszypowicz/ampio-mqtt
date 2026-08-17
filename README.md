@@ -31,8 +31,10 @@ library itself is Home Assistant agnostic.
 >   100-140 ms later, through the per-object republish.
 >
 > `AmpioClient.access_tier` reports the detected tier once discovery
-> completes. [`docs/account-tiers.md`](docs/account-tiers.md) has the
-> full capability table, the measured latency difference, and when an
+> completes, and `AmpioClient.test_connection` reports it at validation
+> time so a setup flow can reject an unsuitable account up front.
+> [`docs/account-tiers.md`](docs/account-tiers.md) has the full
+> capability table, the measured latency difference, and when an
 > administrator account is worth it.
 >
 > **The grant bounds reads and object commands alike.** An account can
@@ -66,7 +68,9 @@ stability note above). Currently supports:
 - live push of object state changes via per-object MQTT topics, plus a bulk
   states snapshot at startup,
 - classification of sensor objects (temperature and M-SENS environmental
-  channels) with Home-Assistant-compatible device/state class hints,
+  channels) with Home-Assistant-compatible device/state class hints, and the
+  parsed reading as `AmpioObject.numeric_value` (None when the value is
+  missing, unparseable, or non-finite),
 - M-SERV identification (mac, firmware versions, local IP),
 - bus events: `send_event()` raises one on either tier, and
   `add_event_listener()` reports the ones Ampio's own logic raises (panel
@@ -113,6 +117,15 @@ RGBW_OUTPUT}`). Drives HA platform selection and bundle/split decisions in
 Protocol reference notes live under [`docs/`](docs/README.md);
 [`src/ampio_mqtt/const.py`](src/ampio_mqtt/const.py) remains the
 canonical source for the topic helpers.
+
+## Supported M-SERV versions
+
+The library is developed and live-tested against an M-SERV self-reporting
+`serverVersion` 1865 (`serverRevision` 409, `mqttVersion` 5.133.11). That
+baseline is the compatibility floor. Older servers are not supported, and
+the library logs a warning when the connected server reports a lower or
+missing `serverVersion`. If something misbehaves on an older server,
+upgrade the M-SERV first.
 
 ## Installation
 

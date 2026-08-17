@@ -19,6 +19,15 @@ The M-SERV's default `mac` is `1`, which is not unique. Treat `mac` as
 unique _within a single install_ (the user assigns the overrides), not
 globally.
 
+Nothing on the wire enforces that uniqueness, so a misconfigured or
+mid-commissioning install can deliver a catalogue where two modules share
+a `mac`. `AmpioClient.colliding_macs` reports the affected values and a
+warning naming the modules is logged when a collision appears; a consumer
+keying devices on `mac` should skip or disambiguate those modules rather
+than merge them. While a `mac` collides the library routes no raw-channel
+input events or diagnostics broadcasts for it - the sender is unknowable -
+and affected inputs update through the per-object state path instead.
+
 ## Objects
 
 | Field                     | Stable across module replacement?                                                                                                                                        | Notes |
@@ -83,9 +92,10 @@ visible = not hidden and (bool(leaf_id) or is_system)
   Designer channel (same `leaf_id`, no value) and on objects the user
   hid - exactly the rows the `leaf_id` test alone wrongly keeps. It is a
   Designer config flag, so unlike the DB `id` it is replacement-stable.
-  When `params` is absent (older firmware) it is `0`, so `hidden` is
-  False and the `leaf_id` test alone decides. Every account tier
-  receives `params` (via `devicesDetails` or `data/params_devices`).
+  Every account tier receives `params` on a baseline server (via
+  `devicesDetails` or `data/params_devices`); a row it has not arrived
+  for yet reads as `0`, so `hidden` is False and the `leaf_id` test
+  alone decides.
   This is the same gate the M-SERV's Matter bridge
   uses (`(params & 2**37) && !(params & 16)`); see
   [`matter-bridge.md`](matter-bridge.md). Bit 37 is a Matter-only opt-in

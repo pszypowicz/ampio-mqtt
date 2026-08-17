@@ -721,6 +721,35 @@ def test_is_on_interpretation(value, expected) -> None:
     assert AmpioObject(id=1, value=value).is_on is expected
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("23.5", 23.5),
+        ("255", 255.0),
+        ("0", 0.0),
+        ("-4.2", -4.2),
+        (None, None),
+        ("", None),
+        ("open", None),
+        ("nan", None),
+        ("inf", None),
+        ("-inf", None),
+        ("1e999", None),
+    ],
+)
+def test_numeric_value_interpretation(value, expected) -> None:
+    assert AmpioObject(id=1, value=value).numeric_value == expected
+
+
+def test_numeric_value_none_for_bare_nan_state_push() -> None:
+    """A bare NaN literal parses (Python's json accepts it) but reads as None."""
+    client = _client()
+    client._feed_message(f"ampio/fromDB/{USER}/ob/12/state", b'{"state": NaN}')
+    obj = client.objects[12]
+    assert obj.value == "nan"
+    assert obj.numeric_value is None
+
+
 def test_last_payloads_retained_for_each_handler() -> None:
     """Each discovery handler stashes the verbatim payload for diagnostics."""
     client = _client()
@@ -828,13 +857,16 @@ def test_data_devices_does_not_degrade_details() -> None:
     assert obj.name == "Named"
 
 
-def test_access_tier_follows_answering_surface() -> None:
+def test_access_tier_reads_the_account_id_off_the_info_reply() -> None:
     client = _client()
     assert client.access_tier is AccessTier.UNKNOWN
-    client._feed_message(DATA_DEVICES_TOPIC, _devices())
+    client._feed_message(
+        f"ampio/fromDB/{USER}/data/info", b'{"Results": {"mac": 1, "userId": "4"}}'
+    )
     assert client.access_tier is AccessTier.RESTRICTED
-    # A (late) config reply upgrades the tier; it never downgrades.
-    client._feed_message(f"ampio/fromDB/{USER}/config/devicesDetails", _details())
+    client._feed_message(
+        f"ampio/fromDB/{USER}/data/info", b'{"Results": {"mac": 1, "userId": "-1"}}'
+    )
     assert client.access_tier is AccessTier.ADMIN
 
 

@@ -7,7 +7,7 @@ import json
 import aiomqtt
 import pytest
 
-from ampio_mqtt import AmpioModule, AmpioServerInfo
+from ampio_mqtt import AccessTier, AmpioModule, AmpioServerInfo
 from ampio_mqtt._protocol import (
     is_auth_error,
     parse_details,
@@ -17,6 +17,7 @@ from ampio_mqtt._protocol import (
     parse_stan_json,
     parse_state_message,
     parse_states_snapshot,
+    server_below_baseline,
     to_int,
 )
 
@@ -45,10 +46,6 @@ def test_to_int(value: object, expected: int | None) -> None:
         "bad user name or password",
         "bad username",
         "unauthorized",
-        "Connection refused: rc=4",
-        "Connection refused: rc=5",
-        "[code:4]",
-        "[code:5]",
         "[code:134]",
         "[code:135]",
     ],
@@ -208,6 +205,7 @@ def test_parse_server_info_extracts_safe_fields() -> None:
         {
             "Results": {
                 "mac": 1234,
+                "userId": "-1",
                 "serverVersion": "3.4.5",
                 "local_ip": "192.168.1.10",
                 "secretToken": "ignored",
@@ -216,6 +214,7 @@ def test_parse_server_info_extracts_safe_fields() -> None:
     )
     info = parse_server_info(payload)
     assert info.mac == 1234
+    assert info.user_id == -1
     assert info.server_version == "3.4.5"
     assert info.local_ip == "192.168.1.10"
 
@@ -223,6 +222,40 @@ def test_parse_server_info_extracts_safe_fields() -> None:
 def test_parse_server_info_bad_payload_returns_empty() -> None:
     assert parse_server_info("not json") == AmpioServerInfo()
     assert parse_server_info(json.dumps([1, 2, 3])) == AmpioServerInfo()
+    # The baseline server always wraps the fields in `Results`.
+    assert parse_server_info(json.dumps({"mac": 1})) == AmpioServerInfo()
+
+
+@pytest.mark.parametrize(
+    ("version", "below"),
+    [
+        ("1865", False),  # the recorded baseline itself
+        ("1866", False),
+        ("1865.1", False),
+        ("1864", True),
+        ("409", True),
+        (None, True),
+        ("", True),
+        ("release-7", True),  # unparseable counts as below
+    ],
+)
+def test_server_below_baseline(version: str | None, below: bool) -> None:
+    assert server_below_baseline(version) is below
+
+
+@pytest.mark.parametrize(
+    ("user_id", "tier"),
+    [
+        (-1, AccessTier.ADMIN),
+        (4, AccessTier.RESTRICTED),
+        (0, AccessTier.RESTRICTED),
+        (None, AccessTier.UNKNOWN),
+    ],
+)
+def test_server_info_access_tier_from_account_id(
+    user_id: int | None, tier: AccessTier
+) -> None:
+    assert AmpioServerInfo(user_id=user_id).access_tier is tier
 
 
 def test_parse_states_snapshot() -> None:

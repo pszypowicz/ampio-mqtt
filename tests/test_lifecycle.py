@@ -126,14 +126,35 @@ def _reset_fake() -> None:
 async def test_connection_returns_server_info_on_happy_path() -> None:
     info_topic = f"ampio/fromDB/{USER}/data/info"
     FakeMqttClient.scripted_messages = [
-        _Message(info_topic, json.dumps({"Results": {"mac": 42}}).encode())
+        _Message(
+            info_topic, json.dumps({"Results": {"mac": 42, "userId": "-1"}}).encode()
+        )
     ]
     with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
         info = await AmpioClient.test_connection("h", 1883, USER, "p", info_timeout=1)
     assert info.mac == 42
+    assert info.access_tier is AccessTier.ADMIN
     assert info_topic in FakeMqttClient.subscribed
     # The info request publish was sent with an empty body.
     assert (f"ampio/control/{USER}/info", b"") in FakeMqttClient.published
+
+
+async def test_connection_reports_a_restricted_account_before_setup() -> None:
+    """A config flow can reject a non-admin account at validation time (#59).
+
+    An app-created user carries its positive users-table row id; only the
+    reserved `admin` login reports the pseudo-user -1.
+    """
+    info_topic = f"ampio/fromDB/{USER}/data/info"
+    FakeMqttClient.scripted_messages = [
+        _Message(
+            info_topic, json.dumps({"Results": {"mac": 42, "userId": "4"}}).encode()
+        )
+    ]
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
+        info = await AmpioClient.test_connection("h", 1883, USER, "p", info_timeout=1)
+    assert info.user_id == 4
+    assert info.access_tier is AccessTier.RESTRICTED
 
 
 async def test_connection_raises_timeout_when_info_never_arrives() -> None:
@@ -161,6 +182,7 @@ async def test_connection_returns_info_without_identity_as_is() -> None:
         info = await AmpioClient.test_connection("h", 1883, USER, "p", info_timeout=1)
     assert info.mac is None
     assert info.server_version is None
+    assert info.access_tier is AccessTier.UNKNOWN
 
 
 async def test_connection_raises_auth_error_on_bad_credentials() -> None:
@@ -230,7 +252,9 @@ async def test_start_drives_full_discovery_through_mocked_broker() -> None:
         _Message(DEVICES_TOPIC, json.dumps({"List": []}).encode()),
         _Message(DETAILS_TOPIC, json.dumps({"List": []}).encode()),
         _Message(STATES_TOPIC, json.dumps({"List": []}).encode()),
-        _Message(INFO_TOPIC, json.dumps({"Results": {"mac": 99}}).encode()),
+        _Message(
+            INFO_TOPIC, json.dumps({"Results": {"mac": 99, "userId": "-1"}}).encode()
+        ),
     ]
     client = AmpioClient("h", username=USER, reconnect_interval=0.0)
     with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
@@ -276,7 +300,9 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
             ).encode(),
         ),
         _Message(STATES_TOPIC, json.dumps({"List": []}).encode()),
-        _Message(INFO_TOPIC, json.dumps({"Results": {"mac": 99}}).encode()),
+        _Message(
+            INFO_TOPIC, json.dumps({"Results": {"mac": 99, "userId": "-1"}}).encode()
+        ),
     ]
     client = AmpioClient("h", username=USER, reconnect_interval=0.0)
     with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
@@ -322,16 +348,15 @@ async def test_restricted_account_completes_via_data_surface_fallback() -> None:
             json.dumps({"List": [{"id": 24, "params": 1}]}).encode(),
         ),
         _Message(STATES_TOPIC, json.dumps({"List": []}).encode()),
-        _Message(INFO_TOPIC, json.dumps({"Results": {"mac": 99}}).encode()),
+        _Message(
+            INFO_TOPIC, json.dumps({"Results": {"mac": 99, "userId": "4"}}).encode()
+        ),
     ]
     client = AmpioClient("h", username=USER, reconnect_interval=0.0)
     with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
-        await client.start(timeout=2.0, discovery_timeout=0.3)
+        await client.start(timeout=2.0, discovery_timeout=1.0)
     try:
-        assert (
-            await client.wait_for_initial_discovery(timeout=1.0, admin_grace=0.05)
-            is True
-        )
+        assert await client.wait_for_initial_discovery(timeout=1.0) is True
         assert client.access_tier is AccessTier.RESTRICTED
         obj = client.objects[24]
         assert obj.name == "CO2"
@@ -401,6 +426,39 @@ async def test_transient_outage_leaves_auth_failure_unset() -> None:
                 while availability.count(True) < 2:
                     await asyncio.sleep(0.01)
             assert client.auth_failure is None
+        finally:
+            await client.stop()
+
+
+async def test_consumer_stop_is_not_an_availability_event() -> None:
+    """stop() must not report the drop it causes itself (#56).
+
+    Every consumer reacting to availability otherwise sees a deliberate
+    shutdown as a lost connection; the HA integration carried a
+    shutting-down flag purely to suppress that false transition.
+    """
+    client = AmpioClient("h", username=USER, reconnect_interval=0.05)
+    availability: list[bool] = []
+    client.add_availability_listener(availability.append)
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        assert availability == [True]
+        await client.stop()
+    assert availability == [True]
+    assert client.available is False
+
+
+async def test_availability_notifies_again_after_restart() -> None:
+    """A stop() suppression must not leak into the next start()."""
+    client = AmpioClient("h", username=USER, reconnect_interval=0.05)
+    availability: list[bool] = []
+    client.add_availability_listener(availability.append)
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        await client.stop()
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        try:
+            assert availability == [True, True]
         finally:
             await client.stop()
 

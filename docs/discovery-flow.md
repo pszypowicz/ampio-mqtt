@@ -2,7 +2,8 @@
 
 `AmpioClient.start()` runs the bring-up sequence: connect, subscribe,
 publish the auto-discovery keywords, wait for the responses, return.
-By the time `start()` returns, `client.objects` and
+By the time `start()` returns - unless the `discovery_timeout`
+elapsed first - `client.objects` and
 `client.server_info` are populated and ready to consult
 (`client.modules` too on the admin tier - see below). Live state
 arrives via push from that point on.
@@ -31,10 +32,10 @@ for the `start()` / `stop()` lifecycle that joins them.
 ## Sequence
 
 1. **Connect** - TCP to the broker; authenticate; start the
-   capped-exponential reconnect loop. Each successful (re)connect bumps
-   `stats.reconnect_count` and stamps `stats.started_at` on the first
-   one.
-2. **Subscribe** - the per-user topics (`ob/+/state`, the nine
+   capped-exponential reconnect loop. The first successful connect
+   stamps `stats.started_at`; each subsequent one bumps
+   `stats.reconnect_count`.
+2. **Subscribe** - the per-user topics (`ob/+/state`, the ten
    response topics) plus the global raw-channel wildcards. See
    [`protocol.md`](protocol.md) and
    [`raw-channel-bridge.md`](raw-channel-bridge.md) for the full
@@ -51,44 +52,48 @@ for the `start()` / `stop()` lifecycle that joins them.
    - empty payload on `states` - bulk snapshot of current values.
 4. **Await** completion or the `discovery_timeout` deadline, whichever
    comes first - this step is `wait_for_initial_discovery()`, which
-   `start()` calls with `timeout=discovery_timeout`. Discovery is
-   complete when `states` and `info` have arrived plus one catalogue
-   pair: the `config` pair (admin accounts) or the `data` pair
-   (standard accounts, whose `config` requests are never answered).
-   When the `data` pair completes first, up to `admin_grace` seconds
-   (default 2.0, spent from the same `timeout` budget) are granted for
-   the `config` pair before returning, so `access_tier` reads its
-   settled value: both requests went out together, so continued
-   `config` silence after `data` answered means the account is not an
-   administrator. Each dispatched message bumps
+   `start()` calls with `timeout=discovery_timeout`. It first awaits
+   `states` and `info`, reads the account tier off the info reply
+   (`AmpioServerInfo.access_tier` - see
+   [`account-tiers.md`](account-tiers.md)), then awaits that tier's
+   catalogue pair: the `config` pair for the administrator, the `data`
+   pair otherwise. A tier the info reply does not settle (a
+   below-baseline server - see the README's supported versions) also
+   waits on the `data` pair, which answers for every account. Each
+   dispatched message bumps
    `stats.last_message_at`. The signals latch, so a later
-   `wait_for_initial_discovery()` call returns immediately once a
-   tier's set has fired (and stays correct across reconnects).
+   `wait_for_initial_discovery()` call returns immediately once its
+   set has fired (and stays correct across reconnects).
 5. **Return.** The library does not periodically refetch the
    catalogues; live state arrives via push on the per-object topic
    (and, for inputs, the raw-channel topics).
 
 ## What runs on demand, not automatically
 
-Two helpers are not part of the auto sequence because the consumer
+Three helpers are not part of the auto sequence because the consumer
 decides when - and whether - to call them:
 
 - **`fetch_rooms()`** - the `groups` + `group_devices` join. The HA
   integration calls it once at setup to seed `DeviceInfo.suggested_area`.
   A non-HA consumer may not want it at all.
+- **`fetch_scenes()`** - the scene catalogue, driven with
+  `run_scene()` / `turn_scene_off()` / `undo_scene()`. Same rationale:
+  a consumer that surfaces no scenes never pays for the fetch.
 - **`fetch_locations()`** - the Designer "Location" name table. Same
   rationale; today it is consumed only for the diagnostics blob since
   the per-output pointer half is not on MQTT
   (see [`untapped-surfaces.md`](untapped-surfaces.md)).
 
-Both helpers accept an explicit `timeout` (default 5.0 s) and raise
-`AmpioConnectionError` on timeout, so a flaky broker fails loud rather
-than silently returning an empty dict.
+All three helpers accept an explicit `timeout` (default 5.0 s) and raise
+`AmpioTimeoutError` on timeout, so a flaky broker fails loud rather
+than silently returning an empty result.
 
 ## Liveness counters
 
-`client.stats` (a `ConnectionStats` dataclass) is the single source the
-HA integration's diagnostics blob reads from. The four fields are:
+`client.stats` (a `ConnectionStats` dataclass) is what the HA
+integration's diagnostics blob reads for connection health
+(the blob also carries `last_payloads` and the location table).
+The four fields are:
 
 - `reconnect_count` - monotonic; useful for a "works intermittently"
   report.
