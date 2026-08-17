@@ -31,8 +31,10 @@ library itself is Home Assistant agnostic.
 >   100-140 ms later, through the per-object republish.
 >
 > `AmpioClient.access_tier` reports the detected tier once discovery
-> completes. [`docs/account-tiers.md`](docs/account-tiers.md) has the
-> full capability table, the measured latency difference, and when an
+> completes, and `AmpioClient.test_connection` reports it at validation
+> time so a setup flow can reject an unsuitable account up front.
+> [`docs/account-tiers.md`](docs/account-tiers.md) has the full
+> capability table, the measured latency difference, and when an
 > administrator account is worth it.
 >
 > **The grant bounds reads and object commands alike.** An account can

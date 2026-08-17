@@ -51,19 +51,17 @@ for the `start()` / `stop()` lifecycle that joins them.
    - empty payload on `states` - bulk snapshot of current values.
 4. **Await** completion or the `discovery_timeout` deadline, whichever
    comes first - this step is `wait_for_initial_discovery()`, which
-   `start()` calls with `timeout=discovery_timeout`. Discovery is
-   complete when `states` and `info` have arrived plus one catalogue
-   pair: the `config` pair (admin accounts) or the `data` pair
-   (standard accounts, whose `config` requests are never answered).
-   When the `data` pair completes first, up to `admin_grace` seconds
-   (default 2.0, spent from the same `timeout` budget) are granted for
-   the `config` pair before returning, so `access_tier` reads its
-   settled value: both requests went out together, so continued
-   `config` silence after `data` answered means the account is not an
-   administrator. Each dispatched message bumps
+   `start()` calls with `timeout=discovery_timeout`. It first awaits
+   `states` and `info`, reads the account tier off the info reply
+   (`AmpioServerInfo.access_tier` - see
+   [`account-tiers.md`](account-tiers.md)), then awaits that tier's
+   catalogue pair: the `config` pair for the administrator, the `data`
+   pair otherwise. A tier the info reply does not settle (firmware
+   predating the `userId` field) also waits on the `data` pair, which
+   answers for every account. Each dispatched message bumps
    `stats.last_message_at`. The signals latch, so a later
-   `wait_for_initial_discovery()` call returns immediately once a
-   tier's set has fired (and stays correct across reconnects).
+   `wait_for_initial_discovery()` call returns immediately once its
+   set has fired (and stays correct across reconnects).
 5. **Return.** The library does not periodically refetch the
    catalogues; live state arrives via push on the per-object topic
    (and, for inputs, the raw-channel topics).

@@ -274,6 +274,7 @@ def parse_server_info(payload: str) -> AmpioServerInfo:
         return AmpioServerInfo()
     return AmpioServerInfo(
         mac=to_int(data.get("mac")),
+        user_id=to_int(data.get("userId")),
         server_version=data.get("serverVersion") or None,
         server_revision=data.get("serverRevision") or None,
         mqtt_version=data.get("mqttVersion") or None,

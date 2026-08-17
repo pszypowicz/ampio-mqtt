@@ -5,7 +5,14 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from .const import InputKind, ObjectKind, OutputKind, SensorKind, is_system_type
+from .const import (
+    AccessTier,
+    InputKind,
+    ObjectKind,
+    OutputKind,
+    SensorKind,
+    is_system_type,
+)
 from .device_types import Capability
 
 # Bit flags inside the `params` integer (`obiekty.params`). The semantics
@@ -236,11 +243,29 @@ class AmpioServerInfo:
     """
 
     mac: int | None = None  # the M-SERV's own CAN mac (matches a module's mac_global)
+    # The asking account's id: -1 for the reserved `admin` login, the
+    # users-table row id for an app-created user. See `access_tier`.
+    user_id: int | None = None
     server_version: str | None = None  # ampio_mqtt application version
     server_revision: str | None = None
     mqtt_version: str | None = None  # broker version
     local_ip: str | None = None  # used for the configuration_url
     device_id: str | None = None  # hardware identifier of the host
+
+    @property
+    def access_tier(self) -> AccessTier:
+        """Account tier, derived from the account id in the info reply.
+
+        The M-SERV's administrator is the reserved ``admin`` login, reported
+        as the pseudo-user id ``-1``; app-created users carry their positive
+        users-table row id and are always the standard tier - the app offers
+        no administrator toggle for them, and their per-object permissions
+        never open the admin-only surfaces. ``UNKNOWN`` when the reply
+        carried no ``userId`` (firmware predating the field).
+        """
+        if self.user_id is None:
+            return AccessTier.UNKNOWN
+        return AccessTier.ADMIN if self.user_id == -1 else AccessTier.RESTRICTED
 
 
 @dataclass(slots=True)

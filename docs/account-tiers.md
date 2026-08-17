@@ -1,13 +1,22 @@
 # Account tiers
 
 Every Ampio account reaches the same broker, but the M-SERV serves two
-different surfaces depending on the account's **administrator bit**. The
-per-user app permissions do not move an account between tiers: a standard
-account granted every permission in the app is still a standard account.
+different surfaces depending on the account: the reserved **`admin` login
+is the administrator**, and every app-created user is a standard account.
+The app offers no administrator toggle for its users (it refuses to create
+a user named `admin` altogether - both verified in the Designer web app),
+and per-user app permissions do not move an account between tiers: a
+standard account granted every permission in the app is still a standard
+account.
 
-`AmpioClient.access_tier` reports which tier answered, settled by the time
-`wait_for_initial_discovery()` returns. See
-[`discovery-flow.md`](discovery-flow.md) for how it is detected.
+The tier is read from the account id the `info` reply reports on every
+tier: `-1` for the admin pseudo-user, the users-table row id for an app
+user - see `AmpioServerInfo.access_tier` (live-verified against both
+account shapes). `AmpioClient.access_tier` exposes it on a running client,
+settled by the time `wait_for_initial_discovery()` returns, and
+`test_connection()` reports it at validation time, so a config flow can
+reject an account whose tier will not support what the consumer needs
+(e.g. `modules`/`mserv_id`, which the standard tier never receives).
 
 ## What each tier gets
 
@@ -79,8 +88,8 @@ Prefer an administrator account when the install needs:
   versions, and `mserv_id` for a `via_device` hierarchy.
 - **Bus events** - panel presses and other Ampio logic signals only
   arrive on the admin tier. A standard account can still raise events it
-  holds the right for, so automation *into* Ampio works either way; it is
-  reacting *to* Ampio's own events that needs admin.
+  holds the right for, so automation _into_ Ampio works either way; it is
+  reacting _to_ Ampio's own events that needs admin.
 - **Module health** - each module broadcasts its CAN supply voltage, and
   the output modules their own temperature, as
   `AmpioModule.supply_voltage` / `temperature`. Useful for spotting a

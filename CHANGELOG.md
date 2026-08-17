@@ -18,7 +18,8 @@ upgrade path.
 
 Addresses feedback from the Home Assistant integration: the numeric half of
 value interpretation (#57), module mac collisions being kept silently
-(#58), and a deliberate `stop()` being reported like an outage (#56).
+(#58), a deliberate `stop()` being reported like an outage (#56), and the
+account tier being unknowable at validation time (#59).
 
 ### Added
 
@@ -35,6 +36,13 @@ value interpretation (#57), module mac collisions being kept silently
   uniqueness, and a consumer keying devices on `AmpioModule.mac` - the
   recommended replacement-stable module key - would otherwise silently
   merge two modules into one (#58).
+- `AmpioServerInfo.user_id` and `AmpioServerInfo.access_tier`: the asking
+  account's id from the info reply (`-1` for the reserved `admin` login,
+  the users-table row id for an app-created user) and the tier derived
+  from it. Since `test_connection` returns this object, a config flow now
+  learns the tier at validation time and can reject a restricted account
+  up front instead of failing at setup when `mserv_id` turns out to be
+  None (#59).
 
 ### Changed
 
@@ -48,6 +56,14 @@ value interpretation (#57), module mac collisions being kept silently
   it made every orderly shutdown look like a lost connection. Outages and
   the fatal auth-failure stop keep reporting False, and `available` still
   reads False after a stop (#56).
+- `AmpioClient.access_tier` is now read off the info reply's account id
+  instead of inferred from which discovery surface answered, so it is
+  exact the moment the info reply arrives. `wait_for_initial_discovery`
+  waits linearly for the tier's own catalogue pair and drops the
+  `admin_grace` parameter along with the surface race - config-surface
+  silence no longer needs a grace window to be conclusive (#59). Firmware
+  whose info reply predates `userId` reads as `UNKNOWN` and completes
+  discovery via the `data` pair, which answers for every account.
 
 ## 0.16.0
 

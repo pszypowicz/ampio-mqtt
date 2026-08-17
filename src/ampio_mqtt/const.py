@@ -82,22 +82,22 @@ ENDPOINT_BY_NAME: dict[str, Endpoint] = {ep.name: ep for ep in ENDPOINTS}
 
 
 class AccessTier(Enum):
-    """Account tier, detected from which discovery surface answers.
+    """Account tier, derived from the account id in the server-info reply.
 
     The M-SERV gates the ``config`` surface (and the raw ``ampio/from/#``
-    channel tree) on the account's administrator bit; the per-user app
-    permissions do not affect it. A non-admin account, however permissioned,
-    is served only the app-sync ``data`` surface.
+    channel tree) on the account being the reserved ``admin`` login; the
+    per-user app permissions do not affect it. A non-admin account, however
+    permissioned, is served only the app-sync ``data`` surface.
     """
 
-    UNKNOWN = "unknown"  # neither surface has answered yet
-    ADMIN = "admin"  # the config surface answered: full catalogue + modules
-    RESTRICTED = "restricted"  # only the data surface answered: app-sync view
+    UNKNOWN = "unknown"  # no info reply yet, or one without an account id
+    ADMIN = "admin"  # the reserved `admin` login: full catalogue + modules
+    RESTRICTED = "restricted"  # an app-created user: app-sync view only
 
 
 # Initial-discovery endpoint groups by tier. Discovery is complete when the
-# common pair plus either tier's catalogue pair have latched; which pair
-# answered determines `AmpioClient.access_tier`.
+# common pair plus the catalogue pair of the account's tier have latched;
+# the tier is read from the info reply (see `AmpioServerInfo.access_tier`).
 DISCOVERY_COMMON: tuple[str, ...] = ("states", "info")
 DISCOVERY_ADMIN: tuple[str, ...] = ("details", "devices")
 DISCOVERY_FALLBACK: tuple[str, ...] = ("data_devices", "params_devices")

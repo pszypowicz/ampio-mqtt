@@ -11,7 +11,6 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from contextlib import suppress
 from typing import Any
 
 from . import _connection, _protocol
@@ -215,22 +214,20 @@ class AmpioClient:
 
     @property
     def access_tier(self) -> AccessTier:
-        """Detected account tier, derived from which discovery surface answered.
+        """Detected account tier, read from the server-info reply.
 
-        ``ADMIN`` once the ``config`` surface has answered (``devicesDetails``);
-        ``RESTRICTED`` when only the app-sync ``data/devices`` catalogue has;
-        ``UNKNOWN`` before either. Settled by the time
-        :meth:`wait_for_initial_discovery` returns True. The value can still
-        upgrade RESTRICTED -> ADMIN if a slow config reply lands later; it
-        never downgrades (the underlying signals latch). The tier reflects the
-        account's administrator bit only - per-user app permissions do not
-        move an account between tiers.
+        The info surface answers for every tier and reports the account's
+        own id: ``-1`` for the reserved ``admin`` login, the users-table row
+        id for an app-created (always non-admin) user. ``UNKNOWN`` until the
+        info reply arrives, or when it carries no account id (firmware
+        predating the field). Settled by the time
+        :meth:`wait_for_initial_discovery` returns True; a config flow can
+        read the same answer from :meth:`test_connection`'s result before
+        any client exists. Per-user app permissions do not move an account
+        between tiers.
         """
-        if self._received["details"].is_set():
-            return AccessTier.ADMIN
-        if self._received["data_devices"].is_set():
-            return AccessTier.RESTRICTED
-        return AccessTier.UNKNOWN
+        info = self._store.server_info
+        return info.access_tier if info is not None else AccessTier.UNKNOWN
 
     @property
     def last_payloads(self) -> dict[str, str]:
@@ -321,6 +318,12 @@ class AmpioClient:
         that arrives without identity fields is returned as-is rather than
         raised: it means the server is answering but has nothing to say, not
         that the request was too slow.
+
+        The result's ``access_tier`` tells a config flow what the account
+        will get before any client exists: a ``RESTRICTED`` account never
+        receives the module list, so a consumer that needs ``modules`` or
+        ``mserv_id`` can reject it here with an accurate message instead of
+        failing at setup.
         """
         user = username or ""
         info = ENDPOINT_BY_NAME["info"]
@@ -349,8 +352,8 @@ class AmpioClient:
         object catalogue so names and classification are known before entities
         are created. Admin accounts complete via the `config` surface (objects
         plus the module list); non-admin accounts complete via the app-sync
-        `data` surface fallback (grant-filtered objects, no modules). See
-        `access_tier` for which one answered.
+        `data` surface (grant-filtered objects, no modules). See `access_tier`
+        for the detected tier.
 
         On return, the initial discovery cycle has been awaited up to
         `discovery_timeout`; see `wait_for_initial_discovery` for the explicit,
@@ -361,26 +364,17 @@ class AmpioClient:
         await self._connection.open(timeout)
         await self.wait_for_initial_discovery(timeout=discovery_timeout)
 
-    async def wait_for_initial_discovery(
-        self, *, timeout: float = 8.0, admin_grace: float = 2.0
-    ) -> bool:
+    async def wait_for_initial_discovery(self, *, timeout: float = 8.0) -> bool:
         """Block until the initial discovery cycle has populated the client.
 
-        Discovery is complete once the states snapshot and info replies have
-        arrived plus one full object catalogue: the admin ``config`` pair
-        (devicesDetails -> ``objects``, devices -> ``modules``) or the
-        restricted ``data`` pair (data/devices -> ``objects``,
-        data/params_devices -> visibility flags). Returns True on completion
-        and False if ``timeout`` elapses first; which pair completed is
-        reported by :pyattr:`access_tier`.
-
-        When the restricted pair completes and the admin pair has not, up to
-        ``admin_grace`` seconds of the remaining ``timeout`` budget are spent
-        waiting for the admin pair before returning, so ``access_tier`` is
-        settled on return: both requests were published at the same moment to
-        the same server, so continued config-surface silence after the data
-        surface answered means the account is not an administrator. The total
-        wait never exceeds ``timeout``.
+        Waits for the states snapshot and info replies, reads the account
+        tier off the info reply, then waits for that tier's object catalogue
+        pair: the admin ``config`` pair (devicesDetails -> ``objects``,
+        devices -> ``modules``) or the ``data`` pair (data/devices ->
+        grant-filtered ``objects``, data/params_devices -> visibility flags).
+        An ``UNKNOWN`` tier waits on the ``data`` pair, which answers for
+        every account. Returns True on completion and False if ``timeout``
+        elapses first.
 
         This is the contract a consumer relies on when it must read
         ``objects``/``server_info`` (and, on the admin tier, ``modules``)
@@ -393,44 +387,17 @@ class AmpioClient:
         immediately.
         """
 
-        def _complete(pair: tuple[str, ...]) -> bool:
-            return all(self._received[n].is_set() for n in DISCOVERY_COMMON + pair)
-
-        # Fast path: discovery already completed in an earlier cycle. Skips the
-        # admin grace, which a restricted account would otherwise re-pay on
-        # every call - by now the config surface has had far longer than the
-        # grace to answer, so its silence is conclusive.
-        if _complete(DISCOVERY_ADMIN) or _complete(DISCOVERY_FALLBACK):
-            return True
-
-        deadline = asyncio.get_running_loop().time() + timeout
-
         async def _all(names: tuple[str, ...]) -> None:
             await asyncio.gather(*(self._received[n].wait() for n in names))
 
-        admin_task = asyncio.create_task(_all(DISCOVERY_COMMON + DISCOVERY_ADMIN))
-        fallback_task = asyncio.create_task(_all(DISCOVERY_COMMON + DISCOVERY_FALLBACK))
         try:
-            done, _ = await asyncio.wait(
-                {admin_task, fallback_task},
-                timeout=timeout,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if not done:
-                return False
-            if admin_task not in done:
-                remaining = deadline - asyncio.get_running_loop().time()
-                grace = min(admin_grace, max(0.0, remaining))
-                with suppress(TimeoutError):
-                    async with asyncio.timeout(grace):
-                        await admin_task
-            return True
-        finally:
-            for task in (admin_task, fallback_task):
-                if not task.done():
-                    task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await task
+            async with asyncio.timeout(timeout):
+                await _all(DISCOVERY_COMMON)
+                admin = self.access_tier is AccessTier.ADMIN
+                await _all(DISCOVERY_ADMIN if admin else DISCOVERY_FALLBACK)
+        except TimeoutError:
+            return False
+        return True
 
     async def stop(self) -> None:
         """Stop the connection.
