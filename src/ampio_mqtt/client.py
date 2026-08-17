@@ -10,7 +10,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeVar, overload
 
 from . import _connection, _protocol
 from ._connection import _decode_payload
@@ -38,8 +38,13 @@ from .endpoints import (
     scene_payload,
 )
 from .errors import AmpioTimeoutError
+from .events import (
+    AuthFailed,
+    AvailabilityChanged,
+    ClientEvent,
+    ConnectionDied,
+)
 from .models import (
-    AmpioEvent,
     AmpioModule,
     AmpioObject,
     AmpioScene,
@@ -49,11 +54,8 @@ from .models import (
 
 _LOGGER = logging.getLogger(__name__)
 
-ObjectListener = Callable[[AmpioObject], None]
-ModuleListener = Callable[[AmpioModule], None]
-EventListener = Callable[[AmpioEvent], None]
-AvailabilityListener = Callable[[bool], None]
-AuthFailureListener = Callable[[str], None]
+EventListener = Callable[[ClientEvent], None]
+_EventT = TypeVar("_EventT", bound=ClientEvent)
 
 
 class AmpioClient:
@@ -84,15 +86,13 @@ class AmpioClient:
             on_availability=self._handle_availability,
             on_connected=self.refresh,
             on_auth_failure=self._handle_auth_failure,
+            on_fatal=self._handle_fatal,
         )
 
-        self._object_listeners: list[ObjectListener] = []
-        self._module_listeners: list[ModuleListener] = []
-        self._event_listeners: list[EventListener] = []
-        self._availability_listeners: list[AvailabilityListener] = []
-        self._auth_failure_listeners: list[AuthFailureListener] = []
-        self._object_removal_listeners: list[ObjectListener] = []
-        self._module_removal_listeners: list[ModuleListener] = []
+        # One registry for every subscriber: (listener, event-type filter).
+        self._listeners: list[
+            tuple[Callable[[Any], None], tuple[type[ClientEvent], ...] | None]
+        ] = []
 
         # Per-endpoint latch, set the first time each reply lands. Derived from
         # the endpoint table so a new endpoint needs no new field here.
@@ -121,7 +121,7 @@ class AmpioClient:
         ]
 
     def _handle_message(self, topic: str, payload: str) -> None:
-        """Apply one message, then tell whoever the change concerns."""
+        """Apply one message, then dispatch what it changed."""
         self.stats.last_message_at = time.time()
         applied = self._store.apply(topic, payload)
         if applied.endpoint is not None:
@@ -135,22 +135,32 @@ class AmpioClient:
                 for future in self._pending.pop(applied.endpoint.name, ()):
                     if not future.done():
                         future.set_result(payload)
-        for obj in applied.objects:
-            _emit(self._object_listeners, obj, "object")
-        for module in applied.modules:
-            _emit(self._module_listeners, module, "module")
         for event in applied.events:
-            _emit(self._event_listeners, event, "event")
-        for obj in applied.removed_objects:
-            _emit(self._object_removal_listeners, obj, "object removal")
-        for module in applied.removed_modules:
-            _emit(self._module_removal_listeners, module, "module removal")
+            self._dispatch(event)
 
     def _handle_availability(self, available: bool) -> None:
-        _emit(self._availability_listeners, available, "availability")
+        self._dispatch(AvailabilityChanged(available))
 
     def _handle_auth_failure(self, message: str) -> None:
-        _emit(self._auth_failure_listeners, message, "auth failure")
+        self._dispatch(AuthFailed(message))
+
+    def _handle_fatal(self, message: str) -> None:
+        self._dispatch(ConnectionDied(message))
+
+    def _dispatch(self, event: ClientEvent) -> None:
+        """Hand `event` to each matching listener, surviving any that raises.
+
+        Listeners are consumer code. One that raises must not take down the
+        connection that feeds every other entity, so the failure is logged
+        and the remaining listeners still run.
+        """
+        for listener, only in list(self._listeners):
+            if only is not None and not isinstance(event, only):
+                continue
+            try:
+                listener(event)
+            except Exception:
+                _LOGGER.exception("Ampio event listener raised")
 
     # --- public API -------------------------------------------------------
 
@@ -258,92 +268,52 @@ class AmpioClient:
         """
         return self._last_payloads
 
-    def add_object_listener(self, listener: ObjectListener) -> Callable[[], None]:
-        """Register a callback invoked on every object update (state/metadata)."""
-        self._object_listeners.append(listener)
-        return lambda: self._object_listeners.remove(listener)
+    @overload
+    def subscribe(self, listener: EventListener) -> Callable[[], None]: ...
 
-    def add_module_listener(self, listener: ModuleListener) -> Callable[[], None]:
-        """Register a callback invoked when a module's own report updates it.
+    @overload
+    def subscribe(
+        self, listener: Callable[[_EventT], None], *, of: type[_EventT]
+    ) -> Callable[[], None]: ...
 
-        Fires on the diagnostics broadcast, so it is administrator-only; a
-        standard account never receives the raw tree and this never fires.
-        """
-        self._module_listeners.append(listener)
-        return lambda: self._module_listeners.remove(listener)
+    @overload
+    def subscribe(
+        self, listener: EventListener, *, of: tuple[type[ClientEvent], ...]
+    ) -> Callable[[], None]: ...
 
-    def add_object_removal_listener(
-        self, listener: ObjectListener
+    def subscribe(
+        self,
+        listener: Callable[[Any], None],
+        *,
+        of: type | tuple[type, ...] | None = None,
     ) -> Callable[[], None]:
-        """Register a callback invoked when an object leaves the catalogue.
+        """Register ``listener`` on the event stream; returns an unsubscribe.
 
-        Fires once per removed object with its final state; by callback time
-        the id is already gone from :pyattr:`objects`. Removal is noticed
-        when the account's authoritative catalogue answers without the
-        object: a Designer delete (whose save restarts the M-SERV, so the
-        reconnect refresh picks it up) or, on the restricted tier, a grant
-        revocation. This is the signal to remove whatever entity was built
-        on the object. An empty catalogue reply never mass-removes - see the
-        store's eviction guard.
+        Everything the client learns flows through this one stream, in the
+        order it was produced: ``ObjectUpdated``, ``ObjectRemoved``,
+        ``ModuleUpdated``, ``ModuleRemoved``, ``BusEvent``,
+        ``AvailabilityChanged``, ``AuthFailed``, and ``ConnectionDied`` -
+        see :mod:`ampio_mqtt.events` for what each means and which account
+        tiers produce it. ``of`` narrows the subscription to one event class
+        (which also types the callback parameter precisely) or a tuple of
+        classes::
+
+            client.subscribe(on_any_event)
+            client.subscribe(on_object, of=ObjectUpdated)
+            client.subscribe(on_gone, of=(ObjectRemoved, ModuleRemoved))
+
+        Ordering across kinds is guaranteed: the availability drop precedes
+        the terminal ``AuthFailed`` / ``ConnectionDied``, and removals
+        follow the updates of the catalogue reply that caused them.
         """
-        self._object_removal_listeners.append(listener)
-        return lambda: self._object_removal_listeners.remove(listener)
+        only = (of,) if isinstance(of, type) else of
+        entry = (listener, only)
+        self._listeners.append(entry)
 
-    def add_module_removal_listener(
-        self, listener: ModuleListener
-    ) -> Callable[[], None]:
-        """Register a callback invoked when a module leaves the module list.
+        def _unsubscribe() -> None:
+            self._listeners.remove(entry)
 
-        Fires once per removed module with its final state, after the store
-        has dropped it. The module list is administrator-only, so this never
-        fires on a standard account.
-        """
-        self._module_removal_listeners.append(listener)
-        return lambda: self._module_removal_listeners.remove(listener)
-
-    def add_event_listener(self, listener: EventListener) -> Callable[[], None]:
-        """Register a callback invoked when a bus event is raised.
-
-        Received events ride the administrator-only raw tree, so this never
-        fires on a standard account even though such an account can raise
-        events itself.
-        """
-        self._event_listeners.append(listener)
-        return lambda: self._event_listeners.remove(listener)
-
-    def add_availability_listener(
-        self, listener: AvailabilityListener
-    ) -> Callable[[], None]:
-        """Register a callback invoked when connection availability changes.
-
-        Fires for every transition the consumer did not cause itself: the
-        connection coming up, an outage, and the fatal auth-failure stop
-        (before its own listener, so entities read unavailable by then). A
-        consumer-initiated ``stop()`` is deliberately not reported - it is
-        not news to the consumer, and reporting it made every orderly
-        shutdown look like a lost connection. ``available`` still reads
-        False after a stop.
-        """
-        self._availability_listeners.append(listener)
-        return lambda: self._availability_listeners.remove(listener)
-
-    def add_auth_failure_listener(
-        self, listener: AuthFailureListener
-    ) -> Callable[[], None]:
-        """Register a callback for a fatal credential rejection after start.
-
-        Invoked with the broker's reason string when a reconnect attempt is
-        rejected as unauthorized after ``start()`` has succeeded - the shape a
-        credential change on the broker produces. By the time it fires the
-        availability listeners have reported False and the connection loop has
-        stopped for good, so this is the signal to drive a reauthentication
-        flow; without it a dead loop is indistinguishable from an outage the
-        client is still retrying. A rejection during ``start()`` itself raises
-        ``AmpioAuthError`` there instead and does not invoke this listener.
-        The reason is also queryable as :pyattr:`auth_failure`.
-        """
-        self._auth_failure_listeners.append(listener)
-        return lambda: self._auth_failure_listeners.remove(listener)
+        return _unsubscribe
 
     @staticmethod
     async def test_connection(
@@ -749,20 +719,6 @@ class AmpioClient:
         drives the same path through the connection.
         """
         self._handle_message(topic, _decode_payload(payload))
-
-
-def _emit(listeners: list[Any], payload: Any, kind: str) -> None:
-    """Hand `payload` to each listener, surviving any that raises.
-
-    Listeners are consumer code. One that raises must not take down the
-    connection that feeds every other entity, so the failure is logged and the
-    remaining listeners still run.
-    """
-    for listener in list(listeners):
-        try:
-            listener(payload)
-        except Exception:
-            _LOGGER.exception("Ampio %s listener raised", kind)
 
 
 def _check_range(name: str, value: int, low: int, high: int) -> None:

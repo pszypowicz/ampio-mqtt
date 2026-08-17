@@ -13,7 +13,8 @@ from typing import Any
 
 from .device_types import module_capabilities, module_model
 from .endpoints import BASELINE_SERVER_VERSION
-from .models import AmpioEvent, AmpioModule, AmpioScene, AmpioServerInfo
+from .events import BusEvent
+from .models import AmpioModule, AmpioScene, AmpioServerInfo
 
 
 @dataclass(slots=True)
@@ -407,8 +408,8 @@ def parse_raw_channel_topic(topic: str) -> tuple[int, str, int] | None:
     return mac, parts[4], channel
 
 
-def parse_event(topic: str, payload: str) -> AmpioEvent | None:
-    """Parse an `ampio/from/<MAC>/event` push into an `AmpioEvent`."""
+def parse_event(topic: str, payload: str) -> BusEvent | None:
+    """Parse an `ampio/from/<MAC>/event` push into a `BusEvent`."""
     parts = topic.split("/")
     if len(parts) != 4 or parts[0] != "ampio" or parts[1] != "from":
         return None
@@ -421,7 +422,7 @@ def parse_event(topic: str, payload: str) -> AmpioEvent | None:
     number = to_int(payload.strip())
     if number is None:
         return None
-    return AmpioEvent(number=number, mac=mac)
+    return BusEvent(number=number, mac=mac)
 
 
 def parse_diagnostics_mac(topic: str) -> int | None:

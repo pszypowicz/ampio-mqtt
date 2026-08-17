@@ -53,6 +53,7 @@ MessageHandler = Callable[[str, str], None]
 AvailabilityHandler = Callable[[bool], None]
 ConnectedHandler = Callable[[], Awaitable[None]]
 AuthFailureHandler = Callable[[str], None]
+FatalHandler = Callable[[str], None]
 
 
 class Connection:
@@ -72,6 +73,7 @@ class Connection:
         on_availability: AvailabilityHandler,
         on_connected: ConnectedHandler,
         on_auth_failure: AuthFailureHandler,
+        on_fatal: FatalHandler,
     ) -> None:
         self._host = host
         self._port = port
@@ -84,6 +86,7 @@ class Connection:
         self._on_availability = on_availability
         self._on_connected = on_connected
         self._on_auth_failure = on_auth_failure
+        self._on_fatal = on_fatal
 
         # Reusing one client id across reconnects keeps the broker from seeing
         # parallel "ghost" sessions while the previous one expires.
@@ -93,6 +96,8 @@ class Connection:
         self._connected = asyncio.Event()
         self._auth_failed = asyncio.Event()
         self._auth_error_message: str | None = None
+        self._died = asyncio.Event()
+        self._fatal_message: str | None = None
         self._available = False
         self._stop = False
         # Set by close() before it cancels the runner, so the teardown's
@@ -122,26 +127,36 @@ class Connection:
         self._connected.clear()
         self._auth_failed.clear()
         self._auth_error_message = None
+        self._died.clear()
+        self._fatal_message = None
         self._runner = asyncio.create_task(self._run())
 
         waiters = [
             asyncio.create_task(self._connected.wait()),
             asyncio.create_task(self._auth_failed.wait()),
+            asyncio.create_task(self._died.wait()),
         ]
         try:
-            done, _ = await asyncio.wait(
+            await asyncio.wait(
                 waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
             )
         finally:
             for task in waiters:
                 if not task.done():
                     task.cancel()
-        if not done:
-            await self.close()
-            raise AmpioConnectionError("Timed out connecting to Ampio")
+        # Connected wins even when a terminal signal raced in behind it: the
+        # session did come up, so the crash/rejection is post-open news and
+        # reaches the consumer through the event stream instead.
+        if self._connected.is_set():
+            return
         if self._auth_failed.is_set():
             await self.close()
             raise AmpioAuthError(self._auth_error_message or _AUTH_REJECTED)
+        if self._died.is_set():
+            await self.close()
+            raise AmpioConnectionError(self._fatal_message or "Connection loop died")
+        await self.close()
+        raise AmpioConnectionError("Timed out connecting to Ampio")
 
     async def close(self) -> None:
         """Stop the loop, reporting rather than raising whatever ended it.
@@ -187,6 +202,28 @@ class Connection:
             raise AmpioConnectionError(str(err)) from err
 
     async def _run(self) -> None:
+        """Drive the session loop, reporting a crash instead of dying silently.
+
+        Anything the loop does not recognize as a transport or credential
+        failure is a bug: nothing will retry, so it is terminal. Left inside
+        the task it would surface only when ``close()`` reaps the runner,
+        and a dead loop reads exactly like an outage under retry. After a
+        successful ``open()`` the crash is reported through ``on_fatal``
+        (the iteration's ``finally`` has already dropped availability);
+        during ``open()`` it makes ``open()`` raise instead, mirroring the
+        auth path.
+        """
+        try:
+            await self._loop()
+        except Exception as err:
+            _LOGGER.exception("Ampio connection loop died")
+            self._stats.last_error = str(err)
+            self._fatal_message = f"Connection loop died: {err}"
+            self._died.set()
+            if self._connected.is_set():
+                self._on_fatal(self._fatal_message)
+
+    async def _loop(self) -> None:
         attempt = 0
         while not self._stop:
             try:

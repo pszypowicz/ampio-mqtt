@@ -14,10 +14,34 @@ from dataclasses import fields
 
 import pytest
 
-from ampio_mqtt._store import AmpioStore
-from ampio_mqtt.models import AmpioObject
+from ampio_mqtt._store import AmpioStore, Applied
+from ampio_mqtt.events import (
+    BusEvent,
+    ModuleRemoved,
+    ModuleUpdated,
+    ObjectRemoved,
+    ObjectUpdated,
+)
+from ampio_mqtt.models import AmpioModule, AmpioObject
 
 USER = "u"
+
+
+def _updated(applied: Applied) -> list[AmpioObject]:
+    return [e.object for e in applied.events if isinstance(e, ObjectUpdated)]
+
+
+def _removed(applied: Applied) -> list[AmpioObject]:
+    return [e.object for e in applied.events if isinstance(e, ObjectRemoved)]
+
+
+def _mod_updated(applied: Applied) -> list[AmpioModule]:
+    return [e.module for e in applied.events if isinstance(e, ModuleUpdated)]
+
+
+def _mod_removed(applied: Applied) -> list[AmpioModule]:
+    return [e.module for e in applied.events if isinstance(e, ModuleRemoved)]
+
 
 DEVICES_TOPIC = f"ampio/fromDB/{USER}/config/devices"
 DETAILS_TOPIC = f"ampio/fromDB/{USER}/config/devicesDetails"
@@ -110,14 +134,14 @@ def test_a_catalogue_reply_reports_its_endpoint_and_the_rows_it_changed() -> Non
     applied = _store().apply(f"ampio/fromDB/{USER}/config/devicesDetails", _catalogue())
     assert applied.endpoint is not None and applied.endpoint.name == "details"
     assert applied.parsed is True
-    assert [o.id for o in applied.objects] == [41]
+    assert [o.id for o in _updated(applied)] == [41]
 
 
 def test_an_unchanged_row_reports_nothing() -> None:
     store = _store()
     topic = f"ampio/fromDB/{USER}/config/devicesDetails"
     store.apply(topic, _catalogue())
-    assert store.apply(topic, _catalogue()).objects == []
+    assert store.apply(topic, _catalogue()).events == []
 
 
 def test_a_changed_row_reports_only_that_row() -> None:
@@ -125,7 +149,7 @@ def test_a_changed_row_reports_only_that_row() -> None:
     topic = f"ampio/fromDB/{USER}/config/devicesDetails"
     store.apply(topic, _catalogue())
     applied = store.apply(topic, _catalogue(opis_menu="Renamed"))
-    assert [o.name for o in applied.objects] == ["Renamed"]
+    assert [o.name for o in _updated(applied)] == ["Renamed"]
 
 
 def test_an_unreadable_reply_reports_its_endpoint_but_not_parsed() -> None:
@@ -133,7 +157,7 @@ def test_an_unreadable_reply_reports_its_endpoint_but_not_parsed() -> None:
     applied = _store().apply(f"ampio/fromDB/{USER}/config/devicesDetails", "null")
     assert applied.endpoint is not None
     assert applied.parsed is False
-    assert applied.objects == []
+    assert _updated(applied) == []
 
 
 def test_a_reply_with_no_state_handler_still_counts_as_parsed() -> None:
@@ -143,26 +167,23 @@ def test_a_reply_with_no_state_handler_still_counts_as_parsed() -> None:
 
 
 @pytest.mark.parametrize(
-    ("topic", "payload", "attr"),
+    ("topic", "payload", "event_type"),
     [
-        (f"ampio/fromDB/{USER}/ob/41/state", '{"state":"1"}', "objects"),
-        ("ampio/from/1/event", "189", "events"),
+        (f"ampio/fromDB/{USER}/ob/41/state", '{"state":"1"}', ObjectUpdated),
+        ("ampio/from/1/event", "189", BusEvent),
     ],
 )
-def test_live_messages_carry_no_endpoint(topic: str, payload: str, attr: str) -> None:
+def test_live_messages_carry_no_endpoint(
+    topic: str, payload: str, event_type: type
+) -> None:
     applied = _store().apply(topic, payload)
     assert applied.endpoint is None
-    assert getattr(applied, attr)
+    assert [e for e in applied.events if isinstance(e, event_type)]
 
 
 def test_an_unrelated_topic_changes_nothing() -> None:
     applied = _store().apply("totally/unrelated", "anything")
-    assert (applied.endpoint, applied.objects, applied.modules, applied.events) == (
-        None,
-        [],
-        [],
-        [],
-    )
+    assert (applied.endpoint, applied.events) == (None, [])
 
 
 def test_diagnostics_report_the_module_they_touched() -> None:
@@ -172,7 +193,7 @@ def test_diagnostics_report_the_module_they_touched() -> None:
         json.dumps({"List": [{"id": 7, "mac": 0xCAFE, "typ_urzadzenia": 11}]}),
     )
     applied = store.apply("ampio/from/CAFE/b/4F", '{"d":[254,79,63,142]}')
-    assert [m.id for m in applied.modules] == [7]
+    assert [m.id for m in _mod_updated(applied)] == [7]
     assert store.modules[7].supply_voltage == 12.6
 
 
@@ -226,7 +247,7 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
     )
     applied = store.apply(f"ampio/fromDB/{USER}/ob/50/state", '{"state":"55"}')
 
-    assert [o.id for o in applied.objects] == [50]
+    assert [o.id for o in _updated(applied)] == [50]
     assert store.objects[50].value == "55"
 
 
@@ -281,7 +302,7 @@ def test_a_colliding_mac_routes_no_diagnostics() -> None:
     store = _store()
     store.apply(DEVICES_TOPIC, _devices(7, 7))
     applied = store.apply("ampio/from/7/b/4F", '{"d":[254,79,63,142]}')
-    assert applied.modules == []
+    assert _mod_updated(applied) == []
     assert all(m.supply_voltage is None for m in store.modules.values())
 
 
@@ -291,12 +312,12 @@ def test_a_colliding_mac_routes_no_raw_edges_but_per_object_still_updates() -> N
     store.apply(DETAILS_TOPIC, _flaga_details((301, 1), (302, 2)))
 
     applied = store.apply("ampio/from/7/state/f/3", "1")
-    assert applied.objects == []
+    assert _updated(applied) == []
     assert store.objects[301].value is None
     assert store.objects[302].value is None
 
     applied = store.apply(f"ampio/fromDB/{USER}/ob/301/state", '{"state":"1"}')
-    assert [o.id for o in applied.objects] == [301]
+    assert [o.id for o in _updated(applied)] == [301]
     assert store.objects[301].value == "1"
 
 
@@ -370,7 +391,7 @@ def test_server_dated_snapshot_never_regresses_a_local_dated_raw_edge() -> None:
     _raw_proven_flag(store)
     far_future = int((time.time() + 7200) * 1000)
     applied = store.apply(STATES_TOPIC, _snapshot("0", far_future))
-    assert applied.objects == []
+    assert _updated(applied) == []
     assert store.objects[10].value == "1"
 
 
@@ -386,16 +407,16 @@ def test_echo_anchors_a_raw_edge_to_the_server_clock() -> None:
         f"ampio/fromDB/{USER}/ob/10/state",
         json.dumps({"state": "255", "on": echo_on}),
     )
-    assert applied.objects == []  # no re-notify
+    assert _updated(applied) == []  # no re-notify
     obj = store.objects[10]
     assert obj.value == "1"  # raw form kept
     assert obj.updated_at == echo_on / 1000.0  # anchored
 
     stale = store.apply(STATES_TOPIC, _snapshot("0", echo_on - 10_000))
-    assert stale.objects == [] and obj.value == "1"
+    assert _updated(stale) == [] and obj.value == "1"
 
     resync = store.apply(STATES_TOPIC, _snapshot("0", echo_on + 10_000))
-    assert [o.id for o in resync.objects] == [10]
+    assert [o.id for o in _updated(resync)] == [10]
     assert obj.value == "0"
 
 
@@ -405,7 +426,7 @@ def test_a_dated_snapshot_beats_an_undated_seed() -> None:
     assert store.objects[10].value == "5"
     assert store.objects[10].updated_at is None
     applied = store.apply(STATES_TOPIC, _snapshot("7", 1779560000000))
-    assert [o.id for o in applied.objects] == [10]
+    assert [o.id for o in _updated(applied)] == [10]
     assert store.objects[10].value == "7"
 
 
@@ -420,7 +441,7 @@ def test_echo_of_an_earlier_edge_does_not_disturb_a_fast_toggle() -> None:
         f"ampio/fromDB/{USER}/ob/10/state",
         json.dumps({"state": "255", "on": echo_on}),  # echo of edge 1
     )
-    assert applied.objects == []
+    assert _updated(applied) == []
     assert store.objects[10].value == "0"
     assert store.objects[10].updated_at == echo_on / 1000.0
 
@@ -432,19 +453,19 @@ def test_the_config_catalogue_evicts_what_it_stopped_listing() -> None:
     assert set(store.objects) == {10, 11}
 
     applied = store.apply(DETAILS_TOPIC, _flaga_details((10, 1)))
-    assert [o.id for o in applied.removed_objects] == [11]
+    assert [o.id for o in _removed(applied)] == [11]
     assert set(store.objects) == {10}
 
     # The unchanged catalogue on the next refresh removes nothing further.
     again = store.apply(DETAILS_TOPIC, _flaga_details((10, 1)))
-    assert again.removed_objects == []
+    assert _removed(again) == []
 
 
 def test_the_devices_reply_evicts_missing_modules() -> None:
     store = _store()
     store.apply(DEVICES_TOPIC, _devices(0xCAFE, 0xBEEF))
     applied = store.apply(DEVICES_TOPIC, _devices(0xCAFE))
-    assert [m.id for m in applied.removed_modules] == [2]
+    assert [m.id for m in _mod_removed(applied)] == [2]
     assert set(store.modules) == {1}
 
 
@@ -457,7 +478,7 @@ def test_an_evicted_objects_raw_channel_no_longer_routes() -> None:
 
     store.apply(DETAILS_TOPIC, _flaga_details((10, 1)))
     applied = store.apply(f"ampio/from/{0xBEEF:X}/state/f/3", "0")
-    assert applied.objects == []
+    assert _updated(applied) == []
     assert 11 not in store.objects
 
 
@@ -470,7 +491,7 @@ def test_the_app_sync_catalogue_evicts_only_on_the_restricted_tier() -> None:
     store.apply(info_topic, '{"Results": {"mac": 1, "userId": "-1"}}')
     store.apply(data_topic, _flaga_details((10, 1), (11, 1)))
     applied = store.apply(data_topic, _flaga_details((10, 1)))
-    assert applied.removed_objects == []
+    assert _removed(applied) == []
     assert set(store.objects) == {10, 11}
 
     # Restricted tier: the grant bounds the store, so the reply is complete
@@ -479,7 +500,7 @@ def test_the_app_sync_catalogue_evicts_only_on_the_restricted_tier() -> None:
     store.apply(info_topic, '{"Results": {"mac": 1, "userId": "4"}}')
     store.apply(data_topic, _flaga_details((10, 1), (11, 1)))
     applied = store.apply(data_topic, _flaga_details((10, 1)))
-    assert [o.id for o in applied.removed_objects] == [11]
+    assert [o.id for o in _removed(applied)] == [11]
     assert set(store.objects) == {10}
 
 
@@ -492,7 +513,7 @@ def test_an_empty_catalogue_reply_never_mass_evicts(
     with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
         details = store.apply(DETAILS_TOPIC, json.dumps({"Status": 0, "List": []}))
         devices = store.apply(DEVICES_TOPIC, json.dumps({"List": []}))
-    assert details.removed_objects == [] and devices.removed_modules == []
+    assert _removed(details) == [] and _mod_removed(devices) == []
     assert set(store.objects) == {10} and set(store.modules) == {1}
     assert sum("refusing to evict" in r.getMessage() for r in caplog.records) == 2
 
@@ -918,7 +939,7 @@ def test_raw_channel_routes_to_input_object_and_notifies() -> None:
 
     obj = store.objects[50]
     assert obj.value == "1" and obj.is_on is True
-    assert applied.objects == [obj]
+    assert _updated(applied) == [obj]
 
 
 def test_raw_channel_unmapped_is_ignored() -> None:
@@ -929,7 +950,7 @@ def test_raw_channel_unmapped_is_ignored() -> None:
     other_mac = store.apply("ampio/from/BEEF/state/f/32", "1")
 
     assert store.objects[50].value is None
-    assert unmapped.objects == [] and other_mac.objects == []
+    assert _updated(unmapped) == [] and _updated(other_mac) == []
 
 
 def test_raw_channel_malformed_topic_is_ignored() -> None:
@@ -971,13 +992,13 @@ def test_per_object_echo_dropped_after_raw_seen() -> None:
     store = _panel_store()
 
     raw = store.apply("ampio/from/CAFE/state/f/32", "1")
-    assert raw.objects == [store.objects[50]]
+    assert _updated(raw) == [store.objects[50]]
 
     # The lagging per-object republish (note the different "255" encoding).
     echo = store.apply(
         f"ampio/fromDB/{USER}/ob/50/state", '{"state": "255", "on": 1700}'
     )
-    assert echo.objects == []  # no double notify
+    assert _updated(echo) == []  # no double notify
     assert store.objects[50].value == "1"  # fast raw value preserved
 
 
@@ -990,7 +1011,7 @@ def test_mapped_input_without_raw_uses_per_object_fallback() -> None:
     )
     obj = store.objects[50]
     assert obj.value == "255" and obj.is_on is True
-    assert applied.objects == [obj]
+    assert _updated(applied) == [obj]
 
 
 def test_detekcja_routes_via_digital_input_prefix() -> None:
@@ -1085,7 +1106,7 @@ def test_params_table_after_catalogue_updates_objects_and_notifies() -> None:
         _devices_rows({"id": 24, "params": 17}, {"id": 999, "params": 1}),
     )
     assert store.objects[24].hidden is True
-    assert applied.objects == [store.objects[24]]
+    assert _updated(applied) == [store.objects[24]]
     assert 999 not in store.objects
 
 
@@ -1173,7 +1194,7 @@ def test_diagnostics_sets_voltage_and_temperature() -> None:
     assert module.supply_voltage == 12.6
     assert module.temperature == 42.0
     assert module.last_seen is not None
-    assert applied.modules == [module]
+    assert _mod_updated(applied) == [module]
 
 
 def test_diagnostics_without_a_temperature_sensor_reports_none() -> None:

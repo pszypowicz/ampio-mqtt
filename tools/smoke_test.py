@@ -18,7 +18,7 @@ import asyncio
 import logging
 import os
 
-from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioObject
+from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioObject, ObjectUpdated
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,7 +54,7 @@ async def run(args: argparse.Namespace) -> int:
         if obj.is_sensor and obj.value is not None and obj.kind is not None:
             print(f"  state  ob/{obj.id:<5} {obj.kind.key:<14} = {obj.value}")
 
-    client.add_object_listener(on_object)
+    client.subscribe(lambda e: on_object(e.object), of=ObjectUpdated)
 
     print(f"Connecting to {args.host}:{args.port} ...")
     try:

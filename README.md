@@ -72,15 +72,15 @@ stability note above). Currently supports:
   parsed reading as `AmpioObject.numeric_value` (None when the value is
   missing, unparseable, or non-finite),
 - M-SERV identification (mac, firmware versions, local IP),
-- bus events: `send_event()` raises one on either tier, and
-  `add_event_listener()` reports the ones Ampio's own logic raises (panel
+- bus events: `send_event()` raises one on either tier, and subscribing
+  to `BusEvent` reports the ones Ampio's own logic raises (panel
   presses and the like, administrator-only),
 - scene catalogue and control via `fetch_scenes()` / `run_scene()` /
   `turn_scene_off()` / `undo_scene()` (`undo` restores what the objects
   held before the scene ran),
 - per-module health on the admin tier (`AmpioModule.supply_voltage`,
   `temperature`) from each module's own diagnostics broadcast, with
-  `add_module_listener()` for updates,
+  `ModuleUpdated` events for updates,
 - best-effort LAN discovery via `discover()` (explicit multicast DNS A-record
   lookup of `ampio.local` driven by `python-zeroconf`, followed by a TCP probe
   of the resolved address). Home Assistant integrations can pass their shared
@@ -110,13 +110,12 @@ RGBW_OUTPUT}`). Drives HA platform selection and bundle/split decisions in
 - input-object classification via `classify()` / `InputKind`
   (`AmpioObject.kind`, `is_input`, `is_on`): flags map to a generic
   boolean, motion detection to `binary_sensor.motion`. Live flag/button events
-  are delivered with minimal latency through the same `add_object_listener()`
-  pipeline by routing the decoded raw per-channel topics (which fire ahead of
+  are delivered with minimal latency through the same `ObjectUpdated`
+  event pipeline by routing the decoded raw per-channel topics (which fire ahead of
   the per-object republish) to the owning object,
 - eviction of objects and modules the authoritative catalogue stops
-  listing, surfaced through `add_object_removal_listener()` /
-  `add_module_removal_listener()` so a consumer can drop the entities it
-  built. Objects deleted in the Ampio app soft-delete on the admin
+  listing, surfaced as `ObjectRemoved` / `ModuleRemoved` events so a
+  consumer can drop the entities it built. Objects deleted in the Ampio app soft-delete on the admin
   catalogue instead (the `params` hidden bit) and disappear through the
   `visible` filter - see the changelog for the observed server behavior,
 - per-connect subscription diagnostics via
@@ -154,7 +153,7 @@ configured on the host.
 ```python
 import asyncio
 
-from ampio_mqtt import AmpioClient, discover
+from ampio_mqtt import AmpioClient, ObjectUpdated, discover
 
 
 async def main() -> None:
@@ -165,7 +164,10 @@ async def main() -> None:
     host = candidates[0].address or candidates[0].host
 
     client = AmpioClient(host, username="user", password="secret")
-    client.add_object_listener(lambda obj: print(obj.id, obj.kind, obj.value))
+    client.subscribe(
+        lambda e: print(e.object.id, e.object.kind, e.object.value),
+        of=ObjectUpdated,
+    )
     await client.start()  # connects, subscribes, requests discovery
 
     # Per-object room map. A Home Assistant integration would forward each

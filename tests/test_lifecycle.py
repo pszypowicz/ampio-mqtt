@@ -24,7 +24,15 @@ from paho.mqtt.enums import MQTTErrorCode
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.reasoncodes import ReasonCode
 
-from ampio_mqtt import AccessTier, AmpioClient, AmpioConnectionError, AmpioTimeoutError
+from ampio_mqtt import (
+    AccessTier,
+    AmpioClient,
+    AmpioConnectionError,
+    AmpioTimeoutError,
+    AuthFailed,
+    AvailabilityChanged,
+    ConnectionDied,
+)
 from ampio_mqtt._connection import _is_auth_error
 from ampio_mqtt.errors import AmpioAuthError
 
@@ -429,8 +437,8 @@ async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
     client = AmpioClient("h", username=USER, reconnect_interval=0.05)
     availability: list[bool] = []
     failures: list[str] = []
-    client.add_availability_listener(availability.append)
-    client.add_auth_failure_listener(failures.append)
+    client.subscribe(lambda e: availability.append(e.available), of=AvailabilityChanged)
+    client.subscribe(lambda e: failures.append(e.reason), of=AuthFailed)
     with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
         await client.start(timeout=2.0, discovery_timeout=0.05)
         try:
@@ -450,7 +458,7 @@ async def test_initial_auth_rejection_raises_without_firing_listener() -> None:
     FakeMqttClient.enter_error = _auth_rejection()
     client = AmpioClient("h", username=USER)
     failures: list[str] = []
-    client.add_auth_failure_listener(failures.append)
+    client.subscribe(lambda e: failures.append(e.reason), of=AuthFailed)
     with (
         patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient),
         pytest.raises(AmpioAuthError),
@@ -465,7 +473,7 @@ async def test_transient_outage_leaves_auth_failure_unset() -> None:
     FakeMqttClient.stream_error = aiomqtt.MqttError("connection lost")
     client = AmpioClient("h", username=USER, reconnect_interval=0.05)
     availability: list[bool] = []
-    client.add_availability_listener(availability.append)
+    client.subscribe(lambda e: availability.append(e.available), of=AvailabilityChanged)
     with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
         await client.start(timeout=2.0, discovery_timeout=0.05)
         try:
@@ -475,6 +483,45 @@ async def test_transient_outage_leaves_auth_failure_unset() -> None:
             assert client.auth_failure is None
         finally:
             await client.stop()
+
+
+async def test_loop_crash_dispatches_connection_died_and_stops() -> None:
+    """An unexpected exception is terminal: availability drops first, then
+    ConnectionDied, and nothing retries - the broker being fine is exactly
+    what made the dead loop indistinguishable from an outage before."""
+    FakeMqttClient.stream_error = RuntimeError("injected bug")
+    client = AmpioClient("h", username=USER, reconnect_interval=0.05)
+    order: list[object] = []
+    client.subscribe(order.append, of=(AvailabilityChanged, ConnectionDied))
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        await asyncio.sleep(0.3)  # several reconnect intervals
+        try:
+            assert order == [
+                AvailabilityChanged(True),
+                AvailabilityChanged(False),
+                ConnectionDied("Connection loop died: injected bug"),
+            ]
+            assert client.available is False
+            assert client.stats.reconnect_count == 0
+            assert client.stats.last_error == "injected bug"
+        finally:
+            await client.stop()
+
+
+async def test_crash_during_start_raises_connection_error() -> None:
+    """A loop crash before the first connect surfaces from start() itself,
+    promptly, and dispatches nothing - mirroring the auth path."""
+    FakeMqttClient.enter_error = RuntimeError("boom at connect")
+    client = AmpioClient("h", username=USER, reconnect_interval=0.05)
+    events: list[object] = []
+    client.subscribe(events.append)
+    with (
+        patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient),
+        pytest.raises(AmpioConnectionError, match="Connection loop died"),
+    ):
+        await client.start(timeout=5.0, discovery_timeout=0.05)
+    assert events == []
 
 
 async def test_start_reports_discovery_timeout() -> None:
@@ -533,7 +580,7 @@ async def test_consumer_stop_is_not_an_availability_event() -> None:
     """
     client = AmpioClient("h", username=USER, reconnect_interval=0.05)
     availability: list[bool] = []
-    client.add_availability_listener(availability.append)
+    client.subscribe(lambda e: availability.append(e.available), of=AvailabilityChanged)
     with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
         await client.start(timeout=2.0, discovery_timeout=0.05)
         assert availability == [True]
@@ -546,7 +593,7 @@ async def test_availability_notifies_again_after_restart() -> None:
     """A stop() suppression must not leak into the next start()."""
     client = AmpioClient("h", username=USER, reconnect_interval=0.05)
     availability: list[bool] = []
-    client.add_availability_listener(availability.append)
+    client.subscribe(lambda e: availability.append(e.available), of=AvailabilityChanged)
     with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
         await client.start(timeout=2.0, discovery_timeout=0.05)
         await client.stop()

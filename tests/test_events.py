@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioEvent
+from ampio_mqtt import AmpioClient, AmpioConnectionError, BusEvent
 
 USER = "u"
 TOPIC = f"ampio/control/{USER}/api"
@@ -27,23 +27,23 @@ def _connected() -> tuple[AmpioClient, _RecordingClient]:
 
 def test_received_event_reaches_listeners() -> None:
     client = AmpioClient("host", username=USER)
-    seen: list[AmpioEvent] = []
-    client.add_event_listener(seen.append)
+    seen: list[BusEvent] = []
+    client.subscribe(seen.append, of=BusEvent)
 
     client._feed_message("ampio/from/1/event", b"189")
 
-    assert seen == [AmpioEvent(number=189, mac=1)]
+    assert seen == [BusEvent(number=189, mac=1)]
 
 
 def test_event_mac_identifies_the_originator() -> None:
     """A panel press carries that module's mac, not the M-SERV's."""
     client = AmpioClient("host", username=USER)
-    seen: list[AmpioEvent] = []
-    client.add_event_listener(seen.append)
+    seen: list[BusEvent] = []
+    client.subscribe(seen.append, of=BusEvent)
 
     client._feed_message("ampio/from/D09A/event", b"42")
 
-    assert seen == [AmpioEvent(number=42, mac=0xD09A)]
+    assert seen == [BusEvent(number=42, mac=0xD09A)]
 
 
 @pytest.mark.parametrize(
@@ -56,16 +56,16 @@ def test_event_mac_identifies_the_originator() -> None:
 )
 def test_malformed_events_are_ignored(topic: str, payload: bytes) -> None:
     client = AmpioClient("host", username=USER)
-    seen: list[AmpioEvent] = []
-    client.add_event_listener(seen.append)
+    seen: list[BusEvent] = []
+    client.subscribe(seen.append, of=BusEvent)
     client._feed_message(topic, payload)
     assert seen == []
 
 
 def test_event_listener_can_be_removed() -> None:
     client = AmpioClient("host", username=USER)
-    seen: list[AmpioEvent] = []
-    unsubscribe = client.add_event_listener(seen.append)
+    seen: list[BusEvent] = []
+    unsubscribe = client.subscribe(seen.append, of=BusEvent)
     unsubscribe()
     client._feed_message("ampio/from/1/event", b"189")
     assert seen == []

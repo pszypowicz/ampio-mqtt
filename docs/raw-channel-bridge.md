@@ -43,7 +43,7 @@ ampio/from/+/event       # bus events
 
 The two channel wildcards are bridged to the owning `AmpioObject` so
 listeners see the same push as for any other update. The event
-wildcard feeds `add_event_listener()` - a different surface with its
+wildcard feeds `BusEvent` subscribers - a different surface with its
 own semantics, described in [`protocol.md`](protocol.md).
 
 The whole tree is administrator-only, and the broker says so
@@ -72,7 +72,7 @@ payload bytes decode as:
 
 Landed on `AmpioModule.supply_voltage` and `AmpioModule.temperature`, and
 each frame refreshes the module's `last_seen`, so a module with no objects
-of its own still shows liveness. Register `add_module_listener()` to be
+of its own still shows liveness. Subscribe to `ModuleUpdated` to be
 told when a module updates. The frame is attributed by its `mac`, so a
 colliding mac (see the routing key below) suspends this for the affected
 modules.

@@ -20,7 +20,7 @@ import argparse
 import asyncio
 import os
 
-from ampio_mqtt import AmpioClient, AmpioObject
+from ampio_mqtt import AmpioClient, AmpioObject, ObjectUpdated
 
 
 def parse_args() -> argparse.Namespace:
@@ -86,7 +86,7 @@ async def run(a: argparse.Namespace) -> int:
         if obj.id == a.object_id:
             print(f"  state  ob/{obj.id} = {obj.value}")
 
-    client.add_object_listener(on_object)
+    client.subscribe(lambda e: on_object(e.object), of=ObjectUpdated)
     await client.start()
     print(f"Connected as {a.username!r} (tier: {client.access_tier.value})")
 

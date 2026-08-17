@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from ampio_mqtt import AmpioClient
+from ampio_mqtt import AmpioClient, BusEvent, ModuleUpdated, ObjectUpdated
 
 USER = "u"
 
@@ -32,8 +32,8 @@ def _details(*items: dict) -> bytes:
 def test_a_raising_listener_does_not_stop_the_others() -> None:
     client = _client()
     seen: list[int] = []
-    client.add_object_listener(lambda obj: (_ for _ in ()).throw(ValueError("boom")))
-    client.add_object_listener(lambda obj: seen.append(obj.id))
+    client.subscribe(lambda e: (_ for _ in ()).throw(ValueError("boom")))
+    client.subscribe(lambda e: seen.append(e.object.id), of=ObjectUpdated)
 
     client._feed_message(f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1"}')
 
@@ -42,7 +42,7 @@ def test_a_raising_listener_does_not_stop_the_others() -> None:
 
 def test_a_raising_listener_does_not_stop_later_messages() -> None:
     client = _client()
-    client.add_object_listener(lambda obj: (_ for _ in ()).throw(ValueError("boom")))
+    client.subscribe(lambda e: (_ for _ in ()).throw(ValueError("boom")))
 
     client._feed_message(f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1"}')
     client._feed_message(f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"2"}')
@@ -51,21 +51,19 @@ def test_a_raising_listener_does_not_stop_later_messages() -> None:
 
 
 @pytest.mark.parametrize(
-    ("register", "topic", "payload"),
+    ("of", "topic", "payload"),
     [
-        ("add_module_listener", "ampio/from/CAFE/b/4F", b'{"d":[254,79,60,0]}'),
-        ("add_event_listener", "ampio/from/1/event", b"189"),
+        (ModuleUpdated, "ampio/from/CAFE/b/4F", b'{"d":[254,79,60,0]}'),
+        (BusEvent, "ampio/from/1/event", b"189"),
     ],
 )
-def test_every_listener_kind_is_isolated(
-    register: str, topic: str, payload: bytes
-) -> None:
+def test_every_listener_kind_is_isolated(of: type, topic: str, payload: bytes) -> None:
     client = _client()
     client._feed_message(
         f"ampio/fromDB/{USER}/config/devices",
         json.dumps({"List": [{"id": 7, "mac": 0xCAFE, "typ_urzadzenia": 11}]}).encode(),
     )
-    getattr(client, register)(lambda _: (_ for _ in ()).throw(ValueError("boom")))
+    client.subscribe(lambda _: (_ for _ in ()).throw(ValueError("boom")), of=of)
 
     client._feed_message(topic, payload)  # must not raise
 

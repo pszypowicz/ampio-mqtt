@@ -18,6 +18,29 @@ upgrade path.
 
 ### Changed
 
+- One typed event stream replaces the seven `add_*_listener` registrations.
+  `subscribe(listener, of=...)` delivers frozen event dataclasses -
+  `ObjectUpdated`, `ObjectRemoved`, `ModuleUpdated`, `ModuleRemoved`,
+  `BusEvent`, `AvailabilityChanged`, `AuthFailed`, `ConnectionDied` - in
+  the order they were produced, with `of` narrowing to one class (typing
+  the callback parameter precisely) or a tuple. The tier-gating knowledge
+  from the old registration docstrings now lives on the event classes in
+  `ampio_mqtt.events`; ordering across kinds is a real guarantee
+  (availability drops precede the terminal events, removals follow the
+  updates of the reply that caused them); a raising listener is still
+  logged and isolated. `AmpioEvent` is absorbed into `BusEvent` - the
+  event class is the model.
+- A crash in the connection loop is now reported instead of silent. An
+  exception the loop does not recognize as transport or credential failure
+  is terminal (nothing retries): after a successful `start()` it dispatches
+  `ConnectionDied` with the availability drop preceding it and the reason
+  in `stats.last_error`; during `start()` it makes `start()` raise
+  `AmpioConnectionError` promptly. Previously the runner task died holding
+  its exception, `stats.last_error` stayed empty, and the dead loop was
+  indistinguishable from an outage under retry (verified against a live
+  broker: an injected store bug froze the client forever while the broker
+  stayed healthy).
+
 - Every publish now goes out at QoS 1, so an awaited publish completes on the
   broker's PUBACK: a returned `command()` (or scene/event publish, or
   discovery request) means the broker accepted it, where QoS 0 meant only

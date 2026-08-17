@@ -23,8 +23,14 @@ from .endpoints import (
     Endpoint,
     response_topic,
 )
+from .events import (
+    ModuleRemoved,
+    ModuleUpdated,
+    ObjectRemoved,
+    ObjectUpdated,
+    StoreEvent,
+)
 from .models import (
-    AmpioEvent,
     AmpioModule,
     AmpioObject,
     AmpioServerInfo,
@@ -49,13 +55,9 @@ class Applied:
     # be read - together they tell the caller when discovery has advanced.
     endpoint: Endpoint | None = None
     parsed: bool = True
-    objects: list[AmpioObject] = field(default_factory=list)
-    modules: list[AmpioModule] = field(default_factory=list)
-    events: list[AmpioEvent] = field(default_factory=list)
-    # Rows the authoritative catalogue stopped listing, in their final state.
-    # By the time the caller sees these they are gone from the store.
-    removed_objects: list[AmpioObject] = field(default_factory=list)
-    removed_modules: list[AmpioModule] = field(default_factory=list)
+    # Everything the message changed, in processing order, ready to dispatch.
+    # Removal events carry final state already gone from the store.
+    events: list[StoreEvent] = field(default_factory=list)
 
 
 class AmpioStore:
@@ -185,7 +187,7 @@ class AmpioStore:
             self._params_by_id.pop(oid, None)
             self._clock_by_id.pop(oid, None)
             self._raw_seen_ids.discard(oid)
-            self._applied.removed_objects.append(obj)
+            self._applied.events.append(ObjectRemoved(obj))
         return True
 
     def _merge_metadata(self, meta: _protocol.ObjectMetadata) -> bool:
@@ -245,7 +247,7 @@ class AmpioStore:
             )
         else:
             for mid in missing:
-                self._applied.removed_modules.append(self.state.modules.pop(mid))
+                self._applied.events.append(ModuleRemoved(self.state.modules.pop(mid)))
         self._rebuild_indexes()
         return True
 
@@ -372,7 +374,7 @@ class AmpioStore:
         module.supply_voltage = diagnostics.supply_voltage
         module.temperature = diagnostics.temperature
         module.last_seen = time.time()
-        self._applied.modules.append(module)
+        self._applied.events.append(ModuleUpdated(module))
 
     def _handle_event(self, topic: str, payload: str) -> None:
         event = _protocol.parse_event(topic, payload)
@@ -514,7 +516,7 @@ class AmpioStore:
         self._colliding_macs = colliding
 
     def _record(self, obj: AmpioObject) -> None:
-        self._applied.objects.append(obj)
+        self._applied.events.append(ObjectUpdated(obj))
 
     # --- read surface -----------------------------------------------------
 

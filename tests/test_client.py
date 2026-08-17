@@ -13,7 +13,16 @@ import pytest
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.reasoncodes import ReasonCode
 
-from ampio_mqtt import AccessTier, AmpioAuthError, AmpioClient, AmpioObject
+from ampio_mqtt import (
+    AccessTier,
+    AmpioAuthError,
+    AmpioClient,
+    AmpioObject,
+    AvailabilityChanged,
+    ModuleRemoved,
+    ObjectRemoved,
+    ObjectUpdated,
+)
 
 USER = "u"
 
@@ -139,7 +148,7 @@ def test_state_updates_object_and_notifies() -> None:
         ),
     )
     received: list = []
-    client.add_object_listener(received.append)
+    client.subscribe(lambda e: received.append(e.object), of=ObjectUpdated)
 
     client._feed_message(
         f"ampio/fromDB/{USER}/ob/41/state",
@@ -153,7 +162,9 @@ def test_state_updates_object_and_notifies() -> None:
 def test_object_removal_listener_fires_after_eviction() -> None:
     client = _client()
     removed: list[int] = []
-    unsubscribe = client.add_object_removal_listener(lambda o: removed.append(o.id))
+    unsubscribe = client.subscribe(
+        lambda e: removed.append(e.object.id), of=ObjectRemoved
+    )
     topic = f"ampio/fromDB/{USER}/config/devicesDetails"
     client._feed_message(topic, _details(_flaga(41, 3), _flaga(42, 4)))
     client._feed_message(topic, _details(_flaga(41, 3)))
@@ -166,10 +177,42 @@ def test_object_removal_listener_fires_after_eviction() -> None:
     assert removed == [42]
 
 
+def test_module_removal_dispatches_module_removed() -> None:
+    client = _client()
+    removed: list[int] = []
+    client.subscribe(lambda e: removed.append(e.module.id), of=ModuleRemoved)
+    topic = f"ampio/fromDB/{USER}/config/devices"
+    client._feed_message(topic, _devices({"id": 1, "mac": 1}, {"id": 2, "mac": 2}))
+    client._feed_message(topic, _devices({"id": 1, "mac": 1}))
+    assert removed == [2]
+    assert 2 not in client.modules
+
+
+def test_subscribe_filters_and_preserves_order() -> None:
+    """One stream, processing order; `of` narrows to the named classes."""
+    client = _client()
+    everything: list[object] = []
+    only_updates: list[object] = []
+    client.subscribe(everything.append)
+    client.subscribe(only_updates.append, of=ObjectUpdated)
+    topic = f"ampio/fromDB/{USER}/config/devicesDetails"
+    client._feed_message(topic, _details(_flaga(41, 3), _flaga(42, 4)))
+    client._feed_message(topic, _details(_flaga(41, 3)))
+    assert [type(e).__name__ for e in everything] == [
+        "ObjectUpdated",
+        "ObjectUpdated",
+        "ObjectRemoved",
+    ]
+    assert [type(e).__name__ for e in only_updates] == [
+        "ObjectUpdated",
+        "ObjectUpdated",
+    ]
+
+
 def test_availability_listener() -> None:
     client = _client()
     events: list[bool] = []
-    client.add_availability_listener(events.append)
+    client.subscribe(lambda e: events.append(e.available), of=AvailabilityChanged)
     client._connection._set_available(True)
     client._connection._set_available(True)
     client._connection._set_available(False)

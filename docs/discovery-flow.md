@@ -76,8 +76,8 @@ for the `start()` / `stop()` lifecycle that joins them.
 Every catalogue reply also evicts what it stopped listing (the admin
 `config` catalogue and module list always; the app-sync `data/devices`
 only on the restricted tier, where the grant bounds the store), fired
-to consumers through `add_object_removal_listener()` /
-`add_module_removal_listener()`. Since catalogues are request/response,
+to consumers as `ObjectRemoved` / `ModuleRemoved` events. Since
+catalogues are request/response,
 a server-side deletion is noticed at the next reply - the refresh a
 reconnect issues, or an explicit `refresh()`; a Designer module
 deletion can commit without restarting the M-SERV, so a consumer that
