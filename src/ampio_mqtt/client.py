@@ -567,8 +567,9 @@ class AmpioClient:
         here (``setTemperature``, ``arm``, ``setVolume``, ``setText``, ...).
         See docs/protocol.md.
 
-        Note the M-SERV does not restrict commands to the objects an account
-        was granted in the app; a non-admin account can command any object.
+        Commands are grant-scoped exactly as reads are: on a standard
+        account a command for an object outside the grant is dropped with
+        no effect and no reply, while an administrator commands any object.
         """
         await self._connection.publish(
             command_topic(self._username),
