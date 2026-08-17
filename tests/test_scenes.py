@@ -36,6 +36,15 @@ _PAYLOAD = json.dumps(
                 ],
                 "Infos": [{"id": 64}, {"id": 48}],
             },
+            # No "active" column: the baseline server always sends it
+            # (live-verified), so this is the shape-drift case - it must
+            # read enabled, matching the dataclass default.
+            {
+                "id": 9,
+                "parentId": -1,
+                "sceneName": "Bez kolumny",
+                "Infos": [],
+            },
         ]
     }
 )
@@ -44,12 +53,13 @@ _PAYLOAD = json.dumps(
 def test_parses_the_catalogue() -> None:
     scenes = parse_scenes(_PAYLOAD)
     assert scenes is not None
-    first, second = scenes
+    first, second, third = scenes
     assert (first.id, first.name, first.active) == (1, "Schody noc", True)
     assert first.parent_id is None  # -1 means top level
     assert first.object_ids == frozenset({50})
     assert (second.id, second.active, second.parent_id) == (7, False, 1)
     assert second.object_ids == frozenset({64, 48})
+    assert (third.id, third.active) == (9, True)
 
 
 @pytest.mark.parametrize(
@@ -111,7 +121,7 @@ async def test_fetch_scenes_requests_and_parses_the_reply() -> None:
         client._feed_message(f"ampio/fromDB/{USER}/data/scenes", _PAYLOAD)
 
     scenes, _ = await asyncio.gather(client.fetch_scenes(timeout=2), _deliver())
-    assert [s.name for s in scenes] == ["Schody noc", "Wyjście"]
+    assert [s.name for s in scenes] == ["Schody noc", "Wyjście", "Bez kolumny"]
     assert recorder.published == [(f"ampio/control/{USER}/data", b"scenes")]
 
 

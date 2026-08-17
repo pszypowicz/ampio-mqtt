@@ -30,6 +30,11 @@ upgrade path.
 
 ### Fixed
 
+- A scene row without the `active` column now parses as enabled, matching
+  `AmpioScene`'s declared default; it previously parsed as disabled, so a
+  server that ever dropped the column would have silently deactivated the
+  whole catalogue. The baseline server always sends the column
+  (live-verified), so this covers shape drift only.
 - Publish-path failures no longer leak `aiomqtt.MqttError` through the
   public API. `command()`, the typed command helpers, `send_event()`, the
   scene commands, and the `fetch_*` request publishes now raise

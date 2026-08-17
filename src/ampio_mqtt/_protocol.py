@@ -230,6 +230,11 @@ def parse_scenes(payload: str) -> list[AmpioScene] | None:
         if sid is None:
             continue
         parent = to_int(item.get("parentId"))
+        # A row without the column reads enabled, matching the dataclass
+        # default: the app creates scenes enabled, and surfacing a scene of
+        # unknown state beats silently hiding the catalogue if the column
+        # ever drifts.
+        raw_active = to_int(item.get("active"))
         objects = {
             oid
             for info in item.get("Infos", [])
@@ -239,7 +244,7 @@ def parse_scenes(payload: str) -> list[AmpioScene] | None:
             AmpioScene(
                 id=sid,
                 name=item.get("sceneName") or "",
-                active=bool(to_int(item.get("active"))),
+                active=raw_active != 0 if raw_active is not None else True,
                 parent_id=parent if parent is not None and parent >= 0 else None,
                 object_ids=frozenset(objects),
             )
