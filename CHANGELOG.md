@@ -17,8 +17,8 @@ upgrade path.
 ## 0.17.0
 
 Addresses feedback from the Home Assistant integration: the numeric half of
-value interpretation (#57) and module mac collisions being kept silently
-(#58).
+value interpretation (#57), module mac collisions being kept silently
+(#58), and a deliberate `stop()` being reported like an outage (#56).
 
 ### Added
 
@@ -43,6 +43,11 @@ value interpretation (#57) and module mac collisions being kept silently
   silently corrupted an arbitrary module's supply voltage, temperature, and
   input state. Affected inputs still update through the per-object state
   path, exactly as they do on the standard account tier (#58).
+- A consumer-initiated `stop()` no longer invokes the availability
+  listeners: the drop it causes is not news to the consumer, and reporting
+  it made every orderly shutdown look like a lost connection. Outages and
+  the fatal auth-failure stop keep reporting False, and `available` still
+  reads False after a stop (#56).
 
 ## 0.16.0
 

@@ -405,6 +405,39 @@ async def test_transient_outage_leaves_auth_failure_unset() -> None:
             await client.stop()
 
 
+async def test_consumer_stop_is_not_an_availability_event() -> None:
+    """stop() must not report the drop it causes itself (#56).
+
+    Every consumer reacting to availability otherwise sees a deliberate
+    shutdown as a lost connection; the HA integration carried a
+    shutting-down flag purely to suppress that false transition.
+    """
+    client = AmpioClient("h", username=USER, reconnect_interval=0.05)
+    availability: list[bool] = []
+    client.add_availability_listener(availability.append)
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        assert availability == [True]
+        await client.stop()
+    assert availability == [True]
+    assert client.available is False
+
+
+async def test_availability_notifies_again_after_restart() -> None:
+    """A stop() suppression must not leak into the next start()."""
+    client = AmpioClient("h", username=USER, reconnect_interval=0.05)
+    availability: list[bool] = []
+    client.add_availability_listener(availability.append)
+    with patch("ampio_mqtt._connection.aiomqtt.Client", FakeMqttClient):
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        await client.stop()
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        try:
+            assert availability == [True, True]
+        finally:
+            await client.stop()
+
+
 async def test_wait_for_initial_discovery_returns_false_on_timeout() -> None:
     """A partial discovery set leaves the wait returning False without raising."""
     # No info message scripted -> _info_received never fires.

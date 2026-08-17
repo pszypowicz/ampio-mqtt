@@ -271,7 +271,16 @@ class AmpioClient:
     def add_availability_listener(
         self, listener: AvailabilityListener
     ) -> Callable[[], None]:
-        """Register a callback invoked when connection availability changes."""
+        """Register a callback invoked when connection availability changes.
+
+        Fires for every transition the consumer did not cause itself: the
+        connection coming up, an outage, and the fatal auth-failure stop
+        (before its own listener, so entities read unavailable by then). A
+        consumer-initiated ``stop()`` is deliberately not reported - it is
+        not news to the consumer, and reporting it made every orderly
+        shutdown look like a lost connection. ``available`` still reads
+        False after a stop.
+        """
         self._availability_listeners.append(listener)
         return lambda: self._availability_listeners.remove(listener)
 
@@ -428,7 +437,9 @@ class AmpioClient:
 
         Safe to call at any point, including when the connection loop has
         already failed: whatever it died of is logged rather than raised, so a
-        consumer can always tear the client down.
+        consumer can always tear the client down. The availability listeners
+        are not invoked for the resulting drop - a deliberate shutdown is not
+        an availability event.
         """
         await self._connection.close()
 
