@@ -763,6 +763,16 @@ def _emit(listeners: list[Any], payload: Any, kind: str) -> None:
 
 
 def _check_range(name: str, value: int, low: int, high: int) -> None:
-    """Reject an out-of-range command argument before it reaches the wire."""
-    if not isinstance(value, int) or not low <= value <= high:
+    """Reject a mis-typed or out-of-range command argument before the wire.
+
+    Rejects bool explicitly: it passes ``isinstance(int)`` (and the type
+    checker, which treats bool as an int subtype), but the wire encoding is
+    ``str()``, so a bool would go out as the literal ``True`` - a malformed
+    command the M-SERV silently drops.
+    """
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not low <= value <= high
+    ):
         raise ValueError(f"{name} must be an int in {low}..{high}, got {value!r}")

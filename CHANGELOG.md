@@ -30,6 +30,12 @@ upgrade path.
 
 ### Fixed
 
+- The typed command helpers now reject `bool` arguments with a `ValueError`.
+  `bool` is an int subclass, so `set_value(oid, True)` previously passed
+  validation and published the literal `setValue/True` - a malformed
+  command the M-SERV silently drops (live-verified), leaving no error, no
+  effect, and nothing in any log. A caller passing `True` wants `turn_on()`
+  or an explicit level, and now hears so at call time.
 - A scene row without the `active` column now parses as enabled, matching
   `AmpioScene`'s declared default; it previously parsed as disabled, so a
   server that ever dropped the column would have silently deactivated the

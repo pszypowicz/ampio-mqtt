@@ -97,6 +97,27 @@ async def test_out_of_range_arguments_are_rejected(call) -> None:
     assert recorder.published == []
 
 
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda c: c.set_value(1, True),
+        lambda c: c.set_value(1, 10, pulse_ms=True),
+        lambda c: c.set_color(1, True, 0, 0),
+        lambda c: c.set_cover_position(1, False),
+        lambda c: c.set_cover_tilt(1, True),
+        lambda c: c.send_event(True),
+    ],
+)
+async def test_bool_arguments_are_rejected(call) -> None:
+    """bool passes isinstance(int) and the type checker, but the wire
+    encoding is str(), so it would go out as the literal 'True' - a
+    malformed command the M-SERV silently drops (live-verified)."""
+    client, recorder = _connected_client()
+    with pytest.raises(ValueError):
+        await call(client)
+    assert recorder.published == []
+
+
 async def test_command_requires_a_connection() -> None:
     client = AmpioClient("host", username=USER)
     with pytest.raises(AmpioConnectionError):
