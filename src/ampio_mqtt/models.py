@@ -425,6 +425,6 @@ class ConnectionStats:
     # Subscriptions the broker rejected in the SUBACK of the latest
     # (re)connect: topic -> reason code. Replaced wholesale on every connect,
     # so an empty dict means the current session got everything it asked for.
-    # A rejection does not fail the connection - the admin-only raw tree is
-    # expected to be denied to a standard account on brokers that enforce it.
+    # The subscribe set is tier-shaped, so every filter should be granted;
+    # a rejection is warned but does not fail the connection.
     subscribe_failures: dict[str, int] = field(default_factory=dict)

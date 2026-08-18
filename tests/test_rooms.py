@@ -168,9 +168,9 @@ async def test_fetch_rooms_treats_malformed_response_as_no_response(
 async def test_concurrent_fetch_does_not_steal_the_first_callers_reply(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
-    """Regression for the latch-clear race: caller B entering between the
-    replies landing and caller A's wakeup used to pop A's payloads, handing A
-    a silently empty map. Each caller now correlates through its own future."""
+    """Caller B entering between the replies landing and caller A's wakeup
+    must not consume A's replies: each caller correlates through its own
+    future, so A's map arrives intact."""
     client, _ = connected
     groups = json.dumps({"List": [{"id": 8, "opis_menu": "Salon"}]})
     group_devices = json.dumps({"List": [{"id_grupy": 8, "id_obiektu": 31}]})

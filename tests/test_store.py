@@ -1282,8 +1282,7 @@ def test_module_updated_carries_a_snapshot() -> None:
 def test_a_cleared_name_clears_in_the_store() -> None:
     """Every metadata field mirrors the catalogue, name included: an empty
     opis_menu is a normal wire state (unnamed objects), and both discovery
-    surfaces agree on names, so there is nothing for a keep-the-old-name
-    guard to protect - it only made a server-side clear stick forever."""
+    surfaces agree on names, so a server-side clear must clear here too."""
     store = _store()
     _apply(store, DETAILS_TOPIC, _catalogue(id=9, opis_menu="Old name"))
     assert store.objects[9].name == "Old name"

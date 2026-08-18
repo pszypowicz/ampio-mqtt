@@ -1,9 +1,8 @@
 """The connection must survive bad input and bad consumers.
 
-Each test here stands for a way the client used to die silently: once the
-runner task ends, nothing reconnects and every entity is frozen for the
-lifetime of the process, so these are about staying alive rather than about
-any single message.
+Once the runner task ends, nothing reconnects and every entity is frozen
+for the lifetime of the process, so these tests are about staying alive
+rather than about any single message.
 """
 
 from __future__ import annotations

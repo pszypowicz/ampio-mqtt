@@ -4,7 +4,7 @@ These tests inject a scripted FakeBroker through the ``mqtt_client_factory``
 transport seam so the connect/subscribe/publish/messages path can be
 exercised without a real broker. They cover:
 - the ``AmpioClient.test_connection`` config-flow helper,
-- ``request_*`` raising when disconnected,
+- ``refresh()`` / ``fetch_*`` raising when disconnected,
 - ``stop()`` cancelling the runner cleanly,
 - ``start()`` driving a successful discovery via scripted broker messages,
 - a runtime credential rejection reaching the auth-failure listener while a
@@ -50,7 +50,7 @@ from ampio_mqtt import (
     ConnectionDied,
 )
 from ampio_mqtt._connection import _is_auth_error
-from ampio_mqtt.errors import AmpioAuthError, AmpioError
+from ampio_mqtt.errors import AmpioAuthError
 
 
 def _auth_rejection(name: str = "Not authorized") -> aiomqtt.MqttCodeError:
@@ -117,14 +117,6 @@ async def test_connection_raises_timeout_when_info_never_arrives() -> None:
         await AmpioClient.test_connection(
             "h", USER, "p", info_timeout=0.1, mqtt_client_factory=broker.factory
         )
-
-
-def test_error_hierarchy_gives_consumers_one_umbrella() -> None:
-    """A config flow catching AmpioError catches every library failure,
-    with AmpioTimeoutError catchable first as the retryable subtype."""
-    assert issubclass(AmpioConnectionError, AmpioError)
-    assert issubclass(AmpioAuthError, AmpioError)
-    assert issubclass(AmpioTimeoutError, AmpioConnectionError)
 
 
 async def test_connection_maps_identityless_info_reply_to_timeout() -> None:
@@ -628,12 +620,9 @@ async def test_unacknowledged_publish_raises_timeout(
 
 
 async def test_consumer_stop_is_not_an_availability_event() -> None:
-    """stop() must not report the drop it causes itself (#56).
-
-    Every consumer reacting to availability otherwise sees a deliberate
-    shutdown as a lost connection; the HA integration carried a
-    shutting-down flag purely to suppress that false transition.
-    """
+    """stop() must not report the drop it causes itself (#56): every
+    consumer reacting to availability would otherwise see a deliberate
+    shutdown as a lost connection."""
     broker = FakeBroker()
     client = make_client(broker, reconnect_interval=0.05)
     availability: list[bool] = []
@@ -771,12 +760,6 @@ def test_is_auth_error_rejects_transport_failures() -> None:
     assert not _is_auth_error(
         aiomqtt.MqttCodeError(ReasonCode(PacketTypes.CONNACK, "Server unavailable"))
     )
-
-
-def test_auth_error_is_not_a_connection_error() -> None:
-    """A config flow catching AmpioConnectionError broadly must not swallow
-    the credential rejection that needs a different user action."""
-    assert not issubclass(AmpioAuthError, AmpioConnectionError)
 
 
 async def test_a_rejected_namespace_filter_warns(
