@@ -5,6 +5,7 @@ covered in test_store.py; the pure model properties in test_models.py."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 
 import aiomqtt
 import pytest
@@ -110,6 +111,47 @@ def test_mserv_falls_back_to_unique_hub_module(hub_type: int) -> None:
     )
     mserv = client.mserv
     assert mserv is not None and mserv.id == 5
+
+
+def test_mserv_matches_the_override_mac_arm() -> None:
+    """The cross-check accepts the Designer override mac as well as the
+    factory id: after a hardware swap mac_global changes but the
+    re-stamped override does not."""
+    client = _client()
+    feed(
+        client,
+        f"ampio/fromDB/{USER}/config/devices",
+        devices(
+            {
+                "id": 4,
+                "mac": 47846,
+                "mac_global": 999,
+                "typ_urzadzenia": 4,
+                "nazwa_urzadzenia": "SWAPPED",
+            }
+        ),
+    )
+    feed(client, f"ampio/fromDB/{USER}/data/info", info(mac="47846"))
+    mserv = client.mserv
+    assert mserv is not None and mserv.id == 4
+
+
+def test_read_surface_is_immutable() -> None:
+    """Neither the mappings nor the frozen instances in them can be mutated
+    from consumer code - the promise core builds its entity layer on."""
+    client = _client()
+    feed(client, f"ampio/fromDB/{USER}/config/devicesDetails", details(_flaga(41, 3)))
+    feed(client, f"ampio/fromDB/{USER}/config/devices", devices({"id": 7, "mac": 1}))
+    with pytest.raises(TypeError):
+        client.objects[99] = client.objects[41]  # type: ignore[index]
+    with pytest.raises(TypeError):
+        del client.objects[41]  # type: ignore[attr-defined]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        client.objects[41].name = "TAMPERED"  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        client.modules[99] = client.modules[7]  # type: ignore[index]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        client.modules[7].name = "TAMPERED"  # type: ignore[misc]
 
 
 def test_mserv_none_when_ambiguous_and_no_info() -> None:

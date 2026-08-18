@@ -62,6 +62,40 @@ async def test_helpers_map_to_verified_verbs(
 
 
 @pytest.mark.parametrize(
+    ("call", "expected"),
+    [
+        (lambda c: c.set_value(111, 0), b"/api/set/111/setValue/0"),
+        (lambda c: c.set_value(111, 255), b"/api/set/111/setValue/255"),
+        (lambda c: c.set_value(111, 1, pulse_ms=0), b"/api/set/111/setValue/1/0"),
+        (
+            lambda c: c.set_value(111, 1, pulse_ms=655350),
+            b"/api/set/111/setValue/1/65535",
+        ),
+        (lambda c: c.set_color(50, 0, 0, 0, 0), b"/api/set/50/setColors/0/0/0/0"),
+        (
+            lambda c: c.set_color(50, 255, 255, 255, 255),
+            b"/api/set/50/setColors/255/255/255/255",
+        ),
+        (lambda c: c.set_cover_position(48, 0), b"/api/set/48/setRollerPos/0/101"),
+        (
+            lambda c: c.set_cover_position(48, 100, lamella=100),
+            b"/api/set/48/setRollerPos/100/100",
+        ),
+        (lambda c: c.send_event(1), b"/api/setEvent/1"),
+        (lambda c: c.send_event(65535), b"/api/setEvent/65535"),
+    ],
+)
+async def test_boundary_values_pass_the_range_checks(
+    connected: tuple[AmpioClient, FakeBroker], call, expected: bytes
+) -> None:
+    """The range limits themselves are legal commands - an off-by-one in
+    the range checks must not silently reject them."""
+    client, broker = connected
+    await call(client)
+    assert broker.published == [(API_TOPIC, expected)]
+
+
+@pytest.mark.parametrize(
     "call",
     [
         lambda c: c.set_value(1, 256),

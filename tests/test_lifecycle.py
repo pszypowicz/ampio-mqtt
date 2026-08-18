@@ -50,7 +50,7 @@ from ampio_mqtt import (
     ConnectionDied,
 )
 from ampio_mqtt._connection import _is_auth_error
-from ampio_mqtt.errors import AmpioAuthError
+from ampio_mqtt.errors import AmpioAuthError, AmpioError
 
 
 def _auth_rejection(name: str = "Not authorized") -> aiomqtt.MqttCodeError:
@@ -117,6 +117,13 @@ async def test_connection_raises_timeout_when_info_never_arrives() -> None:
         await AmpioClient.test_connection(
             "h", USER, "p", info_timeout=0.1, mqtt_client_factory=broker.factory
         )
+
+
+def test_error_hierarchy_gives_consumers_one_umbrella() -> None:
+    """A config flow catching AmpioError catches every library failure,
+    with AmpioTimeoutError catchable first as the retryable subtype."""
+    assert issubclass(AmpioConnectionError, AmpioError)
+    assert issubclass(AmpioAuthError, AmpioError)
     assert issubclass(AmpioTimeoutError, AmpioConnectionError)
 
 
@@ -589,6 +596,25 @@ async def test_availability_notifies_again_after_restart() -> None:
     await client.start(timeout=2.0, discovery_timeout=0.05)
     try:
         assert availability == [True, True]
+    finally:
+        await client.stop()
+
+
+async def test_reconnect_reissues_the_full_subscribe_set() -> None:
+    """Every (re)connect subscribes the whole tier set again - the recovery
+    an outage depends on."""
+    broker = FakeBroker()
+    broker.stream_error = aiomqtt.MqttError("connection lost")
+    client = make_client(broker, reconnect_interval=0.05)
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    first_session = list(broker.subscribed)
+    try:
+        async with asyncio.timeout(2.0):
+            while len(broker.subscribed) < 2 * len(first_session):
+                await asyncio.sleep(0.01)
+        assert broker.subscribed[len(first_session) : 2 * len(first_session)] == (
+            first_session
+        )
     finally:
         await client.stop()
 
