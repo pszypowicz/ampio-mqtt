@@ -34,10 +34,15 @@ async def test_command_without_args_omits_trailing_slash(
         (lambda c: c.turn_off(64), b"/api/set/64/turnOff"),
         (lambda c: c.toggle(64), b"/api/set/64/switch"),
         (lambda c: c.set_value(111, 128), b"/api/set/111/setValue/128"),
-        # pulse_ms is wire-encoded in 10 ms units: 1000 ms -> 100.
+        # pulse_ms is wire-encoded in 10 ms units: 1000 ms -> 100, and a
+        # non-multiple rounds down: 505 ms -> 50.
         (
             lambda c: c.set_value(111, 255, pulse_ms=1000),
             b"/api/set/111/setValue/255/100",
+        ),
+        (
+            lambda c: c.set_value(111, 255, pulse_ms=505),
+            b"/api/set/111/setValue/255/50",
         ),
         (
             lambda c: c.set_color(50, 10, 20, 30, 40),

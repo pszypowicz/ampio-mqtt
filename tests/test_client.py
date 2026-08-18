@@ -249,6 +249,19 @@ def test_last_payloads_retained_for_each_handler() -> None:
     assert client.last_payloads["details"] == details_payload
     assert client.last_payloads["info"] == info_payload
 
+    states_payload = devices({"id": 5, "stan_json": '{"state":"1"}'})
+    data_devices_payload = details({"id": 5, "typ_komponentu": "temp"})
+    params_payload = devices({"id": 5, "params": 17})
+    scenes_payload = devices({"id": 3, "sceneName": "Evening"})
+    feed(client, f"ampio/fromDB/{USER}/data/states", states_payload)
+    feed(client, f"ampio/fromDB/{USER}/data/devices", data_devices_payload)
+    feed(client, f"ampio/fromDB/{USER}/data/params_devices", params_payload)
+    feed(client, f"ampio/fromDB/{USER}/data/scenes", scenes_payload)
+    assert client.last_payloads["states"] == states_payload
+    assert client.last_payloads["data_devices"] == data_devices_payload
+    assert client.last_payloads["params_devices"] == params_payload
+    assert client.last_payloads["scenes"] == scenes_payload
+
 
 def test_groups_payloads_are_retained() -> None:
     """`data/groups` and `data/group_devices` populate the last_payloads map."""

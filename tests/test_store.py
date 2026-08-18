@@ -1198,3 +1198,35 @@ def test_a_zero_server_timestamp_is_still_a_server_timestamp() -> None:
     store.apply(f"ampio/fromDB/{USER}/ob/9/state", '{"state": "1", "on": 0}')
     obj = store.objects[9]
     assert (obj.updated_at, obj.updated_at_clock) == (0.0, "server")
+
+
+def test_updated_at_clock_names_the_stamping_domain() -> None:
+    """The three-state contract: server for a dated push, local for an
+    undated one, and unset when an undated seed supplied the value."""
+    store = _store()
+    topic = f"ampio/fromDB/{USER}/ob/9/state"
+    store.apply(topic, '{"state": "1", "on": 2000}')
+    assert store.objects[9].updated_at_clock == "server"
+    store.apply(topic, '{"state": "2"}')
+    assert store.objects[9].updated_at_clock == "local"
+
+    seeded = _store()
+    seeded.apply(
+        STATES_TOPIC,
+        json.dumps({"List": [{"id": 9, "stan_json": json.dumps({"state": "5"})}]}),
+    )
+    obj = seeded.objects[9]
+    assert obj.value == "5"
+    assert (obj.updated_at, obj.updated_at_clock) == (None, None)
+
+
+def test_raw_proven_tracks_the_bridge_coverage() -> None:
+    """Set by the first raw edge; cleared when the rebuilt index stops
+    covering the object, so it goes back to per-object updates."""
+    store = _panel_store()
+    assert store.objects[50].raw_proven is False
+    store.apply("ampio/from/CAFE/state/f/32", "1")
+    assert store.objects[50].raw_proven is True
+    retyped = dict(_flaga_row(50, 32), typ_komponentu="roleta_procenty")
+    store.apply(DETAILS_TOPIC, details(retyped))
+    assert store.objects[50].raw_proven is False

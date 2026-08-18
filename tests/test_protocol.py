@@ -451,3 +451,10 @@ def test_endpoint_reply_route_carries_raw_payload() -> None:
 
 def test_route_is_user_scoped_for_endpoint_replies() -> None:
     assert _route("ampio/fromDB/other/config/devicesDetails", "{}") is None
+
+
+def test_diagnostics_three_element_frame_has_no_temperature() -> None:
+    report = _route("ampio/from/cafe/b/4F", '{"d": [254, 79, 61]}')
+    assert isinstance(report, DiagnosticsReport)
+    assert report.diagnostics.supply_voltage == 12.2
+    assert report.diagnostics.temperature is None

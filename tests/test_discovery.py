@@ -242,3 +242,25 @@ async def test_tcp_probe_writer_close_error_is_swallowed() -> None:
     with patch("ampio_mqtt.discovery.asyncio.open_connection", _open):
         ok = await discovery_mod._tcp_probe("192.0.2.10", 1883, timeout=0.5)
     assert ok is True
+
+
+async def test_non_default_hostname_and_port_flow_through() -> None:
+    seen: dict[str, object] = {}
+
+    async def _resolve(host: str, timeout: float, zc: AsyncZeroconf | None) -> str:
+        seen["host"] = host
+        return "192.0.2.10"
+
+    async def _probe(address: str, port: int, timeout: float) -> bool:
+        seen["port"] = port
+        return True
+
+    with (
+        patch.object(discovery_mod, "_resolve_mdns", _resolve),
+        patch.object(discovery_mod, "_tcp_probe", _probe),
+    ):
+        results = await discover(hostname="mserv.local", port=2883, timeout=0.5)
+    assert seen == {"host": "mserv.local", "port": 2883}
+    assert results == [
+        DiscoveryResult(host="mserv.local", port=2883, address="192.0.2.10")
+    ]

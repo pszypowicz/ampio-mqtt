@@ -156,3 +156,8 @@ def test_capability_enum_is_strenum() -> None:
     assert Capability.DIGITAL_OUTPUT == "digital_output"
     assert Capability.RGBW_OUTPUT == "rgbw_output"
     assert Capability.UI_PANEL == "ui_panel"
+
+
+def test_av_modules_carry_the_audio_video_role() -> None:
+    for typ in (6, 56):  # M-AV-AMP-s, M-AV-MP3-s
+        assert Capability.AUDIO_VIDEO in module_capabilities(typ)

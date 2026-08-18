@@ -338,6 +338,13 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
         assert 17 in client.modules
         assert 41 in client.objects
         assert client.server_info is not None and client.server_info.mac == 99
+        # The signals latch: a repeat call returns True immediately, and a
+        # reconnect (whose refresh replays the scripted set) keeps it True.
+        assert await client.wait_for_initial_discovery(timeout=0.01) is True
+        broker.stream_error = aiomqtt.MqttError("connection lost")
+        await asyncio.sleep(0.05)
+        broker.stream_error = None
+        assert await client.wait_for_initial_discovery(timeout=0.01) is True
     finally:
         await client.stop()
 
@@ -736,3 +743,9 @@ def test_is_auth_error_rejects_transport_failures() -> None:
     assert not _is_auth_error(
         aiomqtt.MqttCodeError(ReasonCode(PacketTypes.CONNACK, "Server unavailable"))
     )
+
+
+def test_auth_error_is_not_a_connection_error() -> None:
+    """A config flow catching AmpioConnectionError broadly must not swallow
+    the credential rejection that needs a different user action."""
+    assert not issubclass(AmpioAuthError, AmpioConnectionError)
