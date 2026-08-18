@@ -14,6 +14,92 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.22.0
+
+A whole-codebase review executed task by task, with every claim and its
+fix verified at runtime against the live baseline install. Three
+correctness bugs are fixed, the mechanisms that guarded cases the wire
+never produces are gone, and the public API was reshaped on merit alone
+under the beta posture.
+
+### Fixed
+
+- **A corrupt info reply can no longer take the server identity away.**
+  `parse_server_info` returns None for a payload without the `Results`
+  shape, the store refuses to let a parse failure or an identity-less
+  reply replace a held identity, and the spurious below-baseline
+  warning that fired off the wiped version is gone. A True
+  `wait_for_initial_discovery()` keeps implying a populated
+  `server_info.key` on every later read. `test_connection` maps an
+  unparseable reply to the same retryable `AmpioTimeoutError` as
+  silence, and the info string fields are coerced so a numeric wire
+  value cannot crash the baseline comparison.
+- **The states snapshot no longer creates phantom objects.** Only the
+  catalogues decide which objects exist; a snapshot row for an id no
+  catalogue established used to plant an invisible placeholder that the
+  next catalogue reply evicted, dispatching `ObjectRemoved` for an
+  object no consumer was ever told about. Snapshot values now wait in a
+  per-id buffer (the shape `params_devices` already used), so reply
+  order still never decides whether an object starts with its state,
+  and snapshot-before-catalogue discovery dispatches one
+  `ObjectUpdated` carrying metadata and value together instead of first
+  announcing a nameless placeholder.
+- **`fetch_scenes` stays inside its error contract for malformed
+  rows.** A scene row with a non-list `Infos` used to escape as a bare
+  `TypeError`; malformed row fields now degrade (empty `object_ids`,
+  an empty name for a non-string `sceneName`) because the scene itself
+  is real and runnable.
+
+### Changed
+
+- **`AmpioClient(host, username, password=None, *, port=1883, ...)`.**
+  `username` is required and positional - the old signature typed it
+  optional and rejected its absence only at runtime - and `port` is
+  keyword-only. `test_connection(host, username, password, *,
+port=1883, ...)` follows the same shape.
+- **`discover()` returns `DiscoveryResult | None`** with a non-optional
+  `address`. The result was provably always empty-or-single and the
+  address never None, so the list shape and the Optional field only
+  forced an unpacking dance on every consumer.
+- **`mserv_id` is now `mserv`**, returning the M-SERV's own
+  `AmpioModule` row, or None on ambiguity and on the restricted tier.
+  The only known use of the id was reading the row for the hub device
+  name. (#89)
+- **`AmpioServerInfo.access_tier` returns `AccessTier | None`.** None
+  replaces the removed `UNKNOWN` member for a reply carrying no
+  `userId`, which no baseline server produces.
+
+### Added
+
+- **`AmpioObject.is_server_owned`** - True when `leafId` embeds the
+  M-SERV's override mac, so server-owned objects anchor to the hub
+  device identically on both account tiers and the mac rule lives in
+  the library instead of in every consumer. `docs/identity.md` carries
+  the device-grouping guidance. (#89)
+
+### Removed
+
+- **The colliding-mac subsystem.** The live baseline install reports
+  zero duplicate macs across all modules and no consumer read the
+  surface; the machinery guarded a case the wire does not produce.
+- **`Capability`, `AmpioModule.capabilities`, and
+  `module_capabilities`.** The consumer branches on none of it;
+  `module_model` and the internal hub detection behind `mserv` stay,
+  and a flag returns when a consumer concretely needs it.
+
+### Internal
+
+- Each pure request/response endpoint's fetch gate is its own reply
+  parser, the endpoint table and the parsers live in one protocol
+  module (`AccessTier` moved to `ampio_mqtt.models`; the package-root
+  import is unchanged), and the reply channels are tier-scoped.
+  Verified behavior-preserving by the unit suite, the runtime contract
+  scripts, and a live two-tier comparison.
+- The test suite gained transport realism (the fake broker's message
+  stream behaves like aiomqtt's), mutation-proofed expectations, and
+  boundary and immutability coverage for the contracts the integration
+  leans on.
+
 ## 0.21.0
 
 The M-SERV ignores the whole `turnOn` / `turnOff` / `switch` verb family
