@@ -23,7 +23,7 @@ dependencies = [
   # Home Assistant always provides `zeroconf`, and `discover()` accepts an
   # externally-managed instance so the HA integration can pass its shared one.
   # Standalone callers get a per-call instance for free, with no extra to opt in.
-  # Floor: the `AddressResolver*` classes discovery.py imports exist since
+  # Floor: the `AddressResolverIPv4` class discovery.py imports exists since
   # 0.142.0 (python-zeroconf#1499); anything older fails at import.
   "zeroconf>=0.142",
 ]

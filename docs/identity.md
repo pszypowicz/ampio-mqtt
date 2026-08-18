@@ -131,7 +131,7 @@ counterpart no longer exists in Designer.
 
 How deletion behaves on the wire on the baseline server:
 deleting a **module** hard-removes its row from the `devices` list (the
-library evicts it and fires the module-removal listener), but does not
+library evicts it and dispatches `ModuleRemoved`), but does not
 cascade to its objects. Deleting an **object** in the Ampio app is
 two-stage (it first moves to "Ungrouped", a second delete purges it)
 and soft-deletes on the `config` catalogue: the row stays, `leaf_id`

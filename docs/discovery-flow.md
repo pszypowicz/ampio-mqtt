@@ -86,9 +86,10 @@ only on the restricted tier, where the grant bounds the store), fired
 to consumers as `ObjectRemoved` / `ModuleRemoved` events. Since
 catalogues are request/response,
 a server-side deletion is noticed at the next reply - the refresh a
-reconnect issues, or an explicit `refresh()`; a Designer module
-deletion can commit without restarting the M-SERV, so a consumer that
-wants prompt removals refreshes on its own schedule. An empty reply
+reconnect issues, or an explicit `refresh()`; an app-side module
+deletion commits without restarting the M-SERV (a Designer save is the
+case that restarts it), so a consumer that wants prompt removals
+refreshes on its own schedule. An empty reply
 never mass-evicts a populated store.
 
 ## What runs on demand, not automatically

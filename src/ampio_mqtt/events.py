@@ -34,12 +34,18 @@ class ObjectRemoved:
     """The account's authoritative catalogue stopped listing an object.
 
     Carries the final state; by dispatch time the id is gone from
-    :pyattr:`AmpioClient.objects`. Removal is noticed when the catalogue
-    answers without the object: a Designer delete (whose save restarts the
-    M-SERV, so the reconnect refresh notices) or, on the restricted tier, a
-    grant revocation. This is the signal to drop whatever entity was built
-    on the object. An empty catalogue reply never mass-removes - see the
-    store's eviction guard.
+    :pyattr:`AmpioClient.objects`. What triggers it differs by tier,
+    because deletion differs by tool (live-verified; see
+    docs/identity.md). An app-side object delete soft-deletes: the
+    ``config`` row stays with the hidden bit set - the admin tier sees an
+    ``ObjectUpdated`` turning ``hidden``, never an eviction - while the
+    app-sync surfaces drop the row, so the restricted tier evicts at its
+    next catalogue reply, as it does on a grant revocation. A Designer
+    save rebuilds the configuration (restarting the M-SERV along the
+    way), and objects it deleted vanish from the ``config`` catalogue -
+    the admin-tier eviction. Either way this is the signal to drop
+    whatever entity was built on the object. An empty catalogue reply
+    never mass-removes - see the store's eviction guard.
     """
 
     object: AmpioObject

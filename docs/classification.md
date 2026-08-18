@@ -2,12 +2,14 @@
 
 The `devicesDetails` payload returns one row per logical object. The
 library classifies each row into exactly one kind - a `SensorKind`
-(sensor-side platforms), an `InputKind` (binary/boolean platforms), or an
-`OutputKind` (controllable platforms). `classify(typ, interpretacja)`
+(sensor-side platforms), an `InputKind` (binary/boolean platforms), an
+`OutputKind` (controllable platforms), or a `ThermostatKind` (the `reg`
+temperature controllers, climate platform). `classify(typ, interpretacja)`
 returns it, keying on the object type (the wire's `typ_komponentu`)
 and `interpretacja` (a refinement for analog inputs). A component type is
-a measurement, a boolean input, or something controllable, never two, so
-the three are alternatives rather than optional slots on the object.
+a measurement, a boolean input, something controllable, or a thermostat,
+never two, so the four are alternatives rather than optional slots on
+the object.
 
 Authoritative source:
 [`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py)
@@ -25,6 +27,8 @@ in sync when a new type is added.
 | `temp`                                        | yes     | no     | no      | Temperature reading, °C.                                                                                                                   |
 | `lin_wej`                                     | yes     | no     | no      | Analog input - kind set by `interpretacja` (see below).                                                                                    |
 | `bit32`                                       | yes     | no     | no      | Generic 32-bit measurement (units unknown).                                                                                                |
+| `bit8`                                        | yes     | no     | no      | Generic 8-bit measurement, same treatment as `bit32`.                                                                                      |
+| `reg`                                         | no      | no     | no      | Temperature controller (`ThermostatKind`, climate platform) - state is the running flag; #73 tracks the rich readback.                     |
 | `flaga`                                       | no      | yes    | no      | Generic boolean flag (logic flag, button-press hold, etc.).                                                                                |
 | `detekcja`                                    | no      | yes    | yes     | Motion-style detection. Visible even without `leafId` (unless hidden).                                                                     |
 | `symulacja`                                   | no      | yes    | yes     | Presence simulation. Visible even without `leafId` (unless hidden). Raw-channel prefix not yet bridged.                                    |
@@ -132,7 +136,7 @@ it at all". They compose:
 
 ```python
 should_surface = obj.visible          # classify() always yields a kind
-platform = obj.kind                   # SensorKind | InputKind | OutputKind
+platform = obj.kind    # SensorKind | InputKind | OutputKind | ThermostatKind
 ```
 
 A ghost row (`leaf_id == ""`, not a system object) is still classifiable

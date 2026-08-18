@@ -27,7 +27,9 @@ an administrator account is laid out.
 
 Authoritative source:
 [`src/ampio_mqtt/endpoints.py`](../src/ampio_mqtt/endpoints.py)
-(`RAW_INPUT_WILDCARDS`),
+(`RAW_INPUT_WILDCARDS` for the two input filters, plus
+`RAW_DIAGNOSTICS_WILDCARD` and `RAW_EVENT_WILDCARD` - together the four
+raw-tree subscriptions),
 [`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py)
 (the `channel_prefix` field on the `TYPE_PROFILES` rows), and the
 router in [`src/ampio_mqtt/_protocol.py`](../src/ampio_mqtt/_protocol.py)
