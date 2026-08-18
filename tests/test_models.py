@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 
-from ampio_mqtt import AmpioObject, classify
+from ampio_mqtt import AmpioObject, AmpioServerInfo, classify
 
 
 @pytest.mark.parametrize(
@@ -137,3 +137,11 @@ def test_module_mac_parses_strictly(leaf_id: str, expected: int | None) -> None:
     """`0_<macHex>_<F2>_<F3>_<F4>` yields the module's override mac; any
     other shape yields None rather than a half-parsed guess."""
     assert AmpioObject(id=1, leaf_id=leaf_id).module_mac == expected
+
+
+@pytest.mark.parametrize(
+    ("mac", "expected"), [(47846, "47846"), (1, "1"), (None, None)]
+)
+def test_server_key_is_the_decimal_mac(mac: int | None, expected: str | None) -> None:
+    """The canonical registry-scoping string; its format is a promise."""
+    assert AmpioServerInfo(mac=mac).key == expected

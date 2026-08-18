@@ -24,6 +24,14 @@ it away.
 
 ### Added
 
+- **`AmpioServerInfo.key`** - the canonical scoping string for
+  per-server registries (the decimal form of `mac`, matching what
+  consumers already derived by hand), and a hardened contract behind
+  it: an info reply without a server mac no longer completes initial
+  discovery, so a True `start()` / `wait_for_initial_discovery()` now
+  guarantees `server_info` is populated with a non-None `mac` and
+  `key`. No baseline server answers without an identity; one that does
+  leaves discovery incomplete with a warning naming why. (#78)
 - **`AmpioObject.module_mac`** - the owning module's replacement-stable
   bus mac, parsed from the `leafId` second segment. Identical on both
   discovery surfaces, so a restricted account - which never receives

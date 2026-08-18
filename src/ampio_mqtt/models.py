@@ -300,6 +300,19 @@ class AmpioServerInfo:
     device_id: str | None = None  # hardware identifier of the host
 
     @property
+    def key(self) -> str | None:
+        """Canonical scoping key for this M-SERV, for consumer registries.
+
+        The string to prefix per-server artifacts with - unique ids, device
+        identifiers: the decimal form of ``mac``, which is what every known
+        consumer already derived by hand. The format is a stable promise;
+        never parse or reformat it. None only while ``mac`` is unknown,
+        which a True :meth:`AmpioClient.wait_for_initial_discovery` rules
+        out - the info reply gates discovery on carrying an identity.
+        """
+        return str(self.mac) if self.mac is not None else None
+
+    @property
     def access_tier(self) -> AccessTier:
         """Account tier, derived from the account id in the info reply.
 

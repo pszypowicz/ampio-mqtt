@@ -282,6 +282,18 @@ class AmpioStore:
         # re-request every reconnect issues.
         if previous is None or previous.server_version != info.server_version:
             _protocol.warn_if_below_baseline(info.server_version)
+        if info.mac is None:
+            # Without the server identity there is nothing to scope a
+            # consumer's registry by, so discovery must not read complete -
+            # a True wait_for_initial_discovery() promises a populated
+            # `key`. No baseline server answers without a mac.
+            if previous is None or previous.mac is not None:
+                _LOGGER.warning(
+                    "Ampio info reply carries no server mac; initial "
+                    "discovery stays incomplete until an identified "
+                    "reply arrives"
+                )
+            return False
         return True
 
     def _handle_states_snapshot(self, payload: str, applied: Applied) -> bool:

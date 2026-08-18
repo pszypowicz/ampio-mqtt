@@ -47,9 +47,10 @@ the consumer:
 {prefix}_leaf_{leaf_id}
 ```
 
-`prefix` is a per-M-SERV scope, e.g. the server's own CAN mac from
-`AmpioServerInfo.mac` (which every account tier receives). Why `leaf_id`
-rather than the module-mac composite
+`prefix` is a per-M-SERV scope: use `AmpioServerInfo.key`, the canonical
+decimal form of the server's own CAN mac (served on every account tier,
+and guaranteed present once `wait_for_initial_discovery()` returns
+True). Why `leaf_id` rather than the module-mac composite
 (`{prefix}_obj_{module.mac}_{typ_komponentu}_{funkcja}`):
 
 - **Available on both account tiers.** The composite needs `module.mac`,

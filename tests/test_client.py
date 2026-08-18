@@ -9,7 +9,20 @@ import json
 
 import aiomqtt
 import pytest
-from conftest import USER, FakeBroker, details, devices, feed, info
+from conftest import (
+    DATA_DEVICES_TOPIC,
+    DETAILS_TOPIC,
+    DEVICES_TOPIC,
+    INFO_TOPIC,
+    PARAMS_DEVICES_TOPIC,
+    STATES_TOPIC,
+    USER,
+    FakeBroker,
+    details,
+    devices,
+    feed,
+    info,
+)
 
 from ampio_mqtt import (
     AccessTier,
@@ -320,3 +333,24 @@ async def test_object_updated_events_are_snapshots(
     feed(client, f"ampio/fromDB/{USER}/ob/5/state", b'{"state": "2", "on": 3000}')
     assert [e.object.value for e in events] == ["1", "2"]
     assert events[0].object is not client.objects[5]
+
+
+async def test_discovery_stays_incomplete_without_server_identity(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """An info reply without a mac must not complete discovery: a True
+    wait promises the identity a consumer scopes its registry by (#78)."""
+    client, _broker = connected
+    feed(client, STATES_TOPIC, devices())
+    feed(client, INFO_TOPIC, info())  # parses, but carries no identity
+    feed(client, DATA_DEVICES_TOPIC, details())
+    feed(client, PARAMS_DEVICES_TOPIC, devices())
+    assert await client.wait_for_initial_discovery(timeout=0.05) is False
+    assert client.server_info is not None
+    assert client.server_info.key is None
+
+    feed(client, INFO_TOPIC, info(mac=555, userId=-1, serverVersion="1865"))
+    feed(client, DETAILS_TOPIC, details())
+    feed(client, DEVICES_TOPIC, devices())
+    assert await client.wait_for_initial_discovery(timeout=1.0) is True
+    assert client.server_info.key == "555"

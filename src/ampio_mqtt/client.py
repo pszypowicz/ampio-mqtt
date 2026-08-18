@@ -206,7 +206,13 @@ class AmpioClient:
 
     @property
     def server_info(self) -> AmpioServerInfo | None:
-        """The Ampio M-SERV self-reported info, if discovered."""
+        """The Ampio M-SERV self-reported info, if discovered.
+
+        Guaranteed non-None with a populated ``mac`` (and so a non-None
+        :pyattr:`AmpioServerInfo.key`) once
+        :meth:`wait_for_initial_discovery` has returned True - an info
+        reply without an identity does not complete discovery.
+        """
         return self._store.server_info
 
     @property
@@ -430,9 +436,12 @@ class AmpioClient:
 
         This is the contract a consumer relies on when it must read
         ``objects``/``server_info`` (and, on the admin tier, ``modules``)
-        before building anything on top of the client. It never raises on
-        timeout - discovery continues opportunistically and this simply
-        returns False.
+        before building anything on top of the client. A True additionally
+        guarantees the server identity: ``server_info`` is populated with a
+        non-None ``mac``, so :pyattr:`AmpioServerInfo.key` is a string - an
+        info reply without an identity (which no baseline server produces)
+        leaves discovery incomplete. It never raises on timeout - discovery
+        continues opportunistically and this simply returns False.
 
         Safe to call repeatedly and after reconnects - the underlying signals
         latch on first completion, so once discovery has happened this returns
