@@ -201,11 +201,13 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
     come back as something else entirely - which no raw channel feeds.
     """
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         f"ampio/fromDB/{USER}/config/devices",
         json.dumps({"List": [{"id": 7, "mac": 0xCAFE, "typ_urzadzenia": 11}]}),
     )
-    _apply(store, 
+    _apply(
+        store,
         f"ampio/fromDB/{USER}/config/devicesDetails",
         json.dumps(
             {
@@ -226,7 +228,8 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
 
     # After a module swap the id comes back as a cover, which no raw channel
     # feeds, so its only updates are the per-object ones.
-    _apply(store, 
+    _apply(
+        store,
         f"ampio/fromDB/{USER}/config/devicesDetails",
         json.dumps(
             {
@@ -272,7 +275,8 @@ def test_a_below_baseline_server_warns_once(caplog: pytest.LogCaptureFixture) ->
 def test_a_baseline_server_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
     store = _store()
     with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
-        _apply(store, 
+        _apply(
+            store,
             f"ampio/fromDB/{USER}/data/info",
             '{"Results": {"mac": 1, "serverVersion": "1865"}}',
         )
@@ -375,7 +379,8 @@ def test_the_echo_of_a_raw_edge_is_ignored_whole() -> None:
     store = _store()
     _raw_proven_flag(store)
     before = store.objects[10].updated_at
-    applied = _apply(store, 
+    applied = _apply(
+        store,
         f"ampio/fromDB/{USER}/ob/10/state",
         json.dumps({"state": "255", "on": 1787000000000}),
     )
@@ -411,8 +416,8 @@ def test_a_newer_snapshot_corrects_a_value_that_changed_during_an_outage() -> No
     value a pre-outage live push left behind."""
     store = _store()
     _apply(store, DETAILS_TOPIC, details({"id": 10}))
-    _apply(store, 
-        f"ampio/fromDB/{USER}/ob/10/state", '{"state":"255","on":1786700100000}'
+    _apply(
+        store, f"ampio/fromDB/{USER}/ob/10/state", '{"state":"255","on":1786700100000}'
     )
     assert store.objects[10].value == "255"
 
@@ -429,7 +434,8 @@ def test_echo_of_an_earlier_edge_does_not_disturb_a_fast_toggle() -> None:
     _raw_proven_flag(store)
     _apply(store, f"ampio/from/{0xCAFE:X}/state/f/3", "0")  # edge 2
     before = store.objects[10].updated_at
-    applied = _apply(store, 
+    applied = _apply(
+        store,
         f"ampio/fromDB/{USER}/ob/10/state",
         json.dumps({"state": "255", "on": int(time.time() * 1000)}),  # echo of edge 1
     )
@@ -537,7 +543,8 @@ def test_live_messages_touch_last_seen_snapshots_do_not() -> None:
 
 def test_details_populate_and_classify() -> None:
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         DETAILS_TOPIC,
         details(
             {
@@ -578,7 +585,8 @@ def test_details_populate_and_classify() -> None:
 
 def test_devices_populate_modules_with_model_and_versions() -> None:
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         DEVICES_TOPIC,
         devices(
             {
@@ -614,11 +622,13 @@ def test_state_updates_module_last_seen_with_local_receive_time() -> None:
     """A live push marks the module seen at local receive time - the server's
     `on` date is state provenance, never liveness evidence (one clock only)."""
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         DEVICES_TOPIC,
         devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
     )
-    _apply(store, 
+    _apply(
+        store,
         DETAILS_TOPIC,
         details(
             {
@@ -633,7 +643,8 @@ def test_state_updates_module_last_seen_with_local_receive_time() -> None:
     assert store.modules[17].last_seen is None
 
     before = time.time()
-    _apply(store, 
+    _apply(
+        store,
         f"ampio/fromDB/{USER}/ob/41/state",
         '{"state": "22.5", "on": 1779565263813}',
     )
@@ -641,7 +652,8 @@ def test_state_updates_module_last_seen_with_local_receive_time() -> None:
     assert first_seen is not None and before <= first_seen <= time.time()
 
     # Another push refreshes it, regardless of its server date being older.
-    _apply(store, 
+    _apply(
+        store,
         f"ampio/fromDB/{USER}/ob/41/state",
         '{"state": "21.0", "on": 1779560000000}',
     )
@@ -654,11 +666,13 @@ def test_states_snapshot_seeds_value_without_touching_last_seen() -> None:
     it replays DB state that may be arbitrarily old, so last_seen stays
     None until a live message arrives."""
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         DEVICES_TOPIC,
         devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
     )
-    _apply(store, 
+    _apply(
+        store,
         DETAILS_TOPIC,
         details(
             {
@@ -673,7 +687,8 @@ def test_states_snapshot_seeds_value_without_touching_last_seen() -> None:
     assert store.objects[41].value is None
     assert store.modules[17].last_seen is None
 
-    _apply(store, 
+    _apply(
+        store,
         STATES_TOPIC,
         devices(
             {
@@ -691,19 +706,22 @@ def test_states_snapshot_seeds_value_without_touching_last_seen() -> None:
 def test_states_snapshot_does_not_overwrite_live_value() -> None:
     """A snapshot does not regress a value already set by a live push."""
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         DETAILS_TOPIC,
         details(
             {"id": 41, "typ_komponentu": "temp", "interpretacja": 1, "opis_menu": "T"}
         ),
     )
-    _apply(store, 
+    _apply(
+        store,
         f"ampio/fromDB/{USER}/ob/41/state",
         '{"state": "fresh", "on": 1779570000000}',
     )
     assert store.objects[41].value == "fresh"
 
-    _apply(store, 
+    _apply(
+        store,
         STATES_TOPIC,
         devices({"id": 41, "stan_json": '{"state": "stale", "on": 1779560000000}'}),
     )
@@ -715,11 +733,13 @@ def test_states_snapshot_creates_nothing_for_unknown_ids() -> None:
     DB rows, ghost rows included - creating from it would later evict an
     object no consumer was ever told existed."""
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         DATA_DEVICES_TOPIC,
         details({"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"}),
     )
-    applied = _apply(store, 
+    applied = _apply(
+        store,
         STATES_TOPIC,
         devices(
             {"id": 5, "stan_json": '{"state": "1", "on": 1779560000000}'},
@@ -731,7 +751,8 @@ def test_states_snapshot_creates_nothing_for_unknown_ids() -> None:
 
     # The catalogue re-request that would have evicted the phantom now
     # removes nothing.
-    applied = _apply(store, 
+    applied = _apply(
+        store,
         DATA_DEVICES_TOPIC,
         details({"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"}),
     )
@@ -744,14 +765,16 @@ def test_snapshot_before_catalogue_seeds_the_value_at_merge() -> None:
     first must still hand the object its value when the catalogue
     establishes it, in the one update that also carries the metadata."""
     store = _store()
-    applied = _apply(store, 
+    applied = _apply(
+        store,
         STATES_TOPIC,
         devices({"id": 20, "stan_json": '{"state": "7", "on": 1779560000000}'}),
     )
     assert 20 not in store.objects
     assert _updated(applied) == []
 
-    applied = _apply(store, 
+    applied = _apply(
+        store,
         DATA_DEVICES_TOPIC,
         details({"id": 20, "typ_komponentu": "temp", "opis_menu": "T"}),
     )
@@ -765,27 +788,31 @@ def test_eviction_prunes_the_buffered_snapshot_value() -> None:
     """An evicted object's buffered seed must not resurface if a later
     catalogue re-establishes the id."""
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         DATA_DEVICES_TOPIC,
         details(
             {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"},
             {"id": 6, "typ_komponentu": "flaga", "opis_menu": "G"},
         ),
     )
-    _apply(store, 
+    _apply(
+        store,
         STATES_TOPIC,
         devices(
             {"id": 5, "stan_json": '{"state": "1", "on": 1779560000000}'},
             {"id": 6, "stan_json": '{"state": "1", "on": 1779560000000}'},
         ),
     )
-    applied = _apply(store, 
+    applied = _apply(
+        store,
         DATA_DEVICES_TOPIC,
         details({"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"}),
     )
     assert [o.id for o in _removed(applied)] == [6]
 
-    _apply(store, 
+    _apply(
+        store,
         DATA_DEVICES_TOPIC,
         details(
             {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"},
@@ -799,11 +826,13 @@ def test_details_stan_json_seed_does_not_touch_last_seen() -> None:
     """The catalogue's stan_json seed carries state, not liveness - like the
     bulk snapshot, it replays DB rows and leaves last_seen alone."""
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         DEVICES_TOPIC,
         devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
     )
-    _apply(store, 
+    _apply(
+        store,
         DETAILS_TOPIC,
         details(
             {
@@ -823,7 +852,8 @@ def test_details_stan_json_seed_does_not_touch_last_seen() -> None:
 def test_info_parses_only_safe_fields() -> None:
     """Server info parsing keeps version/ip/mac but drops geo/cloud/private fields."""
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         f"ampio/fromDB/{USER}/data/info",
         info(
             serverVersion="1865",
@@ -856,13 +886,15 @@ def test_info_parses_only_safe_fields() -> None:
 
 def test_devices_redelivery_preserves_last_seen() -> None:
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         DEVICES_TOPIC,
         devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
     )
     store.modules[17] = replace(store.modules[17], last_seen=1700000000.0)
     # Re-deliver the devices list (e.g. on reconnect) - last_seen must persist.
-    _apply(store, 
+    _apply(
+        store,
         DEVICES_TOPIC,
         devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m2"}),
     )
@@ -944,7 +976,8 @@ def test_state_with_unparseable_payload_is_dropped() -> None:
 def test_stan_json_with_no_state_field_does_not_overwrite_value() -> None:
     """A stan_json blob without `state` should not clobber an existing value."""
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         DETAILS_TOPIC,
         details(
             {
@@ -1049,8 +1082,8 @@ def test_mapped_input_without_raw_uses_per_object_fallback() -> None:
     """A mapped input that never produced a raw edge still updates per-object."""
     store = _panel_store()
 
-    applied = _apply(store, 
-        f"ampio/fromDB/{USER}/ob/50/state", '{"state": "255", "on": 1700}'
+    applied = _apply(
+        store, f"ampio/fromDB/{USER}/ob/50/state", '{"state": "255", "on": 1700}'
     )
     obj = store.objects[50]
     assert obj.value == "255" and obj.is_on is True
@@ -1121,14 +1154,16 @@ def test_data_devices_populate_and_classify() -> None:
 def test_params_table_before_catalogue_supplies_hidden_flag() -> None:
     """A params table that arrives first is applied when the catalogue lands."""
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         PARAMS_DEVICES_TOPIC,
         devices({"id": 24, "params": 17}, {"id": 25, "params": 1}),
     )
     # The table is not grant-filtered; unknown ids create no placeholders.
     assert store.objects == {}
 
-    _apply(store, 
+    _apply(
+        store,
         DATA_DEVICES_TOPIC,
         devices(_app_row(24, "0_cb9b_74_0_1"), _app_row(25, "0_cb9b_74_0_2")),
     )
@@ -1140,7 +1175,8 @@ def test_params_table_after_catalogue_updates_objects_and_notifies() -> None:
     store = _store()
     _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1")))
 
-    applied = _apply(store, 
+    applied = _apply(
+        store,
         PARAMS_DEVICES_TOPIC,
         devices({"id": 24, "params": 17}, {"id": 999, "params": 1}),
     )
@@ -1154,11 +1190,13 @@ def test_params_table_after_catalogue_updates_objects_and_notifies() -> None:
 
 def test_lammel_is_parsed_into_tilt_position() -> None:
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         DETAILS_TOPIC,
         details({"id": 66, "typ_komponentu": "roleta_lamelki", "interpretacja": 1}),
     )
-    _apply(store, 
+    _apply(
+        store,
         f"ampio/fromDB/{USER}/ob/66/state",
         '{ "state": "95","lammel": "65","block": "0" , "on": 1786723383804}',
     )
@@ -1171,7 +1209,8 @@ def test_lammel_is_parsed_into_tilt_position() -> None:
 
 def test_plain_cover_reports_no_tilt() -> None:
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         DETAILS_TOPIC,
         details({"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}),
     )
@@ -1184,11 +1223,13 @@ def test_plain_cover_reports_no_tilt() -> None:
 
 def test_states_snapshot_seeds_tilt_position() -> None:
     store = _store()
-    _apply(store, 
+    _apply(
+        store,
         DETAILS_TOPIC,
         details({"id": 66, "typ_komponentu": "roleta_lamelki", "opis_menu": "B"}),
     )
-    _apply(store, 
+    _apply(
+        store,
         STATES_TOPIC,
         devices(
             {
@@ -1306,7 +1347,8 @@ def test_updated_at_takes_the_report_date_or_the_receipt_time() -> None:
 
     seeded = _store()
     _apply(seeded, DETAILS_TOPIC, _flaga_details((9, 1)))
-    _apply(seeded, 
+    _apply(
+        seeded,
         STATES_TOPIC,
         json.dumps({"List": [{"id": 9, "stan_json": json.dumps({"state": "5"})}]}),
     )

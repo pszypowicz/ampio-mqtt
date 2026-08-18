@@ -130,9 +130,7 @@ class AmpioClient:
             AccessTier.ADMIN if username == ADMIN_USERNAME else AccessTier.RESTRICTED
         )
         self._served = tuple(ep for ep in ENDPOINTS if ep.tier in (None, self._tier))
-        self._initial_endpoints = tuple(
-            ep.name for ep in self._served if ep.initial
-        )
+        self._initial_endpoints = tuple(ep.name for ep in self._served if ep.initial)
         self._router = _protocol.Router(username, self._served)
         self._store = AmpioStore()
         self.stats = ConnectionStats()

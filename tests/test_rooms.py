@@ -84,8 +84,6 @@ def test_parse_rooms_of_empty_tables_is_empty() -> None:
     assert parse_rooms([], []) == {}
 
 
-
-
 # --- AmpioClient.fetch_rooms() MQTT orchestration -------------------------
 
 
