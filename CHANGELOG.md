@@ -14,6 +14,189 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.19.0
+
+A restructuring release from a second clean-sheet review. Event delivery,
+topic classification, endpoint reply correlation, and per-object
+bookkeeping each get one home: a typed event stream with a terminal
+crash signal, a protocol-layer router, a reply channel per endpoint
+row, and facts carried on the object itself. Every publish is
+acknowledged by the broker at QoS 1 and every failure surfaces as the
+library's own error types. The cover and regulator surfaces grew
+`stop_cover()`, `set_temperature()`, and the `reg`/`bit8`
+classifications, each confirmed on a live install before shipping. The
+test suite runs through an injectable transport seam with a shared kit,
+marginal API was removed, and the docs now treat verified-on-the-baseline
+as the default, with open claims carrying their tracking issue.
+
+### Added
+
+- `reg` and `bit8` classify (#61): `reg` as the new `ThermostatKind`
+  (with `AmpioObject.is_thermostat`) - a thermostat is genuinely none of
+  the sensor/input/output kinds - and `bit8` as a numeric measurement
+  like its `bit32` sibling. `set_temperature()` drives the regulator's
+  setpoint, guarding the bool and non-finite traps; the mode verb stays
+  unwrapped deliberately, since `setHeatingMode` is one-way over MQTT
+  (`M` works, `S` back is silently ignored) and a one-way toggle is a
+  broken control. Surfacing the regulator's rich state
+  (measureTemp/setTemperature/mode/cooling) is #73.
+- `stop_cover()`: halts a cover wherever it is, on either axis (#62).
+  Confirmed on a tilt-capable blind: mid-travel the position freezes at
+  the halt point and the commanded target is never reached, a slat
+  rotation is caught mid-turn the same way, a stop during the pre-travel
+  slat phase also cancels the pending move, and a stop on a stationary
+  cover is a silent no-op. This is what lets a consumer offer Home
+  Assistant's cover stop button.
+- A transport seam: `AmpioClient` and `test_connection` accept a
+  keyword-only `mqtt_client_factory` (a zero-argument callable returning
+  the MQTT session object for one connect attempt), defaulting to the real
+  aiomqtt client exactly as before. The suite now injects an
+  instance-based fake broker through it instead of patching aiomqtt and
+  poking `client._connection._client` - the old pattern manufactured a
+  session state production code cannot produce (never opened, unavailable,
+  yet publishing successfully) and forced the broker fake into class-level
+  state with an autouse reset. The private `_feed_message` test hook is
+  gone from the client, and a shared `tests/conftest.py` replaces eight
+  per-file fake classes and seven copies of the shared constants.
+
+### Removed
+
+- `fetch_locations()`, its parser, its endpoint row (one less subscription
+  per connect), and its tests. The method returned only the id-to-name
+  table behind Designer's "Lokalizacja" dropdown while the per-output
+  pointer that would make it resolvable is not reachable over MQTT; it
+  returns with the #25 RPC route once that pointer is.
+- The `sensors` property (asymmetric - no inputs/outputs twins ever
+  existed - and consumers filter on `kind`) and the generic `request()`
+  escape hatch (undocumented, `KeyError` on unknown names, and covered
+  better by `refresh()`, the `fetch_*` methods, and the probe tool).
+- Dead branches: the unreachable `or []` in `fetch_scenes` is now an
+  assert naming the parsed-gate invariant, and the payload decoder's
+  `str`/`None` handling is gone - aiomqtt 2.5 (the pyproject floor)
+  guarantees `bytes`.
+
+### Changed
+
+- `refresh()` skips the admin-only `config` requests once the info reply
+  has identified a RESTRICTED account - the M-SERV never answers them for
+  that tier and the login's admin bit cannot change mid-session. An
+  UNKNOWN tier still requests everything, which is what makes first
+  discovery work.
+- The package version is single-sourced: hatchling reads it from
+  `__version__`, so a release bumps one line.
+- The duplicated below-baseline warning (validation path and store info
+  handler) collapsed into one `_protocol` helper; both call sites keep
+  their behavior and their tests.
+- The test suite was deduplicated and strengthened (net -213 lines, 439 to
+  443 tests): sixteen tests proving behaviors twice across layers were
+  deleted against verified twins or moved to the store level, the pure
+  model tests moved to their own module, and nine behaviors previously
+  untested gained coverage - the below-baseline warning on the
+  validation path, `auth_failure` clearing on a fresh `start()`, the
+  UNKNOWN-tier discovery fallback, concurrent same-endpoint fetches
+  sharing one reply, backoff growth/cap/jitter bounds, the exact
+  initial-request set at QoS 1, the last uncovered parser branches
+  (`_protocol` now at 100%), and the client-level `colliding_macs` read.
+  Three tests asserting a weaker exception type than the source raises
+  were tightened, and the M-SERV-resolution test was renamed to match
+  the capability-based rule it actually exercises.
+- One typed event stream replaces the seven `add_*_listener` registrations.
+  `subscribe(listener, of=...)` delivers frozen event dataclasses -
+  `ObjectUpdated`, `ObjectRemoved`, `ModuleUpdated`, `ModuleRemoved`,
+  `BusEvent`, `AvailabilityChanged`, `AuthFailed`, `ConnectionDied` - in
+  the order they were produced, with `of` narrowing to one class (typing
+  the callback parameter precisely) or a tuple. The tier-gating knowledge
+  from the old registration docstrings now lives on the event classes in
+  `ampio_mqtt.events`; ordering across kinds is a real guarantee
+  (availability drops precede the terminal events, removals follow the
+  updates of the reply that caused them); a raising listener is still
+  logged and isolated. `AmpioEvent` is absorbed into `BusEvent` - the
+  event class is the model.
+- The per-object clock domain and raw-proven flag moved from store-side
+  dicts onto `AmpioObject` itself as documented public fields
+  (`updated_at_clock`, `raw_proven`), making `updated_at` self-describing
+  and eviction structurally leak-free: the old shape required every
+  removal site to pop three side structures in lockstep, and one
+  forgotten line silently froze a re-added object's state updates
+  (demonstrated at the store level before the change). `AmpioState` is
+  deleted - a three-field wrapper with a single construction site and 27
+  reach-throughs, forwarded twice on the way to the consumer - and the
+  store owns `objects`/`modules`/`server_info` directly.
+- Topic classification has one home: a protocol-layer `Router` turns each
+  inbound message into a typed message (`EndpointReply`, `StateUpdate`,
+  `RawChannelEdge`, `DiagnosticsReport`, `BusEvent`) exactly once, and the
+  store pattern-matches on the result instead of substring-filtering topics
+  and re-validating them in every parser. The dispatcher's loose pre-filters
+  and the parsers' duplicate shape guards - several of which a coverage run
+  proved unreachable behind the pre-filter - are gone, `parse_state_message`
+  / `parse_raw_channel_topic` / `parse_diagnostics_mac` / `parse_event`
+  dissolve into the router, and the store finally matches its own "pure
+  state" docstring. Behavior verified byte-identical against the scripted
+  broker and live against the M-SERV on all four push surfaces.
+- Endpoint reply correlation is consolidated into one per-endpoint channel
+  (discovery latch, verbatim last payload, fetch waiters together), so
+  adding an endpoint is one row in the endpoint table and no new client
+  plumbing. Behavior is unchanged - verified byte-identical against a
+  scripted broker across discovery latching, concurrent fetches,
+  malformed-reply timeouts, stale-waiter cleanup, and reconnect. One
+  visible nuance: `last_payloads` now returns a fresh snapshot dict per
+  access rather than a live internal dict.
+- A crash in the connection loop is now reported instead of silent. An
+  exception the loop does not recognize as transport or credential failure
+  is terminal (nothing retries): after a successful `start()` it dispatches
+  `ConnectionDied` with the availability drop preceding it and the reason
+  in `stats.last_error`; during `start()` it makes `start()` raise
+  `AmpioConnectionError` promptly. Previously the runner task died holding
+  its exception, `stats.last_error` stayed empty, and the dead loop was
+  indistinguishable from an outage under retry (verified against a live
+  broker: an injected store bug froze the client forever while the broker
+  stayed healthy).
+
+- Every publish now goes out at QoS 1, so an awaited publish completes on the
+  broker's PUBACK: a returned `command()` (or scene/event publish, or
+  discovery request) means the broker accepted it, where QoS 0 meant only
+  that the payload left the socket (#68). This hardens the client-to-broker
+  hop; it is not device-level confirmation - the M-SERV still applies
+  commands asynchronously, and #67 tracks the opt-in state-echo API for
+  that. Discovery requests are included deliberately: they share the one
+  publish path, their replies already surface loss through timeouts, and
+  the broker ack costs one packet.
+- `start()` now returns the discovery outcome it always awaited: True when
+  the initial discovery cycle completed within `discovery_timeout`, False
+  when the timeout elapsed first. The result was previously discarded, so
+  a `start()`-only caller could not tell whether `objects`/`server_info`
+  were populated without a second call to `wait_for_initial_discovery()`.
+  A False still leaves the connection up with discovery continuing
+  opportunistically.
+
+### Fixed
+
+- The typed command helpers now reject `bool` arguments with a `ValueError`.
+  `bool` is an int subclass, so `set_value(oid, True)` previously passed
+  validation and published the literal `setValue/True` - a malformed
+  command the M-SERV silently drops (live-verified), leaving no error, no
+  effect, and nothing in any log. A caller passing `True` wants `turn_on()`
+  or an explicit level, and now hears so at call time.
+- A scene row without the `active` column now parses as enabled, matching
+  `AmpioScene`'s declared default; it previously parsed as disabled, so a
+  server that ever dropped the column would have silently deactivated the
+  whole catalogue. The baseline server always sends the column
+  (live-verified), so this covers shape drift only.
+- Publish-path failures no longer leak `aiomqtt.MqttError` through the
+  public API. `command()`, the typed command helpers, `send_event()`, the
+  scene commands, and the `fetch_*` request publishes now raise
+  `AmpioConnectionError` on a transport failure (the aiomqtt original
+  preserved as `__cause__`) and `AmpioTimeoutError` when the broker accepts
+  the session but the PUBACK does not arrive within 5 s - so an
+  `except AmpioError` handler finally covers every failure a call can
+  produce, and consumers never import aiomqtt. The PUBACK deadline is owned
+  by the library because aiomqtt reports its own timeout as a bare
+  `MqttError` distinguishable only by message text; a local deadline keeps
+  the retryable-vs-transport classification structural. The connection
+  loop treats the wrapped form like any transport drop, so a publish
+  failure inside the on-connect refresh recycles the session instead of
+  killing the reconnect loop.
+
 ## 0.18.0
 
 A debt-payoff release from a clean-sheet review of the whole library,

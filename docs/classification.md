@@ -10,13 +10,13 @@ a measurement, a boolean input, or something controllable, never two, so
 the three are alternatives rather than optional slots on the object.
 
 Authoritative source:
-[`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py)
+[`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py)
 (`classify`, the `TYPE_PROFILES` table, and `_LIN_WEJ_BY_INTERP`).
 
 ## `typ_komponentu` truth table
 
 The Sensor / Input / System columns are one row each in the
-`TYPE_PROFILES` table in `const.py` (a type's `sensor`/`analog`/`numeric`,
+`TYPE_PROFILES` table in `classification.py` (a type's `sensor`/`analog`/`numeric`,
 `input`, and `system` fields) - keep that table in sync when a new type
 is added.
 
@@ -57,18 +57,19 @@ it is set to "blinds - percentage". Only the slats variant reports a
 
 Ampio's own vocabulary also carries `rgb`, `rgbww`, `ledww`, `reg`, `ac`,
 `radio`, `ip_radio`, and `satel_alarm`, and virtual devices add `bit8`
-(an 8-bit sensor channel). Three are confirmed live: `reg` (a
-temperature controller riding the M-SERV, with a state shape of its
-own - see `protocol.md`), `satel_alarm` (armed/alarmed flags of an alarm
+(an 8-bit sensor channel). `reg` classifies as `ThermostatKind` (its
+value is the running flag; the rich state shape - see `protocol.md` -
+awaits the #73 climate readback) and `bit8` as a numeric measurement,
+like `bit32`. `satel_alarm` (armed/alarmed flags of an alarm
 integration - a Jablotron behind an M-CON, so the prefix is not
-Satel-specific), and `bit8`. All are absent from `TYPE_PROFILES`, so
-they classify as the generic value sensor.
+Satel-specific) remains absent from `TYPE_PROFILES` and classifies as
+the generic value sensor.
 
 ## `lin_wej` interpretation table
 
 For a `lin_wej` object the measurement is selected by `interpretacja`
 (`_LIN_WEJ_BY_INTERP` in
-[`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py)):
+[`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py)):
 
 | `interpretacja` | `SensorKind.key` | Unit  | HA device class        |
 | --------------- | ---------------- | ----- | ---------------------- |

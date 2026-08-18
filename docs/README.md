@@ -5,6 +5,10 @@ the source comments - "what shape comes back", "which id is
 replacement-stable", "what else is reachable". Each file is one
 screen.
 
+Wire behavior documented here is verified against the baseline install
+(see the README's supported versions). Claims that are still open are
+the marked case - they carry a tracking-issue link.
+
 | File                                             | Subject                                                                                                                                     |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`protocol.md`](protocol.md)                     | Topic map: discovery requests, response topics, live state, raw channels, commands.                                                         |

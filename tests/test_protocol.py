@@ -6,18 +6,26 @@ import json
 
 import pytest
 
-from ampio_mqtt import AccessTier, AmpioModule, AmpioServerInfo
+from ampio_mqtt import AccessTier, AmpioModule, AmpioServerInfo, BusEvent
 from ampio_mqtt._protocol import (
+    DiagnosticsReport,
+    EndpointReply,
+    RawChannelEdge,
+    Router,
+    StateUpdate,
     parse_details,
     parse_devices,
-    parse_raw_channel_topic,
+    parse_params_devices,
+    parse_scenes,
     parse_server_info,
     parse_stan_json,
-    parse_state_message,
     parse_states_snapshot,
     server_below_baseline,
     to_int,
 )
+
+# One router per suite: topic classification is stateless per account.
+_route = Router("u").route
 
 
 @pytest.mark.parametrize(
@@ -103,9 +111,24 @@ def test_parse_states_snapshot_bad_json() -> None:
     assert parse_states_snapshot("not json") is None
 
 
-def test_parse_state_message_non_dict_payload() -> None:
+def test_parse_params_devices_skips_non_int_id() -> None:
+    payload = json.dumps({"List": [{"id": "x", "params": 1}, {"id": 7, "params": 17}]})
+    assert parse_params_devices(payload) == {7: 17}
+
+
+def test_parse_scenes_skips_row_without_id() -> None:
+    payload = json.dumps(
+        {"List": [{"id": None, "sceneName": "Bad"}, {"id": 1, "sceneName": "Good"}]}
+    )
+    scenes = parse_scenes(payload)
+    assert scenes is not None
+    assert [(s.id, s.name) for s in scenes] == [(1, "Good")]
+
+
+def test_state_route_non_dict_payload() -> None:
     """A JSON array payload falls through to text-mode and yields the raw string."""
-    update = parse_state_message("ampio/fromDB/u/ob/41/state", json.dumps([1, 2]))
+    update = _route("ampio/fromDB/u/ob/41/state", json.dumps([1, 2]))
+    assert isinstance(update, StateUpdate)
     assert update is not None
     assert update.value == "[1, 2]" and update.on_ms is None
 
@@ -237,17 +260,17 @@ def test_parse_states_snapshot() -> None:
     assert entries[0].id == 1 and entries[0].stan_json is not None
 
 
-def test_parse_state_message_json_payload() -> None:
-    update = parse_state_message(
+def test_state_route_json_payload() -> None:
+    update = _route(
         "ampio/fromDB/u/ob/41/state", json.dumps({"state": "22.4", "on": 1700})
     )
-    assert update is not None
+    assert isinstance(update, StateUpdate)
     assert update.id == 41 and update.value == "22.4" and update.on_ms == 1700
 
 
-def test_parse_state_message_plain_payload() -> None:
-    update = parse_state_message("ampio/fromDB/u/ob/41/state", "ok")
-    assert update is not None
+def test_state_route_plain_payload() -> None:
+    update = _route("ampio/fromDB/u/ob/41/state", "ok")
+    assert isinstance(update, StateUpdate)
     assert update.value == "ok" and update.on_ms is None
 
 
@@ -260,24 +283,24 @@ def test_parse_state_message_plain_payload() -> None:
         pytest.param(True, "True", id="bool"),
     ],
 )
-def test_parse_state_message_coerces_numeric_state_to_str(
+def test_state_route_coerces_numeric_state_to_str(
     raw_state: object, expected: str
 ) -> None:
     """Numeric JSON `state` values are normalized to text at the parser."""
-    update = parse_state_message(
+    update = _route(
         "ampio/fromDB/u/ob/41/state",
         json.dumps({"state": raw_state, "on": 1700}),
     )
-    assert update is not None
+    assert isinstance(update, StateUpdate)
     assert update.value == expected
     assert isinstance(update.value, str)
 
 
-def test_parse_state_message_null_state_falls_back_to_payload() -> None:
+def test_state_route_null_state_falls_back_to_payload() -> None:
     """An explicit `null` state preserves the raw payload as the value."""
     payload = json.dumps({"state": None, "on": 1700})
-    update = parse_state_message("ampio/fromDB/u/ob/41/state", payload)
-    assert update is not None
+    update = _route("ampio/fromDB/u/ob/41/state", payload)
+    assert isinstance(update, StateUpdate)
     assert update.value == payload
 
 
@@ -287,10 +310,11 @@ def test_parse_state_message_null_state_falls_back_to_payload() -> None:
         "ampio/fromDB/u/notob/41/state",
         "too/short",
         "ampio/fromDB/u/ob/notanint/state",
+        "ampio/fromDB/u/ob/41/state/extra",
     ],
 )
-def test_parse_state_message_invalid_topic(topic: str) -> None:
-    assert parse_state_message(topic, "x") is None
+def test_state_route_invalid_topic(topic: str) -> None:
+    assert _route(topic, "x") is None
 
 
 def test_parse_stan_json_extracts_value_and_timestamp() -> None:
@@ -337,8 +361,11 @@ def test_parse_stan_json_invalid(payload: str) -> None:
         ("ampio/from/00cffe/state/f/1", (0xCFFE, "f", 1)),
     ],
 )
-def test_parse_raw_channel_topic_ok(topic: str, expected: tuple[int, str, int]) -> None:
-    assert parse_raw_channel_topic(topic) == expected
+def test_raw_channel_route_ok(topic: str, expected: tuple[int, str, int]) -> None:
+    edge = _route(topic, " 1 ")
+    assert isinstance(edge, RawChannelEdge)
+    assert (edge.mac, edge.prefix, edge.channel) == expected
+    assert edge.value == "1"  # payload arrives stripped
 
 
 @pytest.mark.parametrize(
@@ -350,8 +377,64 @@ def test_parse_raw_channel_topic_ok(topic: str, expected: tuple[int, str, int]) 
         "ampio/to/CFFE/state/f/32",  # not a 'from' topic
         "ampio/from/ZZZZ/state/f/32",  # non-hex mac
         "ampio/from/CFFE/state/f/notint",  # non-int channel
-        "ampio/fromDB/u/ob/41/state",  # per-object topic, not raw
     ],
 )
-def test_parse_raw_channel_topic_malformed(topic: str) -> None:
-    assert parse_raw_channel_topic(topic) is None
+def test_raw_channel_route_malformed(topic: str) -> None:
+    assert _route(topic, "1") is None
+
+
+@pytest.mark.parametrize(
+    ("topic", "payload", "expected"),
+    [
+        ("ampio/from/1/event", "189", BusEvent(number=189, mac=1)),
+        ("ampio/from/D09A/event", " 42 ", BusEvent(number=42, mac=0xD09A)),
+    ],
+)
+def test_event_route_ok(topic: str, payload: str, expected: BusEvent) -> None:
+    assert _route(topic, payload) == expected
+
+
+@pytest.mark.parametrize(
+    ("topic", "payload"),
+    [
+        ("ampio/from/zz/event", "189"),  # non-hex mac
+        ("ampio/from/1/event", "not-a-number"),
+        ("ampio/from/1/2/event", "189"),  # wrong depth
+        ("ampio/to/1/event", "189"),  # not a 'from' topic
+        ("nmpio/from/1/event", "189"),  # wrong root
+    ],
+)
+def test_event_route_malformed(topic: str, payload: str) -> None:
+    assert _route(topic, payload) is None
+
+
+def test_diagnostics_route_ok() -> None:
+    report = _route("ampio/from/cafe/b/4f", json.dumps({"d": [254, 79, 63, 142]}))
+    assert isinstance(report, DiagnosticsReport)
+    assert report.mac == 0xCAFE
+    assert report.diagnostics.supply_voltage == 12.6
+    assert report.diagnostics.temperature == 42.0
+
+
+@pytest.mark.parametrize(
+    ("topic", "payload"),
+    [
+        ("ampio/from/cafe/b/50", '{"d": [254, 79, 63, 142]}'),  # not the 4F frame
+        ("ampio/from/zz/b/4F", '{"d": [254, 79, 63, 142]}'),  # non-hex mac
+        ("ampio/from/cafe/b/4F", "not json"),  # unparseable frame
+        ("ampio/from/cafe/b/4F/extra", '{"d": [254, 79, 63, 142]}'),
+    ],
+)
+def test_diagnostics_route_malformed(topic: str, payload: str) -> None:
+    assert _route(topic, payload) is None
+
+
+def test_endpoint_reply_route_carries_raw_payload() -> None:
+    reply = _route("ampio/fromDB/u/config/devicesDetails", "{corrupt")
+    assert isinstance(reply, EndpointReply)
+    assert reply.endpoint.name == "details"
+    assert reply.payload == "{corrupt"  # unparsed: the store's handlers decide
+
+
+def test_route_is_user_scoped_for_endpoint_replies() -> None:
+    assert _route("ampio/fromDB/other/config/devicesDetails", "{}") is None

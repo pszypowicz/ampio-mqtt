@@ -3,47 +3,30 @@
 from __future__ import annotations
 
 import pytest
+from conftest import API_TOPIC, USER, FakeBroker, feed
 
-from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioEvent
-
-USER = "u"
-TOPIC = f"ampio/control/{USER}/api"
-
-
-class _RecordingClient:
-    def __init__(self) -> None:
-        self.published: list[tuple[str, bytes]] = []
-
-    async def publish(self, topic: str, payload: bytes = b"") -> None:
-        self.published.append((topic, payload))
-
-
-def _connected() -> tuple[AmpioClient, _RecordingClient]:
-    client = AmpioClient("host", username=USER)
-    recorder = _RecordingClient()
-    client._connection._client = recorder  # type: ignore[assignment]
-    return client, recorder
+from ampio_mqtt import AmpioClient, AmpioConnectionError, BusEvent
 
 
 def test_received_event_reaches_listeners() -> None:
     client = AmpioClient("host", username=USER)
-    seen: list[AmpioEvent] = []
-    client.add_event_listener(seen.append)
+    seen: list[BusEvent] = []
+    client.subscribe(seen.append, of=BusEvent)
 
-    client._feed_message("ampio/from/1/event", b"189")
+    feed(client, "ampio/from/1/event", b"189")
 
-    assert seen == [AmpioEvent(number=189, mac=1)]
+    assert seen == [BusEvent(number=189, mac=1)]
 
 
 def test_event_mac_identifies_the_originator() -> None:
     """A panel press carries that module's mac, not the M-SERV's."""
     client = AmpioClient("host", username=USER)
-    seen: list[AmpioEvent] = []
-    client.add_event_listener(seen.append)
+    seen: list[BusEvent] = []
+    client.subscribe(seen.append, of=BusEvent)
 
-    client._feed_message("ampio/from/D09A/event", b"42")
+    feed(client, "ampio/from/D09A/event", b"42")
 
-    assert seen == [AmpioEvent(number=42, mac=0xD09A)]
+    assert seen == [BusEvent(number=42, mac=0xD09A)]
 
 
 @pytest.mark.parametrize(
@@ -56,33 +39,37 @@ def test_event_mac_identifies_the_originator() -> None:
 )
 def test_malformed_events_are_ignored(topic: str, payload: bytes) -> None:
     client = AmpioClient("host", username=USER)
-    seen: list[AmpioEvent] = []
-    client.add_event_listener(seen.append)
-    client._feed_message(topic, payload)
+    seen: list[BusEvent] = []
+    client.subscribe(seen.append, of=BusEvent)
+    feed(client, topic, payload)
     assert seen == []
 
 
 def test_event_listener_can_be_removed() -> None:
     client = AmpioClient("host", username=USER)
-    seen: list[AmpioEvent] = []
-    unsubscribe = client.add_event_listener(seen.append)
+    seen: list[BusEvent] = []
+    unsubscribe = client.subscribe(seen.append, of=BusEvent)
     unsubscribe()
-    client._feed_message("ampio/from/1/event", b"189")
+    feed(client, "ampio/from/1/event", b"189")
     assert seen == []
 
 
-async def test_send_event_builds_the_payload() -> None:
-    client, recorder = _connected()
+async def test_send_event_builds_the_payload(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
     await client.send_event(189)
-    assert recorder.published == [(TOPIC, b"/api/setEvent/189")]
+    assert broker.published == [(API_TOPIC, b"/api/setEvent/189")]
 
 
 @pytest.mark.parametrize("number", [0, -1, 65536])
-async def test_event_number_range_is_checked(number: int) -> None:
-    client, recorder = _connected()
+async def test_event_number_range_is_checked(
+    connected: tuple[AmpioClient, FakeBroker], number: int
+) -> None:
+    client, broker = connected
     with pytest.raises(ValueError):
         await client.send_event(number)
-    assert recorder.published == []
+    assert broker.published == []
 
 
 async def test_send_event_requires_a_connection() -> None:

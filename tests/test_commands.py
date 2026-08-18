@@ -2,43 +2,29 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
+from conftest import API_TOPIC, USER, FakeBroker
 
 from ampio_mqtt import AmpioClient, AmpioConnectionError
 
-USER = "u"
-TOPIC = f"ampio/control/{USER}/api"
 
-
-class _RecordingClient:
-    """Captures publishes in place of the real aiomqtt client."""
-
-    def __init__(self) -> None:
-        self.published: list[tuple[str, bytes]] = []
-
-    async def publish(self, topic: str, payload: bytes = b"") -> None:
-        self.published.append((topic, payload))
-
-
-def _connected_client() -> tuple[AmpioClient, _RecordingClient]:
-    client = AmpioClient("host", username=USER)
-    recorder = _RecordingClient()
-    client._connection._client = recorder  # type: ignore[assignment]
-    return client, recorder
-
-
-async def test_command_builds_payload_on_the_account_topic() -> None:
-    client, recorder = _connected_client()
+async def test_command_builds_payload_on_the_account_topic(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
     await client.command(64, "setValue", 255)
-    assert recorder.published == [(TOPIC, b"/api/set/64/setValue/255")]
+    assert broker.published == [(API_TOPIC, b"/api/set/64/setValue/255")]
+    # Commands publish at QoS 1 so returning means the broker accepted the
+    # command (#68).
+    assert broker.published_qos == [1]
 
 
-async def test_command_without_args_omits_trailing_slash() -> None:
-    client, recorder = _connected_client()
+async def test_command_without_args_omits_trailing_slash(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
     await client.command(64, "turnOn")
-    assert recorder.published == [(TOPIC, b"/api/set/64/turnOn")]
+    assert broker.published == [(API_TOPIC, b"/api/set/64/turnOn")]
 
 
 @pytest.mark.parametrize(
@@ -68,10 +54,12 @@ async def test_command_without_args_omits_trailing_slash() -> None:
         ),
     ],
 )
-async def test_helpers_map_to_verified_verbs(call, expected: bytes) -> None:
-    client, recorder = _connected_client()
+async def test_helpers_map_to_verified_verbs(
+    connected: tuple[AmpioClient, FakeBroker], call, expected: bytes
+) -> None:
+    client, broker = connected
     await call(client)
-    assert recorder.published == [(TOPIC, expected)]
+    assert broker.published == [(API_TOPIC, expected)]
 
 
 @pytest.mark.parametrize(
@@ -85,11 +73,36 @@ async def test_helpers_map_to_verified_verbs(call, expected: bytes) -> None:
         lambda c: c.set_cover_position(1, 50, lamella=200),
     ],
 )
-async def test_out_of_range_arguments_are_rejected(call) -> None:
-    client, recorder = _connected_client()
+async def test_out_of_range_arguments_are_rejected(
+    connected: tuple[AmpioClient, FakeBroker], call
+) -> None:
+    client, broker = connected
     with pytest.raises(ValueError):
         await call(client)
-    assert recorder.published == []
+    assert broker.published == []
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda c: c.set_value(1, True),
+        lambda c: c.set_value(1, 10, pulse_ms=True),
+        lambda c: c.set_color(1, True, 0, 0),
+        lambda c: c.set_cover_position(1, False),
+        lambda c: c.set_cover_tilt(1, True),
+        lambda c: c.send_event(True),
+    ],
+)
+async def test_bool_arguments_are_rejected(
+    connected: tuple[AmpioClient, FakeBroker], call
+) -> None:
+    """bool passes isinstance(int) and the type checker, but the wire
+    encoding is str(), so it would go out as the literal 'True' - a
+    malformed command the M-SERV silently drops."""
+    client, broker = connected
+    with pytest.raises(ValueError):
+        await call(client)
+    assert broker.published == []
 
 
 async def test_command_requires_a_connection() -> None:
@@ -101,48 +114,72 @@ async def test_command_requires_a_connection() -> None:
 # --- cover tilt ------------------------------------------------------------
 
 
-def _cover(client: AmpioClient, oid: int, typ: str, tilt: str | None = None) -> None:
-    """Register a cover object of `typ` with an optional known lamella angle."""
-    client._feed_message(
-        f"ampio/fromDB/{USER}/config/devicesDetails",
-        json.dumps(
-            {"List": [{"id": oid, "typ_komponentu": typ, "interpretacja": 1}]}
-        ).encode(),
-    )
-    if tilt is not None:
-        client.objects[oid].tilt_position = tilt
-
-
-async def test_position_only_move_leaves_the_slats_alone() -> None:
+async def test_position_only_move_leaves_the_slats_alone(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
     """Both cover types take the sentinel on the axis that must not move."""
-    client, recorder = _connected_client()
-    _cover(client, 48, "roleta_procenty")
-    _cover(client, 66, "roleta_lamelki", tilt="100")
+    client, broker = connected
     await client.set_cover_position(48, 55)
     await client.set_cover_position(66, 95)
-    assert recorder.published == [
-        (TOPIC, b"/api/set/48/setRollerPos/55/101"),
-        (TOPIC, b"/api/set/66/setRollerPos/95/101"),
+    assert broker.published == [
+        (API_TOPIC, b"/api/set/48/setRollerPos/55/101"),
+        (API_TOPIC, b"/api/set/66/setRollerPos/95/101"),
     ]
 
 
-async def test_tilt_only_move_leaves_the_position_alone() -> None:
-    client, recorder = _connected_client()
-    _cover(client, 66, "roleta_lamelki", tilt="100")
+async def test_tilt_only_move_leaves_the_position_alone(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
     await client.set_cover_tilt(66, 50)
-    assert recorder.published == [(TOPIC, b"/api/set/66/setRollerPos/101/50")]
+    assert broker.published == [(API_TOPIC, b"/api/set/66/setRollerPos/101/50")]
 
 
-async def test_both_axes_move_in_one_command() -> None:
-    client, recorder = _connected_client()
-    _cover(client, 66, "roleta_lamelki", tilt="100")
+async def test_stop_cover_publishes_the_stop_verb(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
+    await client.stop_cover(66)
+    assert broker.published == [(API_TOPIC, b"/api/set/66/stop")]
+
+
+async def test_both_axes_move_in_one_command(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
     await client.set_cover_position(66, 95, lamella=20)
-    assert recorder.published == [(TOPIC, b"/api/set/66/setRollerPos/95/20")]
+    assert broker.published == [(API_TOPIC, b"/api/set/66/setRollerPos/95/20")]
 
 
 @pytest.mark.parametrize("lamella", [-1, 101, 200])
-async def test_tilt_range_is_checked(lamella: int) -> None:
-    client, recorder = _connected_client()
+async def test_tilt_range_is_checked(
+    connected: tuple[AmpioClient, FakeBroker], lamella: int
+) -> None:
+    client, broker = connected
     with pytest.raises(ValueError):
         await client.set_cover_tilt(66, lamella)
-    assert recorder.published == []
+    assert broker.published == []
+
+
+async def test_set_temperature_publishes_the_setpoint(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
+    await client.set_temperature(138, 21.5)
+    await client.set_temperature(138, 19)
+    assert broker.published == [
+        (API_TOPIC, b"/api/set/138/setTemperature/21.5"),
+        (API_TOPIC, b"/api/set/138/setTemperature/19"),
+    ]
+
+
+@pytest.mark.parametrize("bad", [True, float("nan"), float("inf"), "21"])
+async def test_set_temperature_rejects_non_numbers(
+    connected: tuple[AmpioClient, FakeBroker], bad: object
+) -> None:
+    """Bools and non-finite floats would serialize as text the M-SERV
+    silently drops - the same trap the int helpers guard against."""
+    client, broker = connected
+    with pytest.raises(ValueError):
+        await client.set_temperature(138, bad)
+    assert broker.published == []

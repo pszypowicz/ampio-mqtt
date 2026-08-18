@@ -16,7 +16,8 @@ detail. It should call `await client.wait_for_initial_discovery()`
 (default `timeout=8.0`) explicitly. That method returns `True` once
 discovery is complete for the account's tier and `False` if the timeout
 elapses; it never raises. `start()` itself delegates its discovery wait
-to this method, so the two share one definition of "discovery is done."
+to this method and returns its result, so the two share one definition
+of "discovery is done."
 Expressing the dependency explicitly keeps `start()` free to return
 earlier in a future revision without silently breaking that ordering -
 the library's own accessors degrade gracefully when nothing is known
@@ -35,7 +36,7 @@ for the `start()` / `stop()` lifecycle that joins them.
    capped-exponential reconnect loop. The first successful connect
    stamps `stats.started_at`; each subsequent one bumps
    `stats.reconnect_count`.
-2. **Subscribe** - the per-user topics (`ob/+/state`, the ten
+2. **Subscribe** - the per-user topics (`ob/+/state`, the nine
    response topics) plus the global raw-channel wildcards, sent as one
    QoS 1 SUBSCRIBE packet. The SUBACK verdicts are read: a filter the
    broker rejects logs a warning and lands in
@@ -75,8 +76,8 @@ for the `start()` / `stop()` lifecycle that joins them.
 Every catalogue reply also evicts what it stopped listing (the admin
 `config` catalogue and module list always; the app-sync `data/devices`
 only on the restricted tier, where the grant bounds the store), fired
-to consumers through `add_object_removal_listener()` /
-`add_module_removal_listener()`. Since catalogues are request/response,
+to consumers as `ObjectRemoved` / `ModuleRemoved` events. Since
+catalogues are request/response,
 a server-side deletion is noticed at the next reply - the refresh a
 reconnect issues, or an explicit `refresh()`; a Designer module
 deletion can commit without restarting the M-SERV, so a consumer that
@@ -85,7 +86,7 @@ never mass-evicts a populated store.
 
 ## What runs on demand, not automatically
 
-Three helpers are not part of the auto sequence because the consumer
+Two helpers are not part of the auto sequence because the consumer
 decides when - and whether - to call them:
 
 - **`fetch_rooms()`** - the `groups` + `group_devices` join. The HA
@@ -94,12 +95,8 @@ decides when - and whether - to call them:
 - **`fetch_scenes()`** - the scene catalogue, driven with
   `run_scene()` / `turn_scene_off()` / `undo_scene()`. Same rationale:
   a consumer that surfaces no scenes never pays for the fetch.
-- **`fetch_locations()`** - the Designer "Location" name table. Same
-  rationale; today it is consumed only for the diagnostics blob since
-  the per-output pointer half is not on MQTT
-  (see [`untapped-surfaces.md`](untapped-surfaces.md)).
 
-All three helpers accept an explicit `timeout` (default 5.0 s) and raise
+Both helpers accept an explicit `timeout` (default 5.0 s) and raise
 `AmpioTimeoutError` on timeout, so a flaky broker fails loud rather
 than silently returning an empty result.
 
@@ -107,7 +104,7 @@ than silently returning an empty result.
 
 `client.stats` (a `ConnectionStats` dataclass) is what the HA
 integration's diagnostics blob reads for connection health
-(the blob also carries `last_payloads` and the location table).
+(the blob also carries `last_payloads`).
 The fields are:
 
 - `reconnect_count` - monotonic; useful for a "works intermittently"

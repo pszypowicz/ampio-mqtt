@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ampio-mqtt"
-version = "0.18.0"
+dynamic = ["version"]
 description = "Async client for the Ampio Smart Home MQTT protocol"
 readme = "README.md"
 license = { text = "MIT" }
@@ -32,13 +32,20 @@ dependencies = [
 Homepage = "https://github.com/pszypowicz/ampio-mqtt"
 Issues = "https://github.com/pszypowicz/ampio-mqtt/issues"
 
-[project.optional-dependencies]
-test = [
+# PEP 735 dev tooling; not part of the published package's metadata.
+# ruff is pinned exactly so a new release cannot break CI without a
+# reviewed bump (dependabot proposes them).
+[dependency-groups]
+dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
   "pytest-cov>=4",
   "mypy>=1.10",
+  "ruff==0.16.3",
 ]
+
+[tool.hatch.version]
+path = "src/ampio_mqtt/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ampio_mqtt"]

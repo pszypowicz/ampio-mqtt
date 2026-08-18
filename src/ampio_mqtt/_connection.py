@@ -18,7 +18,7 @@ from contextlib import suppress
 
 import aiomqtt
 
-from .errors import AmpioAuthError, AmpioConnectionError
+from .errors import AmpioAuthError, AmpioConnectionError, AmpioTimeoutError
 from .models import ConnectionStats
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,6 +30,17 @@ _AUTH_REJECTED = "Authentication rejected by Ampio broker"
 # Subscribing at QoS 1 keeps the broker's at-least-once delivery leg; the
 # default QoS 0 would downgrade it to at-most-once (#65).
 _SUBSCRIBE_QOS = 1
+# Publishes go out at QoS 1 too: the awaited publish then completes on the
+# broker's PUBACK, so a returned command means "the broker accepted it"
+# rather than "the payload left the socket" (#68). Every publish rides the
+# same path, so commands, scene/event publishes, and discovery requests all
+# get the acknowledged leg.
+_PUBLISH_QOS = 1
+# The PUBACK deadline for a QoS 1 publish. Owned here rather than left to
+# aiomqtt's per-client operation timeout: aiomqtt reports its own timeout as
+# a bare MqttError distinguishable only by message text, while a local
+# deadline maps the case structurally to the retryable AmpioTimeoutError.
+_PUBLISH_TIMEOUT = 5.0
 # MQTT 5 reason codes for a credential rejection: 134 "bad user name or
 # password", 135 "not authorized". paho's VERSION2 callbacks (aiomqtt >= 2.2,
 # hence the pyproject floor) normalize CONNACK rejections to these codes
@@ -42,6 +53,11 @@ MessageHandler = Callable[[str, str], None]
 AvailabilityHandler = Callable[[bool], None]
 ConnectedHandler = Callable[[], Awaitable[None]]
 AuthFailureHandler = Callable[[str], None]
+FatalHandler = Callable[[str], None]
+# The transport seam: a zero-argument callable returning the session object
+# for one connect attempt. The default builds the real aiomqtt.Client; tests
+# inject a fake instance and skip both patching and class-level state.
+MqttClientFactory = Callable[[], aiomqtt.Client]
 
 
 class Connection:
@@ -61,6 +77,8 @@ class Connection:
         on_availability: AvailabilityHandler,
         on_connected: ConnectedHandler,
         on_auth_failure: AuthFailureHandler,
+        on_fatal: FatalHandler,
+        client_factory: MqttClientFactory | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -73,15 +91,19 @@ class Connection:
         self._on_availability = on_availability
         self._on_connected = on_connected
         self._on_auth_failure = on_auth_failure
+        self._on_fatal = on_fatal
 
         # Reusing one client id across reconnects keeps the broker from seeing
         # parallel "ghost" sessions while the previous one expires.
         self._client_id = f"ampio_mqtt_{uuid.uuid4().hex}"
+        self._client_factory = client_factory or self._default_client
         self._client: aiomqtt.Client | None = None
         self._runner: asyncio.Task[None] | None = None
         self._connected = asyncio.Event()
         self._auth_failed = asyncio.Event()
         self._auth_error_message: str | None = None
+        self._died = asyncio.Event()
+        self._fatal_message: str | None = None
         self._available = False
         self._stop = False
         # Set by close() before it cancels the runner, so the teardown's
@@ -111,26 +133,36 @@ class Connection:
         self._connected.clear()
         self._auth_failed.clear()
         self._auth_error_message = None
+        self._died.clear()
+        self._fatal_message = None
         self._runner = asyncio.create_task(self._run())
 
         waiters = [
             asyncio.create_task(self._connected.wait()),
             asyncio.create_task(self._auth_failed.wait()),
+            asyncio.create_task(self._died.wait()),
         ]
         try:
-            done, _ = await asyncio.wait(
+            await asyncio.wait(
                 waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
             )
         finally:
             for task in waiters:
                 if not task.done():
                     task.cancel()
-        if not done:
-            await self.close()
-            raise AmpioConnectionError("Timed out connecting to Ampio")
+        # Connected wins even when a terminal signal raced in behind it: the
+        # session did come up, so the crash/rejection is post-open news and
+        # reaches the consumer through the event stream instead.
+        if self._connected.is_set():
+            return
         if self._auth_failed.is_set():
             await self.close()
             raise AmpioAuthError(self._auth_error_message or _AUTH_REJECTED)
+        if self._died.is_set():
+            await self.close()
+            raise AmpioConnectionError(self._fatal_message or "Connection loop died")
+        await self.close()
+        raise AmpioConnectionError("Timed out connecting to Ampio")
 
     async def close(self) -> None:
         """Stop the loop, reporting rather than raising whatever ended it.
@@ -154,22 +186,64 @@ class Connection:
             _LOGGER.exception("Ampio connection loop failed")
 
     async def publish(self, topic: str, payload: bytes) -> None:
+        """Publish at QoS 1, returning once the broker acknowledges it.
+
+        Raises ``AmpioConnectionError`` when no session is up or the
+        transport fails mid-publish (the aiomqtt error chained as
+        ``__cause__``), and ``AmpioTimeoutError`` when the broker accepts
+        the session but the PUBACK does not arrive in time - the retryable
+        shape. A consumer never sees an aiomqtt exception type.
+        """
         if self._client is None:
             raise AmpioConnectionError("Not connected")
-        await self._client.publish(topic, payload)
+        try:
+            async with asyncio.timeout(_PUBLISH_TIMEOUT):
+                await self._client.publish(topic, payload, qos=_PUBLISH_QOS)
+        except TimeoutError as err:
+            raise AmpioTimeoutError(
+                f"Broker did not acknowledge publish to {topic} "
+                f"within {_PUBLISH_TIMEOUT}s"
+            ) from err
+        except aiomqtt.MqttError as err:
+            raise AmpioConnectionError(str(err)) from err
 
     async def _run(self) -> None:
+        """Drive the session loop, reporting a crash instead of dying silently.
+
+        Anything the loop does not recognize as a transport or credential
+        failure is a bug: nothing will retry, so it is terminal. Left inside
+        the task it would surface only when ``close()`` reaps the runner,
+        and a dead loop reads exactly like an outage under retry. After a
+        successful ``open()`` the crash is reported through ``on_fatal``
+        (the iteration's ``finally`` has already dropped availability);
+        during ``open()`` it makes ``open()`` raise instead, mirroring the
+        auth path.
+        """
+        try:
+            await self._loop()
+        except Exception as err:
+            _LOGGER.exception("Ampio connection loop died")
+            self._stats.last_error = str(err)
+            self._fatal_message = f"Connection loop died: {err}"
+            self._died.set()
+            if self._connected.is_set():
+                self._on_fatal(self._fatal_message)
+
+    def _default_client(self) -> aiomqtt.Client:
+        return aiomqtt.Client(
+            hostname=self._host,
+            port=self._port,
+            username=self._username,
+            password=self._password,
+            identifier=self._client_id,
+            timeout=10,
+        )
+
+    async def _loop(self) -> None:
         attempt = 0
         while not self._stop:
             try:
-                async with aiomqtt.Client(
-                    hostname=self._host,
-                    port=self._port,
-                    username=self._username,
-                    password=self._password,
-                    identifier=self._client_id,
-                    timeout=10,
-                ) as client:
+                async with self._client_factory() as client:
                     self._client = client
                     # One SUBSCRIBE packet for the whole set - and the SUBACK
                     # verdicts are read: a broker may reject individual
@@ -201,9 +275,15 @@ class Connection:
                     await self._on_connected()
                     async for message in client.messages:
                         self._on_message(
-                            str(message.topic), _decode_payload(message.payload)
+                            str(message.topic),
+                            message.payload.decode("utf-8", "replace"),
                         )
-            except aiomqtt.MqttError as err:
+            except (aiomqtt.MqttError, AmpioConnectionError) as err:
+                # AmpioConnectionError is publish()'s wrapped form: a failure
+                # inside the on-connected refresh arrives here as one and
+                # recycles the session like any transport drop.
+                # _is_auth_error walks the cause chain, so a wrapped auth
+                # rejection still classifies.
                 self._stats.last_error = str(err)
                 if _is_auth_error(err):
                     # Reconnecting will not help; surface it and stop.
@@ -258,6 +338,7 @@ async def probe(
     request_payload: str,
     reply_topic: str,
     timeout: float,
+    client_factory: MqttClientFactory | None = None,
 ) -> str | None:
     """Connect once, ask for one reply, and return its payload.
 
@@ -265,22 +346,27 @@ async def probe(
     what does the server say it is" without starting the reconnect loop.
     Returns None when the connection is fine but nothing answers in time.
     """
-    try:
-        async with aiomqtt.Client(
+    factory = client_factory or (
+        lambda: aiomqtt.Client(
             hostname=host,
             port=port,
             username=username,
             password=password,
             identifier=f"ampio_mqtt_test_{uuid.uuid4().hex}",
             timeout=10,
-        ) as client:
+        )
+    )
+    try:
+        async with factory() as client:
             await client.subscribe(reply_topic, qos=_SUBSCRIBE_QOS)
-            await client.publish(request_topic, request_payload.encode())
+            await client.publish(
+                request_topic, request_payload.encode(), qos=_PUBLISH_QOS
+            )
             with suppress(TimeoutError):
                 async with asyncio.timeout(timeout):
                     async for message in client.messages:
                         if str(message.topic) == reply_topic:
-                            return _decode_payload(message.payload)
+                            return message.payload.decode("utf-8", "replace")
     except aiomqtt.MqttError as err:
         if _is_auth_error(err):
             raise AmpioAuthError(str(err)) from err
@@ -321,12 +407,3 @@ def _code_value(code: object) -> int:
     """
     value = getattr(code, "value", code)
     return value if isinstance(value, int) else 0x80
-
-
-def _decode_payload(payload: object) -> str:
-    """Coerce an aiomqtt payload (`str | bytes | bytearray | None`) to text."""
-    if isinstance(payload, (bytes, bytearray)):
-        return bytes(payload).decode("utf-8", "replace")
-    if isinstance(payload, str):
-        return payload
-    return ""

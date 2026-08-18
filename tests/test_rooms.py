@@ -5,10 +5,8 @@ Two orthogonal layers:
 - `parse_rooms()` in `ampio_mqtt._protocol` - pure join of the two M-SERV
   reply payloads.
 - `AmpioClient.fetch_rooms()` - the MQTT request/response orchestration.
-  Exercised with the same `_FakeAiomqtt` helpers the existing client tests
-  use: messages are fed into the client via the private `_feed_message`
-  hook and the broker-side publish is intercepted via a fake aiomqtt
-  client.
+  Exercised with the shared FakeBroker kit: replies are injected via
+  `feed` and the broker-side publishes are read off the fake broker.
 """
 
 from __future__ import annotations
@@ -18,6 +16,7 @@ import json
 
 import aiomqtt
 import pytest
+from conftest import FakeBroker, feed
 
 from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioTimeoutError
 from ampio_mqtt._protocol import parse_rooms
@@ -80,6 +79,7 @@ def test_parse_rooms_skips_malformed_entries() -> None:
             {"id_grupy": 3, "id_obiektu": 102},
             {"id_grupy": 4, "id_obiektu": None},
             {"id_grupy": None, "id_obiektu": 103},
+            "not an object",
             {"id_grupy": 4, "id_obiektu": 104},
         ]
     )
@@ -101,26 +101,16 @@ def test_parse_rooms_tolerates_empty_and_unparseable_payloads() -> None:
 # --- AmpioClient.fetch_rooms() MQTT orchestration -------------------------
 
 
-class _FakeMqttClient:
-    """Minimal aiomqtt.Client stand-in: records publishes, no real broker."""
-
-    def __init__(self) -> None:
-        self.published: list[tuple[str, bytes]] = []
-
-    async def publish(self, topic: str, payload: bytes) -> None:
-        self.published.append((topic, payload))
-
-
 async def test_fetch_rooms_raises_when_not_connected() -> None:
     client = AmpioClient("host", username="u", password="p")
     with pytest.raises(AmpioConnectionError):
         await client.fetch_rooms()
 
 
-async def test_fetch_rooms_publishes_keywords_and_joins_responses() -> None:
-    client = AmpioClient("host", username="u", password="p")
-    fake_broker = _FakeMqttClient()
-    client._connection._client = fake_broker  # type: ignore[assignment]
+async def test_fetch_rooms_publishes_keywords_and_joins_responses(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
 
     groups_payload = json.dumps(
         {"List": [{"id": 8, "opis_menu": "Salon"}, {"id": 7, "opis_menu": "Jadalnia"}]}
@@ -137,8 +127,8 @@ async def test_fetch_rooms_publishes_keywords_and_joins_responses() -> None:
     async def _deliver_responses() -> None:
         # Give fetch_rooms a turn to publish before the responses arrive.
         await asyncio.sleep(0)
-        client._feed_message("ampio/fromDB/u/data/groups", groups_payload)
-        client._feed_message("ampio/fromDB/u/data/group_devices", group_devices_payload)
+        feed(client, "ampio/fromDB/u/data/groups", groups_payload)
+        feed(client, "ampio/fromDB/u/data/group_devices", group_devices_payload)
 
     delivery = asyncio.create_task(_deliver_responses())
     try:
@@ -147,40 +137,42 @@ async def test_fetch_rooms_publishes_keywords_and_joins_responses() -> None:
         await delivery
 
     assert result == {31: "Salon", 28: "Jadalnia"}
-    assert fake_broker.published == [
+    assert broker.published == [
         ("ampio/control/u/data", b"groups"),
         ("ampio/control/u/data", b"group_devices"),
     ]
 
 
-async def test_fetch_rooms_times_out_when_response_missing() -> None:
-    client = AmpioClient("host", username="u", password="p")
-    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
+async def test_fetch_rooms_times_out_when_response_missing(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, _ = connected
     # Deliver only one of the two responses - groups arrives, group_devices never does.
 
     async def _deliver_partial() -> None:
         await asyncio.sleep(0)
-        client._feed_message("ampio/fromDB/u/data/groups", json.dumps({"List": []}))
+        feed(client, "ampio/fromDB/u/data/groups", json.dumps({"List": []}))
 
     delivery = asyncio.create_task(_deliver_partial())
     try:
-        with pytest.raises(AmpioConnectionError):
+        with pytest.raises(AmpioTimeoutError):
             await client.fetch_rooms(timeout=0.1)
     finally:
         await delivery
 
 
-async def test_fetch_rooms_treats_malformed_response_as_no_response() -> None:
+async def test_fetch_rooms_treats_malformed_response_as_no_response(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
     """A corrupt reply must end in the retryable timeout, not a fake-valid
     empty map - the same failure contract as a reply that never arrives.
     The raw bytes are still retained for diagnostics."""
-    client = AmpioClient("host", username="u", password="p")
-    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
+    client, _ = connected
 
     async def _deliver_garbage() -> None:
         await asyncio.sleep(0)
-        client._feed_message("ampio/fromDB/u/data/groups", "not-json")
-        client._feed_message("ampio/fromDB/u/data/group_devices", "[]")
+        feed(client, "ampio/fromDB/u/data/groups", "not-json")
+        feed(client, "ampio/fromDB/u/data/group_devices", "[]")
 
     delivery = asyncio.create_task(_deliver_garbage())
     try:
@@ -191,12 +183,13 @@ async def test_fetch_rooms_treats_malformed_response_as_no_response() -> None:
     assert client.last_payloads["groups"] == "not-json"
 
 
-async def test_concurrent_fetch_does_not_steal_the_first_callers_reply() -> None:
+async def test_concurrent_fetch_does_not_steal_the_first_callers_reply(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
     """Regression for the latch-clear race: caller B entering between the
     replies landing and caller A's wakeup used to pop A's payloads, handing A
     a silently empty map. Each caller now correlates through its own future."""
-    client = AmpioClient("host", username="u", password="p")
-    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
+    client, _ = connected
     groups = json.dumps({"List": [{"id": 8, "opis_menu": "Salon"}]})
     group_devices = json.dumps({"List": [{"id_grupy": 8, "id_obiektu": 31}]})
 
@@ -205,36 +198,57 @@ async def test_concurrent_fetch_does_not_steal_the_first_callers_reply() -> None
     # B is queued to run after the replies below are dispatched but before
     # A's wakeup callback - exactly the defective interleaving.
     task_b = asyncio.create_task(client.fetch_rooms(timeout=1.0))
-    client._feed_message("ampio/fromDB/u/data/groups", groups)
-    client._feed_message("ampio/fromDB/u/data/group_devices", group_devices)
+    feed(client, "ampio/fromDB/u/data/groups", groups)
+    feed(client, "ampio/fromDB/u/data/group_devices", group_devices)
     assert await task_a == {31: "Salon"}
     # B asked after the first replies were dispatched, so the next pair
     # answers it.
-    client._feed_message("ampio/fromDB/u/data/groups", groups)
-    client._feed_message("ampio/fromDB/u/data/group_devices", group_devices)
+    feed(client, "ampio/fromDB/u/data/groups", groups)
+    feed(client, "ampio/fromDB/u/data/group_devices", group_devices)
     assert await task_b == {31: "Salon"}
 
 
-async def test_late_reply_after_timeout_resolves_nothing_stale() -> None:
+async def test_concurrent_callers_of_the_same_endpoints_share_one_reply(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """Every concurrent caller of the same endpoint receives the same reply:
+    with both callers' waiters registered before anything lands, one reply
+    pair resolves both."""
+    client, _ = connected
+    groups = json.dumps({"List": [{"id": 8, "opis_menu": "Salon"}]})
+    group_devices = json.dumps({"List": [{"id_grupy": 8, "id_obiektu": 31}]})
+
+    task_a = asyncio.create_task(client.fetch_rooms(timeout=1.0))
+    await asyncio.sleep(0)  # A publishes its requests and registers waiters
+    task_b = asyncio.create_task(client.fetch_rooms(timeout=1.0))
+    await asyncio.sleep(0)  # B's waiters are registered too
+    feed(client, "ampio/fromDB/u/data/groups", groups)
+    feed(client, "ampio/fromDB/u/data/group_devices", group_devices)
+    assert await task_a == {31: "Salon"}
+    assert await task_b == {31: "Salon"}
+
+
+async def test_late_reply_after_timeout_resolves_nothing_stale(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
     """A timed-out fetch leaves no waiter behind; the late reply is a no-op
     and a fresh call still works."""
-    client = AmpioClient("host", username="u", password="p")
-    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
+    client, _ = connected
     groups = json.dumps({"List": [{"id": 1, "opis_menu": "A"}]})
     group_devices = json.dumps({"List": [{"id_grupy": 1, "id_obiektu": 10}]})
 
     with pytest.raises(AmpioTimeoutError):
         await client.fetch_rooms(timeout=0.05)
-    assert client._pending == {}
+    assert all(not ch.waiters for ch in client._channels.values())
 
     # The replies to the timed-out request arrive now - nobody is waiting.
-    client._feed_message("ampio/fromDB/u/data/groups", groups)
-    client._feed_message("ampio/fromDB/u/data/group_devices", group_devices)
+    feed(client, "ampio/fromDB/u/data/groups", groups)
+    feed(client, "ampio/fromDB/u/data/group_devices", group_devices)
 
     async def _deliver() -> None:
         await asyncio.sleep(0)
-        client._feed_message("ampio/fromDB/u/data/groups", groups)
-        client._feed_message("ampio/fromDB/u/data/group_devices", group_devices)
+        feed(client, "ampio/fromDB/u/data/groups", groups)
+        feed(client, "ampio/fromDB/u/data/group_devices", group_devices)
 
     delivery = asyncio.create_task(_deliver())
     try:
@@ -243,15 +257,16 @@ async def test_late_reply_after_timeout_resolves_nothing_stale() -> None:
         await delivery
 
 
-async def test_fetch_rooms_clears_state_between_calls() -> None:
+async def test_fetch_rooms_clears_state_between_calls(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
     """A second call must not see stale events from the first."""
-    client = AmpioClient("host", username="u", password="p")
-    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
+    client, _ = connected
 
     async def _deliver(groups: str, group_devices: str) -> None:
         await asyncio.sleep(0)
-        client._feed_message("ampio/fromDB/u/data/groups", groups)
-        client._feed_message("ampio/fromDB/u/data/group_devices", group_devices)
+        feed(client, "ampio/fromDB/u/data/groups", groups)
+        feed(client, "ampio/fromDB/u/data/group_devices", group_devices)
 
     first = asyncio.create_task(
         _deliver(
@@ -274,15 +289,14 @@ async def test_fetch_rooms_clears_state_between_calls() -> None:
     assert r2 == {20: "B"}
 
 
-async def test_fetch_rooms_propagates_publish_failure() -> None:
-    """If the broker raises while publishing the request, we surface it."""
+async def test_fetch_rooms_wraps_publish_failure(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """A broker failure during the request publish surfaces as the library's
+    own error type, with the aiomqtt original preserved as the cause."""
+    client, broker = connected
+    broker.publish_errors = [aiomqtt.MqttError("publish failed")]
 
-    class _RaisingClient:
-        async def publish(self, topic: str, payload: bytes) -> None:
-            raise aiomqtt.MqttError("publish failed")
-
-    client = AmpioClient("host", username="u", password="p")
-    client._connection._client = _RaisingClient()  # type: ignore[assignment]
-
-    with pytest.raises(aiomqtt.MqttError):
+    with pytest.raises(AmpioConnectionError) as excinfo:
         await client.fetch_rooms(timeout=1.0)
+    assert isinstance(excinfo.value.__cause__, aiomqtt.MqttError)

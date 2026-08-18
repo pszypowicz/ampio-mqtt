@@ -8,16 +8,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeVar, overload
 
 from . import _connection, _protocol
-from ._connection import _decode_payload
 from ._store import AmpioStore
 from .device_types import Capability
 from .endpoints import (
-    BASELINE_SERVER_VERSION,
     DISCOVERY_ADMIN,
     DISCOVERY_COMMON,
     DISCOVERY_FALLBACK,
@@ -38,8 +37,13 @@ from .endpoints import (
     scene_payload,
 )
 from .errors import AmpioTimeoutError
+from .events import (
+    AuthFailed,
+    AvailabilityChanged,
+    ClientEvent,
+    ConnectionDied,
+)
 from .models import (
-    AmpioEvent,
     AmpioModule,
     AmpioObject,
     AmpioScene,
@@ -49,11 +53,44 @@ from .models import (
 
 _LOGGER = logging.getLogger(__name__)
 
-ObjectListener = Callable[[AmpioObject], None]
-ModuleListener = Callable[[AmpioModule], None]
-EventListener = Callable[[AmpioEvent], None]
-AvailabilityListener = Callable[[bool], None]
-AuthFailureListener = Callable[[str], None]
+EventListener = Callable[[ClientEvent], None]
+_EventT = TypeVar("_EventT", bound=ClientEvent)
+
+
+class _ReplyChannel:
+    """Everything the client tracks about one endpoint's replies.
+
+    One instance per endpoint-table row, so a new endpoint needs no new
+    client plumbing: ``received`` latches on the first parsed reply (the
+    discovery signal - it never clears, which is what makes
+    ``wait_for_initial_discovery`` instant after a reconnect),
+    ``last_payload`` keeps the verbatim payload for the diagnostics blob,
+    and ``waiters`` are fetch futures awaiting the next parsed reply.
+    """
+
+    __slots__ = ("last_payload", "received", "waiters")
+
+    def __init__(self) -> None:
+        self.received = asyncio.Event()
+        self.last_payload: str | None = None
+        self.waiters: list[asyncio.Future[str]] = []
+
+    def deliver(self, payload: str, parsed: bool) -> None:
+        """Record one reply; only a parsed one latches and resolves waiters.
+
+        A malformed reply must neither falsely complete discovery nor hand a
+        fetch garbage - the fetch keeps waiting and times out into the same
+        retryable error as silence. The bad bytes still land in
+        ``last_payload``: they are exactly what a diagnostics report needs.
+        """
+        self.last_payload = payload
+        if not parsed:
+            return
+        self.received.set()
+        waiters, self.waiters = self.waiters, []
+        for future in waiters:
+            if not future.done():
+                future.set_result(payload)
 
 
 class AmpioClient:
@@ -67,8 +104,15 @@ class AmpioClient:
         password: str | None = None,
         *,
         reconnect_interval: float = 5.0,
+        mqtt_client_factory: _connection.MqttClientFactory | None = None,
     ) -> None:
-        """Initialize the client. `username` also namespaces the MQTT topics."""
+        """Initialize the client. `username` also namespaces the MQTT topics.
+
+        ``mqtt_client_factory`` is the transport seam: a zero-argument
+        callable returning the MQTT session object for one connect attempt.
+        Leave it None for the real broker connection; a test injects a fake
+        broker instance here instead of patching aiomqtt.
+        """
         self._username = username or ""
         self._store = AmpioStore(self._username)
         self.stats = ConnectionStats()
@@ -84,31 +128,21 @@ class AmpioClient:
             on_availability=self._handle_availability,
             on_connected=self.refresh,
             on_auth_failure=self._handle_auth_failure,
+            on_fatal=self._handle_fatal,
+            client_factory=mqtt_client_factory,
         )
 
-        self._object_listeners: list[ObjectListener] = []
-        self._module_listeners: list[ModuleListener] = []
-        self._event_listeners: list[EventListener] = []
-        self._availability_listeners: list[AvailabilityListener] = []
-        self._auth_failure_listeners: list[AuthFailureListener] = []
-        self._object_removal_listeners: list[ObjectListener] = []
-        self._module_removal_listeners: list[ModuleListener] = []
+        # One registry for every subscriber: (listener, event-type filter).
+        self._listeners: list[
+            tuple[Callable[[Any], None], tuple[type[ClientEvent], ...] | None]
+        ] = []
 
-        # Per-endpoint latch, set the first time each reply lands. Derived from
-        # the endpoint table so a new endpoint needs no new field here.
-        self._received: dict[str, asyncio.Event] = {
-            ep.name: asyncio.Event() for ep in ENDPOINTS
+        # One reply channel per endpoint-table row: discovery latch, verbatim
+        # last payload, and fetch waiters live together, so adding an
+        # endpoint is one row in the table and nothing here.
+        self._channels: dict[str, _ReplyChannel] = {
+            ep.name: _ReplyChannel() for ep in ENDPOINTS
         }
-        # Last payload per endpoint as the broker sent it, so a consumer can
-        # put the verbatim JSON into a diagnostics report without re-deriving
-        # it. Append-only, and retained even when the payload fails to parse -
-        # the bad bytes are exactly what a diagnostics report needs.
-        self._last_payloads: dict[str, str] = {}
-        # Callers of the on-demand fetches, awaiting the next parseable reply
-        # per endpoint. Fetch correlation lives here, in futures; the
-        # _received latches above answer only "has this endpoint ever
-        # answered" for discovery.
-        self._pending: dict[str, list[asyncio.Future[str]]] = {}
 
     def _subscriptions(self) -> list[str]:
         """Every topic the client needs on each (re)connect."""
@@ -121,36 +155,37 @@ class AmpioClient:
         ]
 
     def _handle_message(self, topic: str, payload: str) -> None:
-        """Apply one message, then tell whoever the change concerns."""
+        """Apply one message, then dispatch what it changed."""
         self.stats.last_message_at = time.time()
         applied = self._store.apply(topic, payload)
         if applied.endpoint is not None:
-            self._last_payloads[applied.endpoint.name] = payload
-            # Latch and resolve waiters only on a payload that parsed, so a
-            # malformed reply neither falsely completes discovery nor hands a
-            # fetch garbage - the fetch keeps waiting for a good reply and
-            # times out into the same retryable error as silence.
-            if applied.parsed:
-                self._received[applied.endpoint.name].set()
-                for future in self._pending.pop(applied.endpoint.name, ()):
-                    if not future.done():
-                        future.set_result(payload)
-        for obj in applied.objects:
-            _emit(self._object_listeners, obj, "object")
-        for module in applied.modules:
-            _emit(self._module_listeners, module, "module")
+            self._channels[applied.endpoint.name].deliver(payload, applied.parsed)
         for event in applied.events:
-            _emit(self._event_listeners, event, "event")
-        for obj in applied.removed_objects:
-            _emit(self._object_removal_listeners, obj, "object removal")
-        for module in applied.removed_modules:
-            _emit(self._module_removal_listeners, module, "module removal")
+            self._dispatch(event)
 
     def _handle_availability(self, available: bool) -> None:
-        _emit(self._availability_listeners, available, "availability")
+        self._dispatch(AvailabilityChanged(available))
 
     def _handle_auth_failure(self, message: str) -> None:
-        _emit(self._auth_failure_listeners, message, "auth failure")
+        self._dispatch(AuthFailed(message))
+
+    def _handle_fatal(self, message: str) -> None:
+        self._dispatch(ConnectionDied(message))
+
+    def _dispatch(self, event: ClientEvent) -> None:
+        """Hand `event` to each matching listener, surviving any that raises.
+
+        Listeners are consumer code. One that raises must not take down the
+        connection that feeds every other entity, so the failure is logged
+        and the remaining listeners still run.
+        """
+        for listener, only in list(self._listeners):
+            if only is not None and not isinstance(event, only):
+                continue
+            try:
+                listener(event)
+            except Exception:
+                _LOGGER.exception("Ampio event listener raised")
 
     # --- public API -------------------------------------------------------
 
@@ -209,11 +244,6 @@ class AmpioClient:
         return None
 
     @property
-    def sensors(self) -> dict[int, AmpioObject]:
-        """Objects classified as sensors."""
-        return self._store.state.sensors
-
-    @property
     def available(self) -> bool:
         """Whether the broker connection is up."""
         return self._connection.available
@@ -253,97 +283,63 @@ class AmpioClient:
         Retained for the HA integration's diagnostics blob so a report can
         include the actual JSON the M-SERV emitted. Keys are endpoint names
         (``details``, ``devices``, ``states``, ``info``, ``data_devices``,
-        ``params_devices``, ``groups``, ``group_devices``, ``locations``,
-        ``scenes``); an endpoint absent until its first reply lands.
+        ``params_devices``, ``groups``, ``group_devices``, ``scenes``); an
+        endpoint absent until its first reply lands. A
+        payload that failed to parse is retained too - the bad bytes are
+        exactly what a diagnostics report needs.
         """
-        return self._last_payloads
+        return {
+            name: channel.last_payload
+            for name, channel in self._channels.items()
+            if channel.last_payload is not None
+        }
 
-    def add_object_listener(self, listener: ObjectListener) -> Callable[[], None]:
-        """Register a callback invoked on every object update (state/metadata)."""
-        self._object_listeners.append(listener)
-        return lambda: self._object_listeners.remove(listener)
+    @overload
+    def subscribe(self, listener: EventListener) -> Callable[[], None]: ...
 
-    def add_module_listener(self, listener: ModuleListener) -> Callable[[], None]:
-        """Register a callback invoked when a module's own report updates it.
+    @overload
+    def subscribe(
+        self, listener: Callable[[_EventT], None], *, of: type[_EventT]
+    ) -> Callable[[], None]: ...
 
-        Fires on the diagnostics broadcast, so it is administrator-only; a
-        standard account never receives the raw tree and this never fires.
-        """
-        self._module_listeners.append(listener)
-        return lambda: self._module_listeners.remove(listener)
+    @overload
+    def subscribe(
+        self, listener: EventListener, *, of: tuple[type[ClientEvent], ...]
+    ) -> Callable[[], None]: ...
 
-    def add_object_removal_listener(
-        self, listener: ObjectListener
+    def subscribe(
+        self,
+        listener: Callable[[Any], None],
+        *,
+        of: type | tuple[type, ...] | None = None,
     ) -> Callable[[], None]:
-        """Register a callback invoked when an object leaves the catalogue.
+        """Register ``listener`` on the event stream; returns an unsubscribe.
 
-        Fires once per removed object with its final state; by callback time
-        the id is already gone from :pyattr:`objects`. Removal is noticed
-        when the account's authoritative catalogue answers without the
-        object: a Designer delete (whose save restarts the M-SERV, so the
-        reconnect refresh picks it up) or, on the restricted tier, a grant
-        revocation. This is the signal to remove whatever entity was built
-        on the object. An empty catalogue reply never mass-removes - see the
-        store's eviction guard.
+        Everything the client learns flows through this one stream, in the
+        order it was produced: ``ObjectUpdated``, ``ObjectRemoved``,
+        ``ModuleUpdated``, ``ModuleRemoved``, ``BusEvent``,
+        ``AvailabilityChanged``, ``AuthFailed``, and ``ConnectionDied`` -
+        see :mod:`ampio_mqtt.events` for what each means and which account
+        tiers produce it. ``of`` narrows the subscription to one event class
+        (which also types the callback parameter precisely) or a tuple of
+        classes::
+
+            client.subscribe(on_any_event)
+            client.subscribe(on_object, of=ObjectUpdated)
+            client.subscribe(on_gone, of=(ObjectRemoved, ModuleRemoved))
+
+        Ordering across kinds is guaranteed: the availability drop precedes
+        the terminal ``AuthFailed`` / ``ConnectionDied``, and removals
+        follow the updates of the catalogue reply that caused them.
         """
-        self._object_removal_listeners.append(listener)
-        return lambda: self._object_removal_listeners.remove(listener)
+        only = (of,) if isinstance(of, type) else of
+        entry = (listener, only)
+        self._listeners.append(entry)
 
-    def add_module_removal_listener(
-        self, listener: ModuleListener
-    ) -> Callable[[], None]:
-        """Register a callback invoked when a module leaves the module list.
+        def _unsubscribe() -> None:
+            self._listeners.remove(entry)
 
-        Fires once per removed module with its final state, after the store
-        has dropped it. The module list is administrator-only, so this never
-        fires on a standard account.
-        """
-        self._module_removal_listeners.append(listener)
-        return lambda: self._module_removal_listeners.remove(listener)
-
-    def add_event_listener(self, listener: EventListener) -> Callable[[], None]:
-        """Register a callback invoked when a bus event is raised.
-
-        Received events ride the administrator-only raw tree, so this never
-        fires on a standard account even though such an account can raise
-        events itself.
-        """
-        self._event_listeners.append(listener)
-        return lambda: self._event_listeners.remove(listener)
-
-    def add_availability_listener(
-        self, listener: AvailabilityListener
-    ) -> Callable[[], None]:
-        """Register a callback invoked when connection availability changes.
-
-        Fires for every transition the consumer did not cause itself: the
-        connection coming up, an outage, and the fatal auth-failure stop
-        (before its own listener, so entities read unavailable by then). A
-        consumer-initiated ``stop()`` is deliberately not reported - it is
-        not news to the consumer, and reporting it made every orderly
-        shutdown look like a lost connection. ``available`` still reads
-        False after a stop.
-        """
-        self._availability_listeners.append(listener)
-        return lambda: self._availability_listeners.remove(listener)
-
-    def add_auth_failure_listener(
-        self, listener: AuthFailureListener
-    ) -> Callable[[], None]:
-        """Register a callback for a fatal credential rejection after start.
-
-        Invoked with the broker's reason string when a reconnect attempt is
-        rejected as unauthorized after ``start()`` has succeeded - the shape a
-        credential change on the broker produces. By the time it fires the
-        availability listeners have reported False and the connection loop has
-        stopped for good, so this is the signal to drive a reauthentication
-        flow; without it a dead loop is indistinguishable from an outage the
-        client is still retrying. A rejection during ``start()`` itself raises
-        ``AmpioAuthError`` there instead and does not invoke this listener.
-        The reason is also queryable as :pyattr:`auth_failure`.
-        """
-        self._auth_failure_listeners.append(listener)
-        return lambda: self._auth_failure_listeners.remove(listener)
+        return _unsubscribe
 
     @staticmethod
     async def test_connection(
@@ -353,6 +349,7 @@ class AmpioClient:
         password: str | None,
         *,
         info_timeout: float = 5.0,
+        mqtt_client_factory: _connection.MqttClientFactory | None = None,
     ) -> AmpioServerInfo:
         """Connect, request the server info, and return it.
 
@@ -382,24 +379,19 @@ class AmpioClient:
             request_payload=info.req_payload,
             reply_topic=response_topic(info, user),
             timeout=info_timeout,
+            client_factory=mqtt_client_factory,
         )
         if payload is None:
             raise AmpioTimeoutError(
                 f"No server-info reply from the Ampio broker within {info_timeout}s"
             )
         parsed = _protocol.parse_server_info(payload)
-        if _protocol.server_below_baseline(parsed.server_version):
-            _LOGGER.warning(
-                "Ampio server reports version %s, below the tested baseline %s; "
-                "behavior on this server is untested - upgrade the M-SERV",
-                parsed.server_version or "(none)",
-                ".".join(map(str, BASELINE_SERVER_VERSION)),
-            )
+        _protocol.warn_if_below_baseline(parsed.server_version)
         return parsed
 
     async def start(
         self, *, timeout: float = 15.0, discovery_timeout: float = 8.0
-    ) -> None:
+    ) -> bool:
         """Start the connection, wait for connect and initial discovery.
 
         After connecting, waits up to `discovery_timeout` for the initial
@@ -409,14 +401,17 @@ class AmpioClient:
         `data` surface (grant-filtered objects, no modules). See `access_tier`
         for the detected tier.
 
-        On return, the initial discovery cycle has been awaited up to
-        `discovery_timeout`; see `wait_for_initial_discovery` for the explicit,
-        opt-in form of that guarantee. A consumer that must read
-        `modules`/`objects`/`server_info` before building on top of the client
-        should call that method rather than relying on `start()`'s timing.
+        Returns True when that discovery cycle completed in time and False
+        when `discovery_timeout` elapsed first. A False leaves the connection
+        up and discovery continuing opportunistically, so the caller can
+        await :meth:`wait_for_initial_discovery` (the explicit form of the
+        same guarantee) rather than restarting. A consumer that must read
+        `modules`/`objects`/`server_info` before building on top of the
+        client should check this result or call that method rather than
+        relying on `start()`'s timing.
         """
         await self._connection.open(timeout)
-        await self.wait_for_initial_discovery(timeout=discovery_timeout)
+        return await self.wait_for_initial_discovery(timeout=discovery_timeout)
 
     async def wait_for_initial_discovery(self, *, timeout: float = 8.0) -> bool:
         """Block until the initial discovery cycle has populated the client.
@@ -442,7 +437,7 @@ class AmpioClient:
         """
 
         async def _all(names: tuple[str, ...]) -> None:
-            await asyncio.gather(*(self._received[n].wait() for n in names))
+            await asyncio.gather(*(self._channels[n].received.wait() for n in names))
 
         try:
             async with asyncio.timeout(timeout):
@@ -464,27 +459,24 @@ class AmpioClient:
         """
         await self._connection.close()
 
-    async def request(self, name: str) -> None:
-        """Publish the request keyword for endpoint ``name``.
-
-        The reply lands asynchronously on that endpoint's response topic and is
-        applied by the dispatcher. ``name`` is one of the keys in the endpoint
-        table (``details``, ``devices``, ``states``, ``info``, ...). Use
-        :meth:`fetch_rooms` / :meth:`fetch_locations` for the on-demand
-        endpoints whose reply you need to read back synchronously.
-        """
-        await self._publish(ENDPOINT_BY_NAME[name])
-
     async def refresh(self) -> None:
-        """Re-request the full initial-discovery set (both object catalogues,
-        modules, params, states, info).
+        """Re-request the initial-discovery set for the account's tier.
 
         ``start()`` issues this once on every (re)connect; call it to force a
-        fresh discovery cycle without reconnecting.
+        fresh discovery cycle without reconnecting. Once the info reply has
+        identified a RESTRICTED account the admin-only ``config`` requests
+        are skipped - the M-SERV never answers them for that tier, and the
+        login's admin bit cannot change mid-session. An UNKNOWN tier (before
+        the first info reply) requests everything, which is what makes first
+        discovery work on either tier.
         """
+        restricted = self.access_tier is AccessTier.RESTRICTED
         for ep in ENDPOINTS:
-            if ep.initial:
-                await self._publish(ep)
+            if not ep.initial:
+                continue
+            if restricted and ep.name in DISCOVERY_ADMIN:
+                continue
+            await self._publish(ep)
 
     async def fetch_rooms(self, timeout: float = 5.0) -> dict[int, str]:
         """Return ``{ampio_object_id: room_name}`` for objects assigned to a room.
@@ -516,7 +508,11 @@ class AmpioClient:
         payloads = await self._fetch(
             ("scenes",), timeout, "Timed out fetching scenes from Ampio broker"
         )
-        return _protocol.parse_scenes(payloads["scenes"]) or []
+        scenes = _protocol.parse_scenes(payloads["scenes"])
+        # A payload that resolved the fetch passed the store's parsed gate,
+        # so it is a {"List": [...]} document and parses by construction.
+        assert scenes is not None
+        return scenes
 
     async def send_event(self, event_number: int) -> None:
         """Raise a bus event, running whatever Ampio logic is bound to it.
@@ -554,46 +550,18 @@ class AmpioClient:
             command_topic(self._username), scene_payload(scene_id, verb).encode()
         )
 
-    async def fetch_locations(self, timeout: float = 5.0) -> dict[int, str]:
-        """Return ``{location_id: name}`` for the Designer "Location" markers.
-
-        The location is the user-editable per-output marker visible in the
-        Designer's "Lokalizacja" column (e.g. ``Salon``, ``Kuchnia``, ...).
-        It is **per-output**, not per-module: each module's outputs can be
-        assigned to different locations, and the per-output assignment lives
-        in the device's CAN-resident description table (not exposed via
-        MQTT - see docs/untapped-surfaces.md for the RPC route that would
-        resolve it).
-
-        This method returns only the *name table* - the integer ID -> human
-        label mapping the Designer uses to populate its dropdown. A consumer
-        that does have a way to learn the per-output integer can resolve it
-        through this dict. Without that, the table is still useful in
-        diagnostics ("which location ids does this M-SERV define?").
-
-        Publishes ``locations`` to ``ampio/control/<user>/config`` and awaits
-        the response on ``ampio/fromDB/<user>/config/locations``. Requires
-        ``start()`` to have completed. Raises ``AmpioConnectionError`` if the
-        broker is not connected and ``AmpioTimeoutError`` if the response does
-        not arrive within ``timeout``.
-        """
-        payloads = await self._fetch(
-            ("locations",),
-            timeout,
-            "Timed out fetching locations table from Ampio broker",
-        )
-        return _protocol.parse_locations(payloads["locations"])
-
     # --- commands ---------------------------------------------------------
 
     async def command(self, object_id: int, verb: str, *args: object) -> None:
         """Send ``verb`` (with any args) to an object on the command surface.
 
-        Publishes ``/api/set/<object_id>/<verb>[/<arg>...]`` and returns as soon
-        as the publish completes; the M-SERV applies it asynchronously and the
-        resulting state arrives through the normal object listeners (typically
-        within a few hundred ms). Nothing is echoed back for an unknown verb or
-        an object that cannot perform it - the M-SERV simply ignores it.
+        Publishes ``/api/set/<object_id>/<verb>[/<arg>...]`` at QoS 1 and
+        returns once the broker acknowledges it - "the broker accepted the
+        command", not "the M-SERV applied it". The M-SERV applies it
+        asynchronously and the resulting state arrives through the normal
+        object listeners (typically within a few hundred ms). Nothing is echoed
+        back for an unknown verb or an object that cannot perform it - the
+        M-SERV simply ignores it.
 
         This is the escape hatch for the verbs the library does not wrap: the
         vocabulary is the M-SERV's own, so anything its HTTP API accepts works
@@ -603,6 +571,10 @@ class AmpioClient:
         Commands are grant-scoped exactly as reads are: on a standard
         account a command for an object outside the grant is dropped with
         no effect and no reply, while an administrator commands any object.
+
+        Raises ``AmpioConnectionError`` when the broker is unreachable and
+        ``AmpioTimeoutError`` when it fails to acknowledge in time; never an
+        aiomqtt exception type.
         """
         await self._connection.publish(
             command_topic(self._username),
@@ -638,6 +610,24 @@ class AmpioClient:
         _check_range("pulse_ms", pulse_ms, 0, 655350)
         await self.command(object_id, "setValue", value, pulse_ms // 10)
 
+    async def set_temperature(self, object_id: int, temperature: float) -> None:
+        """Set a thermostat's (``reg``) target temperature in °C.
+
+        The M-SERV echoes the new setpoint in the regulator's rich state
+        push, of which the library surfaces only the running flag until the
+        climate readback lands (#73). Bools and non-finite floats are
+        rejected: both would serialize as text the M-SERV silently drops.
+        """
+        if (
+            isinstance(temperature, bool)
+            or not isinstance(temperature, (int, float))
+            or not math.isfinite(temperature)
+        ):
+            raise ValueError(
+                f"temperature must be a finite number, got {temperature!r}"
+            )
+        await self.command(object_id, "setTemperature", temperature)
+
     async def set_color(
         self, object_id: int, red: int, green: int, blue: int, white: int = 0
     ) -> None:
@@ -658,6 +648,17 @@ class AmpioClient:
     async def close_cover(self, object_id: int) -> None:
         """Drive a cover to fully closed (position 0)."""
         await self.command(object_id, "close")
+
+    async def stop_cover(self, object_id: int) -> None:
+        """Halt a cover wherever it is, on either axis.
+
+        Mid-travel the position freezes at the halt point and the state
+        stream reports the resting value; a slat rotation is caught the
+        same way, freezing the slats at an intermediate angle; sent during
+        the slat-rotation phase that precedes travel it also cancels the
+        pending move; on a stationary cover it is a silent no-op.
+        """
+        await self.command(object_id, "stop")
 
     async def set_cover_position(
         self, object_id: int, position: int, *, lamella: int | None = None
@@ -713,7 +714,7 @@ class AmpioClient:
             name: loop.create_future() for name in names
         }
         for name, future in futures.items():
-            self._pending.setdefault(name, []).append(future)
+            self._channels[name].waiters.append(future)
         try:
             for name in names:
                 await self._publish(ENDPOINT_BY_NAME[name])
@@ -722,41 +723,27 @@ class AmpioClient:
         except TimeoutError as err:
             raise AmpioTimeoutError(timeout_message) from err
         finally:
-            # A resolved future was already dropped by the dispatcher; on
-            # timeout, cancellation, or a failed publish, remove this call's
-            # own waiters so a late reply resolves nothing stale.
+            # A resolved future was already dropped by deliver(); on timeout,
+            # cancellation, or a failed publish, remove this call's own
+            # waiters so a late reply resolves nothing stale.
             for name, future in futures.items():
-                waiters = self._pending.get(name)
-                if waiters is not None and future in waiters:
+                waiters = self._channels[name].waiters
+                if future in waiters:
                     waiters.remove(future)
-                    if not waiters:
-                        del self._pending[name]
         return {name: future.result() for name, future in futures.items()}
-
-    def _feed_message(self, topic: str, payload: str | bytes) -> None:
-        """Inject a message directly into the routing logic.
-
-        Private entry point used by the library's own tests; the real broker
-        drives the same path through the connection.
-        """
-        self._handle_message(topic, _decode_payload(payload))
-
-
-def _emit(listeners: list[Any], payload: Any, kind: str) -> None:
-    """Hand `payload` to each listener, surviving any that raises.
-
-    Listeners are consumer code. One that raises must not take down the
-    connection that feeds every other entity, so the failure is logged and the
-    remaining listeners still run.
-    """
-    for listener in list(listeners):
-        try:
-            listener(payload)
-        except Exception:
-            _LOGGER.exception("Ampio %s listener raised", kind)
 
 
 def _check_range(name: str, value: int, low: int, high: int) -> None:
-    """Reject an out-of-range command argument before it reaches the wire."""
-    if not isinstance(value, int) or not low <= value <= high:
+    """Reject a mis-typed or out-of-range command argument before the wire.
+
+    Rejects bool explicitly: it passes ``isinstance(int)`` (and the type
+    checker, which treats bool as an int subtype), but the wire encoding is
+    ``str()``, so a bool would go out as the literal ``True`` - a malformed
+    command the M-SERV silently drops.
+    """
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not low <= value <= high
+    ):
         raise ValueError(f"{name} must be an int in {low}..{high}, got {value!r}")

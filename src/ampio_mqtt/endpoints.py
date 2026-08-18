@@ -45,7 +45,7 @@ class Endpoint:
     resp_surface: str  # fromDB sub-topic: "config" | "data"
     resp_leaf: str  # final response-topic segment
     # Part of the initial-discovery set awaited by start() /
-    # wait_for_initial_discovery(). The rooms/locations endpoints are on-demand.
+    # wait_for_initial_discovery(). The rooms/scenes endpoints are on-demand.
     initial: bool = False
 
 
@@ -69,7 +69,6 @@ ENDPOINTS: tuple[Endpoint, ...] = (
     ),
     Endpoint("groups", "data", "groups", "data", "groups"),
     Endpoint("group_devices", "data", "group_devices", "data", "group_devices"),
-    Endpoint("locations", "config", "locations", "config", "locations"),
     Endpoint("scenes", "data", "scenes", "data", "scenes"),
 )
 
@@ -112,8 +111,8 @@ DISCOVERY_FALLBACK: tuple[str, ...] = ("data_devices", "params_devices")
 #
 # Writes go to one control topic per account as plain text:
 # ``/api/set/<object_id>/<verb>[/<arg>...]``. The verb vocabulary is the
-# M-SERV's own HTTP API, re-exposed over MQTT; see docs/protocol.md for the
-# table and which verbs are verified live.
+# M-SERV's own HTTP API, re-exposed over MQTT; see docs/protocol.md for
+# the verb table.
 #
 # The per-user grant bounds writes as it bounds reads: a command for an object
 # outside the account's grant is dropped with no effect and no reply.

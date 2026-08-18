@@ -18,7 +18,7 @@ import asyncio
 import logging
 import os
 
-from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioObject
+from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioObject, ObjectUpdated
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,19 +42,21 @@ def parse_args() -> argparse.Namespace:
     args = p.parse_args()
     if not args.host:
         p.error("missing --host (or AMPIO_HOST env)")
+    if not args.username:
+        # An empty username namespaces every topic as ampio/.../ /... and the
+        # run just hangs; fail loud instead.
+        p.error("missing --username (or AMPIO_USERNAME env)")
     return args
 
 
 async def run(args: argparse.Namespace) -> int:
-    client = AmpioClient(
-        args.host, args.port, args.username, args.password
-    )
+    client = AmpioClient(args.host, args.port, args.username, args.password)
 
     def on_object(obj: AmpioObject) -> None:
         if obj.is_sensor and obj.value is not None and obj.kind is not None:
             print(f"  state  ob/{obj.id:<5} {obj.kind.key:<14} = {obj.value}")
 
-    client.add_object_listener(on_object)
+    client.subscribe(lambda e: on_object(e.object), of=ObjectUpdated)
 
     print(f"Connecting to {args.host}:{args.port} ...")
     try:
@@ -70,15 +72,18 @@ async def run(args: argparse.Namespace) -> int:
     types: dict = {}
     for o in objs.values():
         types[o.typ_komponentu] = types.get(o.typ_komponentu, 0) + 1
+    sensors = [o for o in objs.values() if o.is_sensor]
     print(f"\n=== Access tier: {client.access_tier.value} ===")
-    print(f"=== Objects: {len(objs)} (sensors: {len(client.sensors)}), modules: {len(client.modules)} ===")
+    print(
+        f"=== Objects: {len(objs)} (sensors: {len(sensors)}), modules: {len(client.modules)} ==="
+    )
     print("  by typ_komponentu:", types)
 
     print("\n=== Sensors (auto-discovered) ===")
-    for o in sorted(client.sensors.values(), key=lambda o: o.id):
+    for o in sorted(sensors, key=lambda o: o.id):
         unit = (o.kind.unit or "") if o.kind else ""
         dc = (o.kind.device_class or "-") if o.kind else "-"
-        print(f"  ob/{o.id:<5} {dc:<18} {str(o.name):<26} = {o.value} {unit}")
+        print(f"  ob/{o.id:<5} {dc:<18} {o.name!s:<26} = {o.value} {unit}")
 
     await client.stop()
     return 0

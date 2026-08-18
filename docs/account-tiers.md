@@ -11,8 +11,8 @@ account.
 
 The tier is read from the account id the `info` reply reports on every
 tier: `-1` for the admin pseudo-user, the users-table row id for an app
-user - see `AmpioServerInfo.access_tier` (live-verified against both
-account shapes). `AmpioClient.access_tier` exposes it on a running client,
+user - see `AmpioServerInfo.access_tier`.
+`AmpioClient.access_tier` exposes it on a running client,
 settled by the time `wait_for_initial_discovery()` returns True, and
 `test_connection()` reports it at validation time, so a config flow can
 reject an account whose tier will not support what the consumer needs
@@ -36,9 +36,8 @@ reject an account whose tier will not support what the consumer needs
 | **Raw channel tree** (`ampio/from/#`)         | yes           | **no**                                |
 | **Module diagnostics** (voltage, temperature) | yes           | **no**                                |
 | **CAN write tree** (`ampio/to/#`)             | yes           | **no**                                |
-| Designer location table (`fetch_locations`)   | yes           | no                                    |
 
-The raw-tree denial is enforced in the SUBACK, live-verified: a
+The raw-tree denial is enforced in the SUBACK: a
 standard account's subscriptions to the four `ampio/from/...` filters
 come back with reason code 128 even over MQTT 3.1.1 (where stock
 mosquitto would grant silently and just filter delivery). The library

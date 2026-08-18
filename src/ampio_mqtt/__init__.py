@@ -7,6 +7,7 @@ from .classification import (
     ObjectKind,
     OutputKind,
     SensorKind,
+    ThermostatKind,
     classify,
 )
 from .client import AmpioClient
@@ -19,8 +20,18 @@ from .errors import (
     AmpioError,
     AmpioTimeoutError,
 )
+from .events import (
+    AuthFailed,
+    AvailabilityChanged,
+    BusEvent,
+    ClientEvent,
+    ConnectionDied,
+    ModuleRemoved,
+    ModuleUpdated,
+    ObjectRemoved,
+    ObjectUpdated,
+)
 from .models import (
-    AmpioEvent,
     AmpioModule,
     AmpioObject,
     AmpioScene,
@@ -34,23 +45,32 @@ __all__ = [
     "AmpioClient",
     "AmpioConnectionError",
     "AmpioError",
-    "AmpioEvent",
     "AmpioModule",
     "AmpioObject",
     "AmpioScene",
     "AmpioServerInfo",
     "AmpioTimeoutError",
+    "AuthFailed",
+    "AvailabilityChanged",
+    "BusEvent",
     "Capability",
+    "ClientEvent",
+    "ConnectionDied",
     "ConnectionStats",
     "DiscoveryResult",
     "InputKind",
+    "ModuleRemoved",
+    "ModuleUpdated",
     "ObjectKind",
+    "ObjectRemoved",
+    "ObjectUpdated",
     "OutputKind",
     "SensorKind",
+    "ThermostatKind",
     "classify",
     "discover",
     "module_capabilities",
     "module_model",
 ]
 
-__version__ = "0.18.0"
+__version__ = "0.19.0"

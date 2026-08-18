@@ -26,11 +26,12 @@ per-object topic instead, 100-140 ms later - measured in
 an administrator account is laid out.
 
 Authoritative source:
-[`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py)
-(`RAW_INPUT_WILDCARDS`, the `channel_prefix` field on the
-`TYPE_PROFILES` rows) and the dispatcher in
-[`src/ampio_mqtt/_store.py`](../src/ampio_mqtt/_store.py)
-(`_handle_raw_channel`).
+[`src/ampio_mqtt/endpoints.py`](../src/ampio_mqtt/endpoints.py)
+(`RAW_INPUT_WILDCARDS`),
+[`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py)
+(the `channel_prefix` field on the `TYPE_PROFILES` rows), and the
+router in [`src/ampio_mqtt/_protocol.py`](../src/ampio_mqtt/_protocol.py)
+plus the store's `_apply_raw_channel`.
 
 ## What the library subscribes to
 
@@ -43,12 +44,12 @@ ampio/from/+/event       # bus events
 
 The two channel wildcards are bridged to the owning `AmpioObject` so
 listeners see the same push as for any other update. The event
-wildcard feeds `add_event_listener()` - a different surface with its
+wildcard feeds `BusEvent` subscribers - a different surface with its
 own semantics, described in [`protocol.md`](protocol.md).
 
 The whole tree is administrator-only, and the broker says so
 explicitly: on a standard account all four filters are rejected in the
-SUBACK with reason code 128 (live-verified; the client logs the
+SUBACK with reason code 128 (the client logs the
 rejections and records them in `ConnectionStats.subscribe_failures`,
 then degrades to the per-object path as designed).
 
@@ -72,7 +73,7 @@ payload bytes decode as:
 
 Landed on `AmpioModule.supply_voltage` and `AmpioModule.temperature`, and
 each frame refreshes the module's `last_seen`, so a module with no objects
-of its own still shows liveness. Register `add_module_listener()` to be
+of its own still shows liveness. Subscribe to `ModuleUpdated` to be
 told when a module updates. The frame is attributed by its `mac`, so a
 colliding mac (see the routing key below) suspends this for the affected
 modules.
