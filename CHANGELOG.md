@@ -14,7 +14,20 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
-## Unreleased
+## 0.19.0
+
+A restructuring release from a second clean-sheet review. Event delivery,
+topic classification, endpoint reply correlation, and per-object
+bookkeeping each get one home: a typed event stream with a terminal
+crash signal, a protocol-layer router, a reply channel per endpoint
+row, and facts carried on the object itself. Every publish is
+acknowledged by the broker at QoS 1 and every failure surfaces as the
+library's own error types. The cover and regulator surfaces grew
+`stop_cover()`, `set_temperature()`, and the `reg`/`bit8`
+classifications, each confirmed on a live install before shipping. The
+test suite runs through an injectable transport seam with a shared kit,
+marginal API was removed, and the docs now treat verified-on-the-baseline
+as the default, with open claims carrying their tracking issue.
 
 ### Added
 
