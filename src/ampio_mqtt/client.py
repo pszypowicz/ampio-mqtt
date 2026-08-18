@@ -58,6 +58,42 @@ EventListener = Callable[[ClientEvent], None]
 _EventT = TypeVar("_EventT", bound=ClientEvent)
 
 
+class _ReplyChannel:
+    """Everything the client tracks about one endpoint's replies.
+
+    One instance per endpoint-table row, so a new endpoint needs no new
+    client plumbing: ``received`` latches on the first parsed reply (the
+    discovery signal - it never clears, which is what makes
+    ``wait_for_initial_discovery`` instant after a reconnect),
+    ``last_payload`` keeps the verbatim payload for the diagnostics blob,
+    and ``waiters`` are fetch futures awaiting the next parsed reply.
+    """
+
+    __slots__ = ("last_payload", "received", "waiters")
+
+    def __init__(self) -> None:
+        self.received = asyncio.Event()
+        self.last_payload: str | None = None
+        self.waiters: list[asyncio.Future[str]] = []
+
+    def deliver(self, payload: str, parsed: bool) -> None:
+        """Record one reply; only a parsed one latches and resolves waiters.
+
+        A malformed reply must neither falsely complete discovery nor hand a
+        fetch garbage - the fetch keeps waiting and times out into the same
+        retryable error as silence. The bad bytes still land in
+        ``last_payload``: they are exactly what a diagnostics report needs.
+        """
+        self.last_payload = payload
+        if not parsed:
+            return
+        self.received.set()
+        waiters, self.waiters = self.waiters, []
+        for future in waiters:
+            if not future.done():
+                future.set_result(payload)
+
+
 class AmpioClient:
     """Maintains a connection to the Ampio broker and tracks object state."""
 
@@ -94,21 +130,12 @@ class AmpioClient:
             tuple[Callable[[Any], None], tuple[type[ClientEvent], ...] | None]
         ] = []
 
-        # Per-endpoint latch, set the first time each reply lands. Derived from
-        # the endpoint table so a new endpoint needs no new field here.
-        self._received: dict[str, asyncio.Event] = {
-            ep.name: asyncio.Event() for ep in ENDPOINTS
+        # One reply channel per endpoint-table row: discovery latch, verbatim
+        # last payload, and fetch waiters live together, so adding an
+        # endpoint is one row in the table and nothing here.
+        self._channels: dict[str, _ReplyChannel] = {
+            ep.name: _ReplyChannel() for ep in ENDPOINTS
         }
-        # Last payload per endpoint as the broker sent it, so a consumer can
-        # put the verbatim JSON into a diagnostics report without re-deriving
-        # it. Append-only, and retained even when the payload fails to parse -
-        # the bad bytes are exactly what a diagnostics report needs.
-        self._last_payloads: dict[str, str] = {}
-        # Callers of the on-demand fetches, awaiting the next parseable reply
-        # per endpoint. Fetch correlation lives here, in futures; the
-        # _received latches above answer only "has this endpoint ever
-        # answered" for discovery.
-        self._pending: dict[str, list[asyncio.Future[str]]] = {}
 
     def _subscriptions(self) -> list[str]:
         """Every topic the client needs on each (re)connect."""
@@ -125,16 +152,7 @@ class AmpioClient:
         self.stats.last_message_at = time.time()
         applied = self._store.apply(topic, payload)
         if applied.endpoint is not None:
-            self._last_payloads[applied.endpoint.name] = payload
-            # Latch and resolve waiters only on a payload that parsed, so a
-            # malformed reply neither falsely completes discovery nor hands a
-            # fetch garbage - the fetch keeps waiting for a good reply and
-            # times out into the same retryable error as silence.
-            if applied.parsed:
-                self._received[applied.endpoint.name].set()
-                for future in self._pending.pop(applied.endpoint.name, ()):
-                    if not future.done():
-                        future.set_result(payload)
+            self._channels[applied.endpoint.name].deliver(payload, applied.parsed)
         for event in applied.events:
             self._dispatch(event)
 
@@ -264,9 +282,15 @@ class AmpioClient:
         include the actual JSON the M-SERV emitted. Keys are endpoint names
         (``details``, ``devices``, ``states``, ``info``, ``data_devices``,
         ``params_devices``, ``groups``, ``group_devices``, ``locations``,
-        ``scenes``); an endpoint absent until its first reply lands.
+        ``scenes``); an endpoint absent until its first reply lands. A
+        payload that failed to parse is retained too - the bad bytes are
+        exactly what a diagnostics report needs.
         """
-        return self._last_payloads
+        return {
+            name: channel.last_payload
+            for name, channel in self._channels.items()
+            if channel.last_payload is not None
+        }
 
     @overload
     def subscribe(self, listener: EventListener) -> Callable[[], None]: ...
@@ -415,7 +439,7 @@ class AmpioClient:
         """
 
         async def _all(names: tuple[str, ...]) -> None:
-            await asyncio.gather(*(self._received[n].wait() for n in names))
+            await asyncio.gather(*(self._channels[n].received.wait() for n in names))
 
         try:
             async with asyncio.timeout(timeout):
@@ -692,7 +716,7 @@ class AmpioClient:
             name: loop.create_future() for name in names
         }
         for name, future in futures.items():
-            self._pending.setdefault(name, []).append(future)
+            self._channels[name].waiters.append(future)
         try:
             for name in names:
                 await self._publish(ENDPOINT_BY_NAME[name])
@@ -701,15 +725,13 @@ class AmpioClient:
         except TimeoutError as err:
             raise AmpioTimeoutError(timeout_message) from err
         finally:
-            # A resolved future was already dropped by the dispatcher; on
-            # timeout, cancellation, or a failed publish, remove this call's
-            # own waiters so a late reply resolves nothing stale.
+            # A resolved future was already dropped by deliver(); on timeout,
+            # cancellation, or a failed publish, remove this call's own
+            # waiters so a late reply resolves nothing stale.
             for name, future in futures.items():
-                waiters = self._pending.get(name)
-                if waiters is not None and future in waiters:
+                waiters = self._channels[name].waiters
+                if future in waiters:
                     waiters.remove(future)
-                    if not waiters:
-                        del self._pending[name]
         return {name: future.result() for name, future in futures.items()}
 
     def _feed_message(self, topic: str, payload: str | bytes) -> None:

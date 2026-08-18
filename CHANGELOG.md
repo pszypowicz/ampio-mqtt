@@ -30,6 +30,14 @@ upgrade path.
   updates of the reply that caused them); a raising listener is still
   logged and isolated. `AmpioEvent` is absorbed into `BusEvent` - the
   event class is the model.
+- Endpoint reply correlation is consolidated into one per-endpoint channel
+  (discovery latch, verbatim last payload, fetch waiters together), so
+  adding an endpoint is one row in the endpoint table and no new client
+  plumbing. Behavior is unchanged - verified byte-identical against a
+  scripted broker across discovery latching, concurrent fetches,
+  malformed-reply timeouts, stale-waiter cleanup, and reconnect. One
+  visible nuance: `last_payloads` now returns a fresh snapshot dict per
+  access rather than a live internal dict.
 - A crash in the connection loop is now reported instead of silent. An
   exception the loop does not recognize as transport or credential failure
   is terminal (nothing retries): after a successful `start()` it dispatches

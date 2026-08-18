@@ -225,7 +225,7 @@ async def test_late_reply_after_timeout_resolves_nothing_stale() -> None:
 
     with pytest.raises(AmpioTimeoutError):
         await client.fetch_rooms(timeout=0.05)
-    assert client._pending == {}
+    assert all(not ch.waiters for ch in client._channels.values())
 
     # The replies to the timed-out request arrive now - nobody is waiting.
     client._feed_message("ampio/fromDB/u/data/groups", groups)
