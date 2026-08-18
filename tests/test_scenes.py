@@ -75,6 +75,45 @@ def test_unparseable_or_empty_payloads(payload: str, expected: list | None) -> N
     assert parse_scenes(payload) == expected
 
 
+@pytest.mark.parametrize("infos", [5, "x", None, {"id": 1}])
+def test_malformed_infos_degrades_to_empty_object_ids(infos: object) -> None:
+    """The scene is real and runnable whatever its Infos annex looks like,
+    and nothing row-shaped may escape fetch_scenes as a bare exception."""
+    payload = json.dumps({"List": [{"id": 1, "sceneName": "Evening", "Infos": infos}]})
+    scenes = parse_scenes(payload)
+    assert scenes is not None
+    [scene] = scenes
+    assert (scene.id, scene.name) == (1, "Evening")
+    assert scene.object_ids == frozenset()
+
+
+def test_non_string_scene_name_reads_empty() -> None:
+    """AmpioScene.name is typed str; a non-string wire value must not land
+    in it."""
+    payload = json.dumps({"List": [{"id": 1, "sceneName": 7}]})
+    scenes = parse_scenes(payload)
+    assert scenes is not None
+    assert scenes[0].name == ""
+
+
+async def test_fetch_scenes_survives_a_malformed_infos_row(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """The documented error contract holds even for a reply whose row
+    content is malformed: the fetch returns the degraded scene rather than
+    leaking a bare TypeError."""
+    client, _broker = connected
+    bad = json.dumps({"List": [{"id": 1, "sceneName": "Evening", "Infos": 5}]})
+
+    async def _deliver() -> None:
+        await asyncio.sleep(0)
+        feed(client, f"ampio/fromDB/{USER}/data/scenes", bad)
+
+    scenes, _ = await asyncio.gather(client.fetch_scenes(timeout=2), _deliver())
+    [scene] = scenes
+    assert (scene.id, scene.name, scene.object_ids) == (1, "Evening", frozenset())
+
+
 @pytest.mark.parametrize(
     ("call", "expected"),
     [

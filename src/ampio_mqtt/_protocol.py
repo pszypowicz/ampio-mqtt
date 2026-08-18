@@ -248,15 +248,22 @@ def parse_scenes(payload: str) -> list[AmpioScene] | None:
         # unknown state beats silently hiding the catalogue if the column
         # ever drifts.
         raw_active = to_int(item.get("active"))
+        # Malformed row fields degrade in the same spirit as `active` above:
+        # the scene itself is real and runnable (the M-SERV replays its
+        # actions server-side), so a broken annex must not hide it - and the
+        # store's parse gate covers only the outer List shape, so nothing
+        # row-shaped may escape fetch_scenes as a bare exception.
+        infos = item.get("Infos")
         objects = {
             oid
-            for info in item.get("Infos", [])
+            for info in (infos if isinstance(infos, list) else [])
             if isinstance(info, dict) and (oid := to_int(info.get("id"))) is not None
         }
+        name = item.get("sceneName")
         out.append(
             AmpioScene(
                 id=sid,
-                name=item.get("sceneName") or "",
+                name=name if isinstance(name, str) else "",
                 active=raw_active != 0 if raw_active is not None else True,
                 parent_id=parent if parent is not None and parent >= 0 else None,
                 object_ids=frozenset(objects),

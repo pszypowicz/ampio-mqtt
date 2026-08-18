@@ -565,8 +565,10 @@ class AmpioClient:
         payloads = await self._fetch(
             ("scenes",), timeout, "Timed out fetching scenes from Ampio broker"
         )
-        # A payload that resolved the fetch passed the store's parsed gate,
-        # so it is a {"List": [...]} document and parses by construction.
+        # The store's parsed gate admits only {"List": [...]} documents - the
+        # one shape parse_scenes returns None for - and the row parser
+        # degrades malformed fields instead of raising, so a payload that
+        # resolved the fetch parses by construction.
         return cast("list[AmpioScene]", _protocol.parse_scenes(payloads["scenes"]))
 
     async def send_event(self, event_number: int) -> None:
