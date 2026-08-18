@@ -16,6 +16,8 @@ from collections.abc import AsyncIterator
 from typing import Self
 
 import pytest
+from paho.mqtt.packettypes import PacketTypes
+from paho.mqtt.reasoncodes import ReasonCode
 
 from ampio_mqtt import AmpioClient
 
@@ -92,12 +94,18 @@ class FakeBroker:
 
     async def subscribe(
         self, topic: str | list[tuple[str, int]], qos: int = 0
-    ) -> list[int]:
+    ) -> list[ReasonCode]:
         entries = topic if isinstance(topic, list) else [(topic, qos)]
         for t, q in entries:
             self.subscribed.append(t)
             self.subscribed_qos.append(q)
-        return [self.suback_codes.get(t, 0) for t, _q in entries]
+        # aiomqtt's VERSION2 callbacks deliver ReasonCodes, never plain
+        # ints - the fake hands over the same shape, with the int knob in
+        # `suback_codes` mapped onto real verdicts.
+        return [
+            ReasonCode(PacketTypes.SUBACK, identifier=self.suback_codes.get(t, q))
+            for t, q in entries
+        ]
 
     async def publish(self, topic: str, payload: bytes = b"", qos: int = 0) -> None:
         if self.publish_delay:
