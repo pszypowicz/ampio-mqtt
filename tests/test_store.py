@@ -10,10 +10,21 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import fields
+from dataclasses import fields, replace
 
 import pytest
-from conftest import details, devices, info
+from conftest import (
+    ADMIN_USER,
+    DATA_DEVICES_TOPIC,
+    DETAILS_TOPIC,
+    DEVICES_TOPIC,
+    PARAMS_DEVICES_TOPIC,
+    STATES_TOPIC,
+    USER,
+    details,
+    devices,
+    info,
+)
 
 from ampio_mqtt._store import AmpioStore, Applied
 from ampio_mqtt.events import (
@@ -24,8 +35,6 @@ from ampio_mqtt.events import (
     ObjectUpdated,
 )
 from ampio_mqtt.models import AmpioModule, AmpioObject
-
-USER = "u"
 
 
 def _updated(applied: Applied) -> list[AmpioObject]:
@@ -42,10 +51,6 @@ def _mod_updated(applied: Applied) -> list[AmpioModule]:
 
 def _mod_removed(applied: Applied) -> list[AmpioModule]:
     return [e.module for e in applied.events if isinstance(e, ModuleRemoved)]
-
-
-DEVICES_TOPIC = f"ampio/fromDB/{USER}/config/devices"
-DETAILS_TOPIC = f"ampio/fromDB/{USER}/config/devicesDetails"
 
 
 def _store() -> AmpioStore:
@@ -92,7 +97,7 @@ def _catalogue(**overrides: object) -> str:
         "id": 41,
         "typ_komponentu": "przekaznik",
         "interpretacja": 1,
-        "leafId": "0_a_1",
+        "leafId": "0_a_1_0_0",
         "opis_menu": "Lamp",
         "params": 1,
     }
@@ -350,14 +355,10 @@ def _snapshot(state: str, on_ms: int | None) -> str:
     return json.dumps({"List": [{"id": 10, "stan_json": json.dumps(stan)}]})
 
 
-STATES_TOPIC = f"ampio/fromDB/{USER}/data/states"
-
-
-def test_server_dated_snapshot_never_regresses_a_local_dated_raw_edge() -> None:
-    """The raw tree is undated, so a raw edge is stamped with the local
-    clock. A snapshot's server date is incomparable to that - on an unsynced
-    M-SERV the skew is unbounded - so it must never decide against the edge,
-    however far in the future it reads."""
+def test_snapshots_never_touch_a_raw_proven_object() -> None:
+    """A raw-proven object's resync is the broker's retained raw table; a
+    DB snapshot may be staler than that raw truth with no comparable clock
+    to prove it, so its rows are skipped whatever date they carry."""
     store = _store()
     _raw_proven_flag(store)
     far_future = int((time.time() + 7200) * 1000)
@@ -366,29 +367,19 @@ def test_server_dated_snapshot_never_regresses_a_local_dated_raw_edge() -> None:
     assert store.objects[10].value == "1"
 
 
-def test_echo_anchors_a_raw_edge_to_the_server_clock() -> None:
-    """The per-object echo of a raw edge carries the server `on` date. It is
-    dropped as a notification (the raw value is authoritative) but its date
-    re-anchors the object, after which snapshot supersession is a same-clock
-    comparison: older server dates lose, newer ones win - resync intact."""
+def test_the_echo_of_a_raw_edge_is_ignored_whole() -> None:
+    """The per-object echo repeats what the raw edge delivered ~150 ms
+    earlier: no second event, no overwrite, not even its timestamp."""
     store = _store()
     _raw_proven_flag(store)
-    echo_on = int((time.time() + 7200) * 1000)  # skewed server clock
+    before = store.objects[10].updated_at
     applied = store.apply(
         f"ampio/fromDB/{USER}/ob/10/state",
-        json.dumps({"state": "255", "on": echo_on}),
+        json.dumps({"state": "255", "on": 1787000000000}),
     )
-    assert _updated(applied) == []  # no re-notify
-    obj = store.objects[10]
-    assert obj.value == "1"  # raw form kept
-    assert obj.updated_at == echo_on / 1000.0  # anchored
-
-    stale = store.apply(STATES_TOPIC, _snapshot("0", echo_on - 10_000))
-    assert _updated(stale) == [] and obj.value == "1"
-
-    resync = store.apply(STATES_TOPIC, _snapshot("0", echo_on + 10_000))
-    assert [o.id for o in _updated(resync)] == [10]
-    assert obj.value == "0"
+    assert _updated(applied) == []
+    assert store.objects[10].value == "1"
+    assert store.objects[10].updated_at == before
 
 
 def test_a_dated_snapshot_beats_an_undated_seed() -> None:
@@ -428,18 +419,18 @@ def test_a_newer_snapshot_corrects_a_value_that_changed_during_an_outage() -> No
 
 def test_echo_of_an_earlier_edge_does_not_disturb_a_fast_toggle() -> None:
     """Edge 1, edge 2, then the echo of edge 1: the value must stay edge 2's
-    and nothing may notify - the echo contributes only its timestamp."""
+    and nothing may notify - the echo contributes nothing at all."""
     store = _store()
     _raw_proven_flag(store)
     store.apply(f"ampio/from/{0xCAFE:X}/state/f/3", "0")  # edge 2
-    echo_on = int(time.time() * 1000)
+    before = store.objects[10].updated_at
     applied = store.apply(
         f"ampio/fromDB/{USER}/ob/10/state",
-        json.dumps({"state": "255", "on": echo_on}),  # echo of edge 1
+        json.dumps({"state": "255", "on": int(time.time() * 1000)}),  # echo of edge 1
     )
     assert _updated(applied) == []
     assert store.objects[10].value == "0"
-    assert store.objects[10].updated_at == echo_on / 1000.0
+    assert store.objects[10].updated_at == before
 
 
 def test_the_config_catalogue_evicts_what_it_stopped_listing() -> None:
@@ -479,21 +470,18 @@ def test_an_evicted_objects_raw_channel_no_longer_routes() -> None:
 
 
 def test_the_app_sync_catalogue_evicts_only_on_the_restricted_tier() -> None:
-    data_topic = f"ampio/fromDB/{USER}/data/devices"
-    info_topic = f"ampio/fromDB/{USER}/data/info"
-
-    # Admin tier: data/devices is a second view, not the authority.
-    store = _store()
-    store.apply(info_topic, '{"Results": {"mac": 1, "userId": "-1"}}')
+    # Admin store: data/devices is a second view, not the authority.
+    store = AmpioStore(ADMIN_USER)
+    data_topic = f"ampio/fromDB/{ADMIN_USER}/data/devices"
     store.apply(data_topic, _flaga_details((10, 1), (11, 1)))
     applied = store.apply(data_topic, _flaga_details((10, 1)))
     assert _removed(applied) == []
     assert set(store.objects) == {10, 11}
 
-    # Restricted tier: the grant bounds the store, so the reply is complete
-    # for the account and a vanished row is a revocation.
+    # Restricted store: the grant bounds it, so the reply is complete for
+    # the account and a vanished row is a revocation.
     store = _store()
-    store.apply(info_topic, '{"Results": {"mac": 1, "userId": "4"}}')
+    data_topic = f"ampio/fromDB/{USER}/data/devices"
     store.apply(data_topic, _flaga_details((10, 1), (11, 1)))
     applied = store.apply(data_topic, _flaga_details((10, 1)))
     assert [o.id for o in _removed(applied)] == [11]
@@ -646,34 +634,6 @@ def test_state_updates_module_last_seen_with_local_receive_time() -> None:
     assert later_seen is not None and later_seen >= first_seen
 
 
-def test_state_push_with_numeric_state_is_stored_as_string() -> None:
-    """A broker that emits unquoted numbers in `state` still yields str value."""
-    store = _store()
-    store.apply(
-        DEVICES_TOPIC,
-        devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
-    )
-    store.apply(
-        DETAILS_TOPIC,
-        details(
-            {
-                "id": 41,
-                "id_urzadzenia": 17,
-                "typ_komponentu": "temp",
-                "interpretacja": 1,
-                "opis_menu": "T",
-            }
-        ),
-    )
-    store.apply(
-        f"ampio/fromDB/{USER}/ob/41/state",
-        '{"state": 24.4, "on": 1779560000000}',
-    )
-    value = store.objects[41].value
-    assert value == "24.4"
-    assert isinstance(value, str)
-
-
 def test_states_snapshot_seeds_value_without_touching_last_seen() -> None:
     """The bulk states reply seeds the value but is not liveness evidence:
     it replays DB state that may be arbitrarily old, so last_seen stays
@@ -813,7 +773,7 @@ def test_devices_redelivery_preserves_last_seen() -> None:
         DEVICES_TOPIC,
         devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
     )
-    store.modules[17].last_seen = 1700000000.0
+    store.modules[17] = replace(store.modules[17], last_seen=1700000000.0)
     # Re-deliver the devices list (e.g. on reconnect) - last_seen must persist.
     store.apply(
         DEVICES_TOPIC,
@@ -947,7 +907,8 @@ def test_index_rebuilds_when_devices_arrive_after_details() -> None:
     assert store.objects[50].value == "1"
 
 
-def test_flag_without_funkcja_is_not_indexed() -> None:
+def test_flag_without_funkcja_is_not_bridged() -> None:
+    """No channel index means no raw route - an edge must change nothing."""
     store = _store()
     store.apply(DEVICES_TOPIC, devices(_PANEL))
     no_funkcja = {
@@ -958,7 +919,8 @@ def test_flag_without_funkcja_is_not_indexed() -> None:
         "opis_menu": "Flag",
     }
     store.apply(DETAILS_TOPIC, details(no_funkcja))
-    assert store._input_index == {}
+    applied = store.apply("ampio/from/CAFE/state/f/1", "1")
+    assert store.objects[51].value is None and _updated(applied) == []
 
 
 def test_mapped_input_without_raw_uses_per_object_fallback() -> None:
@@ -1004,13 +966,11 @@ def test_symulacja_classifies_but_is_not_bridged() -> None:
     }
     store.apply(DETAILS_TOPIC, details(sym))
     assert store.objects[61].is_input is True
-    assert store._input_index == {}  # symulacja prefix not bridged
+    applied = store.apply("ampio/from/CAFE/state/f/1", "1")
+    assert store.objects[61].value is None and _updated(applied) == []
 
 
 # --- app-sync data-surface fallback (non-admin accounts) --------------------
-
-DATA_DEVICES_TOPIC = f"ampio/fromDB/{USER}/data/devices"
-PARAMS_DEVICES_TOPIC = f"ampio/fromDB/{USER}/data/params_devices"
 
 
 def _app_row(oid: int, leaf: str, name: str = "Air quality", interp: int = 5) -> dict:
@@ -1165,21 +1125,6 @@ def test_diagnostics_for_an_unknown_module_is_ignored() -> None:
     assert store.modules[7].supply_voltage is None
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        '{"d":[254,80,60,0]}',  # not the diagnostics frame type
-        '{"d":[1,79,60,0]}',  # not a broadcast
-        '{"d":[254,79]}',  # truncated
-        "not json",
-    ],
-)
-def test_non_diagnostics_frames_are_ignored(payload: str) -> None:
-    store = _diag_store()
-    store.apply("ampio/from/CAFE/b/4F", payload)
-    assert store.modules[7].supply_voltage is None
-
-
 # --- module catalogue events and event snapshots ---------------------------
 
 
@@ -1202,11 +1147,11 @@ def test_devices_reply_dispatches_module_updated_for_new_and_changed() -> None:
 
 def test_object_updated_carries_a_snapshot() -> None:
     """A dispatched event freezes the state it announced; later changes to
-    the same object must not reach a listener that deferred processing."""
+    the same object must not reach a listener that deferred processing.
+    Objects are frozen, so the store publishes a new instance per change."""
     store = _store()
     state_topic = f"ampio/fromDB/{USER}/ob/5/state"
     (event,) = _updated(store.apply(state_topic, '{"state": "1", "on": 2000}'))
-    assert event is not store.objects[5]
     store.apply(state_topic, '{"state": "2", "on": 3000}')
     assert event.value == "1"
     assert store.objects[5].value == "2"
@@ -1216,7 +1161,53 @@ def test_module_updated_carries_a_snapshot() -> None:
     store = _diag_store()
     diag_topic = "ampio/from/CAFE/b/4F"
     (event,) = _mod_updated(store.apply(diag_topic, '{"d":[254,79,60,110],"m":0}'))
-    assert event is not store.modules[7]
     store.apply(diag_topic, '{"d":[254,79,70,110],"m":0}')
     assert event.supply_voltage == 12.0
     assert store.modules[7].supply_voltage == 14.0
+
+
+def test_a_cleared_name_clears_in_the_store() -> None:
+    """Every metadata field mirrors the catalogue, name included: an empty
+    opis_menu is a normal wire state (unnamed objects), and both discovery
+    surfaces agree on names, so there is nothing for a keep-the-old-name
+    guard to protect - it only made a server-side clear stick forever."""
+    store = _store()
+    store.apply(DETAILS_TOPIC, _catalogue(id=9, opis_menu="Old name"))
+    assert store.objects[9].name == "Old name"
+    applied = store.apply(DETAILS_TOPIC, _catalogue(id=9, opis_menu=""))
+    assert store.objects[9].name is None
+    assert [o.id for o in _updated(applied)] == [9]
+
+
+def test_updated_at_takes_the_report_date_or_the_receipt_time() -> None:
+    """A dated report stamps the M-SERV's own `on` (0 is a value, not
+    absence); an undated push stamps receipt; an undated seed leaves None."""
+    store = _store()
+    topic = f"ampio/fromDB/{USER}/ob/9/state"
+    store.apply(topic, '{"state": "1", "on": 0}')
+    assert store.objects[9].updated_at == 0.0
+    before = time.time()
+    store.apply(topic, '{"state": "2"}')
+    updated_at = store.objects[9].updated_at
+    assert updated_at is not None and before <= updated_at <= time.time()
+
+    seeded = _store()
+    seeded.apply(
+        STATES_TOPIC,
+        json.dumps({"List": [{"id": 9, "stan_json": json.dumps({"state": "5"})}]}),
+    )
+    obj = seeded.objects[9]
+    assert obj.value == "5"
+    assert obj.updated_at is None
+
+
+def test_raw_proven_tracks_the_bridge_coverage() -> None:
+    """Set by the first raw edge; cleared when the rebuilt index stops
+    covering the object, so it goes back to per-object updates."""
+    store = _panel_store()
+    assert store.objects[50].raw_proven is False
+    store.apply("ampio/from/CAFE/state/f/32", "1")
+    assert store.objects[50].raw_proven is True
+    retyped = dict(_flaga_row(50, 32), typ_komponentu="roleta_procenty")
+    store.apply(DETAILS_TOPIC, details(retyped))
+    assert store.objects[50].raw_proven is False

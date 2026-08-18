@@ -300,3 +300,17 @@ async def test_fetch_rooms_wraps_publish_failure(
     with pytest.raises(AmpioConnectionError) as excinfo:
         await client.fetch_rooms(timeout=1.0)
     assert isinstance(excinfo.value.__cause__, aiomqtt.MqttError)
+
+
+async def test_fetch_timeout_bounds_the_publish_leg(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """A broker slow to PUBACK must not stretch the fetch beyond its
+    budget: the publishes sit inside the timeout window, so the two
+    stalled requests alone (0.4 s here) cannot precede the reply wait."""
+    client, broker = connected
+    broker.publish_delay = 0.2
+    start = asyncio.get_running_loop().time()
+    with pytest.raises(AmpioTimeoutError):
+        await client.fetch_rooms(timeout=0.1)
+    assert asyncio.get_running_loop().time() - start < 0.35

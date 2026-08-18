@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 from .classification import (
+    INPUT_KIND_KEYS,
+    OPEN_SENSOR_KEY_PREFIXES,
+    OUTPUT_KIND_KEYS,
+    SENSOR_KIND_KEYS,
+    THERMOSTAT_KIND_KEYS,
     InputKind,
     ObjectKind,
     OutputKind,
     SensorKind,
     ThermostatKind,
-    classify,
 )
 from .client import AmpioClient
-from .device_types import Capability, module_capabilities, module_model
+from .device_types import Capability
 from .discovery import DiscoveryResult, discover
 from .endpoints import AccessTier
 from .errors import (
@@ -40,6 +44,11 @@ from .models import (
 )
 
 __all__ = [
+    "INPUT_KIND_KEYS",
+    "OPEN_SENSOR_KEY_PREFIXES",
+    "OUTPUT_KIND_KEYS",
+    "SENSOR_KIND_KEYS",
+    "THERMOSTAT_KIND_KEYS",
     "AccessTier",
     "AmpioAuthError",
     "AmpioClient",
@@ -67,10 +76,7 @@ __all__ = [
     "OutputKind",
     "SensorKind",
     "ThermostatKind",
-    "classify",
     "discover",
-    "module_capabilities",
-    "module_model",
 ]
 
-__version__ = "0.20.0"
+__version__ = "0.21.0"

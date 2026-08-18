@@ -56,7 +56,7 @@ carry the API detail.
 - A maintained broker connection with QoS 1 on every leg, capped-backoff
   reconnect, and one typed event stream that includes the terminal
   `AuthFailed` and `ConnectionDied` signals
-  ([`docs/discovery-flow.md`](docs/discovery-flow.md)).
+  ([`docs/events.md`](docs/events.md)).
 - Discovery of the object and module catalogues on either account tier,
   with the detected tier exposed for setup flows
   ([`docs/account-tiers.md`](docs/account-tiers.md)).
@@ -91,8 +91,9 @@ the capability table and the measured latency difference.
 The library is developed and live-tested against an M-SERV self-reporting
 `serverVersion` 1865 (`serverRevision` 409, `mqttVersion` 5.133.11). That
 baseline is the compatibility floor; wire behavior documented in this
-repo is verified against that install unless a tracking issue marks the
-claim open. Older servers are not supported, and
+repo is verified against that install unless marked otherwise in place -
+an open claim carries a tracking-issue link or a caveat naming exactly
+what is unverified. Older servers are not supported, and
 the library logs a warning when the connected server reports a lower or
 missing `serverVersion`. If something misbehaves on an older server,
 upgrade the M-SERV first.

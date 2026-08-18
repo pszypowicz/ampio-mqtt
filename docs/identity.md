@@ -20,13 +20,9 @@ unique _within a single install_ (the user assigns the overrides), not
 globally.
 
 Nothing on the wire enforces that uniqueness, so a misconfigured or
-mid-commissioning install can deliver a catalogue where two modules share
-a `mac`. `AmpioClient.colliding_macs` reports the affected values and a
-warning naming the modules is logged when a collision appears; a consumer
-keying devices on `mac` should skip or disambiguate those modules rather
-than merge them. While a `mac` collides the library routes no raw-channel
-input events or diagnostics broadcasts for it - the sender is unknowable -
-and affected inputs update through the per-object state path instead.
+mid-commissioning install can deliver two modules sharing a `mac`.
+`AmpioClient.colliding_macs` is the signal and its docstring the full
+contract: skip or disambiguate those modules rather than merge them.
 
 ## Objects
 
@@ -47,9 +43,10 @@ the consumer:
 {prefix}_leaf_{leaf_id}
 ```
 
-`prefix` is a per-M-SERV scope, e.g. the server's own CAN mac from
-`AmpioServerInfo.mac` (which every account tier receives). Why `leaf_id`
-rather than the module-mac composite
+`prefix` is a per-M-SERV scope: use `AmpioServerInfo.key`, the canonical
+decimal form of the server's own CAN mac (served on every account tier,
+and guaranteed present once `wait_for_initial_discovery()` returns
+True). Why `leaf_id` rather than the module-mac composite
 (`{prefix}_obj_{module.mac}_{typ_komponentu}_{funkcja}`):
 
 - **Available on both account tiers.** The composite needs `module.mac`,
@@ -77,6 +74,19 @@ tier the module-mac composite above still covers them; on the standard
 tier only the DB `id` is available, with its replacement instability
 accepted and documented.
 
+## Module identity on every tier: `AmpioObject.module_mac`
+
+`leafId` embeds the owning module's override mac as its second segment
+(`0_<macHex>_...`), exposed as `AmpioObject.module_mac`. The embedded
+value equals `AmpioModule.mac` - live-verified across a full catalogue,
+including the M-SERV, whose override (`1`) diverges from its factory
+id - so a consumer can group entities by physical module even on the
+restricted tier, which never receives the module catalogue. An entry
+set up with a standard account and later switched to an administrator
+keeps its entity-to-device mapping and only gains metadata. The parse
+is strict: any shape other than `0_<macHex>_<F2>_<F3>_<F4>` reads as
+None, exactly like the empty `leafId` of system objects and ghost rows.
+
 ## Visibility (`AmpioObject.visible`)
 
 Not every row in `devicesDetails` is meant to be surfaced. The
@@ -97,8 +107,8 @@ visible = not hidden and (bool(leaf_id) or is_system)
   for yet reads as `0`, so `hidden` is False and the `leaf_id` test
   alone decides.
   This is the same gate the M-SERV's Matter bridge
-  uses (`(params & 2**37) && !(params & 16)`); see
-  [`matter-bridge.md`](matter-bridge.md). Bit 37 is a Matter-only opt-in
+  uses (`(params & 2**37) && !(params & 16)`) - see the section on the
+  bit semantics below. Bit 37 is a Matter-only opt-in
   and is deliberately **not** used for filtering, so the library does not
   surface it.
 - **`leaf_id`** - non-empty for every "real" object in the M-SERV's
@@ -115,9 +125,26 @@ Consumers should treat `visible` as the discovery filter. Ghosts that
 slip in look like real entities until the user notices their HA
 counterpart no longer exists in Designer.
 
+## Where the `params` bit semantics come from
+
+The M-SERV ships its own Matter bridge (a matter.js app launched by
+`ampio-server`), and that bridge's production gate is the corroboration
+for the two bits this library reads: it exposes an object only when
+`(params & 2**37) && !(params & 16)` - bit 37 the per-object Matter
+opt-in set in Designer, bit 4 the hidden/stub marker `hidden` /
+`visible` build on. The `leafId` structure `0_<macHex>_<F2>_<F3>_<F4>`
+that `AmpioObject.module_mac` parses is likewise the structure the
+bridge's own classifier reads. The bridge also illustrates why a
+dedicated integration is the right path for sensors rather than
+leaning on it: it types objects through a registry with known gaps (no
+`lin_wej` branch; loudness has no Matter device type at all), keys
+endpoints on the volatile DB `id`, and exposes only the channels
+hand-flagged for Matter - a dozen on the reference install, with
+humidity, pressure, illuminance, and CO2 on zero modules.
+
 How deletion behaves on the wire on the baseline server:
 deleting a **module** hard-removes its row from the `devices` list (the
-library evicts it and fires the module-removal listener), but does not
+library evicts it and dispatches `ModuleRemoved`), but does not
 cascade to its objects. Deleting an **object** in the Ampio app is
 two-stage (it first moves to "Ungrouped", a second delete purges it)
 and soft-deletes on the `config` catalogue: the row stays, `leaf_id`

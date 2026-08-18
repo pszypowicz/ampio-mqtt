@@ -93,36 +93,45 @@ def test_parse_details_params(raw: object, expected: int | None) -> None:
     assert items is not None and items[0].params == expected
 
 
-def test_parse_details_bad_json() -> None:
-    assert parse_details("not json") is None
+@pytest.mark.parametrize(
+    "parser",
+    [
+        parse_details,
+        parse_devices,
+        parse_params_devices,
+        parse_scenes,
+        parse_states_snapshot,
+    ],
+)
+def test_unparseable_payloads_return_none(parser) -> None:
+    assert parser("not json") is None
 
 
-def test_parse_devices_bad_json() -> None:
-    assert parse_devices("not json") is None
-
-
-def test_parse_devices_skips_non_int_id() -> None:
-    payload = json.dumps({"List": [{"id": "x"}, {"id": 5, "typ_urzadzenia": 1}]})
-    modules = parse_devices(payload)
-    assert modules is not None and [m.id for m in modules] == [5]
-
-
-def test_parse_states_snapshot_bad_json() -> None:
-    assert parse_states_snapshot("not json") is None
-
-
-def test_parse_params_devices_skips_non_int_id() -> None:
-    payload = json.dumps({"List": [{"id": "x", "params": 1}, {"id": 7, "params": 17}]})
-    assert parse_params_devices(payload) == {7: 17}
-
-
-def test_parse_scenes_skips_row_without_id() -> None:
-    payload = json.dumps(
-        {"List": [{"id": None, "sceneName": "Bad"}, {"id": 1, "sceneName": "Good"}]}
-    )
-    scenes = parse_scenes(payload)
-    assert scenes is not None
-    assert [(s.id, s.name) for s in scenes] == [(1, "Good")]
+@pytest.mark.parametrize(
+    ("parser", "rows", "surviving_ids"),
+    [
+        (parse_details, [{"id": "x"}, {"id": 5}], lambda r: [i.id for i in r]),
+        (
+            parse_devices,
+            [{"id": "x"}, {"id": 5, "typ_urzadzenia": 1}],
+            lambda r: [m.id for m in r],
+        ),
+        (
+            parse_params_devices,
+            [{"id": "x", "params": 1}, {"id": 5, "params": 17}],
+            lambda r: list(r),
+        ),
+        (
+            parse_scenes,
+            [{"id": None, "sceneName": "Bad"}, {"id": 5, "sceneName": "Good"}],
+            lambda r: [s.id for s in r],
+        ),
+        (parse_states_snapshot, [{"id": "x"}, {"id": 5}], lambda r: [e.id for e in r]),
+    ],
+)
+def test_rows_without_an_int_id_are_skipped(parser, rows, surviving_ids) -> None:
+    result = parser(json.dumps({"List": rows}))
+    assert result is not None and surviving_ids(result) == [5]
 
 
 def test_state_route_non_dict_payload() -> None:
@@ -424,6 +433,9 @@ def test_diagnostics_route_ok() -> None:
         ("ampio/from/zz/b/4F", '{"d": [254, 79, 63, 142]}'),  # non-hex mac
         ("ampio/from/cafe/b/4F", "not json"),  # unparseable frame
         ("ampio/from/cafe/b/4F/extra", '{"d": [254, 79, 63, 142]}'),
+        ("ampio/from/cafe/b/4F", '{"d": [254, 80, 63, 142]}'),  # wrong frame type
+        ("ampio/from/cafe/b/4F", '{"d": [1, 79, 63, 142]}'),  # not a broadcast
+        ("ampio/from/cafe/b/4F", '{"d": [254, 79]}'),  # truncated
     ],
 )
 def test_diagnostics_route_malformed(topic: str, payload: str) -> None:
@@ -439,3 +451,10 @@ def test_endpoint_reply_route_carries_raw_payload() -> None:
 
 def test_route_is_user_scoped_for_endpoint_replies() -> None:
     assert _route("ampio/fromDB/other/config/devicesDetails", "{}") is None
+
+
+def test_diagnostics_three_element_frame_has_no_temperature() -> None:
+    report = _route("ampio/from/cafe/b/4F", '{"d": [254, 79, 61]}')
+    assert isinstance(report, DiagnosticsReport)
+    assert report.diagnostics.supply_voltage == 12.2
+    assert report.diagnostics.temperature is None

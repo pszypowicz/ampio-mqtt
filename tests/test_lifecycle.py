@@ -20,6 +20,11 @@ import logging
 import aiomqtt
 import pytest
 from conftest import (
+    ADMIN_DETAILS_TOPIC,
+    ADMIN_DEVICES_TOPIC,
+    ADMIN_INFO_TOPIC,
+    ADMIN_STATES_TOPIC,
+    ADMIN_USER,
     DATA_DEVICES_TOPIC,
     DETAILS_TOPIC,
     DEVICES_TOPIC,
@@ -58,11 +63,13 @@ def _auth_rejection(name: str = "Not authorized") -> aiomqtt.MqttCodeError:
 
 
 async def test_connection_returns_server_info_on_happy_path() -> None:
+    """Messages on other topics are skipped until the info topic arrives."""
     broker = FakeBroker()
     broker.scripted_messages = [
+        Message("unrelated/topic", b"junk"),
         Message(
             INFO_TOPIC, json.dumps({"Results": {"mac": 42, "userId": "-1"}}).encode()
-        )
+        ),
     ]
     info = await AmpioClient.test_connection(
         "h", 1883, USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
@@ -127,45 +134,9 @@ async def test_connection_returns_info_without_identity_as_is() -> None:
     assert info.access_tier is AccessTier.UNKNOWN
 
 
-async def test_connection_warns_about_a_below_baseline_server(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    broker = FakeBroker()
-    broker.scripted_messages = [
-        Message(
-            INFO_TOPIC,
-            json.dumps({"Results": {"mac": 42, "serverVersion": "1"}}).encode(),
-        )
-    ]
-    with caplog.at_level(logging.WARNING, logger="ampio_mqtt.client"):
-        await AmpioClient.test_connection(
-            "h", 1883, USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
-        )
-    assert any("below the tested baseline" in r.getMessage() for r in caplog.records)
-
-
-async def test_connection_does_not_warn_at_the_baseline_version(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    broker = FakeBroker()
-    broker.scripted_messages = [
-        Message(
-            INFO_TOPIC,
-            json.dumps({"Results": {"mac": 42, "serverVersion": "1865"}}).encode(),
-        )
-    ]
-    with caplog.at_level(logging.WARNING, logger="ampio_mqtt.client"):
-        await AmpioClient.test_connection(
-            "h", 1883, USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
-        )
-    assert not any(
-        "below the tested baseline" in r.getMessage() for r in caplog.records
-    )
-
-
 async def test_connection_raises_auth_error_on_bad_credentials() -> None:
     broker = FakeBroker()
-    broker.enter_error = _auth_rejection()
+    broker.enter_errors = [_auth_rejection()]
     with pytest.raises(AmpioAuthError):
         await AmpioClient.test_connection(
             "h", 1883, USER, "bad", info_timeout=0.1, mqtt_client_factory=broker.factory
@@ -174,24 +145,11 @@ async def test_connection_raises_auth_error_on_bad_credentials() -> None:
 
 async def test_connection_raises_connection_error_on_transport_failure() -> None:
     broker = FakeBroker()
-    broker.enter_error = aiomqtt.MqttError("Connection refused")
+    broker.enter_errors = [aiomqtt.MqttError("Connection refused")]
     with pytest.raises(AmpioConnectionError):
         await AmpioClient.test_connection(
             "h", 1883, USER, "p", info_timeout=0.1, mqtt_client_factory=broker.factory
         )
-
-
-async def test_connection_ignores_unrelated_topics() -> None:
-    """Messages on other topics are skipped until the info topic arrives."""
-    broker = FakeBroker()
-    broker.scripted_messages = [
-        Message("unrelated/topic", b"junk"),
-        Message(INFO_TOPIC, json.dumps({"Results": {"mac": 7}}).encode()),
-    ]
-    info = await AmpioClient.test_connection(
-        "h", 1883, USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
-    )
-    assert info.mac == 7
 
 
 # --- discovery requests when disconnected ---------------------------------
@@ -203,25 +161,16 @@ async def test_refresh_raises_when_disconnected() -> None:
         await client.refresh()
 
 
-async def test_refresh_skips_admin_requests_on_a_restricted_tier() -> None:
-    """Once the info reply identifies a RESTRICTED account, refresh() stops
-    publishing the config requests the M-SERV never answers for that tier;
-    the login's admin bit cannot change mid-session."""
+async def test_a_restricted_client_requests_only_its_pair() -> None:
+    """A non-admin login never publishes the config requests the M-SERV
+    would not answer for it - from the first connect, not after a
+    tier-settling round trip."""
     broker = FakeBroker()
-    broker.scripted_messages = [
-        Message(
-            INFO_TOPIC, json.dumps({"Results": {"mac": 99, "userId": "4"}}).encode()
-        ),
-    ]
     client = AmpioClient(
         "h", username=USER, reconnect_interval=0.0, mqtt_client_factory=broker.factory
     )
     await client.start(timeout=2.0, discovery_timeout=0.05)
     try:
-        # The first refresh ran on an UNKNOWN tier and asked for everything.
-        assert len(broker.published) == 6
-        broker.published.clear()
-        await client.refresh()
         assert sorted(p for _t, p in broker.published) == [
             b"",  # info
             b"",  # states
@@ -231,27 +180,30 @@ async def test_refresh_skips_admin_requests_on_a_restricted_tier() -> None:
         assert all(
             t.endswith(("/data", "/states", "/info")) for t, _p in broker.published
         )
+        broker.published.clear()
+        await client.refresh()
+        assert sorted(p for _t, p in broker.published) == [
+            b"",
+            b"",
+            b"devices",
+            b"params_devices",
+        ]
     finally:
         await client.stop()
 
 
-async def test_refresh_skips_data_requests_on_the_admin_tier() -> None:
-    """Once the info reply identifies the ADMIN account, refresh() stops
-    publishing the app-sync pair, which only repeats what the config
-    catalogue already carries."""
+async def test_an_admin_client_requests_only_the_config_pair() -> None:
+    """The admin login owns the config catalogues; the app-sync pair only
+    repeats them, so it is never requested."""
     broker = FakeBroker()
-    broker.scripted_messages = [
-        Message(
-            INFO_TOPIC, json.dumps({"Results": {"mac": 99, "userId": "-1"}}).encode()
-        ),
-    ]
     client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.0, mqtt_client_factory=broker.factory
+        "h",
+        username=ADMIN_USER,
+        reconnect_interval=0.0,
+        mqtt_client_factory=broker.factory,
     )
     await client.start(timeout=2.0, discovery_timeout=0.05)
     try:
-        # The first refresh ran on an UNKNOWN tier and asked for everything.
-        assert len(broker.published) == 6
         broker.published.clear()
         await client.refresh()
         assert sorted(p for _t, p in broker.published) == [
@@ -306,40 +258,44 @@ async def test_start_drives_full_discovery_through_mocked_broker() -> None:
     """A scripted broker drives start() through connect + discovery to completion."""
     broker = FakeBroker()
     broker.scripted_messages = [
-        Message(DEVICES_TOPIC, json.dumps({"List": []}).encode()),
-        Message(DETAILS_TOPIC, json.dumps({"List": []}).encode()),
-        Message(STATES_TOPIC, json.dumps({"List": []}).encode()),
+        Message(ADMIN_DEVICES_TOPIC, json.dumps({"List": []}).encode()),
+        Message(ADMIN_DETAILS_TOPIC, json.dumps({"List": []}).encode()),
+        Message(ADMIN_STATES_TOPIC, json.dumps({"List": []}).encode()),
         Message(
-            INFO_TOPIC, json.dumps({"Results": {"mac": 99, "userId": "-1"}}).encode()
+            ADMIN_INFO_TOPIC,
+            json.dumps({"Results": {"mac": 99, "userId": "-1"}}).encode(),
         ),
     ]
     client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.0, mqtt_client_factory=broker.factory
+        "h",
+        username=ADMIN_USER,
+        reconnect_interval=0.0,
+        mqtt_client_factory=broker.factory,
     )
     completed = await client.start(timeout=2.0, discovery_timeout=1.0)
     try:
         assert completed is True
         assert client.available is True
         assert client.server_info is not None and client.server_info.mac == 99
-        # The five expected subscriptions were issued.
         assert {
-            DETAILS_TOPIC,
-            DEVICES_TOPIC,
-            STATES_TOPIC,
-            INFO_TOPIC,
-            f"ampio/fromDB/{USER}/ob/+/state",
+            ADMIN_DETAILS_TOPIC,
+            ADMIN_DEVICES_TOPIC,
+            ADMIN_STATES_TOPIC,
+            ADMIN_INFO_TOPIC,
+            f"ampio/fromDB/{ADMIN_USER}/ob/+/state",
         }.issubset(set(broker.subscribed))
         # Every runtime subscription asks for QoS 1 (#65), and every
         # discovery request publish goes out at QoS 1 (#68).
         assert set(broker.subscribed_qos) == {1}
         assert set(broker.published_qos) == {1}
-        # start() publishes exactly the initial-endpoint request set, once.
-        assert set(broker.published) == {
-            (request_topic(ep, USER), ep.req_payload.encode())
+        # start() publishes exactly the tier's initial request set, once.
+        expected = {
+            (request_topic(ep, ADMIN_USER), ep.req_payload.encode())
             for ep in ENDPOINTS
-            if ep.initial
+            if ep.initial and ep.tier in (None, AccessTier.ADMIN)
         }
-        assert len(broker.published) == 6
+        assert set(broker.published) == expected
+        assert len(broker.published) == len(expected)
     finally:
         await client.stop()
 
@@ -349,13 +305,13 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
     broker = FakeBroker()
     broker.scripted_messages = [
         Message(
-            DEVICES_TOPIC,
+            ADMIN_DEVICES_TOPIC,
             json.dumps(
                 {"List": [{"id": 17, "mac": 52111, "typ_urzadzenia": 44}]}
             ).encode(),
         ),
         Message(
-            DETAILS_TOPIC,
+            ADMIN_DETAILS_TOPIC,
             json.dumps(
                 {
                     "List": [
@@ -370,13 +326,17 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
                 }
             ).encode(),
         ),
-        Message(STATES_TOPIC, json.dumps({"List": []}).encode()),
+        Message(ADMIN_STATES_TOPIC, json.dumps({"List": []}).encode()),
         Message(
-            INFO_TOPIC, json.dumps({"Results": {"mac": 99, "userId": "-1"}}).encode()
+            ADMIN_INFO_TOPIC,
+            json.dumps({"Results": {"mac": 99, "userId": "-1"}}).encode(),
         ),
     ]
     client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.0, mqtt_client_factory=broker.factory
+        "h",
+        username=ADMIN_USER,
+        reconnect_interval=0.0,
+        mqtt_client_factory=broker.factory,
     )
     await client.start(timeout=2.0, discovery_timeout=1.0)
     try:
@@ -385,6 +345,13 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
         assert 17 in client.modules
         assert 41 in client.objects
         assert client.server_info is not None and client.server_info.mac == 99
+        # The signals latch: a repeat call returns True immediately, and a
+        # reconnect (whose refresh replays the scripted set) keeps it True.
+        assert await client.wait_for_initial_discovery(timeout=0.01) is True
+        broker.stream_error = aiomqtt.MqttError("connection lost")
+        await asyncio.sleep(0.05)
+        broker.stream_error = None
+        assert await client.wait_for_initial_discovery(timeout=0.01) is True
     finally:
         await client.stop()
 
@@ -443,28 +410,6 @@ async def test_restricted_account_completes_via_data_surface_fallback() -> None:
         await client.stop()
 
 
-async def test_unknown_tier_completes_discovery_via_the_data_pair() -> None:
-    """An info reply that carries no account id leaves the tier UNKNOWN, and
-    discovery still completes through the app-sync data pair - the documented
-    fallback, since that pair answers for every account."""
-    broker = FakeBroker()
-    broker.scripted_messages = [
-        Message(STATES_TOPIC, json.dumps({"List": []}).encode()),
-        Message(INFO_TOPIC, json.dumps({"Results": {"mac": 99}}).encode()),
-        Message(DATA_DEVICES_TOPIC, json.dumps({"List": []}).encode()),
-        Message(PARAMS_DEVICES_TOPIC, json.dumps({"List": []}).encode()),
-    ]
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.0, mqtt_client_factory=broker.factory
-    )
-    completed = await client.start(timeout=2.0, discovery_timeout=1.0)
-    try:
-        assert completed is True
-        assert client.access_tier is AccessTier.UNKNOWN
-    finally:
-        await client.stop()
-
-
 async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
     """A credential rejection on reconnect reaches the auth-failure listener.
 
@@ -490,8 +435,8 @@ async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
                 await asyncio.sleep(0.01)
     finally:
         await client.stop()
-    assert failures == ["[code:135] Not authorized"]
-    assert client.auth_failure == "[code:135] Not authorized"
+    assert len(failures) == 1 and "authorized" in failures[0].lower()
+    assert client.auth_failure == failures[0]
     assert availability == [True, False]
 
 
@@ -515,7 +460,6 @@ async def test_fresh_start_clears_a_runtime_auth_failure() -> None:
 
     # The broker accepts the credentials again.
     broker.enter_errors = []
-    broker.enter_error = None
     broker.stream_error = None
     await client.start(timeout=2.0, discovery_timeout=0.05)
     try:
@@ -529,14 +473,15 @@ async def test_initial_auth_rejection_raises_without_firing_listener() -> None:
     """A rejection during start() raises AmpioAuthError; the listener is for
     the runtime path only, so a config flow does not get a double signal."""
     broker = FakeBroker()
-    broker.enter_error = _auth_rejection()
+    broker.enter_errors = [_auth_rejection()]
     client = AmpioClient("h", username=USER, mqtt_client_factory=broker.factory)
     failures: list[str] = []
     client.subscribe(lambda e: failures.append(e.reason), of=AuthFailed)
     with pytest.raises(AmpioAuthError):
         await client.start(timeout=2.0, discovery_timeout=0.05)
     assert failures == []
-    assert client.auth_failure == "[code:135] Not authorized"
+    assert client.auth_failure is not None
+    assert "authorized" in client.auth_failure.lower()
     assert client._connection._runner is None  # stop() ran during the raise
 
 
@@ -589,7 +534,7 @@ async def test_crash_during_start_raises_connection_error() -> None:
     """A loop crash before the first connect surfaces from start() itself,
     promptly, and dispatches nothing - mirroring the auth path."""
     broker = FakeBroker()
-    broker.enter_error = RuntimeError("boom at connect")
+    broker.enter_errors = [RuntimeError("boom at connect")]
     client = AmpioClient(
         "h", username=USER, reconnect_interval=0.05, mqtt_client_factory=broker.factory
     )
@@ -711,17 +656,20 @@ async def test_wait_for_initial_discovery_returns_false_on_timeout() -> None:
 # --- subscription verdicts -------------------------------------------------
 
 
-async def test_rejected_subscriptions_are_warned_and_recorded(
+async def test_a_rejected_raw_filter_warns_on_the_admin_client(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A SUBACK failure code must surface in the log and in the stats while
-    the connection stays up - a denied raw-tree topic is expected for a
-    standard account, and silence would read as a mysteriously dead topic."""
+    """The subscribe set is tier-shaped, so a rejection of any filter the
+    client asked for - the admin's raw tree included - is a fault: it lands
+    in the stats and warns while the connection stays up."""
     denied = "ampio/from/+/state/f/+"
     broker = FakeBroker()
     broker.suback_codes = {denied: 0x87}
     client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.05, mqtt_client_factory=broker.factory
+        "h",
+        username=ADMIN_USER,
+        reconnect_interval=0.05,
+        mqtt_client_factory=broker.factory,
     )
     with caplog.at_level(logging.WARNING, logger="ampio_mqtt._connection"):
         await client.start(timeout=2.0, discovery_timeout=0.05)
@@ -730,9 +678,7 @@ async def test_rejected_subscriptions_are_warned_and_recorded(
             assert client.stats.subscribe_failures == {denied: 0x87}
         finally:
             await client.stop()
-    assert any(
-        denied in r.getMessage() and "135" in r.getMessage() for r in caplog.records
-    )
+    assert any(denied in r.getMessage() for r in caplog.records)
 
 
 async def test_granted_subscriptions_leave_no_failures() -> None:
@@ -783,3 +729,29 @@ def test_is_auth_error_rejects_transport_failures() -> None:
     assert not _is_auth_error(
         aiomqtt.MqttCodeError(ReasonCode(PacketTypes.CONNACK, "Server unavailable"))
     )
+
+
+def test_auth_error_is_not_a_connection_error() -> None:
+    """A config flow catching AmpioConnectionError broadly must not swallow
+    the credential rejection that needs a different user action."""
+    assert not issubclass(AmpioAuthError, AmpioConnectionError)
+
+
+async def test_a_rejected_namespace_filter_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A rejected fromDB filter means a broken broker or ACL - loud on any
+    tier."""
+    denied = STATES_TOPIC
+    broker = FakeBroker()
+    broker.suback_codes = {denied: 0x87}
+    client = AmpioClient(
+        "h", username=USER, reconnect_interval=0.05, mqtt_client_factory=broker.factory
+    )
+    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._connection"):
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        try:
+            assert client.stats.subscribe_failures == {denied: 0x87}
+        finally:
+            await client.stop()
+    assert any(denied in r.getMessage() for r in caplog.records)

@@ -9,7 +9,20 @@ import json
 
 import aiomqtt
 import pytest
-from conftest import USER, FakeBroker, details, devices, feed, info
+from conftest import (
+    DATA_DEVICES_TOPIC,
+    DETAILS_TOPIC,
+    DEVICES_TOPIC,
+    INFO_TOPIC,
+    PARAMS_DEVICES_TOPIC,
+    STATES_TOPIC,
+    USER,
+    FakeBroker,
+    details,
+    devices,
+    feed,
+    info,
+)
 
 from ampio_mqtt import (
     AccessTier,
@@ -236,6 +249,19 @@ def test_last_payloads_retained_for_each_handler() -> None:
     assert client.last_payloads["details"] == details_payload
     assert client.last_payloads["info"] == info_payload
 
+    states_payload = devices({"id": 5, "stan_json": '{"state":"1"}'})
+    data_devices_payload = details({"id": 5, "typ_komponentu": "temp"})
+    params_payload = devices({"id": 5, "params": 17})
+    scenes_payload = devices({"id": 3, "sceneName": "Evening"})
+    feed(client, f"ampio/fromDB/{USER}/data/states", states_payload)
+    feed(client, f"ampio/fromDB/{USER}/data/devices", data_devices_payload)
+    feed(client, f"ampio/fromDB/{USER}/data/params_devices", params_payload)
+    feed(client, f"ampio/fromDB/{USER}/data/scenes", scenes_payload)
+    assert client.last_payloads["states"] == states_payload
+    assert client.last_payloads["data_devices"] == data_devices_payload
+    assert client.last_payloads["params_devices"] == params_payload
+    assert client.last_payloads["scenes"] == scenes_payload
+
 
 def test_groups_payloads_are_retained() -> None:
     """`data/groups` and `data/group_devices` populate the last_payloads map."""
@@ -248,9 +274,11 @@ def test_groups_payloads_are_retained() -> None:
     assert client.last_payloads["group_devices"] == group_devices.decode()
 
 
-def test_access_tier_is_unknown_before_any_info_reply() -> None:
-    """The userId-to-tier mapping itself is covered in test_protocol."""
-    assert _client().access_tier is AccessTier.UNKNOWN
+def test_access_tier_is_the_authenticated_username() -> None:
+    """The broker authenticates the login at CONNACK and only the reserved
+    `admin` name is the administrator, so the tier is a constructor fact."""
+    assert _client().access_tier is AccessTier.RESTRICTED
+    assert AmpioClient("host", username="admin").access_tier is AccessTier.ADMIN
 
 
 def test_colliding_macs_surface_through_the_client() -> None:
@@ -308,15 +336,33 @@ async def test_reconnect_count_increments_on_reconnect() -> None:
     assert client.stats.last_error == "simulated drop"
 
 
-async def test_object_updated_events_are_snapshots(
+async def test_discovery_stays_incomplete_without_server_identity(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
-    """A deferred listener must see the state the event announced, not
-    whatever the object holds by the time it looks."""
+    """An info reply without a mac must not complete discovery: a True
+    wait promises the identity a consumer scopes its registry by (#78)."""
     client, _broker = connected
-    events: list[ObjectUpdated] = []
-    client.subscribe(events.append, of=ObjectUpdated)
-    feed(client, f"ampio/fromDB/{USER}/ob/5/state", b'{"state": "1", "on": 2000}')
-    feed(client, f"ampio/fromDB/{USER}/ob/5/state", b'{"state": "2", "on": 3000}')
-    assert [e.object.value for e in events] == ["1", "2"]
-    assert events[0].object is not client.objects[5]
+    feed(client, STATES_TOPIC, devices())
+    feed(client, INFO_TOPIC, info())  # parses, but carries no identity
+    feed(client, DATA_DEVICES_TOPIC, details())
+    feed(client, PARAMS_DEVICES_TOPIC, devices())
+    assert await client.wait_for_initial_discovery(timeout=0.05) is False
+    assert client.server_info is not None
+    assert client.server_info.key is None
+
+    feed(client, INFO_TOPIC, info(mac=555, userId=-1, serverVersion="1865"))
+    feed(client, DETAILS_TOPIC, details())
+    feed(client, DEVICES_TOPIC, devices())
+    assert await client.wait_for_initial_discovery(timeout=1.0) is True
+    assert client.server_info.key == "555"
+
+
+@pytest.mark.parametrize("username", [None, ""])
+async def test_username_is_required(username: str | None) -> None:
+    """Every topic is namespaced by account; without one the client would
+    subscribe to `ampio/fromDB//...` - a namespace no M-SERV serves - and
+    fail minutes later as discovery that never completes."""
+    with pytest.raises(ValueError):
+        AmpioClient("host", username=username)
+    with pytest.raises(ValueError):
+        await AmpioClient.test_connection("host", 1883, username, None)

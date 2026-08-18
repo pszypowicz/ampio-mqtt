@@ -8,14 +8,29 @@ The M-SERV publishes the same data twice:
   (`{state, desc, on}`, `desc` optional) and the one the library's
   per-object dispatcher consumes.
 - On the **raw channel tree** `ampio/from/<MAC>/state/<prefix>/<channel>`,
-  global, NOT user-scoped. This is the decoded-CAN form: plain-text
-  payloads (`"0"`, `"1"`, ...) keyed by the module's effective bus MAC
-  and a per-prefix channel index.
+  global, NOT user-scoped, and **retained**: the broker holds every
+  channel's last value (edges republish retained), so a subscriber
+  receives the complete current input state of the install the moment it
+  subscribes. This is the decoded-CAN form: plain-text payloads
+  (`"0"`, `"1"`, ...) keyed by the module's effective bus MAC and a
+  per-prefix channel index.
 
 The raw form arrives **first** for input changes (the M-SERV decodes
 CAN and publishes the raw value before re-encoding the per-object
 record). For an input platform that wants minimum latency on a
 button-press or flag toggle, the raw form is the right source.
+
+Once an object has produced a raw message it is **raw-owned**
+(`AmpioObject.raw_proven`): the slower per-object echo is ignored
+whole, and the bulk `states` snapshot skips the object - its resync is
+the retained raw table itself, re-delivered at every reconnect's
+subscribe and routed through the index that persists across sessions.
+On the first connect the retained tables arrive before the catalogues
+can build that index, so initial values come from the snapshot and raw
+ownership begins with the object's first raw message. An input whose
+module publishes no raw table (the M-SERV's own virtual objects) never
+becomes raw-owned and lives on the per-object path with snapshot
+resync, unchanged.
 
 The raw tree is served only to **administrator** accounts: the broker
 ACL delivers nothing on `ampio/from/#` to a standard account, retained
@@ -27,7 +42,9 @@ an administrator account is laid out.
 
 Authoritative source:
 [`src/ampio_mqtt/endpoints.py`](../src/ampio_mqtt/endpoints.py)
-(`RAW_INPUT_WILDCARDS`),
+(`RAW_INPUT_WILDCARDS` for the two input filters, plus
+`RAW_DIAGNOSTICS_WILDCARD` and `RAW_EVENT_WILDCARD` - together the four
+raw-tree subscriptions),
 [`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py)
 (the `channel_prefix` field on the `TYPE_PROFILES` rows), and the
 router in [`src/ampio_mqtt/_protocol.py`](../src/ampio_mqtt/_protocol.py)
@@ -47,11 +64,13 @@ listeners see the same push as for any other update. The event
 wildcard feeds `BusEvent` subscribers - a different surface with its
 own semantics, described in [`protocol.md`](protocol.md).
 
-The whole tree is administrator-only, and the broker says so
-explicitly: on a standard account all four filters are rejected in the
-SUBACK with reason code 128 (the client logs the
-rejections and records them in `ConnectionStats.subscribe_failures`,
-then degrades to the per-object path as designed).
+The whole tree is administrator-only (the broker rejects the filters
+for any other account in the SUBACK with reason code 128), and only
+the `admin` login subscribes to it - a standard client never asks, so
+its connect carries no rejections at all. A rejection the admin client
+does receive lands in `ConnectionStats.subscribe_failures` and warns:
+with a tier-shaped subscribe set it can only mean a broken broker or
+ACL.
 
 ## Module diagnostics (`b/4F`)
 

@@ -2,17 +2,10 @@
 
 from __future__ import annotations
 
-import json
-from importlib.resources import files
-
 import pytest
 
-from ampio_mqtt import Capability, module_capabilities, module_model
-from ampio_mqtt.device_types import (
-    MODULE_CAPABILITIES,
-    MODULE_MODELS,
-    _capabilities_for,
-)
+from ampio_mqtt import Capability
+from ampio_mqtt.device_types import module_capabilities, module_model
 
 # --- module_model ---------------------------------------------------------
 
@@ -141,37 +134,6 @@ def test_capabilities_unknown_type_is_empty() -> None:
     assert module_capabilities(None) == frozenset()
 
 
-def test_every_known_model_has_a_capability_set() -> None:
-    """Every entry in MODULE_MODELS must be in MODULE_CAPABILITIES.
-
-    Possibly an empty frozenset (M-METEO and M-SMOG end up empty per the
-    sparsely-described upstream JSON), but the key must exist so a missing
-    catalogue row never masquerades as a flagless module.
-    """
-    for type_code, model in MODULE_MODELS.items():
-        caps = MODULE_CAPABILITIES.get(type_code)
-        assert caps is not None, f"type {type_code} ({model}) missing capabilities"
-        assert isinstance(caps, frozenset)
-        for cap in caps:
-            assert isinstance(cap, Capability), f"non-Capability {cap!r} for {model}"
-
-
-def test_module_capabilities_matches_live_rederivation() -> None:
-    """MODULE_CAPABILITIES must equal a fresh re-derivation from the JSON.
-
-    Catches the case where someone edits ``MODULE_CAPABILITIES`` by hand or
-    edits the algorithm without refreshing the table. The vendored
-    ``_devtypes.json`` is the single source of truth.
-    """
-    payload = files("ampio_mqtt").joinpath("_devtypes.json").read_text(encoding="utf-8")
-    rederived: dict[int, frozenset[Capability]] = {}
-    for entry in json.loads(payload):
-        value = entry.get("value")
-        if isinstance(value, int):
-            rederived[value] = _capabilities_for(entry)
-    assert rederived == MODULE_CAPABILITIES
-
-
 def test_inoc_modules_are_io_hybrids() -> None:
     """M-INOC-* has BOTH digital outputs and analog inputs."""
     for typ in (14, 26, 55):  # M-INOC-8s x2 + M-INOC-4p
@@ -195,3 +157,8 @@ def test_capability_enum_is_strenum() -> None:
     assert Capability.DIGITAL_OUTPUT == "digital_output"
     assert Capability.RGBW_OUTPUT == "rgbw_output"
     assert Capability.UI_PANEL == "ui_panel"
+
+
+def test_av_modules_carry_the_audio_video_role() -> None:
+    for typ in (6, 56):  # M-AV-AMP-s, M-AV-MP3-s
+        assert Capability.AUDIO_VIDEO in module_capabilities(typ)

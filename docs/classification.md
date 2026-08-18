@@ -2,12 +2,14 @@
 
 The `devicesDetails` payload returns one row per logical object. The
 library classifies each row into exactly one kind - a `SensorKind`
-(sensor-side platforms), an `InputKind` (binary/boolean platforms), or an
-`OutputKind` (controllable platforms). `classify(typ, interpretacja)`
+(sensor-side platforms), an `InputKind` (binary/boolean platforms), an
+`OutputKind` (controllable platforms), or a `ThermostatKind` (the `reg`
+temperature controllers, climate platform). `classify(typ, interpretacja)`
 returns it, keying on the object type (the wire's `typ_komponentu`)
 and `interpretacja` (a refinement for analog inputs). A component type is
-a measurement, a boolean input, or something controllable, never two, so
-the three are alternatives rather than optional slots on the object.
+a measurement, a boolean input, something controllable, or a thermostat,
+never two, so the four are alternatives rather than optional slots on
+the object.
 
 Authoritative source:
 [`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py)
@@ -15,16 +17,18 @@ Authoritative source:
 
 ## `typ_komponentu` truth table
 
-The Sensor / Input / System columns are one row each in the
-`TYPE_PROFILES` table in `classification.py` (a type's `sensor`/`analog`/`numeric`,
-`input`, and `system` fields) - keep that table in sync when a new type
-is added.
+Each row here is one `TYPE_PROFILES` entry in `classification.py`: its
+`kind` (a fixed kind instance, or the analog/numeric selector for the
+`interpretacja`-keyed families) plus the `system` flag - keep that table
+in sync when a new type is added.
 
 | `typ_komponentu`                              | Sensor? | Input? | System? | Note                                                                                                                                       |
 | --------------------------------------------- | ------- | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `temp`                                        | yes     | no     | no      | Temperature reading, °C.                                                                                                                   |
 | `lin_wej`                                     | yes     | no     | no      | Analog input - kind set by `interpretacja` (see below).                                                                                    |
 | `bit32`                                       | yes     | no     | no      | Generic 32-bit measurement (units unknown).                                                                                                |
+| `bit8`                                        | yes     | no     | no      | Generic 8-bit measurement, same treatment as `bit32`.                                                                                      |
+| `reg`                                         | no      | no     | no      | Temperature controller (`ThermostatKind`, climate platform) - state is the running flag; #73 tracks the rich readback.                     |
 | `flaga`                                       | no      | yes    | no      | Generic boolean flag (logic flag, button-press hold, etc.).                                                                                |
 | `detekcja`                                    | no      | yes    | yes     | Motion-style detection. Visible even without `leafId` (unless hidden).                                                                     |
 | `symulacja`                                   | no      | yes    | yes     | Presence simulation. Visible even without `leafId` (unless hidden). Raw-channel prefix not yet bridged.                                    |
@@ -37,17 +41,21 @@ is added.
 
 Controllable types get an `OutputKind` whose flags say which command
 verbs the object answers, so a consumer picks a platform and feature set
-without its own `typ_komponentu` table. Every output answers `turnOn` /
-`turnOff` / `switch`.
+without its own `typ_komponentu` table. The `switchable` flag covers the
+`turnOn` / `turnOff` / `switch` family: every output answers it except
+`rgbw`, which the M-SERV drives through `setColors` alone. The library's
+`turn_off()` sends `setColors 0/0/0/0` for it, while `turn_on()` and
+`toggle()` raise `ValueError` - turning a color light on means choosing
+a color, which is the consumer's call via `set_color()`.
 
-| `typ_komponentu`  | `OutputKind.key` | Dimmable | Color | Cover | Position | Tilt | Platform shape                    |
-| ----------------- | ---------------- | -------- | ----- | ----- | -------- | ---- | --------------------------------- |
-| `przekaznik`      | `relay`          | no       | no    | no    | no       | no   | switch                            |
-| `led`             | `dimmer`         | yes      | no    | no    | no       | no   | light with brightness             |
-| `rgbw`            | `rgbw`           | no       | yes   | no    | no       | no   | light with RGBW colour            |
-| `roleta`          | `cover`          | no       | no    | yes   | no       | no   | cover, open/close/stop only       |
-| `roleta_procenty` | `cover_position` | no       | no    | yes   | yes      | no   | cover with position               |
-| `roleta_lamelki`  | `cover_tilt`     | no       | no    | yes   | yes      | yes  | cover with position and slat tilt |
+| `typ_komponentu`  | `OutputKind.key` | Dimmable | Color | Cover | Position | Tilt | Switchable | Platform shape                    |
+| ----------------- | ---------------- | -------- | ----- | ----- | -------- | ---- | ---------- | --------------------------------- |
+| `przekaznik`      | `relay`          | no       | no    | no    | no       | no   | yes        | switch                            |
+| `led`             | `dimmer`         | yes      | no    | no    | no       | no   | yes        | light with brightness             |
+| `rgbw`            | `rgbw`           | no       | yes   | no    | no       | no   | no         | light with RGBW colour            |
+| `roleta`          | `cover`          | no       | no    | yes   | no       | no   | yes        | cover, open/close/stop only       |
+| `roleta_procenty` | `cover_position` | no       | no    | yes   | yes      | no   | yes        | cover with position               |
+| `roleta_lamelki`  | `cover_tilt`     | no       | no    | yes   | yes      | yes  | yes        | cover with position and slat tilt |
 
 `roleta_lamelki` is what the Ampio app writes when a cover's type is set
 to "blinds - slats"; the same cover reads back as `roleta_procenty` while
@@ -84,6 +92,21 @@ For a `lin_wej` object the measurement is selected by `interpretacja`
 Unknown values fall through to a generic `analog_<n>` SensorKind with no
 device class, so a future M-SENS variant still surfaces as a sensor.
 
+## The kind-key vocabulary
+
+`SENSOR_KIND_KEYS`, `INPUT_KIND_KEYS`, `OUTPUT_KIND_KEYS`, and
+`THERMOSTAT_KIND_KEYS` export every static `kind.key` the library can
+emit, derived from `TYPE_PROFILES` and the `lin_wej` map at import time
+so they cannot drift. Two key families embed `interpretacja` and stay
+open; `OPEN_SENSOR_KEY_PREFIXES` (`analog_`, `value_`) names them. A
+consumer mapping `kind.key` to its own entity descriptions should assert
+in its CI that every exported key is either mapped or deliberately
+excluded (treating each open prefix as one decision), so a library
+upgrade that adds a kind fails a test instead of silently dropping
+entities - the failure mode every prior Ampio consumer exhibits, from
+the M-SERV's own Matter bridge (unmapped objects return `undefined` and
+vanish) to the config-driven predecessors.
+
 ## What classification keys on (and what it ignores)
 
 Classification uses exactly two wire fields:
@@ -113,7 +136,7 @@ it at all". They compose:
 
 ```python
 should_surface = obj.visible          # classify() always yields a kind
-platform = obj.kind                   # SensorKind | InputKind | OutputKind
+platform = obj.kind    # SensorKind | InputKind | OutputKind | ThermostatKind
 ```
 
 A ghost row (`leaf_id == ""`, not a system object) is still classifiable

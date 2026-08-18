@@ -14,6 +14,130 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.21.0
+
+The M-SERV ignores the whole `turnOn` / `turnOff` / `switch` verb family
+for `rgbw` objects - no effect, no reply, from either state
+(live-verified on the baseline install; every other output type answers
+all three). The library now encodes that fact instead of overpromising
+it away.
+
+### Added
+
+- **`AmpioServerInfo.key`** - the canonical scoping string for
+  per-server registries (the decimal form of `mac`, matching what
+  consumers already derived by hand), and a hardened contract behind
+  it: an info reply without a server mac no longer completes initial
+  discovery, so a True `start()` / `wait_for_initial_discovery()` now
+  guarantees `server_info` is populated with a non-None `mac` and
+  `key`. No baseline server answers without an identity; one that does
+  leaves discovery incomplete with a warning naming why. (#78)
+- **The kind-key vocabulary is exported** - `SENSOR_KIND_KEYS`,
+  `INPUT_KIND_KEYS`, `OUTPUT_KIND_KEYS`, `THERMOSTAT_KIND_KEYS`,
+  derived from the classification tables at import time, plus
+  `OPEN_SENSOR_KEY_PREFIXES` for the two `interpretacja`-embedding
+  families that cannot be enumerated. A consumer CI-asserts every key
+  is mapped or deliberately excluded, so a library upgrade that adds a
+  kind fails a test instead of silently dropping entities. (#83)
+- **`AmpioObject.rgbw` and `AmpioObject.position`** - typed state
+  accessors, so consumers never parse `value` or do bit math. `rgbw`
+  decodes the packed color word (`R | G<<8 | B<<16 | W<<24`,
+  live-verified against the module's raw channel echo; the signed
+  32-bit form the Matter bridge emits decodes identically) and
+  `position` reads the cover travel percent, the counterpart of
+  `tilt_position`. Both are gated on the object's kind - a dimmer's
+  level never masquerades as a color, a relay's state never as a
+  position. (#82)
+- **`AmpioObject.module_mac`** - the owning module's replacement-stable
+  bus mac, parsed from the `leafId` second segment. Identical on both
+  discovery surfaces, so a restricted account - which never receives
+  the module catalogue - can still group entities by physical module,
+  and a later switch to an administrator account only adds metadata.
+  Live-verified: every parseable object in the reference catalogue
+  matches `AmpioModule.mac`, including the M-SERV, whose override
+  diverges from its factory id. Parsed strictly - any unexpected shape
+  reads as None, like the empty `leafId` of system objects. (#77)
+
+### Changed
+
+- **Bridged inputs are raw-owned, and the clock domains are gone.** The
+  raw `f`/`i` tree turned out to be retained: the broker holds every
+  channel's last value and replays the complete input state on each
+  subscribe, making the raw path self-resyncing across reconnects. A
+  raw-proven object now ignores its per-object echo entirely and is
+  skipped by the bulk snapshot; on a first connect the snapshot seeds
+  initial values and raw ownership begins with the first raw message.
+  With the echo-anchoring gone, `AmpioObject.updated_at_clock` is
+  removed: every dated report on the baseline wire carries the
+  M-SERV's own clock, so `updated_at` is simply the report's `on`
+  timestamp, or the receive time for the undated raw tree.
+- **`classify`, `module_model`, and `module_capabilities` left the
+  top-level API.** All three are pre-digested by the models -
+  `obj.kind`, `module.model`, `module.capabilities` - and the kind-key
+  vocabulary exports cover the exhaustiveness-testing case; they stay
+  importable from their submodules.
+- **The account tier is the authenticated username.** The broker
+  verifies the login at CONNACK and the app cannot create another
+  `admin`, so `username == "admin"` decides the tier at construction:
+  `AmpioClient.access_tier` is a constant, `UNKNOWN` leaves the client
+  (it survives only on `AmpioServerInfo.access_tier`, the wire's own
+  confirmation for config flows), the subscription set and discovery
+  requests are tier-shaped from the first connect (four requests either
+  way, no request-everything round), the discovery wait is one gather,
+  and the store's eviction rule reads the username instead of the info
+  reply. A standard client never subscribes to the raw tree, so every
+  SUBACK rejection is a genuine fault again and warns - no rejection
+  reaches a correctly configured install's log on either tier.
+- **A message-processing bug costs one message, not the connection.**
+  The client guards each inbound message: a payload whose processing
+  raises is dropped with a logged traceback (once per topic; repeats at
+  debug) while the connection stays up. Previously any such exception
+  took the terminal `ConnectionDied` path, so a retained poison payload
+  would kill the client seconds after every restart. Bugs in the
+  connection loop itself remain terminal.
+- **The read surface is immutable.** `AmpioObject`, `AmpioModule`,
+  `AmpioScene`, and `AmpioServerInfo` are frozen dataclasses, and
+  `client.objects` / `client.modules` return read-only views (typed
+  `Mapping`). Consumer code can no longer corrupt the store through the
+  documented read API - a deleted entry used to dangle the raw-channel
+  index and kill the connection on the next raw edge - and events carry
+  the same immutable instances, so the snapshot guarantee from 0.20.0
+  holds by construction instead of by per-event copying.
+- **`OutputKind.switchable`** (default `True`, `False` for `rgbw`) says
+  whether an object answers the switch-verb family, so a consumer picks
+  its wiring from the kind instead of discovering a silent no-op.
+- **`turn_on()` and `toggle()` raise `ValueError`** for a known
+  non-switchable output rather than publishing a command the M-SERV
+  silently drops. Turning a color light on means choosing a color, which
+  is the consumer's call via `set_color()`.
+
+### Fixed
+
+- **A fetch's `timeout` bounds the whole call.** `fetch_rooms` /
+  `fetch_scenes` published their requests before starting the timeout
+  window, and each publish awaits its PUBACK under the connection's own
+  5 s deadline - so a broker slow to acknowledge could stretch a
+  `timeout=5.0` rooms fetch to ~15 s. The publishes now sit inside the
+  window, making the documented contract true.
+- **`username` is required.** `AmpioClient` and `test_connection` raise
+  `ValueError` without one instead of silently subscribing to the
+  degenerate `ampio/fromDB//...` namespace no M-SERV serves, where the
+  failure surfaced minutes later as discovery that never completes.
+  Also: a server timestamp of `0` now lands in the server clock domain
+  instead of being restamped with the local clock (`on` is epoch
+  milliseconds; zero is a value, not absence).
+- **A name cleared server-side now clears in the store.** The metadata
+  merge kept an object's old name when a catalogue row arrived without
+  one, so a Designer rename-to-empty stuck forever. Live evidence
+  showed the guard protected nothing: empty names are a normal wire
+  state (unnamed objects), and the two discovery surfaces never
+  disagree on names. `name` now mirrors the catalogue unconditionally,
+  like every other metadata field.
+- **`turn_off()` works on rgbw objects.** A known color output that does
+  not answer `turnOff` is turned off with `setColors 0/0/0/0` - off is
+  unambiguous, so the library routes it. An object whose metadata has
+  not arrived yet still gets the plain verb.
+
 ## 0.20.0
 
 A cleanup release from a third clean-slate review, with every

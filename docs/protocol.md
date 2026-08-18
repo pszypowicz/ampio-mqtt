@@ -7,10 +7,11 @@ The M-SERV speaks two parallel topic trees on the same MQTT broker:
   one of the control surfaces, get a JSON response on the matching
   `fromDB` topic. Per-object live state arrives on `.../ob/<id>/state`.
 - **Raw tree** - `ampio/from/<MAC>/state/...`. Global, not user-scoped,
-  and served only to administrator accounts (the broker ACL returns
-  nothing on it for standard accounts). Carries decoded
-  CAN per-channel state, keyed by the module's effective bus MAC. Used
-  as a low-latency input bridge - see
+  retained (the broker holds every channel's last value and replays it
+  on each subscribe), and served only to administrator accounts (the
+  broker ACL returns nothing on it for standard accounts). Carries
+  decoded CAN per-channel state, keyed by the module's effective bus
+  MAC. Used as a low-latency, self-resyncing input bridge - see
   [`raw-channel-bridge.md`](raw-channel-bridge.md).
 
 All topic helpers live in
@@ -43,6 +44,15 @@ of the account's app permissions). Everything on the
 | (empty)          | `ampio/control/<user>/states` | `ampio/fromDB/<user>/data/states`           | `{List: [{id, stan_json}]}` - bulk snapshot of the account's object states.                                                                                                                                                                                    |
 | (empty)          | `ampio/control/<user>/info`   | `ampio/fromDB/<user>/data/info`             | `{Results: {mac, userId, serverVersion, serverRevision, mqttVersion, local_ip, device_id, ...}}` - server self-report; retained in the account namespace. `userId` is the asking account's id (`-1` for the reserved `admin` login) and drives tier detection. |
 
+Each account namespace also carries a retained
+`ampio/fromDB/<user>/md5/<keyword>` topic per app-sync table (`devices`,
+`params_devices`, `groups`, `group_devices`, `scenes`, `resources`,
+`icons`, `logging`): the MD5 of the exact reply payload the account
+would receive, per-account for the grant-filtered tables. The Designer
+SPA uses these to skip redundant refetches. The library does not: the
+hashes cover neither the `config` catalogues nor `states`, so the
+requests worth saving have no hash - the analysis is recorded in #24.
+
 ## Commands (write)
 
 One topic per account carries every write, as plain text:
@@ -65,9 +75,13 @@ verb, the row says so.
 **Commands are grant-scoped.** The per-user grant bounds writes exactly
 as it bounds reads: a command for an object outside the account's grant
 is dropped with no effect and no reply, while the identical command from
-an administrator succeeds - checked against two non-granted objects
-of different types. The account's namespace likewise carries state only
-for granted objects, including ones it just commanded.
+an administrator succeeds. Checked against non-granted objects of
+multiple component types - most recently `setColors` on an rgbw and
+`setValue` on a dimmer, sent from the standard account while an admin
+session observed both objects stay silent, with a granted-object
+positive control from the same account confirming its command path
+works. The account's namespace likewise carries state only for granted
+objects, including ones it just commanded.
 
 The `ampio/to/<mac>/...` CAN tree is the other write path (documented in
 Ampio's own MQTT API note, with per-channel `cmd` topics and a `raw` hex
@@ -78,9 +92,9 @@ which works on both tiers.
 
 | Verb                               | Args                        | Notes                                                                                                                                                                                                                                                                                                                                                     |
 | ---------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `turnOn`                           | -                           | Full on (255).                                                                                                                                                                                                                                                                                                                                            |
+| `turnOn`                           | -                           | Full on (255). Ignored by `rgbw` objects (no effect, no reply) - see `setColors`.                                                                                                                                                                                                                                                                         |
 | `turnOff`                          | -                           | Off. Ignored by `rgbw` objects (no effect, no reply) - turn those off with `setColors 0/0/0/0`.                                                                                                                                                                                                                                                           |
-| `switch`                           | -                           | Inverts current state.                                                                                                                                                                                                                                                                                                                                    |
+| `switch`                           | -                           | Inverts current state. Ignored by `rgbw` objects (no effect, no reply).                                                                                                                                                                                                                                                                                   |
 | `open`                             | -                           | Cover to 100.                                                                                                                                                                                                                                                                                                                                             |
 | `close`                            | -                           | Cover to 0.                                                                                                                                                                                                                                                                                                                                               |
 | `stop`                             | -                           | Halts a cover on either axis: mid-travel the position stream freezes at the halt point and the commanded target is never reached; a slat rotation is caught mid-turn the same way (slats freeze at an intermediate angle); during the pre-travel slat phase it also cancels the pending move; stationary it is a silent no-op. Exposed as `stop_cover()`. |
@@ -90,13 +104,29 @@ which works on both tiers.
 | `setColor`                         | 24-bit `R \| G<<8 \| B<<16` | Dead on the baseline server: in the spec enum, but a live send to an `rgbw` object had no effect and no reply. Use `setColors`.                                                                                                                                                                                                                           |
 | `setColorW`                        | `<rgb24>/<white>`           | Dead on the baseline server, same observation as `setColor`. Use `setColors`.                                                                                                                                                                                                                                                                             |
 | `setTemperature`                   | `<°C>`                      | Regulator (`reg`) setpoint; echoed as `setTemperature` in the reg state push (see Live state). Absent from the spec enum (Ampio's MQTT API note only), yet works.                                                                                                                                                                                         |
-| `setHeatingMode`                   | mode letter                 | `M` switched a regulator from Schedule to Manual (state push `mode` went `S` -> `M`); sending `S` back was silently ignored, so only `M` is mapped of the claimed `A,S,M,H`.                                                                                                                                                                              |
+| `setHeatingMode`                   | mode letter                 | `M` switched a regulator from Schedule to Manual (state push `mode` went `S` -> `M`); sending `S` back was silently ignored, so only `M` is mapped of the claimed `A,S,M,H`; #73 tracks pinning the full mode vocabulary.                                                                                                                                 |
 | `arm`, `disarm`                    | `<pin>`                     | Flip a `satel_alarm` object's armed state, ~1 s echo; the `satel_` types cover alarm integrations generally (verified on a Jablotron behind an M-CON). Absent from the spec enum, yet works. The paired "alarmed" object also reads 1 while the panel is in its exit-delay `arming` phase - on its own it is not a siren indicator.                       |
 | `setVolume`, `setInput`, `setSeek` | radio module                | In the spec enum. Untestable here - no radio module.                                                                                                                                                                                                                                                                                                      |
 | `setText`                          | `<text>`                    | Sets the `desc` field of the object's state push (`state` unchanged), fanned out to every user namespace.                                                                                                                                                                                                                                                 |
 | `setVirtualTemp`                   | `<°C>`                      | Drives a virtual temperature channel: plain decimal, echoed as the object's state (`21.5`; zero echoes `0.0`).                                                                                                                                                                                                                                            |
 | `setVirtualValue`                  | `<0-255>`                   | Drives a virtual sensor channel, echoed as state. Works from the standard tier on a granted object.                                                                                                                                                                                                                                                       |
 | `setFakeValue`                     | `<0-255>`                   | Undocumented alias of `setVirtualValue`: absent from the spec enum (the server changelog names it), drives the virtual channel identically.                                                                                                                                                                                                               |
+
+**`rgbw` on/off is a consumer-side color replay.** The switch-verb rows
+above mark `rgbw` as ignoring `turnOn` / `turnOff` / `switch`; live
+observation shows how Ampio's own consumers handle that. The Ampio app
+remembers the light's last color client-side and re-sends it via
+`setColors` for "on", with `setColors 0` for "off". The M-SERV's Matter
+bridge does the same server-side: a Matter On/Off from Home Assistant
+surfaces on the bus as `setColors` carrying the bridge's remembered
+color (or `0`), published to the **admin** account's `/api` topic - the
+bridge is an ordinary MQTT client of this same surface, so its writes
+are observable and grant-equivalent to admin. The bridge sends the
+packed form as a signed 32-bit int (negative values), which the M-SERV
+accepts; state echoes report the unsigned form. A consumer wanting "on"
+for an `rgbw` object should follow the same pattern: remember the last
+non-zero state value (it is the packed color, decoded for consumers as
+`AmpioObject.rgbw`) and replay it with `setColors`.
 
 Scenes are driven by their own payloads on the same topic, addressing the
 scene rather than an object:

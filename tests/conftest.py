@@ -20,6 +20,12 @@ import pytest
 from ampio_mqtt import AmpioClient
 
 USER = "u"
+ADMIN_USER = "admin"
+
+ADMIN_DETAILS_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/devicesDetails"
+ADMIN_DEVICES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/devices"
+ADMIN_STATES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/data/states"
+ADMIN_INFO_TOPIC = f"ampio/fromDB/{ADMIN_USER}/data/info"
 
 DETAILS_TOPIC = f"ampio/fromDB/{USER}/config/devicesDetails"
 DEVICES_TOPIC = f"ampio/fromDB/{USER}/config/devices"
@@ -44,18 +50,19 @@ class FakeBroker:
     Pass ``broker.factory`` as ``mqtt_client_factory``; the same instance
     serves every reconnect. Scripted connect outcomes (`enter_errors`) and
     publish outcomes (`publish_errors`) are consumed left to right;
-    `scripted_messages` replay into the stream on every connect, and
-    `deliver` queues into the live session.
+    `scripted_messages` replay into the stream on every connect.
     """
 
     def __init__(self) -> None:
-        self.enter_error: BaseException | None = None
         self.enter_errors: list[BaseException | None] = []
         self.enter_delay: float = 0.0
         # Raised from the message stream once queued messages are consumed,
         # simulating the broker dropping an established connection.
         self.stream_error: BaseException | None = None
         self.publish_errors: list[BaseException | None] = []
+        # Seconds each publish stalls before its PUBACK, simulating a
+        # broker slow to acknowledge.
+        self.publish_delay: float = 0.0
         self.scripted_messages: list[Message] = []
         self.published: list[tuple[str, bytes]] = []
         self.published_qos: list[int] = []
@@ -72,7 +79,7 @@ class FakeBroker:
     async def __aenter__(self) -> Self:
         if self.enter_delay:
             await asyncio.sleep(self.enter_delay)
-        error = self.enter_errors.pop(0) if self.enter_errors else self.enter_error
+        error = self.enter_errors.pop(0) if self.enter_errors else None
         if error is not None:
             raise error
         self._queue = asyncio.Queue()
@@ -93,15 +100,13 @@ class FakeBroker:
         return [self.suback_codes.get(t, 0) for t, _q in entries]
 
     async def publish(self, topic: str, payload: bytes = b"", qos: int = 0) -> None:
+        if self.publish_delay:
+            await asyncio.sleep(self.publish_delay)
         error = self.publish_errors.pop(0) if self.publish_errors else None
         if error is not None:
             raise error
         self.published.append((topic, payload))
         self.published_qos.append(qos)
-
-    def deliver(self, topic: str, payload: bytes) -> None:
-        """Queue a message for the running session's stream."""
-        self._queue.put_nowait(Message(topic, payload))
 
     @property
     def messages(self) -> Self:

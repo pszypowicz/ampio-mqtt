@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
-from typing import Literal
 
 from .classification import (
     InputKind,
@@ -18,15 +18,27 @@ from .device_types import Capability
 from .endpoints import AccessTier
 
 # Bit flags inside the `params` integer (`obiekty.params`); the semantics
-# match the M-SERV's own Matter bridge (docs/matter-bridge.md). Bit 4 is the
+# match the M-SERV's own Matter bridge (docs/identity.md). Bit 4 is the
 # hidden/stub marker (see `AmpioObject.hidden`); bit 37 is the per-object
 # Matter opt-in, not a visibility signal, and nothing here reads it.
 _HIDDEN_FLAG = 1 << 4
 
+# The `leafId` shape: `0_<macHex>_<F2>_<F3>_<F4>`, the same structure the
+# M-SERV's own Matter bridge parses (docs/identity.md). Only the mac
+# segment is extracted; the F segments' meaning stays opaque. Strict on
+# purpose - a half-parsed mac that is wrong is worse than None.
+_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_[^_]+_[^_]+_[^_]+\Z")
 
-@dataclass(slots=True)
+
+@dataclass(slots=True, frozen=True)
 class AmpioObject:
-    """A logical Ampio object (DB object) and its latest state."""
+    """A logical Ampio object (DB object) and its latest state.
+
+    Frozen: an instance is an immutable snapshot. The store publishes a new
+    instance on every change, so the one carried by an event stays what the
+    event announced, and consumer code cannot corrupt the library's state
+    through the read surface.
+    """
 
     # Volatile: `id` (and `device_id`, the owning id_urzadzenia) are DB
     # autoincrement ids assigned in hardware (`mac_global`) order. They change
@@ -61,23 +73,19 @@ class AmpioObject:
     # What this object is, once metadata has arrived. Exactly one kind applies.
     kind: ObjectKind | None = None
     value: str | None = None
-    # Epoch seconds of the report `value` came from, in whichever domain
-    # `updated_at_clock` names. Lets a later bulk snapshot be compared
-    # against what is already held instead of being applied or dropped blind.
+    # Epoch seconds of the report `value` came from: the M-SERV's own `on`
+    # timestamp when the report carried one (every dated report on the
+    # baseline wire does), the local receive time for the undated raw tree.
+    # Lets a later bulk snapshot be compared against what is already held
+    # instead of being applied or dropped blind. None until any report
+    # arrives, or when an undated seed supplied the value.
     updated_at: float | None = None
-    # Which clock stamped `updated_at`: "server" for the M-SERV's own `on`
-    # field, "local" for the receive clock of the undated raw tree (whose
-    # per-object echo, due ~150 ms after an edge, re-anchors the object to
-    # the server clock). Timestamps are only comparable within one domain -
-    # an unsynced M-SERV's RTC can be arbitrarily wrong - and the library
-    # never compares across them; neither should a consumer. None until any
-    # report arrives, or when an undated seed supplied the value.
-    updated_at_clock: Literal["server", "local"] | None = None
     # Whether this input's raw-channel form has been observed. From then on
-    # the raw path is authoritative: the slower per-object echo no longer
-    # re-notifies or overwrites, and only anchors `updated_at` to the server
-    # clock. Only ever True on the admin tier, which alone receives the raw
-    # tree; cleared when the raw index stops covering the object.
+    # the raw path owns the object: the slower per-object echo is ignored
+    # whole, and snapshot rows are skipped - resync comes from the broker's
+    # retained raw table, replayed on every subscribe. Only ever True on
+    # the admin tier, which alone receives the raw tree; cleared when the
+    # raw index stops covering the object.
     raw_proven: bool = False
     # Slat angle percent, from the `lammel` state field. Only tilt-capable
     # covers report it.
@@ -140,6 +148,54 @@ class AmpioObject:
         return parsed if math.isfinite(parsed) else None
 
     @property
+    def rgbw(self) -> tuple[int, int, int, int] | None:
+        """The four color channels, decoded from the packed state value.
+
+        Only a color output (`OutputKind.color`) reads non-None - a
+        dimmer's 0-255 level must not masquerade as a color. The packed
+        form is ``R | G<<8 | B<<16 | W<<24``. A negative value is the same word
+        in signed 32-bit form - the M-SERV's own Matter bridge emits that
+        shape - and decodes identically. None when the value is missing,
+        not an integer, or outside 32 bits.
+        """
+        if not (isinstance(self.kind, OutputKind) and self.kind.color):
+            return None
+        if self.value is None:
+            return None
+        try:
+            packed = int(self.value)
+        except ValueError:
+            return None
+        if packed < 0:
+            packed += 1 << 32
+        if not 0 <= packed <= 0xFFFFFFFF:
+            return None
+        return (
+            packed & 0xFF,
+            (packed >> 8) & 0xFF,
+            (packed >> 16) & 0xFF,
+            (packed >> 24) & 0xFF,
+        )
+
+    @property
+    def position(self) -> int | None:
+        """Cover travel percent (0 closed, 100 open) from the state value.
+
+        Anything but a position-capable cover (`OutputKind.position`)
+        reads None, as does a value outside 0-100. The slat axis is
+        :pyattr:`tilt_position`, exactly as `setRollerPos` splits them.
+        """
+        if not (isinstance(self.kind, OutputKind) and self.kind.position):
+            return None
+        if self.value is None:
+            return None
+        try:
+            pos = int(self.value)
+        except ValueError:
+            return None
+        return pos if 0 <= pos <= 100 else None
+
+    @property
     def is_system(self) -> bool:
         """Whether this is a system object (always present regardless of grouping).
 
@@ -158,7 +214,7 @@ class AmpioObject:
         M-SERV's own Matter bridge honours. It catches the phantom rows that
         duplicate a real Designer channel (sharing its ``leaf_id`` but carrying
         no value), which the ``leaf_id`` heuristic alone lets through. See
-        docs/matter-bridge.md.
+        docs/identity.md.
         """
         return bool(self.params & _HIDDEN_FLAG)
 
@@ -179,6 +235,27 @@ class AmpioObject:
         return f"leaf_{self.leaf_id}" if self.leaf_id else None
 
     @property
+    def module_mac(self) -> int | None:
+        """The owning module's effective bus mac, parsed from ``leaf_id``.
+
+        ``leafId`` embeds the module's Designer override mac - the
+        replacement-stable ``AmpioModule.mac``, not the factory
+        ``mac_global`` - the M-SERV's own objects embed its override ``1``,
+        not its factory id. Because ``leafId`` is served
+        identically on both account tiers, this is the module key a
+        consumer can group entities by even on a restricted account, which
+        never receives the module catalogue - an entry set up with a
+        standard account and later switched to an administrator keeps its
+        entity-to-device mapping and only gains metadata.
+
+        None when ``leaf_id`` is empty - system objects, ghost rows, and
+        the window before an object's catalogue metadata arrives - or, on
+        no observed install, when it has an unexpected shape.
+        """
+        match = _LEAF_ID_RE.fullmatch(self.leaf_id)
+        return int(match.group(1), 16) if match is not None else None
+
+    @property
     def visible(self) -> bool:
         """Whether the object is one the user can see in Designer's tree.
 
@@ -195,9 +272,12 @@ class AmpioObject:
         return bool(self.leaf_id) or self.is_system
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class AmpioModule:
-    """A physical Ampio module (urzadzenie) that owns objects."""
+    """A physical Ampio module (urzadzenie) that owns objects.
+
+    Frozen, exactly as :class:`AmpioObject` is.
+    """
 
     id: int
     # Designer-assignable CAN bus address (the "MAC override"). This is the
@@ -229,7 +309,7 @@ class AmpioModule:
     temperature: float | None = None  # °C
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class AmpioScene:
     """A named multi-action preset defined in the Ampio app."""
 
@@ -244,7 +324,7 @@ class AmpioScene:
     object_ids: frozenset[int] = field(default_factory=frozenset)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class AmpioServerInfo:
     """A safe subset of the Ampio M-SERV self-reported info.
 
@@ -263,8 +343,25 @@ class AmpioServerInfo:
     device_id: str | None = None  # hardware identifier of the host
 
     @property
+    def key(self) -> str | None:
+        """Canonical scoping key for this M-SERV, for consumer registries.
+
+        The string to prefix per-server artifacts with - unique ids, device
+        identifiers: the decimal form of ``mac``, which is what every known
+        consumer already derived by hand. The format is a stable promise;
+        never parse or reformat it. None only while ``mac`` is unknown,
+        which a True :meth:`AmpioClient.wait_for_initial_discovery` rules
+        out - the info reply gates discovery on carrying an identity.
+        """
+        return str(self.mac) if self.mac is not None else None
+
+    @property
     def access_tier(self) -> AccessTier:
-        """Account tier, derived from the account id in the info reply.
+        """Account tier per the account id in the info reply.
+
+        The wire's own confirmation for a config flow reading a
+        :meth:`AmpioClient.test_connection` result; a running client's
+        operational tier comes from the authenticated username instead.
 
         The M-SERV's administrator is the reserved ``admin`` login, reported
         as the pseudo-user id ``-1``; app-created users carry their positive

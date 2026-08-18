@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import pytest
 
-from ampio_mqtt import classify
 from ampio_mqtt.classification import (
+    INPUT_KIND_KEYS,
+    OPEN_SENSOR_KEY_PREFIXES,
+    OUTPUT_KIND_KEYS,
+    SENSOR_KIND_KEYS,
+    THERMOSTAT_KIND_KEYS,
+    TYPE_PROFILES,
     InputKind,
     OutputKind,
     SensorKind,
     ThermostatKind,
+    classify,
 )
 
 
@@ -173,3 +179,50 @@ def test_bit8_is_a_numeric_measurement() -> None:
     kind = classify("bit8", 3)
     assert isinstance(kind, SensorKind)
     assert (kind.key, kind.name) == ("value_3", "Measurement")
+
+
+# --- the exported kind-key vocabulary --------------------------------------
+
+
+def test_kind_key_vocabulary_contents() -> None:
+    """The exhaustiveness tripwire: adding a kind must update this list,
+    exactly as a consumer's own mapping test will demand of its mapping."""
+    assert {"flaga", "detekcja", "symulacja"} == INPUT_KIND_KEYS
+    assert {
+        "relay",
+        "rgbw",
+        "dimmer",
+        "cover",
+        "cover_position",
+        "cover_tilt",
+    } == OUTPUT_KIND_KEYS
+    assert {"thermostat"} == THERMOSTAT_KIND_KEYS
+    assert {
+        "value",
+        "temperature",
+        "humidity",
+        "pressure_abs",
+        "loudness",
+        "illuminance",
+        "iaq",
+        "pressure_rel",
+        "co2",
+    } == SENSOR_KIND_KEYS
+
+
+def test_classify_never_leaves_the_exported_vocabulary() -> None:
+    """Every key classify() can mint is either exported or in an exported
+    open family - the invariant a consumer's exhaustiveness check rests on."""
+    vocab = {
+        SensorKind: SENSOR_KIND_KEYS,
+        InputKind: INPUT_KIND_KEYS,
+        OutputKind: OUTPUT_KIND_KEYS,
+        ThermostatKind: THERMOSTAT_KIND_KEYS,
+    }
+    for typ in [None, "no_such_type", *TYPE_PROFILES]:
+        for interp in [None, *range(9), 99]:
+            kind = classify(typ, interp)
+            key = kind.key
+            assert key in vocab[type(kind)] or key.startswith(
+                OPEN_SENSOR_KEY_PREFIXES
+            ), (typ, interp, key)

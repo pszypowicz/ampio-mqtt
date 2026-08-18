@@ -11,6 +11,7 @@ them through unchanged.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import Literal
 
 # Device-class strings the library can emit. Values match Home Assistant's
@@ -68,7 +69,9 @@ class OutputKind:
 
     The flags say which command verbs the object answers, so a consumer can
     pick a platform and feature set without a `typ_komponentu` table of its
-    own. Every output answers ``turnOn`` / ``turnOff`` / ``switch``.
+    own. ``switchable`` covers the ``turnOn`` / ``turnOff`` / ``switch``
+    family: every output answers it except ``rgbw``, which the M-SERV
+    drives through ``setColors`` alone.
     """
 
     key: str
@@ -82,10 +85,14 @@ class OutputKind:
     # Position axis of `setRollerPos`.
     position: bool = False
     # Lamella axis of `setRollerPos`, and a `lammel` field in the object's
-    # state payload. The KEEP_POSITION sentinel (101) leaves an axis
-    # uncommanded, exactly as on the position axis - see docs/protocol.md
-    # and `AmpioClient.set_cover_tilt`, which relies on it.
+    # state payload; `KEEP_POSITION` in endpoints.py is the
+    # leave-this-axis-alone sentinel both axes share.
     tilt: bool = False
+    # The `turnOn` / `turnOff` / `switch` verb family. False only for `rgbw`:
+    # the M-SERV ignores all three for it (no effect, no reply), so
+    # `setColors` is its one switching verb - which `AmpioClient.turn_off`
+    # relies on to emulate off.
+    switchable: bool = True
 
 
 # lin_wej (analog input) measurement kind, keyed by `interpretacja`.
@@ -130,26 +137,27 @@ class ThermostatKind:
 ObjectKind = SensorKind | InputKind | OutputKind | ThermostatKind
 
 
+class _Selector(Enum):
+    """The two ``interpretacja``-driven kind families a profile can carry
+    in place of a fixed kind instance - their keys are minted at classify
+    time, so no instance can sit in the table."""
+
+    ANALOG = auto()  # the interpretacja-keyed lin_wej map
+    NUMERIC = auto()  # generic value_<interpretacja> measurement
+
+
 @dataclass(frozen=True, slots=True)
 class TypeProfile:
     """Everything the library derives from one ``typ_komponentu``.
 
-    One row per known component type. A type absent from the table is unknown
-    metadata and classifies as the generic value sensor.
+    One row per known component type; a type absent from the table is
+    unknown metadata and classifies as the generic value sensor. ``kind``
+    is the one kind the type is - a fixed instance, or a `_Selector` for
+    the ``interpretacja``-keyed families - so a profile carrying two kinds
+    is unrepresentable, exactly as the `ObjectKind` contract demands.
     """
 
-    # Sensor side. ``sensor`` is a fixed kind; ``analog`` selects the
-    # interpretacja-keyed lin_wej map; ``numeric`` is a generic bit32
-    # measurement. A type with none of these is not a sensor.
-    sensor: SensorKind | None = None
-    analog: bool = False
-    numeric: bool = False
-    # Input side: the binary/flag kind, if this type is an input.
-    input: InputKind | None = None
-    # Output side: the controllable kind, if this type accepts commands.
-    output: OutputKind | None = None
-    # Thermostat side: the temperature-controller kind.
-    thermostat: ThermostatKind | None = None
+    kind: ObjectKind | _Selector
     # Raw ``ampio/from/<mac>/state/<prefix>/<ch>`` bridge prefix. Only known
     # prefixes are set; an input without one (symulacja) falls back to the
     # per-object topic.
@@ -161,33 +169,73 @@ class TypeProfile:
 
 
 TYPE_PROFILES: dict[str, TypeProfile] = {
-    "temp": TypeProfile(
-        sensor=SensorKind("temperature", "Temperature", "°C", "temperature")
-    ),
-    "lin_wej": TypeProfile(analog=True),
-    "bit32": TypeProfile(numeric=True),
-    "przekaznik": TypeProfile(output=OutputKind("relay", "Relay")),
-    "rgbw": TypeProfile(output=OutputKind("rgbw", "RGBW light", color=True)),
-    "led": TypeProfile(output=OutputKind("dimmer", "Dimmer", dimmable=True)),
-    "roleta": TypeProfile(output=OutputKind("cover", "Cover", cover=True)),
+    "temp": TypeProfile(SensorKind("temperature", "Temperature", "°C", "temperature")),
+    "lin_wej": TypeProfile(_Selector.ANALOG),
+    "bit32": TypeProfile(_Selector.NUMERIC),
+    "przekaznik": TypeProfile(OutputKind("relay", "Relay")),
+    "rgbw": TypeProfile(OutputKind("rgbw", "RGBW light", color=True, switchable=False)),
+    "led": TypeProfile(OutputKind("dimmer", "Dimmer", dimmable=True)),
+    "roleta": TypeProfile(OutputKind("cover", "Cover", cover=True)),
     "roleta_procenty": TypeProfile(
-        output=OutputKind("cover_position", "Cover", cover=True, position=True)
+        OutputKind("cover_position", "Cover", cover=True, position=True)
     ),
     "roleta_lamelki": TypeProfile(
-        output=OutputKind("cover_tilt", "Blind", cover=True, position=True, tilt=True)
+        OutputKind("cover_tilt", "Blind", cover=True, position=True, tilt=True)
     ),
-    "reg": TypeProfile(thermostat=ThermostatKind("thermostat", "Thermostat")),
-    "bit8": TypeProfile(numeric=True),
-    "flaga": TypeProfile(input=InputKind("flaga", "Flag", None), channel_prefix="f"),
+    "reg": TypeProfile(ThermostatKind("thermostat", "Thermostat")),
+    "bit8": TypeProfile(_Selector.NUMERIC),
+    "flaga": TypeProfile(InputKind("flaga", "Flag", None), channel_prefix="f"),
     "detekcja": TypeProfile(
-        input=InputKind("detekcja", "Detection", "motion"),
+        InputKind("detekcja", "Detection", "motion"),
         channel_prefix="i",
         system=True,
     ),
-    "symulacja": TypeProfile(
-        input=InputKind("symulacja", "Simulation", None), system=True
-    ),
+    "symulacja": TypeProfile(InputKind("symulacja", "Simulation", None), system=True),
 }
+
+
+def _kind_keys() -> tuple[
+    frozenset[str], frozenset[str], frozenset[str], frozenset[str]
+]:
+    sensor: set[str] = {_GENERIC_SENSOR.key}
+    inputs: set[str] = set()
+    output: set[str] = set()
+    thermostat: set[str] = set()
+    for profile in TYPE_PROFILES.values():
+        match profile.kind:
+            case SensorKind() as kind:
+                sensor.add(kind.key)
+            case _Selector.ANALOG:
+                sensor.update(kind.key for kind in _LIN_WEJ_BY_INTERP.values())
+            case _Selector.NUMERIC:
+                pass  # the open value_<interpretacja> family
+            case InputKind() as kind:
+                inputs.add(kind.key)
+            case OutputKind() as kind:
+                output.add(kind.key)
+            case ThermostatKind() as kind:
+                thermostat.add(kind.key)
+    return (
+        frozenset(sensor),
+        frozenset(inputs),
+        frozenset(output),
+        frozenset(thermostat),
+    )
+
+
+# The complete static `kind.key` vocabulary, derived from the tables above
+# at import time so a new row is part of it with no second edit. A consumer
+# mapping `kind.key` to its own entity descriptions should assert in its CI
+# that every key here is either mapped or deliberately excluded - a library
+# upgrade that adds a kind then fails a test instead of silently dropping
+# entities.
+SENSOR_KIND_KEYS, INPUT_KIND_KEYS, OUTPUT_KIND_KEYS, THERMOSTAT_KIND_KEYS = _kind_keys()
+
+# The two open families: keys minted with the object's `interpretacja`
+# embedded (`analog_<n>` for a lin_wej measurement the map does not know,
+# `value_<n>` for the numeric bit8/bit32 channels), so they cannot be
+# enumerated. A consumer treats each prefix as one mapping decision.
+OPEN_SENSOR_KEY_PREFIXES: tuple[str, ...] = ("analog_", "value_")
 
 
 def classify(typ: str | None, interpretacja: int | None) -> ObjectKind:
@@ -200,19 +248,15 @@ def classify(typ: str | None, interpretacja: int | None) -> ObjectKind:
     profile = TYPE_PROFILES.get(typ) if typ is not None else None
     if profile is None:
         return _GENERIC_SENSOR
-    if profile.analog:
-        if interpretacja in _LIN_WEJ_BY_INTERP:
-            return _LIN_WEJ_BY_INTERP[interpretacja]
-        return SensorKind(f"analog_{interpretacja}", "Analog input", None, None)
-    if profile.numeric:
-        return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
-    return (
-        profile.sensor
-        or profile.input
-        or profile.output
-        or profile.thermostat
-        or _GENERIC_SENSOR
-    )
+    match profile.kind:
+        case _Selector.ANALOG:
+            if interpretacja in _LIN_WEJ_BY_INTERP:
+                return _LIN_WEJ_BY_INTERP[interpretacja]
+            return SensorKind(f"analog_{interpretacja}", "Analog input", None, None)
+        case _Selector.NUMERIC:
+            return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
+        case kind:
+            return kind
 
 
 def is_system_type(typ: str | None) -> bool:
