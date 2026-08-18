@@ -50,8 +50,8 @@ def _client() -> AmpioClient:
     return AmpioClient("host", username=USER)
 
 
-def test_mserv_id_prefers_info_mac_cross_check() -> None:
-    """mserv_id matches the module whose mac_global matches info.mac."""
+def test_mserv_prefers_info_mac_cross_check() -> None:
+    """mserv is the module row whose mac_global matches info.mac."""
     client = _client()
     # Two modules with typ != 10 plus the actual M-SERV (typ=10, mac_global=47846).
     feed(
@@ -79,12 +79,13 @@ def test_mserv_id_prefers_info_mac_cross_check() -> None:
         f"ampio/fromDB/{USER}/data/info",
         info(serverVersion="1", mac="47846"),
     )
-    assert client.mserv_id == 1
+    mserv = client.mserv
+    assert mserv is not None and mserv.id == 1 and mserv.name == "MSERV"
 
 
 # Type 10 is the M-SERV-s; type 0 is VIRTUAL. Both are hub types.
 @pytest.mark.parametrize("hub_type", [10, 0])
-def test_mserv_id_falls_back_to_unique_hub_module(hub_type: int) -> None:
+def test_mserv_falls_back_to_unique_hub_module(hub_type: int) -> None:
     """Without info, the unique hub-typed module identifies the M-SERV,
     with a VIRTUAL hub resolving exactly like an M-SERV one."""
     client = _client()
@@ -108,10 +109,11 @@ def test_mserv_id_falls_back_to_unique_hub_module(hub_type: int) -> None:
             },
         ),
     )
-    assert client.mserv_id == 5
+    mserv = client.mserv
+    assert mserv is not None and mserv.id == 5
 
 
-def test_mserv_id_none_when_ambiguous_and_no_info() -> None:
+def test_mserv_none_when_ambiguous_and_no_info() -> None:
     """If multiple modules are typ=10 and no info reply, do not guess."""
     client = _client()
     feed(
@@ -134,7 +136,7 @@ def test_mserv_id_none_when_ambiguous_and_no_info() -> None:
             },
         ),
     )
-    assert client.mserv_id is None
+    assert client.mserv is None
 
 
 def test_state_updates_object_and_notifies() -> None:

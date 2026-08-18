@@ -19,7 +19,7 @@ admin pseudo-user, the users-table row id for an app user -
 `AmpioServerInfo.access_tier`) is the wire's own confirmation, which
 `test_connection()` reports at validation time so a config flow can
 reject an account whose tier will not support what the consumer needs
-(e.g. `modules`/`mserv_id`, which the standard tier never receives).
+(e.g. `modules`/`mserv`, which the standard tier never receives).
 
 ## What each tier gets
 
@@ -35,7 +35,7 @@ reject an account whose tier will not support what the consumer needs
 | `logging` config table (`data` surface)       | yes           | yes (the table is not grant-filtered) |
 | md5 change-detection tree                     | yes           | yes                                   |
 | Commands                                      | all objects   | granted objects                       |
-| **Module list** (`modules`, `mserv_id`)       | yes           | **no**                                |
+| **Module list** (`modules`, `mserv`)       | yes           | **no**                                |
 | **Raw channel tree** (`ampio/from/#`)         | yes           | **no**                                |
 | **Module diagnostics** (voltage, temperature) | yes           | **no**                                |
 | **CAN write tree** (`ampio/to/#`)             | yes           | **no**                                |
@@ -54,7 +54,7 @@ ids that own its granted objects - without names, macs, or models, but
 enough to group entities by physical module. And the M-SERV's own
 identity needs no module list at all: `server_info` is served fully on
 both tiers, so a consumer can anchor its hub device on
-`AmpioServerInfo.mac` instead of `mserv_id`.
+`AmpioServerInfo.mac` instead of `mserv`.
 
 Grants bound reads and object writes alike. A command for an object
 outside a standard account's grant is dropped with no effect and no
@@ -107,7 +107,7 @@ Prefer an administrator account when the install needs:
   hold-to-dim timing, where an extra ~130 ms is felt. Presses the M-SERV
   itself classifies arrive as ordinary objects and need no admin.
 - **Module metadata** - per-module device entries, models, firmware
-  versions, and `mserv_id` for a `via_device` hierarchy.
+  versions, and `mserv` for a `via_device` hierarchy.
 - **Bus events** - panel presses and other Ampio logic signals only
   arrive on the admin tier. A standard account can still raise events
   (see the exception above), so automation _into_ Ampio works either

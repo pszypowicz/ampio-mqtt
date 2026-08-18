@@ -28,6 +28,12 @@ _HIDDEN_FLAG = 1 << 4
 # purpose - a half-parsed mac that is wrong is worse than None.
 _LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_[^_]+_[^_]+_[^_]+\Z")
 
+# The M-SERV's Designer override mac: its objects' leafId embeds this value
+# (not the factory mac_global), and its own module row reports it as
+# `AmpioModule.mac`. The one place the rule lives - consumers read
+# `AmpioObject.is_server_owned` instead of comparing macs themselves.
+_MSERV_MAC = 1
+
 
 @dataclass(slots=True, frozen=True)
 class AmpioObject:
@@ -253,6 +259,19 @@ class AmpioObject:
         """
         match = _LEAF_ID_RE.fullmatch(self.leaf_id)
         return int(match.group(1), 16) if match is not None else None
+
+    @property
+    def is_server_owned(self) -> bool:
+        """Whether this object belongs to the M-SERV itself.
+
+        True when ``leaf_id`` embeds the M-SERV's override mac. ``leafId``
+        is served identically on both account tiers, so a consumer can
+        anchor server-owned objects to its hub device even on a restricted
+        account, which never receives the module catalogue. False when
+        ``leaf_id`` is empty - system objects, ghost rows, and the window
+        before catalogue metadata arrives.
+        """
+        return self.module_mac == _MSERV_MAC
 
     @property
     def visible(self) -> bool:

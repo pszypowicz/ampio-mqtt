@@ -4,7 +4,7 @@ The `typ_urzadzenia` field reported for each module is a numeric hardware
 type code. :func:`module_model` resolves it to the human model name (for
 example 44 -> M-SENS) for a consumer's device info, and :func:`is_hub`
 answers the one capability question the library itself has - which module
-is the M-SERV - for :pyattr:`AmpioClient.mserv_id`.
+is the M-SERV - for :pyattr:`AmpioClient.mserv`.
 
 The table is derived from the device-type catalogue published by Ampio
 in `node-red-contrib-ampio` (file `ampioin/db/devtypes.json`), a verbatim

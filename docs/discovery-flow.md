@@ -9,7 +9,7 @@ elapsed first - `client.objects` and
 arrives via push from that point on.
 
 A consumer that **depends** on those collections being populated before
-it does anything else - the canonical case is resolving `mserv_id` to
+it does anything else - the canonical case is resolving `mserv` to
 pre-register the M-SERV device so other modules' `via_device` parents
 resolve - should not rely on `start()`'s blocking as an implementation
 detail. It should call `await client.wait_for_initial_discovery()`

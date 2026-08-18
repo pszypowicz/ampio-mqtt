@@ -82,6 +82,13 @@ keeps its entity-to-device mapping and only gains metadata. The parse
 is strict: any shape other than `0_<macHex>_<F2>_<F3>_<F4>` reads as
 None, exactly like the empty `leafId` of system objects and ghost rows.
 
+Two helpers close the loop for a consumer building devices on
+`module_mac`: `AmpioObject.is_server_owned` marks the objects that
+belong to the M-SERV itself (their `leafId` embeds its override mac),
+so they anchor to the hub device identically on both tiers, and
+`AmpioClient.mserv` returns the M-SERV's own module row - name, model,
+versions - on the admin tier that has the catalogue.
+
 ## Visibility (`AmpioObject.visible`)
 
 Not every row in `devicesDetails` is meant to be surfaced. The

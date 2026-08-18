@@ -266,21 +266,22 @@ class AmpioClient:
         return self._store.server_info
 
     @property
-    def mserv_id(self) -> int | None:
-        """Resolve the module id of the M-SERV server.
+    def mserv(self) -> AmpioModule | None:
+        """The M-SERV's own module row, for naming the hub device.
 
-        Prefers cross-validating the server's self-reported mac against each
-        module's mac_global/mac; falls back to the unique module the device
-        catalogue marks as a hub.
+        Prefers cross-validating the server's self-reported mac against
+        each module's mac_global/mac; falls back to the unique hub-typed
+        module. None when neither identifies one - ambiguity included -
+        and always None on the restricted tier, which never receives the
+        module catalogue. Tier-independent device grouping needs no module
+        row at all: see :pyattr:`AmpioObject.is_server_owned`.
         """
         info = self._store.server_info
         if info is not None and info.mac is not None:
-            for mid, mod in self._store.modules.items():
+            for mod in self._store.modules.values():
                 if info.mac in (mod.mac_global, mod.mac):
-                    return mid
-        candidates = [
-            mid for mid, mod in self._store.modules.items() if is_hub(mod.type)
-        ]
+                    return mod
+        candidates = [mod for mod in self._store.modules.values() if is_hub(mod.type)]
         if len(candidates) == 1:
             return candidates[0]
         return None
@@ -402,7 +403,7 @@ class AmpioClient:
         The result's ``access_tier`` tells a config flow what the account
         will get before any client exists: a ``RESTRICTED`` account never
         receives the module list, so a consumer that needs ``modules`` or
-        ``mserv_id`` can reject it here with an accurate message instead of
+        ``mserv`` can reject it here with an accurate message instead of
         failing at setup.
         """
         if not username:
