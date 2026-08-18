@@ -98,6 +98,22 @@ which works on both tiers.
 | `setVirtualValue`                  | `<0-255>`                   | Drives a virtual sensor channel, echoed as state. Works from the standard tier on a granted object.                                                                                                                                                                                                                                                       |
 | `setFakeValue`                     | `<0-255>`                   | Undocumented alias of `setVirtualValue`: absent from the spec enum (the server changelog names it), drives the virtual channel identically.                                                                                                                                                                                                               |
 
+**`rgbw` on/off is a consumer-side color replay.** The switch-verb rows
+above mark `rgbw` as ignoring `turnOn` / `turnOff` / `switch`; live
+observation shows how Ampio's own consumers handle that. The Ampio app
+remembers the light's last color client-side and re-sends it via
+`setColors` for "on", with `setColors 0` for "off". The M-SERV's Matter
+bridge does the same server-side: a Matter On/Off from Home Assistant
+surfaces on the bus as `setColors` carrying the bridge's remembered
+color (or `0`), published to the **admin** account's `/api` topic - the
+bridge is an ordinary MQTT client of this same surface, so its writes
+are observable and grant-equivalent to admin. The bridge sends the
+packed form as a signed 32-bit int (negative values), which the M-SERV
+accepts; state echoes report the unsigned form. A consumer wanting "on"
+for an `rgbw` object should follow the same pattern: remember the last
+non-zero state value (it is the packed color) and replay it with
+`setColors`.
+
 Scenes are driven by their own payloads on the same topic, addressing the
 scene rather than an object:
 
