@@ -56,7 +56,7 @@ carry the API detail.
 - A maintained broker connection with QoS 1 on every leg, capped-backoff
   reconnect, and one typed event stream that includes the terminal
   `AuthFailed` and `ConnectionDied` signals
-  ([`docs/discovery-flow.md`](docs/discovery-flow.md)).
+  ([`docs/events.md`](docs/events.md)).
 - Discovery of the object and module catalogues on either account tier,
   with the detected tier exposed for setup flows
   ([`docs/account-tiers.md`](docs/account-tiers.md)).

@@ -12,10 +12,11 @@ the marked case - they carry a tracking-issue link.
 | File                                             | Subject                                                                                                                                     |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`protocol.md`](protocol.md)                     | Topic map: discovery requests, response topics, live state, raw channels, commands.                                                         |
+| [`events.md`](events.md)                         | The typed event stream: subscription patterns, what each event announces per tier, ordering, and the terminal signals.                      |
 | [`account-tiers.md`](account-tiers.md)           | What an administrator account gets that a standard one does not, with the measured latency difference.                                      |
 | [`identity.md`](identity.md)                     | Which id is which - `mac` vs `mac_global`, `id` vs `funkcja` vs `leaf_id`, replacement-stable vs hardware-ordered.                          |
 | [`classification.md`](classification.md)         | The `typ_komponentu` vocabulary, the `lin_wej` interpretation table, the visibility rule.                                                   |
 | [`raw-channel-bridge.md`](raw-channel-bridge.md) | The `ampio/from/<MAC>/state/...` parallel topic surface; what is bridged today and what is not.                                             |
-| [`discovery-flow.md`](discovery-flow.md)         | What `start()` does, what runs automatically vs on demand, LAN discovery, and the connection liveness counters.                                            |
+| [`discovery-flow.md`](discovery-flow.md)         | What `start()` does, what runs automatically vs on demand, LAN discovery, and the connection liveness counters.                             |
 | [`untapped-surfaces.md`](untapped-surfaces.md)   | Reachable but unconsumed surfaces (resources, logs, MD5 hashes, CAN write tree, RPC bridge). Each entry links to its tracking issue.        |
 | [`matter-bridge.md`](matter-bridge.md)           | The M-SERV's own Matter bridge, reverse-engineered: the `params` bit-4/bit-37 gate, its `type`/`leafId` classification table, and its gaps. |
