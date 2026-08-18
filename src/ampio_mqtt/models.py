@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Literal
 
 from .classification import (
     InputKind,
@@ -65,14 +66,24 @@ class AmpioObject:
     # What this object is, once metadata has arrived. Exactly one kind applies.
     kind: ObjectKind | None = None
     value: str | None = None
-    # Epoch seconds of the report `value` came from - the `on` field when the
-    # M-SERV supplied one, local receive time for the raw channel, which
-    # sends none (the object's own per-object echo, due ~150 ms after a raw
-    # edge, re-anchors it to the M-SERV's clock). Lets a later bulk snapshot
-    # be compared against what is already held instead of being applied or
-    # dropped blind; the library never compares the two clocks against each
-    # other.
+    # Epoch seconds of the report `value` came from, in whichever domain
+    # `updated_at_clock` names. Lets a later bulk snapshot be compared
+    # against what is already held instead of being applied or dropped blind.
     updated_at: float | None = None
+    # Which clock stamped `updated_at`: "server" for the M-SERV's own `on`
+    # field, "local" for the receive clock of the undated raw tree (whose
+    # per-object echo, due ~150 ms after an edge, re-anchors the object to
+    # the server clock). Timestamps are only comparable within one domain -
+    # an unsynced M-SERV's RTC can be arbitrarily wrong - and the library
+    # never compares across them; neither should a consumer. None until any
+    # report arrives, or when an undated seed supplied the value.
+    updated_at_clock: Literal["server", "local"] | None = None
+    # Whether this input's raw-channel form has been observed. From then on
+    # the raw path is authoritative: the slower per-object echo no longer
+    # re-notifies or overwrites, and only anchors `updated_at` to the server
+    # clock. Only ever True on the admin tier, which alone receives the raw
+    # tree; cleared when the raw index stops covering the object.
+    raw_proven: bool = False
     # Slat angle percent, from the `lammel` state field. Only tilt-capable
     # covers report it.
     tilt_position: int | None = None
@@ -261,20 +272,6 @@ class AmpioServerInfo:
         if self.user_id is None:
             return AccessTier.UNKNOWN
         return AccessTier.ADMIN if self.user_id == -1 else AccessTier.RESTRICTED
-
-
-@dataclass(slots=True)
-class AmpioState:
-    """All known objects, modules, and server info."""
-
-    objects: dict[int, AmpioObject] = field(default_factory=dict)
-    modules: dict[int, AmpioModule] = field(default_factory=dict)
-    server_info: AmpioServerInfo | None = None
-
-    @property
-    def sensors(self) -> dict[int, AmpioObject]:
-        """Objects classified as sensors."""
-        return {i: o for i, o in self.objects.items() if o.is_sensor}
 
 
 @dataclass(slots=True)

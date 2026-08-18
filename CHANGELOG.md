@@ -30,6 +30,16 @@ upgrade path.
   updates of the reply that caused them); a raising listener is still
   logged and isolated. `AmpioEvent` is absorbed into `BusEvent` - the
   event class is the model.
+- The per-object clock domain and raw-proven flag moved from store-side
+  dicts onto `AmpioObject` itself as documented public fields
+  (`updated_at_clock`, `raw_proven`), making `updated_at` self-describing
+  and eviction structurally leak-free: the old shape required every
+  removal site to pop three side structures in lockstep, and one
+  forgotten line silently froze a re-added object's state updates
+  (demonstrated at the store level before the change). `AmpioState` is
+  deleted - a three-field wrapper with a single construction site and 27
+  reach-throughs, forwarded twice on the way to the consumer - and the
+  store owns `objects`/`modules`/`server_info` directly.
 - Topic classification has one home: a protocol-layer `Router` turns each
   inbound message into a typed message (`EndpointReply`, `StateUpdate`,
   `RawChannelEdge`, `DiagnosticsReport`, `BusEvent`) exactly once, and the

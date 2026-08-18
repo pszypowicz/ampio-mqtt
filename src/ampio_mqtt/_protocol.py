@@ -1,7 +1,7 @@
 """Pure parsers for the Ampio DB-object MQTT protocol.
 
 These helpers turn raw MQTT payloads into typed structures with no I/O and no
-state mutation - the `AmpioStore` is what applies them to `AmpioState`.
+state mutation - the `AmpioStore` is what applies them to its state.
 Keeping the parsing isolated makes it trivially unit-testable.
 """
 

@@ -574,7 +574,7 @@ def test_details_populate_and_classify() -> None:
     assert store.objects[107].interpretacja == 7
     # relay is not a sensor
     assert store.objects[1].is_sensor is False
-    assert set(store.state.sensors) == {41, 107}
+    assert {i for i, o in store.objects.items() if o.is_sensor} == {41, 107}
 
 
 def test_devices_populate_modules_with_model_and_versions() -> None:
@@ -829,7 +829,7 @@ def test_devices_redelivery_preserves_last_seen() -> None:
             {"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}
         ),
     )
-    store.state.modules[17].last_seen = 1700000000.0
+    store.modules[17].last_seen = 1700000000.0
     # Re-deliver the devices list (e.g. on reconnect) - last_seen must persist.
     store.apply(
         DEVICES_TOPIC,

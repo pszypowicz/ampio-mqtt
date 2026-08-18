@@ -239,7 +239,7 @@ class AmpioClient:
     @property
     def sensors(self) -> dict[int, AmpioObject]:
         """Objects classified as sensors."""
-        return self._store.state.sensors
+        return {i: o for i, o in self._store.objects.items() if o.is_sensor}
 
     @property
     def available(self) -> bool:
