@@ -11,7 +11,7 @@ import logging
 import math
 import time
 from collections.abc import Callable
-from typing import Any, TypeVar, overload
+from typing import Any, TypeVar, cast, overload
 
 from . import _connection, _protocol
 from ._store import AmpioStore
@@ -137,9 +137,7 @@ class AmpioClient:
             tuple[Callable[[Any], None], tuple[type[ClientEvent], ...] | None]
         ] = []
 
-        # One reply channel per endpoint-table row: discovery latch, verbatim
-        # last payload, and fetch waiters live together, so adding an
-        # endpoint is one row in the table and nothing here.
+        # One reply channel per endpoint-table row - see _ReplyChannel.
         self._channels: dict[str, _ReplyChannel] = {
             ep.name: _ReplyChannel() for ep in ENDPOINTS
         }
@@ -263,15 +261,13 @@ class AmpioClient:
     def access_tier(self) -> AccessTier:
         """Detected account tier, read from the server-info reply.
 
-        The info surface answers for every tier and reports the account's
-        own id: ``-1`` for the reserved ``admin`` login, the users-table row
-        id for an app-created (always non-admin) user. ``UNKNOWN`` until the
-        info reply arrives, or when it carries no account id (a
-        below-baseline server, warned at discovery). Settled by the time
-        :meth:`wait_for_initial_discovery` returns True; a config flow can
-        read the same answer from :meth:`test_connection`'s result before
-        any client exists. Per-user app permissions do not move an account
-        between tiers.
+        ``UNKNOWN`` until the info reply arrives, or when it carries no
+        account id (a below-baseline server, warned at discovery). Settled
+        by the time :meth:`wait_for_initial_discovery` returns True; a
+        config flow can read the same answer from :meth:`test_connection`'s
+        result before any client exists. See :class:`AccessTier` for what
+        each tier is served and :pyattr:`AmpioServerInfo.access_tier` for
+        how the tier is derived.
         """
         info = self._store.server_info
         return info.access_tier if info is not None else AccessTier.UNKNOWN
@@ -395,11 +391,11 @@ class AmpioClient:
         """Start the connection, wait for connect and initial discovery.
 
         After connecting, waits up to `discovery_timeout` for the initial
-        object catalogue so names and classification are known before entities
-        are created. Admin accounts complete via the `config` surface (objects
-        plus the module list); non-admin accounts complete via the app-sync
-        `data` surface (grant-filtered objects, no modules). See `access_tier`
-        for the detected tier.
+        object catalogue so names and classification are known before
+        entities are created; which catalogue pair completes it depends on
+        the account tier - see :meth:`wait_for_initial_discovery`. Calling
+        ``start()`` on a running client closes the previous session first
+        and starts over.
 
         Returns True when that discovery cycle completed in time and False
         when `discovery_timeout` elapsed first. A False leaves the connection
@@ -464,19 +460,23 @@ class AmpioClient:
 
         ``start()`` issues this once on every (re)connect; call it to force a
         fresh discovery cycle without reconnecting. Once the info reply has
-        identified a RESTRICTED account the admin-only ``config`` requests
-        are skipped - the M-SERV never answers them for that tier, and the
-        login's admin bit cannot change mid-session. An UNKNOWN tier (before
-        the first info reply) requests everything, which is what makes first
-        discovery work on either tier.
+        settled the tier, the other tier's catalogue pair is skipped: the
+        M-SERV never answers the ``config`` requests for a RESTRICTED
+        account (and the login's admin bit cannot change mid-session), and
+        on the ADMIN tier the app-sync pair repeats what the ``config``
+        catalogue already carries. An UNKNOWN tier (before the first info
+        reply) requests everything, which is what makes first discovery work
+        on either tier.
         """
-        restricted = self.access_tier is AccessTier.RESTRICTED
+        tier = self.access_tier
+        skip: tuple[str, ...] = ()
+        if tier is AccessTier.RESTRICTED:
+            skip = DISCOVERY_ADMIN
+        elif tier is AccessTier.ADMIN:
+            skip = DISCOVERY_FALLBACK
         for ep in ENDPOINTS:
-            if not ep.initial:
-                continue
-            if restricted and ep.name in DISCOVERY_ADMIN:
-                continue
-            await self._publish(ep)
+            if ep.initial and ep.name not in skip:
+                await self._publish(ep)
 
     async def fetch_rooms(self, timeout: float = 5.0) -> dict[int, str]:
         """Return ``{ampio_object_id: room_name}`` for objects assigned to a room.
@@ -508,11 +508,9 @@ class AmpioClient:
         payloads = await self._fetch(
             ("scenes",), timeout, "Timed out fetching scenes from Ampio broker"
         )
-        scenes = _protocol.parse_scenes(payloads["scenes"])
         # A payload that resolved the fetch passed the store's parsed gate,
         # so it is a {"List": [...]} document and parses by construction.
-        assert scenes is not None
-        return scenes
+        return cast("list[AmpioScene]", _protocol.parse_scenes(payloads["scenes"]))
 
     async def send_event(self, event_number: int) -> None:
         """Raise a bus event, running whatever Ampio logic is bound to it.

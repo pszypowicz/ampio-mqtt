@@ -132,24 +132,21 @@ def test_none_returns_none() -> None:
 )
 def test_capability_spot_checks(code: int, expected_subset: set[Capability]) -> None:
     caps = module_capabilities(code)
-    assert caps is not None
     assert expected_subset == set(caps), f"caps for typ {code} = {sorted(caps)}"
 
 
-def test_capabilities_unknown_type_returns_none() -> None:
-    assert module_capabilities(999) is None
-
-
-def test_capabilities_none_returns_none() -> None:
-    assert module_capabilities(None) is None
+def test_capabilities_unknown_type_is_empty() -> None:
+    """An unknown type has no flags; `module_model` is the unknown signal."""
+    assert module_capabilities(999) == frozenset()
+    assert module_capabilities(None) == frozenset()
 
 
 def test_every_known_model_has_a_capability_set() -> None:
     """Every entry in MODULE_MODELS must be in MODULE_CAPABILITIES.
 
     Possibly an empty frozenset (M-METEO and M-SMOG end up empty per the
-    sparsely-described upstream JSON), but the key must exist so consumers
-    can distinguish "known model, no flags" from "unknown type".
+    sparsely-described upstream JSON), but the key must exist so a missing
+    catalogue row never masquerades as a flagless module.
     """
     for type_code, model in MODULE_MODELS.items():
         caps = MODULE_CAPABILITIES.get(type_code)

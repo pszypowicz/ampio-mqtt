@@ -17,16 +17,10 @@ from .classification import (
 from .device_types import Capability
 from .endpoints import AccessTier
 
-# Bit flags inside the `params` integer (`obiekty.params`). The semantics
-# match the M-SERV's own Matter bridge, which selects exposable objects with
-# `(params & 2**37) and not (params & 16)`. See docs/matter-bridge.md.
-#
-# - bit 4 (`16`): the object is hidden / a stub. The M-SERV sets it on the
-#   phantom rows that duplicate a real Designer channel (same leafId, no value)
-#   and on objects the user removed/hid. It is the authoritative "do not
-#   surface this" marker, and unlike the DB `id` it is replacement-stable.
-# Bit 37 marks a per-object Matter opt-in; it is not a visibility signal and
-# nothing here reads it. See docs/matter-bridge.md.
+# Bit flags inside the `params` integer (`obiekty.params`); the semantics
+# match the M-SERV's own Matter bridge (docs/matter-bridge.md). Bit 4 is the
+# hidden/stub marker (see `AmpioObject.hidden`); bit 37 is the per-object
+# Matter opt-in, not a visibility signal, and nothing here reads it.
 _HIDDEN_FLAG = 1 << 4
 
 

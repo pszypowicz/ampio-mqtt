@@ -73,6 +73,21 @@ exclude = [
   ".pytest_cache/**",
 ]
 
+[tool.ruff.lint]
+# Beyond the default E/F set: import order, modern syntax, bugbear's
+# footguns, simplifications, ruff's own checks, and the asyncio rules.
+extend-select = ["I", "UP", "B", "SIM", "RUF", "ASYNC"]
+# ASYNC109 flags async functions taking a `timeout` parameter, but timeout
+# parameters are this library's deliberate public API shape - a config flow
+# passes them as plain values instead of wrapping calls in asyncio.timeout.
+ignore = ["ASYNC109"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests poll with `while ...: await asyncio.sleep(...)` on purpose; the
+# asyncio.Event alternative would need production hooks that exist only
+# for tests.
+"tests/*" = ["ASYNC110"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

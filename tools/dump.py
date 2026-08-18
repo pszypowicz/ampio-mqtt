@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import os
 
 import aiomqtt
@@ -90,10 +91,8 @@ async def run(a: argparse.Namespace) -> int:
                     if count >= a.max:
                         return
 
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(reader(), a.duration)
-            except TimeoutError:
-                pass
             if a.outfile:
                 await asyncio.to_thread(_append_lines, a.outfile, captured)
     except aiomqtt.MqttError as err:

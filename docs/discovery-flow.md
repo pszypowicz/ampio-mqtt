@@ -55,6 +55,13 @@ for the `start()` / `stop()` lifecycle that joins them.
      (every tier).
    - empty payload on `info` - server self-report.
    - empty payload on `states` - bulk snapshot of current values.
+
+   All six go out while the tier is unknown. Once the info reply has
+   settled it, later refreshes (each reconnect issues one) skip the
+   other tier's pair: a restricted account's `config` requests would
+   never be answered, and the admin account's app-sync pair only
+   repeats what its `config` catalogue already carries.
+
 4. **Await** completion or the `discovery_timeout` deadline, whichever
    comes first - this step is `wait_for_initial_discovery()`, which
    `start()` calls with `timeout=discovery_timeout`. It first awaits

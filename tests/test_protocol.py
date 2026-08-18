@@ -311,6 +311,7 @@ def test_state_route_null_state_falls_back_to_payload() -> None:
         "too/short",
         "ampio/fromDB/u/ob/notanint/state",
         "ampio/fromDB/u/ob/41/state/extra",
+        "ampio/fromDB/otheruser/ob/41/state",
     ],
 )
 def test_state_route_invalid_topic(topic: str) -> None:

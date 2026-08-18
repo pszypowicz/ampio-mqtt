@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import os
 
 import aiomqtt
@@ -141,13 +142,11 @@ async def run(a: argparse.Namespace) -> int:
                     print(f">>> requested {kw!r}")
                     await asyncio.sleep(a.gap)
 
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(
                     asyncio.gather(reader(), publisher()),
                     a.gap * len(keywords) + a.duration,
                 )
-            except TimeoutError:
-                pass
     except aiomqtt.MqttError as err:
         print(f"MQTT error: {err}")
         return 1

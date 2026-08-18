@@ -109,8 +109,6 @@ async def _tcp_probe(address: str, port: int, timeout: float) -> bool:
     except (OSError, TimeoutError):
         return False
     writer.close()
-    try:
+    with contextlib.suppress(OSError):
         await writer.wait_closed()
-    except OSError:
-        pass
     return True

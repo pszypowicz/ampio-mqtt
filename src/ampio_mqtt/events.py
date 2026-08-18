@@ -4,6 +4,10 @@ One stream carries everything the library learns: object and module news
 from the store, bus events, and connection-state transitions, in the order
 they were produced. Every class is a frozen dataclass, so a ``match``
 statement destructures them positionally and instances compare by value.
+Update and removal events carry a snapshot taken as the change was
+applied - a listener that defers processing still sees the state the
+event was about, and reads current state from ``AmpioClient.objects`` /
+``modules`` when it wants that instead.
 """
 
 from __future__ import annotations
@@ -43,10 +47,11 @@ class ObjectRemoved:
 
 @dataclass(frozen=True, slots=True)
 class ModuleUpdated:
-    """A module's own diagnostics broadcast updated it.
+    """A module's catalogue row or its own diagnostics broadcast changed it.
 
-    Rides the administrator-only raw tree, so it never fires on a standard
-    account.
+    Fires for a module the list adds or changes and for each diagnostics
+    broadcast. Both sources are administrator-only, so it never fires on a
+    standard account.
     """
 
     module: AmpioModule

@@ -141,15 +141,14 @@ def module_model(type_code: int | None) -> str | None:
     return MODULE_MODELS.get(type_code)
 
 
-def module_capabilities(type_code: int | None) -> frozenset[Capability] | None:
-    """Resolve a module type code to its `Capability` set, or None if unknown.
+def module_capabilities(type_code: int | None) -> frozenset[Capability]:
+    """Resolve a module type code to its `Capability` set.
 
-    Returns an empty ``frozenset`` for *known* types that don't advertise any
-    of our modeled capabilities (rare, but happens for sparsely-described
-    upstream entries like ``M-METEO``/``M-SMOG``). Returns ``None`` only when
-    the type code itself is unknown - consumers can distinguish "module is
-    known but has no flags" from "module is unknown".
+    Empty when the type advertises none of the modeled capabilities (rare,
+    but happens for sparsely-described upstream entries like
+    ``M-METEO``/``M-SMOG``) and when the type code itself is unknown -
+    :func:`module_model` returning None is the "unknown type" signal.
     """
     if type_code is None:
-        return None
-    return MODULE_CAPABILITIES.get(type_code)
+        return frozenset()
+    return MODULE_CAPABILITIES.get(type_code, frozenset())

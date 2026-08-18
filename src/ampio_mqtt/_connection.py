@@ -127,7 +127,11 @@ class Connection:
 
         Raises ``AmpioAuthError`` if the broker rejects the credentials and
         ``AmpioConnectionError`` if nothing comes up within ``timeout``.
+        A loop left running by an earlier ``open()`` is closed first: the
+        two would otherwise share one client id and take the session from
+        each other on every reconnect, flapping availability forever.
         """
+        await self.close()
         self._stop = False
         self._closing = False
         self._connected.clear()

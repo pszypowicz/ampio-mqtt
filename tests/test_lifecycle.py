@@ -235,6 +235,38 @@ async def test_refresh_skips_admin_requests_on_a_restricted_tier() -> None:
         await client.stop()
 
 
+async def test_refresh_skips_data_requests_on_the_admin_tier() -> None:
+    """Once the info reply identifies the ADMIN account, refresh() stops
+    publishing the app-sync pair, which only repeats what the config
+    catalogue already carries."""
+    broker = FakeBroker()
+    broker.scripted_messages = [
+        Message(
+            INFO_TOPIC, json.dumps({"Results": {"mac": 99, "userId": "-1"}}).encode()
+        ),
+    ]
+    client = AmpioClient(
+        "h", username=USER, reconnect_interval=0.0, mqtt_client_factory=broker.factory
+    )
+    await client.start(timeout=2.0, discovery_timeout=0.05)
+    try:
+        # The first refresh ran on an UNKNOWN tier and asked for everything.
+        assert len(broker.published) == 6
+        broker.published.clear()
+        await client.refresh()
+        assert sorted(p for _t, p in broker.published) == [
+            b"",  # info
+            b"",  # states
+            b"devices",  # module list
+            b"devicesDetails",
+        ]
+        assert all(
+            t.endswith(("/config", "/states", "/info")) for t, _p in broker.published
+        )
+    finally:
+        await client.stop()
+
+
 # --- stop() and start() lifecycle -----------------------------------------
 
 
@@ -247,6 +279,26 @@ async def test_stop_cancels_pending_runner() -> None:
     client = AmpioClient("h", username=USER, reconnect_interval=3600)
     client._connection._runner = asyncio.create_task(_sleep_forever())
     await client.stop()
+    assert client._connection._runner is None
+
+
+async def test_second_start_recycles_the_connection_loop() -> None:
+    """start() on a running client closes the previous loop first - two
+    loops would share one client id and steal the session from each other
+    on every reconnect."""
+    broker = FakeBroker()
+    client = AmpioClient(
+        "h", username=USER, reconnect_interval=0.0, mqtt_client_factory=broker.factory
+    )
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    first_runner = client._connection._runner
+    assert first_runner is not None
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    try:
+        assert first_runner.done()
+        assert client.available is True
+    finally:
+        await client.stop()
     assert client._connection._runner is None
 
 
