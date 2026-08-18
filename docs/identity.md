@@ -19,11 +19,6 @@ The M-SERV's default `mac` is `1`, which is not unique. Treat `mac` as
 unique _within a single install_ (the user assigns the overrides), not
 globally.
 
-Nothing on the wire enforces that uniqueness, so a misconfigured or
-mid-commissioning install can deliver two modules sharing a `mac`.
-`AmpioClient.colliding_macs` is the signal and its docstring the full
-contract: skip or disambiguate those modules rather than merge them.
-
 ## Objects
 
 | Field                     | Stable across module replacement?                                                                                                                                        | Notes |

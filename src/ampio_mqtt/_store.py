@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -66,10 +65,6 @@ class AmpioStore:
         # broadcasts. Ids, not instances: modules are frozen and replaced on
         # every change, so a cached instance would go stale.
         self._module_id_by_mac: dict[int, int] = {}
-        # Macs the devices catalogue reports on more than one module. Nothing
-        # on the wire enforces uniqueness, so this is the signal a consumer
-        # keying devices on mac needs to avoid silently merging two modules.
-        self._colliding_macs: frozenset[int] = frozenset()
         # Full-catalogue `{object_id: params}` from `data/params_devices`, kept
         # because the app-sync catalogue carries no params column and the two
         # replies arrive in no fixed order.
@@ -479,10 +474,8 @@ class AmpioStore:
         raw-topic MAC on replaced modules. `(mac, prefix, channel)` routes an
         input channel to its object, covering only bridgeable input types with
         a known channel and module mac; `mac` alone routes a module's own
-        diagnostics broadcast. A colliding mac routes nothing - see
-        :pyattr:`AmpioClient.colliding_macs` for the contract.
+        diagnostics broadcast.
         """
-        self._refresh_colliding_macs()
         index: dict[tuple[int, str, int], int] = {}
         for obj in self.objects.values():
             prefix = input_channel_prefix(obj.typ_komponentu)
@@ -491,14 +484,12 @@ class AmpioStore:
             module = self.modules.get(obj.device_id)
             if module is None or module.mac is None:
                 continue
-            if module.mac in self._colliding_macs:
-                continue
             index[(module.mac, prefix, obj.funkcja)] = obj.id
         self._input_index = index
         self._module_id_by_mac = {
             module.mac: module.id
             for module in self.modules.values()
-            if module.mac is not None and module.mac not in self._colliding_macs
+            if module.mac is not None
         }
         # An object the index no longer covers must go back to its per-object
         # updates, or a mac change in Designer would freeze it for good.
@@ -507,43 +498,8 @@ class AmpioStore:
             if obj.raw_proven and oid not in covered:
                 self.objects[oid] = replace(obj, raw_proven=False)
 
-    def _refresh_colliding_macs(self) -> None:
-        """Recompute the colliding-mac set, warning when it changes.
-
-        Warns only on a change, not on every catalogue parse - the catalogue
-        is re-requested on every reconnect, and repeating a standing collision
-        each time would drown the log in old news. A collision that resolves
-        clears the set silently.
-        """
-        counts = Counter(
-            module.mac for module in self.modules.values() if module.mac is not None
-        )
-        colliding = frozenset(mac for mac, n in counts.items() if n > 1)
-        if colliding and colliding != self._colliding_macs:
-            details = "; ".join(
-                f"mac {mac} shared by "
-                + ", ".join(
-                    f"module {module.id} ({module.name or 'unnamed'})"
-                    for module in self.modules.values()
-                    if module.mac == mac
-                )
-                for mac in sorted(colliding)
-            )
-            _LOGGER.warning(
-                "Ampio devices catalogue reports colliding module macs; "
-                "raw-channel and diagnostics routing for them is disabled: %s",
-                details,
-            )
-        self._colliding_macs = colliding
-
     def _record(self, obj: AmpioObject, applied: Applied) -> None:
         applied.events.append(ObjectUpdated(obj))
-
-    # --- read surface -----------------------------------------------------
-
-    @property
-    def colliding_macs(self) -> frozenset[int]:
-        return self._colliding_macs
 
 
 def _identity(obj: AmpioObject) -> tuple[object, ...]:

@@ -281,16 +281,6 @@ def test_access_tier_is_the_authenticated_username() -> None:
     assert AmpioClient("host", username="admin").access_tier is AccessTier.ADMIN
 
 
-def test_colliding_macs_surface_through_the_client() -> None:
-    client = _client()
-    feed(
-        client,
-        f"ampio/fromDB/{USER}/config/devices",
-        devices({"id": 1, "mac": 5}, {"id": 2, "mac": 5}),
-    )
-    assert client.colliding_macs == frozenset({5})
-
-
 def test_dispatch_updates_last_message_at() -> None:
     """Every dispatched MQTT message advances the connection stats clock."""
     client = _client()

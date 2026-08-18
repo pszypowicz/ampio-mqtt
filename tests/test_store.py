@@ -235,68 +235,6 @@ def test_the_store_is_the_only_thing_holding_state() -> None:
     assert all(isinstance(o, AmpioObject) for o in store.objects.values())
 
 
-def test_colliding_macs_keep_both_modules_and_warn_once(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    store = _store()
-    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
-        store.apply(DEVICES_TOPIC, _devices(7, 7))
-    assert store.colliding_macs == {7}
-    assert sorted(store.modules) == [1, 2]
-    warnings = [r for r in caplog.records if "colliding module macs" in r.getMessage()]
-    assert len(warnings) == 1
-    assert "module 1 (A)" in warnings[0].getMessage()
-    assert "module 2 (B)" in warnings[0].getMessage()
-
-    # A reconnect re-requests the catalogue; a standing collision is old news.
-    caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
-        store.apply(DEVICES_TOPIC, _devices(7, 7))
-    assert caplog.records == []
-    assert store.colliding_macs == {7}
-
-
-def test_a_resolved_collision_clears_the_set() -> None:
-    store = _store()
-    store.apply(DEVICES_TOPIC, _devices(7, 7))
-    store.apply(DEVICES_TOPIC, _devices(7, 8))
-    assert store.colliding_macs == frozenset()
-
-
-def test_unique_macs_produce_no_collision_signal(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    store = _store()
-    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
-        store.apply(DEVICES_TOPIC, _devices(7, 8))
-    assert store.colliding_macs == frozenset()
-    assert caplog.records == []
-
-
-def test_a_colliding_mac_routes_no_diagnostics() -> None:
-    """The sender is unknowable, and a wrong attribution would stand silently."""
-    store = _store()
-    store.apply(DEVICES_TOPIC, _devices(7, 7))
-    applied = store.apply("ampio/from/7/b/4F", '{"d":[254,79,63,142]}')
-    assert _mod_updated(applied) == []
-    assert all(m.supply_voltage is None for m in store.modules.values())
-
-
-def test_a_colliding_mac_routes_no_raw_edges_but_per_object_still_updates() -> None:
-    store = _store()
-    store.apply(DEVICES_TOPIC, _devices(7, 7))
-    store.apply(DETAILS_TOPIC, _flaga_details((301, 1), (302, 2)))
-
-    applied = store.apply("ampio/from/7/state/f/3", "1")
-    assert _updated(applied) == []
-    assert store.objects[301].value is None
-    assert store.objects[302].value is None
-
-    applied = store.apply(f"ampio/fromDB/{USER}/ob/301/state", '{"state":"1"}')
-    assert [o.id for o in _updated(applied)] == [301]
-    assert store.objects[301].value == "1"
-
-
 def test_a_below_baseline_server_warns_once(caplog: pytest.LogCaptureFixture) -> None:
     store = _store()
     topic = f"ampio/fromDB/{USER}/data/info"

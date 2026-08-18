@@ -93,9 +93,7 @@ payload bytes decode as:
 Landed on `AmpioModule.supply_voltage` and `AmpioModule.temperature`, and
 each frame refreshes the module's `last_seen`, so a module with no objects
 of its own still shows liveness. Subscribe to `ModuleUpdated` to be
-told when a module updates. The frame is attributed by its `mac`, so a
-colliding mac (see the routing key below) suspends this for the affected
-modules.
+told when a module updates.
 
 The broadcasts are periodic rather than retained, so the fields fill in
 over the first minute of a session rather than immediately, and modules
@@ -120,10 +118,3 @@ than resolved per message, and rebuilt on every catalogue apply. This
 is why `mac` (the Designer override) and not `mac_global` (the factory
 id) is the right module key here: a replacement module re-uses the
 override, so the routing keeps working across a hardware swap.
-
-A `mac` the catalogue reports on two or more modules routes nothing:
-the sender of a raw-tree message on it is unknowable, so the input
-bridge and the diagnostics handler both skip it rather than attribute
-the message to an arbitrary module. Affected inputs still update
-through the per-object path, and `AmpioClient.colliding_macs` names
-the offending macs (see [`identity.md`](identity.md)).
