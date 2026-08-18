@@ -195,7 +195,7 @@ class AmpioStore:
             obj,
             device_id=meta.device_id,
             typ_komponentu=meta.typ_komponentu,
-            name=meta.name or obj.name,
+            name=meta.name,
             interpretacja=meta.interpretacja,
             funkcja=meta.funkcja,
             leaf_id=meta.leaf_id,

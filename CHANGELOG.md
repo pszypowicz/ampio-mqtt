@@ -91,6 +91,13 @@ it away.
   5 s deadline - so a broker slow to acknowledge could stretch a
   `timeout=5.0` rooms fetch to ~15 s. The publishes now sit inside the
   window, making the documented contract true.
+- **A name cleared server-side now clears in the store.** The metadata
+  merge kept an object's old name when a catalogue row arrived without
+  one, so a Designer rename-to-empty stuck forever. Live evidence
+  showed the guard protected nothing: empty names are a normal wire
+  state (unnamed objects), and the two discovery surfaces never
+  disagree on names. `name` now mirrors the catalogue unconditionally,
+  like every other metadata field.
 - **`turn_off()` works on rgbw objects.** A known color output that does
   not answer `turnOff` is turned off with `setColors 0/0/0/0` - off is
   unambiguous, so the library routes it. An object whose metadata has
