@@ -340,7 +340,7 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
 async def test_restricted_account_completes_via_data_surface_fallback() -> None:
     """With the config surface silent, the app-sync pair completes discovery.
 
-    This is the non-admin shape verified live: `config/devicesDetails` and
+    This is the non-admin shape: `config/devicesDetails` and
     `config/devices` never answer, while `data/devices` (grant-filtered, with
     full metadata) and `data/params_devices` do.
     """

@@ -34,8 +34,8 @@ _PAYLOAD = json.dumps(
                 ],
                 "Infos": [{"id": 64}, {"id": 48}],
             },
-            # No "active" column: the baseline server always sends it
-            # (live-verified), so this is the shape-drift case - it must
+            # No "active" column: the baseline server always sends it, so
+            # this is the shape-drift case - it must
             # read enabled, matching the dataclass default.
             {
                 "id": 9,

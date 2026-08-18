@@ -15,7 +15,7 @@ library itself is Home Assistant agnostic.
 
 > **Account tiers.** Any Ampio account works; what the library can see is
 > decided by the account's administrator bit. Per-user app permissions do
-> not change it (live-verified with a standard account granted every app
+> not change it (verified with a standard account granted every app
 > permission):
 >
 > - **Administrator** - the full catalogue: every DB object, the module
@@ -131,7 +131,9 @@ canonical source for the topic helpers.
 
 The library is developed and live-tested against an M-SERV self-reporting
 `serverVersion` 1865 (`serverRevision` 409, `mqttVersion` 5.133.11). That
-baseline is the compatibility floor. Older servers are not supported, and
+baseline is the compatibility floor; wire behavior documented in this
+repo is verified against that install unless a tracking issue marks the
+claim open. Older servers are not supported, and
 the library logs a warning when the connected server reports a lower or
 missing `serverVersion`. If something misbehaves on an older server,
 upgrade the M-SERV first.

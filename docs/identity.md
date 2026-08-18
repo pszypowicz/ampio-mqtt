@@ -56,11 +56,11 @@ rather than the module-mac composite
   which only administrator accounts receive (`config/devices` does not
   answer for standard accounts, and the app-sync catalogue carries no
   module list). `leafId` ships in both the `config` and app-sync `data`
-  catalogues with identical values (live-verified), so an install that
+  catalogues with identical values, so an install that
   upgrades a standard account to an administrator keeps every unique id.
 - **Replacement-stable.** `leafId` is part of the reloaded Designer
   config, like `funkcja` and the `mac` override.
-- **Unique among visible objects.** Live-verified across a full admin
+- **Unique among visible objects.** Across a full admin
   catalogue: no duplicate `leafId` once `visible` filtering is applied.
   The known collision - a hidden phantom stub sharing its labelled
   twin's `leaf_id` - is exactly what the `hidden` flag removes; filter
@@ -115,7 +115,7 @@ Consumers should treat `visible` as the discovery filter. Ghosts that
 slip in look like real entities until the user notices their HA
 counterpart no longer exists in Designer.
 
-How deletion behaves on the wire, observed live on the baseline server:
+How deletion behaves on the wire on the baseline server:
 deleting a **module** hard-removes its row from the `devices` list (the
 library evicts it and fires the module-removal listener), but does not
 cascade to its objects. Deleting an **object** in the Ampio app is

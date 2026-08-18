@@ -49,7 +49,7 @@ own semantics, described in [`protocol.md`](protocol.md).
 
 The whole tree is administrator-only, and the broker says so
 explicitly: on a standard account all four filters are rejected in the
-SUBACK with reason code 128 (live-verified; the client logs the
+SUBACK with reason code 128 (the client logs the
 rejections and records them in `ConnectionStats.subscribe_failures`,
 then degrades to the per-object path as designed).
 

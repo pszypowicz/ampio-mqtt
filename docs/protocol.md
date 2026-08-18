@@ -8,7 +8,7 @@ The M-SERV speaks two parallel topic trees on the same MQTT broker:
   `fromDB` topic. Per-object live state arrives on `.../ob/<id>/state`.
 - **Raw tree** - `ampio/from/<MAC>/state/...`. Global, not user-scoped,
   and served only to administrator accounts (the broker ACL returns
-  nothing on it for standard accounts - live-verified). Carries decoded
+  nothing on it for standard accounts). Carries decoded
   CAN per-channel state, keyed by the module's effective bus MAC. Used
   as a low-latency input bridge - see
   [`raw-channel-bridge.md`](raw-channel-bridge.md).
@@ -26,8 +26,8 @@ responses are retained, so a fresh subscriber sees the last value
 immediately.
 
 The whole `config` surface answers only for **administrator** accounts;
-standard accounts get silence there (no error, no reply - live-verified,
-and independent of the account's app permissions). Everything on the
+standard accounts get silence there (no error, no reply, independent
+of the account's app permissions). Everything on the
 `data`, `states`, and `info` surfaces answers for every account.
 
 | Keyword          | Control surface               | Response topic                              | Shape                                                                                                                                                                                                                                                          |
@@ -65,15 +65,15 @@ verb, the row says so.
 **Commands are grant-scoped.** The per-user grant bounds writes exactly
 as it bounds reads: a command for an object outside the account's grant
 is dropped with no effect and no reply, while the identical command from
-an administrator succeeds. Verified live against two non-granted objects
+an administrator succeeds - checked against two non-granted objects
 of different types. The account's namespace likewise carries state only
 for granted objects, including ones it just commanded.
 
 The `ampio/to/<mac>/...` CAN tree is the other write path (documented in
 Ampio's own MQTT API note, with per-channel `cmd` topics and a `raw` hex
 channel covering CCT, DALI, blind angles, and display text). It is
-**admin-only** - a non-admin account's publishes there are dropped, which
-this library confirmed live - so the library uses the `/api` surface,
+**admin-only** - a non-admin account's publishes there are dropped - so
+the library uses the `/api` surface,
 which works on both tiers.
 
 | Verb                               | Args                        | Notes                                                                                                                                                                                                                                                                                                                               |
@@ -86,7 +86,7 @@ which works on both tiers.
 | `stop`                             | -                           | Halts a cover mid-travel - the position stream freezes at the halt point. Not yet exposed by the library (#62).                                                                                                                                                                                                                     |
 | `setValue`                         | `<0-255>[/<time>]`          | `time` is in 10 ms units and **reverts** the object afterwards - a timed pulse, not a fade.                                                                                                                                                                                                                                         |
 | `setColors`                        | `<R>/<G>/<B>/<W>`           | Also accepts one packed int (`R \| G<<8 \| B<<16 \| W<<24`), which is what object state reports back. Absent from the spec enum - undocumented but real.                                                                                                                                                                            |
-| `setRollerPos`                     | `<position>/<lamella>`      | Percent each; `101` omits an axis (see the slat-drag note below), so one command moves either axis alone or both together. Live-verified on a tilt-capable blind, both axes: a tilt-only command holds position, and undirected downward travel drags the slats closed (#72).                                                       |
+| `setRollerPos`                     | `<position>/<lamella>`      | Percent each; `101` omits an axis (see the slat-drag note below), so one command moves either axis alone or both together.                                                       |
 | `setColor`                         | 24-bit `R \| G<<8 \| B<<16` | Dead on the baseline server: in the spec enum, but a live send to an `rgbw` object had no effect and no reply. Use `setColors`.                                                                                                                                                                                                     |
 | `setColorW`                        | `<rgb24>/<white>`           | Dead on the baseline server, same observation as `setColor`. Use `setColors`.                                                                                                                                                                                                                                                       |
 | `setTemperature`                   | `<°C>`                      | Regulator (`reg`) setpoint; echoed as `setTemperature` in the reg state push (see Live state). Absent from the spec enum (Ampio's MQTT API note only), yet works.                                                                                                                                                                   |
@@ -140,12 +140,12 @@ The MAC on a received event identifies what raised it: the module's own
 address for a panel press, the M-SERV's (`1` by default) for an event
 injected through the command surface.
 
-The two directions are gated differently, which is verified live:
+The two directions are gated differently:
 
 - **Raising** works on both account tiers and is bounded by nothing.
   The Ampio app shows a per-user rights list per event, but that list is
   not enforced here: a standard account raised an event it had no right
-  to, verified live against a control event created without it. Since
+  to, checked against a control event created without that right. Since
   the logic behind an event can drive anything, this is how an account
   reaches objects it cannot command directly.
 - **Receiving** is administrator-only. It rides the raw tree, and a

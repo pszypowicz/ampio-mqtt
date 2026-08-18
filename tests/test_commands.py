@@ -98,7 +98,7 @@ async def test_bool_arguments_are_rejected(
 ) -> None:
     """bool passes isinstance(int) and the type checker, but the wire
     encoding is str(), so it would go out as the literal 'True' - a
-    malformed command the M-SERV silently drops (live-verified)."""
+    malformed command the M-SERV silently drops."""
     client, broker = connected
     with pytest.raises(ValueError):
         await call(client)

@@ -8,7 +8,7 @@ PRs should reference.
 
 ### `resources` - settings table, served on both tiers
 
-Live-verified: the `resources` keyword answers on the app-sync `data`
+The `resources` keyword answers on the app-sync `data`
 surface for **both account tiers** (admins additionally get a
 `config`-surface variant). Rows are shaped
 `{id, opis, type, wartoscB, wartoscN, wartoscS}` and on the probed
@@ -47,7 +47,7 @@ and future `fetch_*` helpers no-op on reconnect when nothing has
 changed. Optimization, not a correctness fix - the current behaviour
 of re-fetching every time is correct, just chatty.
 
-Live-verified on both tiers: a standard account's namespace retains
+On both tiers: a standard account's namespace retains
 `md5/devices`, `md5/groups`, `md5/group_devices`, `md5/params_devices`,
 `md5/scenes`, `md5/resources`, `md5/icons`, and `md5/logging` on
 subscribe, so the cache would help the standard tier too.
@@ -63,7 +63,7 @@ Ampio's own MQTT API note documents a second write path alongside the
 blind position with lamella angle, timed output/flag pulses, M-DOT
 display drawing, and Satel partitions - none of which the `/api` verb
 list reaches. It is admin-only (a non-admin account's publishes there
-are dropped, verified live), so it can never back the standard-user
+are dropped), so it can never back the standard-user
 path, but an admin-tier install could use it for the device classes
 `/api` cannot express.
 
