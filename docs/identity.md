@@ -77,6 +77,19 @@ tier the module-mac composite above still covers them; on the standard
 tier only the DB `id` is available, with its replacement instability
 accepted and documented.
 
+## Module identity on every tier: `AmpioObject.module_mac`
+
+`leafId` embeds the owning module's override mac as its second segment
+(`0_<macHex>_...`), exposed as `AmpioObject.module_mac`. The embedded
+value equals `AmpioModule.mac` - live-verified across a full catalogue,
+including the M-SERV, whose override (`1`) diverges from its factory
+id - so a consumer can group entities by physical module even on the
+restricted tier, which never receives the module catalogue. An entry
+set up with a standard account and later switched to an administrator
+keeps its entity-to-device mapping and only gains metadata. The parse
+is strict: any shape other than `0_<macHex>_<F2>_<F3>_<F4>` reads as
+None, exactly like the empty `leafId` of system objects and ghost rows.
+
 ## Visibility (`AmpioObject.visible`)
 
 Not every row in `devicesDetails` is meant to be surfaced. The

@@ -117,3 +117,23 @@ def test_is_thermostat_and_the_running_flag() -> None:
     assert obj.is_thermostat
     assert not (obj.is_sensor or obj.is_input or obj.is_output)
     assert replace(obj, value="1").is_on  # the surfaced value is the running flag
+
+
+@pytest.mark.parametrize(
+    ("leaf_id", "expected"),
+    [
+        ("0_cb8f_76_0_0", 0xCB8F),
+        ("0_1_10_0_0", 1),  # the M-SERV's override mac, not its factory id
+        ("0_D09A_5_1_2", 0xD09A),  # uppercase hex parses too
+        ("", None),  # system objects and ghost rows carry no leafId
+        ("0_cb8f_76_0", None),  # four segments
+        ("0_cb8f_76_0_0_9", None),  # six segments
+        ("1_cb8f_76_0_0", None),  # unexpected leading segment
+        ("0_zz_76_0_0", None),  # non-hex mac segment
+        ("0__76_0_0", None),  # empty mac segment
+    ],
+)
+def test_module_mac_parses_strictly(leaf_id: str, expected: int | None) -> None:
+    """`0_<macHex>_<F2>_<F3>_<F4>` yields the module's override mac; any
+    other shape yields None rather than a half-parsed guess."""
+    assert AmpioObject(id=1, leaf_id=leaf_id).module_mac == expected

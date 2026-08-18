@@ -22,6 +22,18 @@ for `rgbw` objects - no effect, no reply, from either state
 all three). The library now encodes that fact instead of overpromising
 it away.
 
+### Added
+
+- **`AmpioObject.module_mac`** - the owning module's replacement-stable
+  bus mac, parsed from the `leafId` second segment. Identical on both
+  discovery surfaces, so a restricted account - which never receives
+  the module catalogue - can still group entities by physical module,
+  and a later switch to an administrator account only adds metadata.
+  Live-verified: every parseable object in the reference catalogue
+  matches `AmpioModule.mac`, including the M-SERV, whose override
+  diverges from its factory id. Parsed strictly - any unexpected shape
+  reads as None, like the empty `leafId` of system objects. (#77)
+
 ### Changed
 
 - **The read surface is immutable.** `AmpioObject`, `AmpioModule`,

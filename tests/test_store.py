@@ -92,7 +92,7 @@ def _catalogue(**overrides: object) -> str:
         "id": 41,
         "typ_komponentu": "przekaznik",
         "interpretacja": 1,
-        "leafId": "0_a_1",
+        "leafId": "0_a_1_0_0",
         "opis_menu": "Lamp",
         "params": 1,
     }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -22,6 +23,12 @@ from .endpoints import AccessTier
 # hidden/stub marker (see `AmpioObject.hidden`); bit 37 is the per-object
 # Matter opt-in, not a visibility signal, and nothing here reads it.
 _HIDDEN_FLAG = 1 << 4
+
+# The `leafId` shape: `0_<macHex>_<F2>_<F3>_<F4>`, the same structure the
+# M-SERV's own Matter bridge parses (docs/matter-bridge.md). Only the mac
+# segment is extracted; the F segments' meaning stays opaque. Strict on
+# purpose - a half-parsed mac that is wrong is worse than None.
+_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_[^_]+_[^_]+_[^_]+\Z")
 
 
 @dataclass(slots=True, frozen=True)
@@ -183,6 +190,27 @@ class AmpioObject:
         by prefixing with a server identifier (e.g. ``AmpioServerInfo.mac``).
         """
         return f"leaf_{self.leaf_id}" if self.leaf_id else None
+
+    @property
+    def module_mac(self) -> int | None:
+        """The owning module's effective bus mac, parsed from ``leaf_id``.
+
+        ``leafId`` embeds the module's Designer override mac - the
+        replacement-stable ``AmpioModule.mac``, not the factory
+        ``mac_global`` (live-verified: the M-SERV's objects embed its
+        override ``1``, not its factory id). Because ``leafId`` is served
+        identically on both account tiers, this is the module key a
+        consumer can group entities by even on a restricted account, which
+        never receives the module catalogue - an entry set up with a
+        standard account and later switched to an administrator keeps its
+        entity-to-device mapping and only gains metadata.
+
+        None when ``leaf_id`` is empty - system objects, ghost rows, and
+        the window before an object's catalogue metadata arrives - or, on
+        no observed install, when it has an unexpected shape.
+        """
+        match = _LEAF_ID_RE.fullmatch(self.leaf_id)
+        return int(match.group(1), 16) if match is not None else None
 
     @property
     def visible(self) -> bool:
