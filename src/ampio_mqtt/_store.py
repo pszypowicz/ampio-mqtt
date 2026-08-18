@@ -10,8 +10,9 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from functools import partial
+from typing import Any
 
 from . import _protocol
 from .classification import classify, input_channel_prefix
@@ -177,22 +178,15 @@ class AmpioStore:
         obj = self.objects.get(meta.id)
         if obj is None:
             obj = AmpioObject(id=meta.id)
+        updates: dict[str, Any] = {
+            name: getattr(meta, name) for name in _METADATA_FIELDS
+        }
         # A row without the column leaves the params_devices value standing.
-        params = (
-            meta.params if meta.params is not None else self._params_by_id.get(meta.id)
-        )
-        updated = replace(
-            obj,
-            device_id=meta.device_id,
-            typ_komponentu=meta.typ_komponentu,
-            name=meta.name,
-            interpretacja=meta.interpretacja,
-            funkcja=meta.funkcja,
-            leaf_id=meta.leaf_id,
-            params=obj.params if params is None else params,
-            kind=classify(meta.typ_komponentu, meta.interpretacja),
-        )
-        changed = _identity(updated) != _identity(obj)
+        if updates["params"] is None:
+            updates["params"] = self._params_by_id.get(meta.id, obj.params)
+        updates["kind"] = classify(meta.typ_komponentu, meta.interpretacja)
+        changed = any(getattr(obj, name) != value for name, value in updates.items())
+        updated = replace(obj, **updates)
         # A row without the column (the app-sync shape) falls back to the
         # buffered snapshot value, so reply order never decides whether an
         # object starts with its state.
@@ -492,15 +486,11 @@ class AmpioStore:
         applied.events.append(ObjectUpdated(obj))
 
 
-def _identity(obj: AmpioObject) -> tuple[object, ...]:
-    """The metadata fields a catalogue row can change."""
-    return (
-        obj.device_id,
-        obj.typ_komponentu,
-        obj.name,
-        obj.interpretacja,
-        obj.funkcja,
-        obj.leaf_id,
-        obj.params,
-        obj.kind,
-    )
+# The catalogue-owned object fields, derived from the wire row's own shape
+# so a new column is added in one place and flows through the merge; `id`
+# keys the merge and `stan_json` seeds state, so neither is metadata.
+_METADATA_FIELDS = tuple(
+    f.name
+    for f in fields(_protocol.ObjectMetadata)
+    if f.name not in ("id", "stan_json")
+)
