@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from ampio_mqtt import classify
-from ampio_mqtt.classification import InputKind, OutputKind, SensorKind
+from ampio_mqtt.classification import (
+    InputKind,
+    OutputKind,
+    SensorKind,
+    ThermostatKind,
+)
 
 
 def _sensor(typ: str | None, interp: int | None) -> SensorKind | None:
@@ -154,3 +159,17 @@ def test_output_kinds(typ, key, dimmable, color, cover, position, tilt) -> None:
 def test_every_type_maps_to_exactly_one_kind(typ: str | None, expected: type) -> None:
     """An object is a measurement, a boolean input, or controllable - never two."""
     assert isinstance(classify(typ, 1), expected)
+
+
+def test_reg_is_a_thermostat() -> None:
+    kind = classify("reg", None)
+    assert isinstance(kind, ThermostatKind)
+    assert kind.key == "thermostat"
+
+
+def test_bit8_is_a_numeric_measurement() -> None:
+    """Same treatment as its bit32 sibling: a generic numeric sensor keyed
+    by interpretacja."""
+    kind = classify("bit8", 3)
+    assert isinstance(kind, SensorKind)
+    assert (kind.key, kind.name) == ("value_3", "Measurement")

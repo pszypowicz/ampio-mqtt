@@ -18,6 +18,15 @@ upgrade path.
 
 ### Added
 
+- `reg` and `bit8` classify (#61): `reg` as the new `ThermostatKind`
+  (with `AmpioObject.is_thermostat`) - a thermostat is genuinely none of
+  the sensor/input/output kinds - and `bit8` as a numeric measurement
+  like its `bit32` sibling. `set_temperature()` drives the regulator's
+  setpoint, guarding the bool and non-finite traps; the mode verb stays
+  unwrapped deliberately, since `setHeatingMode` is one-way over MQTT
+  (`M` works, `S` back is silently ignored) and a one-way toggle is a
+  broken control. Surfacing the regulator's rich state
+  (measureTemp/setTemperature/mode/cooling) is #73.
 - `stop_cover()`: halts a cover wherever it is, on either axis (#62).
   Confirmed on a tilt-capable blind: mid-travel the position freezes at
   the halt point and the commanded target is never reached, a slat

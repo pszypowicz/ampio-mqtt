@@ -109,10 +109,25 @@ _GENERIC_SENSOR = SensorKind(
 )
 
 
-# What an object is. Exactly one of the three applies - a component type is a
-# measurement, a boolean input, or something controllable, never two - so the
-# kinds are alternatives rather than a set of optional slots.
-ObjectKind = SensorKind | InputKind | OutputKind
+@dataclass(frozen=True, slots=True)
+class ThermostatKind:
+    """Neutral description of a temperature-controller (`reg`) object.
+
+    Its state value is the running flag, not a measurement, and it accepts
+    commands (:meth:`AmpioClient.set_temperature`) without answering the
+    output verbs - so it is none of the other three kinds. The rich state
+    the regulator pushes (measured and target temperature, mode, cooling)
+    is not surfaced yet; #73 tracks the climate readback.
+    """
+
+    key: str
+    name: str
+
+
+# What an object is. Exactly one applies - a component type is a measurement,
+# a boolean input, something controllable, or a thermostat, never two - so
+# the kinds are alternatives rather than a set of optional slots.
+ObjectKind = SensorKind | InputKind | OutputKind | ThermostatKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +148,8 @@ class TypeProfile:
     input: InputKind | None = None
     # Output side: the controllable kind, if this type accepts commands.
     output: OutputKind | None = None
+    # Thermostat side: the temperature-controller kind.
+    thermostat: ThermostatKind | None = None
     # Raw ``ampio/from/<mac>/state/<prefix>/<ch>`` bridge prefix. Only known
     # prefixes are set; an input without one (symulacja) falls back to the
     # per-object topic.
@@ -159,6 +176,8 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     "roleta_lamelki": TypeProfile(
         output=OutputKind("cover_tilt", "Blind", cover=True, position=True, tilt=True)
     ),
+    "reg": TypeProfile(thermostat=ThermostatKind("thermostat", "Thermostat")),
+    "bit8": TypeProfile(numeric=True),
     "flaga": TypeProfile(input=InputKind("flaga", "Flag", None), channel_prefix="f"),
     "detekcja": TypeProfile(
         input=InputKind("detekcja", "Detection", "motion"),
@@ -187,7 +206,13 @@ def classify(typ: str | None, interpretacja: int | None) -> ObjectKind:
         return SensorKind(f"analog_{interpretacja}", "Analog input", None, None)
     if profile.numeric:
         return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
-    return profile.sensor or profile.input or profile.output or _GENERIC_SENSOR
+    return (
+        profile.sensor
+        or profile.input
+        or profile.output
+        or profile.thermostat
+        or _GENERIC_SENSOR
+    )
 
 
 def is_system_type(typ: str | None) -> bool:

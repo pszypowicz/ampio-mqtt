@@ -11,6 +11,7 @@ from .classification import (
     ObjectKind,
     OutputKind,
     SensorKind,
+    ThermostatKind,
     is_system_type,
 )
 from .device_types import Capability
@@ -102,6 +103,16 @@ class AmpioObject:
     def is_output(self) -> bool:
         """Whether this object accepts commands (switch/light/cover platforms)."""
         return isinstance(self.kind, OutputKind)
+
+    @property
+    def is_thermostat(self) -> bool:
+        """Whether this is a temperature controller (climate platform).
+
+        Its `value` is the running flag (`is_on` applies); the setpoint is
+        driven with :meth:`AmpioClient.set_temperature`, and the rich
+        readback is tracked in #73.
+        """
+        return isinstance(self.kind, ThermostatKind)
 
     @property
     def supports_tilt(self) -> bool:

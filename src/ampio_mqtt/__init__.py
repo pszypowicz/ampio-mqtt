@@ -7,6 +7,7 @@ from .classification import (
     ObjectKind,
     OutputKind,
     SensorKind,
+    ThermostatKind,
     classify,
 )
 from .client import AmpioClient
@@ -65,6 +66,7 @@ __all__ = [
     "ObjectUpdated",
     "OutputKind",
     "SensorKind",
+    "ThermostatKind",
     "classify",
     "discover",
     "module_capabilities",

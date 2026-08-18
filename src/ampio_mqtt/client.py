@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from collections.abc import Callable
 from typing import Any, TypeVar, overload
@@ -608,6 +609,24 @@ class AmpioClient:
             return
         _check_range("pulse_ms", pulse_ms, 0, 655350)
         await self.command(object_id, "setValue", value, pulse_ms // 10)
+
+    async def set_temperature(self, object_id: int, temperature: float) -> None:
+        """Set a thermostat's (``reg``) target temperature in °C.
+
+        The M-SERV echoes the new setpoint in the regulator's rich state
+        push, of which the library surfaces only the running flag until the
+        climate readback lands (#73). Bools and non-finite floats are
+        rejected: both would serialize as text the M-SERV silently drops.
+        """
+        if (
+            isinstance(temperature, bool)
+            or not isinstance(temperature, (int, float))
+            or not math.isfinite(temperature)
+        ):
+            raise ValueError(
+                f"temperature must be a finite number, got {temperature!r}"
+            )
+        await self.command(object_id, "setTemperature", temperature)
 
     async def set_color(
         self, object_id: int, red: int, green: int, blue: int, white: int = 0

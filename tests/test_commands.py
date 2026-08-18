@@ -159,3 +159,27 @@ async def test_tilt_range_is_checked(
     with pytest.raises(ValueError):
         await client.set_cover_tilt(66, lamella)
     assert broker.published == []
+
+
+async def test_set_temperature_publishes_the_setpoint(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
+    await client.set_temperature(138, 21.5)
+    await client.set_temperature(138, 19)
+    assert broker.published == [
+        (API_TOPIC, b"/api/set/138/setTemperature/21.5"),
+        (API_TOPIC, b"/api/set/138/setTemperature/19"),
+    ]
+
+
+@pytest.mark.parametrize("bad", [True, float("nan"), float("inf"), "21"])
+async def test_set_temperature_rejects_non_numbers(
+    connected: tuple[AmpioClient, FakeBroker], bad: object
+) -> None:
+    """Bools and non-finite floats would serialize as text the M-SERV
+    silently drops - the same trap the int helpers guard against."""
+    client, broker = connected
+    with pytest.raises(ValueError):
+        await client.set_temperature(138, bad)
+    assert broker.published == []
