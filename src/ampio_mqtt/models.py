@@ -19,13 +19,13 @@ from .device_types import Capability
 from .endpoints import AccessTier
 
 # Bit flags inside the `params` integer (`obiekty.params`); the semantics
-# match the M-SERV's own Matter bridge (docs/matter-bridge.md). Bit 4 is the
+# match the M-SERV's own Matter bridge (docs/identity.md). Bit 4 is the
 # hidden/stub marker (see `AmpioObject.hidden`); bit 37 is the per-object
 # Matter opt-in, not a visibility signal, and nothing here reads it.
 _HIDDEN_FLAG = 1 << 4
 
 # The `leafId` shape: `0_<macHex>_<F2>_<F3>_<F4>`, the same structure the
-# M-SERV's own Matter bridge parses (docs/matter-bridge.md). Only the mac
+# M-SERV's own Matter bridge parses (docs/identity.md). Only the mac
 # segment is extracted; the F segments' meaning stays opaque. Strict on
 # purpose - a half-parsed mac that is wrong is worse than None.
 _LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_[^_]+_[^_]+_[^_]+\Z")
@@ -220,7 +220,7 @@ class AmpioObject:
         M-SERV's own Matter bridge honours. It catches the phantom rows that
         duplicate a real Designer channel (sharing its ``leaf_id`` but carrying
         no value), which the ``leaf_id`` heuristic alone lets through. See
-        docs/matter-bridge.md.
+        docs/identity.md.
         """
         return bool(self.params & _HIDDEN_FLAG)
 

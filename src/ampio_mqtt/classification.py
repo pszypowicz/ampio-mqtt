@@ -85,9 +85,8 @@ class OutputKind:
     # Position axis of `setRollerPos`.
     position: bool = False
     # Lamella axis of `setRollerPos`, and a `lammel` field in the object's
-    # state payload. The KEEP_POSITION sentinel (101) leaves an axis
-    # uncommanded, exactly as on the position axis - see docs/protocol.md
-    # and `AmpioClient.set_cover_tilt`, which relies on it.
+    # state payload; `KEEP_POSITION` in endpoints.py is the
+    # leave-this-axis-alone sentinel both axes share.
     tilt: bool = False
     # The `turnOn` / `turnOff` / `switch` verb family. False only for `rgbw`:
     # the M-SERV ignores all three for it (no effect, no reply), so

@@ -28,7 +28,12 @@ from enum import Enum
 # Every request/response endpoint the M-SERV exposes is one row here, and that
 # row is the single source of truth: the client derives its subscriptions,
 # topic-to-handler routing, discovery-completion signals, and retained payloads
-# from this table. Adding an endpoint is one row, not edits in four places.
+# from this table. Adding an endpoint is one row, not edits in four places:
+# verify the wire shape live first (tools/probe_config.py publishes candidate
+# keywords and prints the replies), add the row, give the reply an
+# `AmpioStore._handlers` entry only if it mutates state, and expose a
+# `fetch_<name>()` awaiting `AmpioClient._fetch` - `fetch_scenes()` is the
+# three-line reference shape.
 #
 # A request publishes ``req_payload`` (a keyword, or "" for the dedicated
 # ``states``/``info`` surfaces) to ``ampio/control/<user>/<req_surface>``; the

@@ -20,13 +20,9 @@ unique _within a single install_ (the user assigns the overrides), not
 globally.
 
 Nothing on the wire enforces that uniqueness, so a misconfigured or
-mid-commissioning install can deliver a catalogue where two modules share
-a `mac`. `AmpioClient.colliding_macs` reports the affected values and a
-warning naming the modules is logged when a collision appears; a consumer
-keying devices on `mac` should skip or disambiguate those modules rather
-than merge them. While a `mac` collides the library routes no raw-channel
-input events or diagnostics broadcasts for it - the sender is unknowable -
-and affected inputs update through the per-object state path instead.
+mid-commissioning install can deliver two modules sharing a `mac`.
+`AmpioClient.colliding_macs` is the signal and its docstring the full
+contract: skip or disambiguate those modules rather than merge them.
 
 ## Objects
 
@@ -111,8 +107,8 @@ visible = not hidden and (bool(leaf_id) or is_system)
   for yet reads as `0`, so `hidden` is False and the `leaf_id` test
   alone decides.
   This is the same gate the M-SERV's Matter bridge
-  uses (`(params & 2**37) && !(params & 16)`); see
-  [`matter-bridge.md`](matter-bridge.md). Bit 37 is a Matter-only opt-in
+  uses (`(params & 2**37) && !(params & 16)`) - see the section on the
+  bit semantics below. Bit 37 is a Matter-only opt-in
   and is deliberately **not** used for filtering, so the library does not
   surface it.
 - **`leaf_id`** - non-empty for every "real" object in the M-SERV's
@@ -128,6 +124,23 @@ visible = not hidden and (bool(leaf_id) or is_system)
 Consumers should treat `visible` as the discovery filter. Ghosts that
 slip in look like real entities until the user notices their HA
 counterpart no longer exists in Designer.
+
+## Where the `params` bit semantics come from
+
+The M-SERV ships its own Matter bridge (a matter.js app launched by
+`ampio-server`), and that bridge's production gate is the corroboration
+for the two bits this library reads: it exposes an object only when
+`(params & 2**37) && !(params & 16)` - bit 37 the per-object Matter
+opt-in set in Designer, bit 4 the hidden/stub marker `hidden` /
+`visible` build on. The `leafId` structure `0_<macHex>_<F2>_<F3>_<F4>`
+that `AmpioObject.module_mac` parses is likewise the structure the
+bridge's own classifier reads. The bridge also illustrates why a
+dedicated integration is the right path for sensors rather than
+leaning on it: it types objects through a registry with known gaps (no
+`lin_wej` branch; loudness has no Matter device type at all), keys
+endpoints on the volatile DB `id`, and exposes only the channels
+hand-flagged for Matter - a dozen on the reference install, with
+humidity, pressure, illuminance, and CO2 on zero modules.
 
 How deletion behaves on the wire on the baseline server:
 deleting a **module** hard-removes its row from the `devices` list (the
