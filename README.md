@@ -56,8 +56,8 @@ carry the API detail.
   reconnect, and one typed event stream that includes the terminal
   `AuthFailed` and `ConnectionDied` signals
   ([`docs/events.md`](docs/events.md)).
-- Discovery of the object and module catalogues on either account tier,
-  with the detected tier exposed for setup flows
+- Discovery of the object catalogue on either account tier (the module
+  catalogue is admin-only), with the detected tier exposed for setup flows
   ([`docs/account-tiers.md`](docs/account-tiers.md)).
 - Classification of every object into a sensor, input, output, or
   thermostat kind with Home-Assistant-compatible hints

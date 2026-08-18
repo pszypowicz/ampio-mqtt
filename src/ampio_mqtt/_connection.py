@@ -191,6 +191,8 @@ class Connection:
         except asyncio.CancelledError:
             pass
         except Exception:
+            # Unreachable while _run's own catch-all holds; kept because
+            # stop() promises never to raise into a consumer's teardown.
             _LOGGER.exception("Ampio connection loop failed")
 
     async def publish(self, topic: str, payload: bytes) -> None:

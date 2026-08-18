@@ -249,7 +249,7 @@ class AmpioObject:
         twin's ``leaf_id``, so filter on ``visible`` first. Objects with an
         empty ``leaf_id`` (system objects, ghost rows) return None; a consumer
         surfacing those needs its own fallback key. Scope the key per M-SERV
-        by prefixing with a server identifier (e.g. ``AmpioServerInfo.mac``).
+        by prefixing with the server identifier, ``AmpioServerInfo.key``.
         """
         return f"leaf_{self.leaf_id}" if self.leaf_id else None
 
@@ -367,7 +367,7 @@ class AmpioServerInfo:
     # The asking account's id: -1 for the reserved `admin` login, the
     # users-table row id for an app-created user. See `access_tier`.
     user_id: int | None = None
-    server_version: str | None = None  # ampio_mqtt application version
+    server_version: str | None = None  # the M-SERV server application's version
     server_revision: str | None = None
     mqtt_version: str | None = None  # broker version
     local_ip: str | None = None  # used for the configuration_url
@@ -410,8 +410,9 @@ class AmpioServerInfo:
 class ConnectionStats:
     """Lightweight liveness counters surfaced for downstream diagnostics.
 
-    Updated by `AmpioClient` itself; values are monotonic except `last_error`
-    (overwritten on every reconnect attempt). Intended for HA's per-config-
+    Updated by the connection layer (`last_message_at` by the client);
+    values are monotonic except `last_error` (overwritten on every
+    reconnect attempt). Intended for HA's per-config-
     entry diagnostics blob so a maintainer can correlate a "flapping" report
     with the actual reconnect count seen by the client.
     """

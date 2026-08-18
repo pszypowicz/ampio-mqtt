@@ -63,15 +63,11 @@ it is set to "blinds - percentage". Only the slats variant reports a
 `lammel` angle in its state payload, surfaced as
 `AmpioObject.tilt_position`.
 
-Ampio's own vocabulary also carries `rgb`, `rgbww`, `ledww`, `reg`, `ac`,
-`radio`, `ip_radio`, and `satel_alarm`, and virtual devices add `bit8`
-(an 8-bit sensor channel). `reg` classifies as `ThermostatKind` (its
-value is the running flag; the rich state shape - see `protocol.md` -
-awaits the #73 climate readback) and `bit8` as a numeric measurement,
-like `bit32`. `satel_alarm` (armed/alarmed flags of an alarm
-integration - a Jablotron behind an M-CON, so the prefix is not
-Satel-specific) remains absent from `TYPE_PROFILES` and classifies as
-the generic value sensor.
+Ampio's own vocabulary also carries `rgb`, `rgbww`, `ledww`, `ac`,
+`radio`, `ip_radio`, and `satel_alarm` - types absent from
+`TYPE_PROFILES` that classify as the generic value sensor.
+`satel_alarm` is the armed/alarmed flags of an alarm integration (a
+Jablotron behind an M-CON, so the prefix is not Satel-specific).
 
 ## `lin_wej` interpretation table
 

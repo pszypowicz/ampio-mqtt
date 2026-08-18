@@ -670,7 +670,7 @@ gets smaller and the catalogue path stops doing the same work twice.
   every observed firmware and the code said as much - room membership comes
   from `fetch_rooms()`. `visible` loses the clause it fed.
 - `AmpioObject.matter_exposed`. Informational only, filtered on by nothing, and
-  read by nothing; the bit stays documented in `docs/matter-bridge.md`.
+  read by nothing; the bit stays documented in `docs/identity.md`.
 - `AmpioState` from the public exports - the client's `objects` / `modules` /
   `server_info` / `sensors` properties are the read surface.
 - An unreachable guard in the raw-channel handler, whose test had to delete an
@@ -906,7 +906,7 @@ authoritative visibility marker, fixing the duplicated-Designer-channel case
 where a phantom stub and a labelled object share one `leaf_id` (the downstream
 unique-id collision tracked in #15, dup #32). The bit semantics are
 reverse-engineered from the M-SERV's own Matter bridge; see
-[docs/matter-bridge.md](docs/matter-bridge.md).
+[docs/identity.md](docs/identity.md).
 
 ### Added
 
@@ -915,7 +915,7 @@ reverse-engineered from the M-SERV's own Matter bridge; see
   replacement-stable, set on phantom/stub rows and user-hidden objects.
 - `AmpioObject.matter_exposed` (`params` bit 37) - the per-object Matter opt-in,
   informational only (never used for filtering).
-- `docs/matter-bridge.md` - the reverse-engineered M-SERV Matter bridge: its
+- `docs/identity.md` - the reverse-engineered M-SERV Matter bridge: its
   `params` gate, `type`/`leafId` classification table, and gaps.
 
 ### Changed

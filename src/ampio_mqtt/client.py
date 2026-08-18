@@ -121,9 +121,7 @@ class AmpioClient:
                 "username is required - the Ampio topics are namespaced by account"
             )
         self._username = username
-        # The tier is the authenticated login name: the broker verifies it
-        # at CONNACK and the app cannot create another `admin`, so a held
-        # session under that name IS the administrator.
+        # The tier is the authenticated login name - see AccessTier.
         self._tier = (
             AccessTier.ADMIN if username == ADMIN_USERNAME else AccessTier.RESTRICTED
         )
@@ -303,8 +301,9 @@ class AmpioClient:
 
         ``None`` while the credentials are accepted, including through outages
         the client is still trying to reconnect across. Once set, the
-        connection loop has stopped for good and only a fresh ``start()`` -
-        presumably with new credentials - clears it.
+        connection loop has stopped for good. A fresh ``start()`` clears it
+        but retries the constructor credentials; recovering from a genuinely
+        changed password means building a new client.
         """
         return self._connection.auth_failure
 

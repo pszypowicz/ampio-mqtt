@@ -40,13 +40,13 @@ reject an account whose tier will not support what the consumer needs
 | **Module diagnostics** (voltage, temperature) | yes           | **no**                                |
 | **CAN write tree** (`ampio/to/#`)             | yes           | **no**                                |
 
-The raw-tree denial is enforced in the SUBACK: a
-standard account's subscriptions to the four `ampio/from/...` filters
-come back with reason code 128 even over MQTT 3.1.1 (where stock
-mosquitto would grant silently and just filter delivery). The library
-records those verdicts in `ConnectionStats.subscribe_failures`, so a
-diagnostics blob carries the broker's own statement of the account's
-raw-tree access on every connect.
+The raw-tree denial is enforced in the SUBACK: a standard account's
+subscription to the `ampio/from/...` filters comes back with reason
+code 128 even over MQTT 3.1.1 (where stock mosquitto would grant
+silently and just filter delivery). The library never runs into it - a
+standard client does not ask for the raw tree - but the verdict is what
+locks the table above to the broker's own enforcement rather than
+convention.
 
 Two of the gaps are narrower than the table suggests. The `data/devices`
 rows carry `id_urzadzenia`, so a standard account still learns the module
@@ -60,13 +60,12 @@ Grants bound reads and object writes alike. A command for an object
 outside a standard account's grant is dropped with no effect and no
 reply, and no state for it reaches that account's namespace.
 
-**Bus events are the exception.** Raising one is bounded by neither the
-object grants nor the per-event rights the app displays - a standard
-account raised an event it had no right to. Whatever logic the installer
-bound to that event then runs with full authority, so an account can
-reach objects it cannot command directly. A dedicated standard account
-is a real boundary for direct object control; it is not a boundary
-against anything reachable through Ampio's own event logic.
+**Bus events are the exception.** Raising one is bounded by neither
+the object grants nor the per-event rights the app displays, and the
+logic bound to an event runs with full authority - so a dedicated
+standard account is a real boundary for direct object control, not
+against anything reachable through Ampio's own event logic. The gating
+detail is in [`protocol.md`](protocol.md).
 
 ## The latency difference is on reads only
 
