@@ -225,6 +225,36 @@ def test_object_removal_listener_fires_after_eviction() -> None:
     assert removed == [42]
 
 
+def test_unsubscribe_is_idempotent() -> None:
+    """Consumer teardown lists routinely invoke a cleanup callback twice;
+    the second call must be a no-op, not a ValueError."""
+    client = _client()
+    unsubscribe = client.subscribe(lambda e: None, of=ObjectRemoved)
+    unsubscribe()
+    unsubscribe()
+
+
+def test_unsubscribe_removes_only_its_own_registration() -> None:
+    """The same listener registered twice is dispatched twice; either
+    unsubscribe drops exactly its own registration, however often called."""
+    client = _client()
+    seen: list[int] = []
+
+    def listener(e: ObjectUpdated) -> None:
+        seen.append(e.object.id)
+
+    first = client.subscribe(listener, of=ObjectUpdated)
+    client.subscribe(listener, of=ObjectUpdated)
+    topic = f"ampio/fromDB/{USER}/config/devicesDetails"
+    feed(client, topic, details(_flaga(41, 3)))
+    assert seen == [41, 41]
+
+    first()
+    first()  # repeat must not touch the surviving registration
+    feed(client, topic, details(_flaga(41, 4)))
+    assert seen == [41, 41, 41]
+
+
 def test_module_removal_dispatches_module_removed() -> None:
     client = _client()
     removed: list[int] = []

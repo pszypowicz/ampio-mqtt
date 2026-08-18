@@ -372,13 +372,18 @@ class AmpioClient:
         Ordering across kinds is guaranteed: the availability drop precedes
         the terminal ``AuthFailed`` / ``ConnectionDied``, and removals
         follow the updates of the catalogue reply that caused them.
+
+        The returned unsubscribe removes exactly its own registration and
+        is idempotent - consumer teardown lists routinely invoke a cleanup
+        callback more than once, and the same listener registered twice
+        keeps its other registration.
         """
         only = (of,) if isinstance(of, type) else of
         entry = (listener, only)
         self._listeners.append(entry)
 
         def _unsubscribe() -> None:
-            self._listeners.remove(entry)
+            self._listeners = [e for e in self._listeners if e is not entry]
 
         return _unsubscribe
 
