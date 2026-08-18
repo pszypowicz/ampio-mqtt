@@ -118,10 +118,11 @@ python tools/probe_config.py --keywords logs,resources
 Once the response shape is in hand, the implementation pattern is
 almost always the same as `fetch_rooms()`:
 
-1. Add a row to the `ENDPOINTS` table in `const.py`. Subscription,
-   response routing, the discovery latch and `refresh()` all derive
-   from it.
+1. Add a row to the `ENDPOINTS` table in `endpoints.py`. Subscription,
+   response routing, the reply channel, the discovery latch and
+   `refresh()` all derive from it.
 2. If the reply mutates state, add a handler to `AmpioStore._handlers`
    in `_store.py`; if it is pure request/response, skip this.
-3. Expose a `fetch_<name>()` on the client that calls
-   `_request_and_wait()` and parses the retained payload.
+3. Expose a `fetch_<name>()` on the client that awaits the reply via
+   `AmpioClient._fetch` and parses the returned payload - see
+   `fetch_scenes()` for the three-line shape.

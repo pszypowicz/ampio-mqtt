@@ -10,13 +10,13 @@ a measurement, a boolean input, or something controllable, never two, so
 the three are alternatives rather than optional slots on the object.
 
 Authoritative source:
-[`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py)
+[`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py)
 (`classify`, the `TYPE_PROFILES` table, and `_LIN_WEJ_BY_INTERP`).
 
 ## `typ_komponentu` truth table
 
 The Sensor / Input / System columns are one row each in the
-`TYPE_PROFILES` table in `const.py` (a type's `sensor`/`analog`/`numeric`,
+`TYPE_PROFILES` table in `classification.py` (a type's `sensor`/`analog`/`numeric`,
 `input`, and `system` fields) - keep that table in sync when a new type
 is added.
 
@@ -68,7 +68,7 @@ they classify as the generic value sensor.
 
 For a `lin_wej` object the measurement is selected by `interpretacja`
 (`_LIN_WEJ_BY_INTERP` in
-[`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py)):
+[`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py)):
 
 | `interpretacja` | `SensorKind.key` | Unit  | HA device class        |
 | --------------- | ---------------- | ----- | ---------------------- |

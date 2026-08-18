@@ -36,7 +36,7 @@ for the `start()` / `stop()` lifecycle that joins them.
    capped-exponential reconnect loop. The first successful connect
    stamps `stats.started_at`; each subsequent one bumps
    `stats.reconnect_count`.
-2. **Subscribe** - the per-user topics (`ob/+/state`, the ten
+2. **Subscribe** - the per-user topics (`ob/+/state`, the nine
    response topics) plus the global raw-channel wildcards, sent as one
    QoS 1 SUBSCRIBE packet. The SUBACK verdicts are read: a filter the
    broker rejects logs a warning and lands in

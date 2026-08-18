@@ -14,9 +14,9 @@ The M-SERV speaks two parallel topic trees on the same MQTT broker:
   [`raw-channel-bridge.md`](raw-channel-bridge.md).
 
 All topic helpers live in
-[`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py). Treat the
-constants there as the authoritative source; the table below is a quick
-reference.
+[`src/ampio_mqtt/endpoints.py`](../src/ampio_mqtt/endpoints.py). Treat
+the constants there as the authoritative source; the table below is a
+quick reference.
 
 ## Discovery (request / response)
 
@@ -184,7 +184,8 @@ rather than treat every event as user intent.
 | Method                          | What it does                                                                                                                                                                                                                                                                                               |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AmpioClient.start()`           | Connects, subscribes, publishes the six auto-discovery requests (`devicesDetails` and `devices` on `config`, `devices` and `params_devices` on `data`, plus the empty-payload `states` and `info` surfaces), waits for whichever catalogue answers, returns. See [`discovery-flow.md`](discovery-flow.md). |
+| `AmpioClient.refresh()`         | Re-publishes the initial-discovery requests for the account's tier; `start()` issues it on every (re)connect, and a consumer calls it to notice server-side catalogue changes without reconnecting.                                                                                                          |
 | `AmpioClient.fetch_rooms()`     | One-shot: publishes `groups` + `group_devices`, joins both responses into `{object_id: room_name}`. On-demand because the consumer decides when room hints are needed.                                                                                                                                     |
 | `AmpioClient.send_event()`      | Raises a bus event; `BusEvent` subscribers see the ones the bus raises (administrator-only).                                                                                                                                                                                                           |
 | `AmpioClient.fetch_scenes()`    | One-shot: publishes `scenes`, returns `list[AmpioScene]`. Drive them with `run_scene()` / `turn_scene_off()` / `undo_scene()`.                                                                                                                                                                             |
-| `AmpioClient.last_payloads`     | `{endpoint_name: payload}` of the verbatim retained response per endpoint (`details`, `devices`, `states`, `info`, `data_devices`, `params_devices`, `groups`, `group_devices`, `locations`, `scenes`). Intended for the HA integration's diagnostics blob.                                                |
+| `AmpioClient.last_payloads`     | `{endpoint_name: payload}` of the verbatim retained response per endpoint (`details`, `devices`, `states`, `info`, `data_devices`, `params_devices`, `groups`, `group_devices`, `scenes`). Intended for the HA integration's diagnostics blob.                                                |

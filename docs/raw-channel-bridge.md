@@ -26,11 +26,12 @@ per-object topic instead, 100-140 ms later - measured in
 an administrator account is laid out.
 
 Authoritative source:
-[`src/ampio_mqtt/const.py`](../src/ampio_mqtt/const.py)
-(`RAW_INPUT_WILDCARDS`, the `channel_prefix` field on the
-`TYPE_PROFILES` rows) and the dispatcher in
-[`src/ampio_mqtt/_store.py`](../src/ampio_mqtt/_store.py)
-(`_handle_raw_channel`).
+[`src/ampio_mqtt/endpoints.py`](../src/ampio_mqtt/endpoints.py)
+(`RAW_INPUT_WILDCARDS`),
+[`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py)
+(the `channel_prefix` field on the `TYPE_PROFILES` rows), and the
+router in [`src/ampio_mqtt/_protocol.py`](../src/ampio_mqtt/_protocol.py)
+plus the store's `_apply_raw_channel`.
 
 ## What the library subscribes to
 

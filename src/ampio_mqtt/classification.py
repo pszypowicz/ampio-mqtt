@@ -82,8 +82,9 @@ class OutputKind:
     # Position axis of `setRollerPos`.
     position: bool = False
     # Lamella axis of `setRollerPos`, and a `lammel` field in the object's
-    # state payload. `setRollerPos` ignores the KEEP_POSITION sentinel on
-    # these, so the lamella argument must carry a real angle.
+    # state payload. The KEEP_POSITION sentinel (101) leaves an axis
+    # uncommanded, exactly as on the position axis - see docs/protocol.md
+    # and `AmpioClient.set_cover_tilt`, which relies on it.
     tilt: bool = False
 
 
