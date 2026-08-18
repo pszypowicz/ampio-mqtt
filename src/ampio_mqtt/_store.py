@@ -81,8 +81,9 @@ class AmpioStore:
         # updates for an object the next catalogue reply then evicts.
         self._pending_state: dict[int, tuple[_protocol.StateUpdate, float]] = {}
         # Endpoints whose reply mutates state, each reporting whether the
-        # payload parsed. The rest are pure request/response - the client keeps
-        # their payload and parses it on demand.
+        # payload parsed. The rest are pure request/response, parsed by the
+        # dispatcher with the endpoint's own `parses` gate and never sent
+        # here.
         self._handlers: dict[str, Callable[[str, Applied], bool]] = {
             "details": partial(self._handle_catalogue, "devicesDetails"),
             "data_devices": partial(self._handle_catalogue, "data/devices"),
@@ -91,6 +92,15 @@ class AmpioStore:
             "states": self._handle_states_snapshot,
             "info": self._handle_info,
         }
+        # The endpoint table and this handler table are edited separately;
+        # a name typo between them would otherwise surface as a silent
+        # discovery hang, so misalignment fails construction instead.
+        handler_gated = {ep.name for ep in _protocol.ENDPOINTS if ep.parses is None}
+        if set(self._handlers) != handler_gated:
+            raise RuntimeError(
+                f"store handlers {sorted(self._handlers)} do not match the "
+                f"handler-gated endpoints {sorted(handler_gated)}"
+            )
 
     # --- routing ----------------------------------------------------------
 
@@ -99,16 +109,9 @@ class AmpioStore:
         applied = Applied()
         match msg:
             case _protocol.EndpointReply(endpoint=endpoint, payload=body):
-                handler = self._handlers.get(endpoint.name)
-                if handler is not None:
-                    applied.parsed = handler(body, applied)
-                else:
-                    # Pure request/response endpoints mutate nothing here;
-                    # their gate is the endpoint's own reply parser, so a
-                    # reply that resolves a fetch parses by construction.
-                    applied.parsed = endpoint.parses(body) is not None
-                    if not applied.parsed:
-                        _LOGGER.warning("Could not parse Ampio %s reply", endpoint.name)
+                # Only handler-gated replies reach the store - the dispatcher
+                # parses pure request/response replies itself.
+                applied.parsed = self._handlers[endpoint.name](body, applied)
             case _protocol.StateUpdate() as update:
                 self._apply_state(update, applied)
             case _protocol.RawChannelEdge() as edge:

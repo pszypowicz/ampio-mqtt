@@ -285,8 +285,10 @@ def parse_scenes(payload: str) -> list[AmpioScene] | None:
     return out
 
 
-def parse_rooms(groups_payload: str, group_devices_payload: str) -> dict[int, str]:
-    """Join `data/groups` and `data/group_devices` replies into a room map.
+def parse_rooms(
+    groups_rows: list[Any], group_devices_rows: list[Any]
+) -> dict[int, str]:
+    """Join parsed `data/groups` and `data/group_devices` rows into a room map.
 
     Returns ``{ampio_object_id: room_name}``. Objects assigned to multiple
     groups map to the first room encountered - the join table has no
@@ -295,7 +297,7 @@ def parse_rooms(groups_payload: str, group_devices_payload: str) -> dict[int, st
     allows one area per device. Mistyped rows are skipped.
     """
     group_names: dict[int, str] = {}
-    for row in list_rows(groups_payload) or []:
+    for row in groups_rows:
         if not isinstance(row, dict):
             continue
         gid = row.get("id")
@@ -303,7 +305,7 @@ def parse_rooms(groups_payload: str, group_devices_payload: str) -> dict[int, st
         if isinstance(gid, int) and isinstance(name, str) and name:
             group_names[gid] = name
     room_map: dict[int, str] = {}
-    for row in list_rows(group_devices_payload) or []:
+    for row in group_devices_rows:
         if not isinstance(row, dict):
             continue
         oid = row.get("id_obiektu")
@@ -491,12 +493,12 @@ class Endpoint:
     # serves the `config` catalogues to administrators only, and an admin
     # session never needs the app-sync pair (it repeats the `config` view).
     tier: AccessTier | None = None
-    # The reply parser gating a pure request/response endpoint: a reply
-    # that does not parse must neither resolve a fetch nor latch discovery,
-    # so the gate IS the parser a fetch will run - never a stand-in shape
-    # check. Endpoints whose replies mutate state are gated by their
-    # AmpioStore handler instead and never read this field.
-    parses: Callable[[str], object | None] = list_rows
+    # The reply parser for a pure request/response endpoint. The dispatcher
+    # runs it exactly once: a reply that does not parse neither resolves a
+    # fetch nor latches discovery, and the parsed value is what a fetch
+    # returns. None marks an endpoint whose reply mutates state - its
+    # AmpioStore handler is the gate instead.
+    parses: Callable[[str], object | None] | None = None
 
 
 ENDPOINTS: tuple[Endpoint, ...] = (
@@ -545,8 +547,15 @@ ENDPOINTS: tuple[Endpoint, ...] = (
         initial=True,
         tier=AccessTier.RESTRICTED,
     ),
-    Endpoint("groups", "data", "groups", "data", "groups"),
-    Endpoint("group_devices", "data", "group_devices", "data", "group_devices"),
+    Endpoint("groups", "data", "groups", "data", "groups", parses=list_rows),
+    Endpoint(
+        "group_devices",
+        "data",
+        "group_devices",
+        "data",
+        "group_devices",
+        parses=list_rows,
+    ),
     Endpoint("scenes", "data", "scenes", "data", "scenes", parses=parse_scenes),
 )
 

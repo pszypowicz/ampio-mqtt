@@ -29,6 +29,7 @@ from conftest import (
     info,
 )
 
+from ampio_mqtt import _protocol
 from ampio_mqtt._protocol import ENDPOINTS, Router
 from ampio_mqtt._store import AmpioStore, Applied
 from ampio_mqtt.events import (
@@ -330,24 +331,16 @@ def test_below_baseline_warning_survives_an_identityless_reply_arriving_first(
     assert "100" in warnings[0].getMessage()
 
 
-def test_on_demand_reply_parseability_gates_parsed(
-    caplog: pytest.LogCaptureFixture,
+def test_handler_table_misalignment_fails_at_construction(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Endpoints with no mutating handler still report whether their reply
-    parsed, so a corrupt reply cannot complete a fetch (it is List-shaped
-    or it does not count)."""
-    store = _store()
-    topic = f"ampio/fromDB/{USER}/data/groups"
-    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
-        bad = _apply(store, topic, "{not json !!")
-    assert bad.parsed is False
-    assert any("groups" in r.getMessage() for r in caplog.records)
-
-    not_a_list_reply = _apply(store, topic, "[]")
-    assert not_a_list_reply.parsed is False
-
-    good = _apply(store, topic, '{"List": []}')
-    assert good.parsed is True
+    """A handler-gated endpoint row without a matching store handler (a
+    name typo, a row added without its handler) would surface as a silent
+    discovery hang; construction refuses it instead."""
+    rogue = _protocol.Endpoint("rogue", "data", "rogue", "data", "rogue")
+    monkeypatch.setattr(_protocol, "ENDPOINTS", (*ENDPOINTS, rogue))
+    with pytest.raises(RuntimeError, match="rogue"):
+        AmpioStore()
 
 
 def _raw_proven_flag(store: AmpioStore, mac: int = 0xCAFE) -> None:

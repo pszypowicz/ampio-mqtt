@@ -73,10 +73,11 @@ class _ReplyChannel:
     def __init__(self) -> None:
         self.received = asyncio.Event()
         self.last_payload: str | None = None
-        self.waiters: list[asyncio.Future[str]] = []
+        self.waiters: list[asyncio.Future[Any]] = []
 
-    def deliver(self, payload: str, parsed: bool) -> None:
-        """Record one reply; only a parsed one latches and resolves waiters.
+    def deliver(self, payload: str, parsed: object | None) -> None:
+        """Record one reply; ``parsed`` is its parsed form, None when the
+        payload could not be read.
 
         A malformed reply must neither falsely complete discovery nor hand a
         fetch garbage - the fetch keeps waiting and times out into the same
@@ -84,13 +85,13 @@ class _ReplyChannel:
         ``last_payload``: they are exactly what a diagnostics report needs.
         """
         self.last_payload = payload
-        if not parsed:
+        if parsed is None:
             return
         self.received.set()
         waiters, self.waiters = self.waiters, []
         for future in waiters:
             if not future.done():
-                future.set_result(payload)
+                future.set_result(parsed)
 
 
 class AmpioClient:
@@ -199,9 +200,23 @@ class AmpioClient:
             msg = self._router.route(topic, payload)
             if msg is None:
                 return
+            if (
+                isinstance(msg, _protocol.EndpointReply)
+                and msg.endpoint.parses is not None
+            ):
+                # Pure request/response: the endpoint's own parser is the
+                # gate, run exactly once - its output is what a fetch
+                # returns. Nothing here mutates the store.
+                parsed = msg.endpoint.parses(payload)
+                if parsed is None:
+                    _LOGGER.warning("Could not parse Ampio %s reply", msg.endpoint.name)
+                self._channels[msg.endpoint.name].deliver(payload, parsed)
+                return
             applied = self._store.apply(msg)
             if isinstance(msg, _protocol.EndpointReply):
-                self._channels[msg.endpoint.name].deliver(payload, applied.parsed)
+                self._channels[msg.endpoint.name].deliver(
+                    payload, applied.parsed or None
+                )
         except Exception:
             if topic in self._poisoned_topics:
                 _LOGGER.debug("Dropped another failing Ampio message on %s", topic)
@@ -535,12 +550,12 @@ class AmpioClient:
         if the broker is not connected and ``AmpioTimeoutError`` if either
         response does not arrive within ``timeout``.
         """
-        payloads = await self._fetch(
+        replies = await self._fetch(
             ("groups", "group_devices"),
             timeout,
             "Timed out fetching room map from Ampio broker",
         )
-        return _protocol.parse_rooms(payloads["groups"], payloads["group_devices"])
+        return _protocol.parse_rooms(replies["groups"], replies["group_devices"])
 
     async def fetch_scenes(self, timeout: float = 5.0) -> list[AmpioScene]:
         """Return the scene catalogue defined in the Ampio app.
@@ -549,14 +564,12 @@ class AmpioClient:
         if the broker is not connected and ``AmpioTimeoutError`` if the
         response does not arrive within ``timeout``.
         """
-        payloads = await self._fetch(
+        replies = await self._fetch(
             ("scenes",), timeout, "Timed out fetching scenes from Ampio broker"
         )
-        # The store's parsed gate admits only {"List": [...]} documents - the
-        # one shape parse_scenes returns None for - and the row parser
-        # degrades malformed fields instead of raising, so a payload that
-        # resolved the fetch parses by construction.
-        return cast("list[AmpioScene]", _protocol.parse_scenes(payloads["scenes"]))
+        # The channel resolved with the scenes endpoint's own parser output;
+        # the cast recovers the type the table's Callable field erases.
+        return cast("list[AmpioScene]", replies["scenes"])
 
     async def send_event(self, event_number: int) -> None:
         """Raise a bus event, running whatever Ampio logic is bound to it.
@@ -783,21 +796,22 @@ class AmpioClient:
 
     async def _fetch(
         self, names: tuple[str, ...], timeout: float, timeout_message: str
-    ) -> dict[str, str]:
-        """Request the given endpoints and return each reply payload by name.
+    ) -> dict[str, Any]:
+        """Request the given endpoints and return each parsed reply by name.
 
         One future per endpoint correlates this caller with the next parseable
         reply, so concurrent fetches never disturb each other and the
         discovery latches stay untouched; every concurrent caller of the same
-        endpoint receives the same reply. The wire carries no correlation
-        ids - a reply already in flight from an earlier request can satisfy a
-        later ask, which for these idempotent read endpoints is the intended
-        semantics. A reply that does not parse resolves nothing (see
-        ``_handle_message``), so a corrupt reply ends in the same retryable
-        ``AmpioTimeoutError`` as no reply at all.
+        endpoint receives the same reply, already parsed by the endpoint's
+        own gate. The wire carries no correlation ids - a reply already in
+        flight from an earlier request can satisfy a later ask, which for
+        these idempotent read endpoints is the intended semantics. A reply
+        that does not parse resolves nothing (see ``_handle_message``), so a
+        corrupt reply ends in the same retryable ``AmpioTimeoutError`` as no
+        reply at all.
         """
         loop = asyncio.get_running_loop()
-        futures: dict[str, asyncio.Future[str]] = {
+        futures: dict[str, asyncio.Future[Any]] = {
             name: loop.create_future() for name in names
         }
         for name, future in futures.items():
