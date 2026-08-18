@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 from .classification import (
+    INPUT_KIND_KEYS,
+    OPEN_SENSOR_KEY_PREFIXES,
+    OUTPUT_KIND_KEYS,
+    SENSOR_KIND_KEYS,
+    THERMOSTAT_KIND_KEYS,
     InputKind,
     ObjectKind,
     OutputKind,
@@ -40,6 +45,11 @@ from .models import (
 )
 
 __all__ = [
+    "INPUT_KIND_KEYS",
+    "OPEN_SENSOR_KEY_PREFIXES",
+    "OUTPUT_KIND_KEYS",
+    "SENSOR_KIND_KEYS",
+    "THERMOSTAT_KIND_KEYS",
     "AccessTier",
     "AmpioAuthError",
     "AmpioClient",

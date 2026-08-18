@@ -88,6 +88,21 @@ For a `lin_wej` object the measurement is selected by `interpretacja`
 Unknown values fall through to a generic `analog_<n>` SensorKind with no
 device class, so a future M-SENS variant still surfaces as a sensor.
 
+## The kind-key vocabulary
+
+`SENSOR_KIND_KEYS`, `INPUT_KIND_KEYS`, `OUTPUT_KIND_KEYS`, and
+`THERMOSTAT_KIND_KEYS` export every static `kind.key` the library can
+emit, derived from `TYPE_PROFILES` and the `lin_wej` map at import time
+so they cannot drift. Two key families embed `interpretacja` and stay
+open; `OPEN_SENSOR_KEY_PREFIXES` (`analog_`, `value_`) names them. A
+consumer mapping `kind.key` to its own entity descriptions should assert
+in its CI that every exported key is either mapped or deliberately
+excluded (treating each open prefix as one decision), so a library
+upgrade that adds a kind fails a test instead of silently dropping
+entities - the failure mode every prior Ampio consumer exhibits, from
+the M-SERV's own Matter bridge (unmapped objects return `undefined` and
+vanish) to the config-driven predecessors.
+
 ## What classification keys on (and what it ignores)
 
 Classification uses exactly two wire fields:

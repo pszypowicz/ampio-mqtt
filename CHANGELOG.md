@@ -32,6 +32,13 @@ it away.
   guarantees `server_info` is populated with a non-None `mac` and
   `key`. No baseline server answers without an identity; one that does
   leaves discovery incomplete with a warning naming why. (#78)
+- **The kind-key vocabulary is exported** - `SENSOR_KIND_KEYS`,
+  `INPUT_KIND_KEYS`, `OUTPUT_KIND_KEYS`, `THERMOSTAT_KIND_KEYS`,
+  derived from the classification tables at import time, plus
+  `OPEN_SENSOR_KEY_PREFIXES` for the two `interpretacja`-embedding
+  families that cannot be enumerated. A consumer CI-asserts every key
+  is mapped or deliberately excluded, so a library upgrade that adds a
+  kind fails a test instead of silently dropping entities. (#83)
 - **`AmpioObject.rgbw` and `AmpioObject.position`** - typed state
   accessors, so consumers never parse `value` or do bit math. `rgbw`
   decodes the packed color word (`R | G<<8 | B<<16 | W<<24`,

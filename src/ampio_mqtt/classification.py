@@ -199,6 +199,47 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
 }
 
 
+def _kind_keys() -> tuple[
+    frozenset[str], frozenset[str], frozenset[str], frozenset[str]
+]:
+    sensor: set[str] = {_GENERIC_SENSOR.key}
+    inputs: set[str] = set()
+    output: set[str] = set()
+    thermostat: set[str] = set()
+    for profile in TYPE_PROFILES.values():
+        if profile.sensor is not None:
+            sensor.add(profile.sensor.key)
+        if profile.analog:
+            sensor.update(kind.key for kind in _LIN_WEJ_BY_INTERP.values())
+        if profile.input is not None:
+            inputs.add(profile.input.key)
+        if profile.output is not None:
+            output.add(profile.output.key)
+        if profile.thermostat is not None:
+            thermostat.add(profile.thermostat.key)
+    return (
+        frozenset(sensor),
+        frozenset(inputs),
+        frozenset(output),
+        frozenset(thermostat),
+    )
+
+
+# The complete static `kind.key` vocabulary, derived from the tables above
+# at import time so a new row is part of it with no second edit. A consumer
+# mapping `kind.key` to its own entity descriptions should assert in its CI
+# that every key here is either mapped or deliberately excluded - a library
+# upgrade that adds a kind then fails a test instead of silently dropping
+# entities.
+SENSOR_KIND_KEYS, INPUT_KIND_KEYS, OUTPUT_KIND_KEYS, THERMOSTAT_KIND_KEYS = _kind_keys()
+
+# The two open families: keys minted with the object's `interpretacja`
+# embedded (`analog_<n>` for a lin_wej measurement the map does not know,
+# `value_<n>` for the numeric bit8/bit32 channels), so they cannot be
+# enumerated. A consumer treats each prefix as one mapping decision.
+OPEN_SENSOR_KEY_PREFIXES: tuple[str, ...] = ("analog_", "value_")
+
+
 def classify(typ: str | None, interpretacja: int | None) -> ObjectKind:
     """Classify a DB object into the one kind it is.
 
