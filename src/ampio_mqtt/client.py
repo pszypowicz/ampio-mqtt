@@ -15,6 +15,7 @@ from typing import Any, TypeVar, cast, overload
 
 from . import _connection, _protocol
 from ._store import AmpioStore
+from .classification import OutputKind
 from .device_types import Capability
 from .endpoints import (
     DISCOVERY_ADMIN,
@@ -580,16 +581,59 @@ class AmpioClient:
         )
 
     async def turn_on(self, object_id: int) -> None:
-        """Turn an object fully on."""
+        """Turn an object fully on.
+
+        Raises ``ValueError`` for an output whose kind says the switch verbs
+        do not apply (``rgbw``): the M-SERV drops the command with no effect
+        and no reply, and turning a color light on means choosing a color -
+        the consumer's call, via :meth:`set_color`.
+        """
+        self._check_switchable(object_id, "turnOn")
         await self.command(object_id, "turnOn")
 
     async def turn_off(self, object_id: int) -> None:
-        """Turn an object off."""
+        """Turn an object off.
+
+        A color output that does not answer the switch verbs (``rgbw``) is
+        turned off with ``setColors 0/0/0/0`` instead - off is unambiguous,
+        so the library routes it. An object whose kind is not yet known gets
+        the plain verb; the library cannot know better than the caller.
+        """
+        kind = self._output_kind(object_id)
+        if kind is not None and not kind.switchable and kind.color:
+            await self.set_color(object_id, 0, 0, 0, 0)
+            return
         await self.command(object_id, "turnOff")
 
     async def toggle(self, object_id: int) -> None:
-        """Invert an object's current on/off state."""
+        """Invert an object's current on/off state.
+
+        Raises ``ValueError`` for an output whose kind says the switch verbs
+        do not apply (``rgbw``), exactly as :meth:`turn_on` does.
+        """
+        self._check_switchable(object_id, "switch")
         await self.command(object_id, "switch")
+
+    def _output_kind(self, object_id: int) -> OutputKind | None:
+        """The object's kind when it is a known output, else None."""
+        obj = self._store.objects.get(object_id)
+        kind = obj.kind if obj is not None else None
+        return kind if isinstance(kind, OutputKind) else None
+
+    def _check_switchable(self, object_id: int, verb: str) -> None:
+        """Reject a switch-family verb for an output known not to answer it.
+
+        The M-SERV drops the command with no effect and no reply, so sending
+        it would silently do nothing - the same trap ``_check_range`` guards
+        against for malformed arguments. An object with no metadata yet
+        passes through.
+        """
+        kind = self._output_kind(object_id)
+        if kind is not None and not kind.switchable:
+            raise ValueError(
+                f"object {object_id} ({kind.key}) does not answer {verb}; "
+                "drive it with set_color()"
+            )
 
     async def set_value(
         self, object_id: int, value: int, *, pulse_ms: int | None = None

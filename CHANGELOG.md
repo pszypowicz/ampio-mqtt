@@ -14,6 +14,31 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.21.0
+
+The M-SERV ignores the whole `turnOn` / `turnOff` / `switch` verb family
+for `rgbw` objects - no effect, no reply, from either state
+(live-verified on the baseline install; every other output type answers
+all three). The library now encodes that fact instead of overpromising
+it away.
+
+### Changed
+
+- **`OutputKind.switchable`** (default `True`, `False` for `rgbw`) says
+  whether an object answers the switch-verb family, so a consumer picks
+  its wiring from the kind instead of discovering a silent no-op.
+- **`turn_on()` and `toggle()` raise `ValueError`** for a known
+  non-switchable output rather than publishing a command the M-SERV
+  silently drops. Turning a color light on means choosing a color, which
+  is the consumer's call via `set_color()`.
+
+### Fixed
+
+- **`turn_off()` works on rgbw objects.** A known color output that does
+  not answer `turnOff` is turned off with `setColors 0/0/0/0` - off is
+  unambiguous, so the library routes it. An object whose metadata has
+  not arrived yet still gets the plain verb.
+
 ## 0.20.0
 
 A cleanup release from a third clean-slate review, with every

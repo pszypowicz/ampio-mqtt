@@ -68,7 +68,9 @@ class OutputKind:
 
     The flags say which command verbs the object answers, so a consumer can
     pick a platform and feature set without a `typ_komponentu` table of its
-    own. Every output answers ``turnOn`` / ``turnOff`` / ``switch``.
+    own. ``switchable`` covers the ``turnOn`` / ``turnOff`` / ``switch``
+    family: every output answers it except ``rgbw``, which the M-SERV
+    drives through ``setColors`` alone.
     """
 
     key: str
@@ -86,6 +88,11 @@ class OutputKind:
     # uncommanded, exactly as on the position axis - see docs/protocol.md
     # and `AmpioClient.set_cover_tilt`, which relies on it.
     tilt: bool = False
+    # The `turnOn` / `turnOff` / `switch` verb family. False only for `rgbw`:
+    # the M-SERV ignores all three for it (no effect, no reply), so
+    # `setColors` is its one switching verb - which `AmpioClient.turn_off`
+    # relies on to emulate off.
+    switchable: bool = True
 
 
 # lin_wej (analog input) measurement kind, keyed by `interpretacja`.
@@ -167,7 +174,9 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     "lin_wej": TypeProfile(analog=True),
     "bit32": TypeProfile(numeric=True),
     "przekaznik": TypeProfile(output=OutputKind("relay", "Relay")),
-    "rgbw": TypeProfile(output=OutputKind("rgbw", "RGBW light", color=True)),
+    "rgbw": TypeProfile(
+        output=OutputKind("rgbw", "RGBW light", color=True, switchable=False)
+    ),
     "led": TypeProfile(output=OutputKind("dimmer", "Dimmer", dimmable=True)),
     "roleta": TypeProfile(output=OutputKind("cover", "Cover", cover=True)),
     "roleta_procenty": TypeProfile(

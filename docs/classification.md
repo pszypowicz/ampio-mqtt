@@ -37,17 +37,21 @@ is added.
 
 Controllable types get an `OutputKind` whose flags say which command
 verbs the object answers, so a consumer picks a platform and feature set
-without its own `typ_komponentu` table. Every output answers `turnOn` /
-`turnOff` / `switch`.
+without its own `typ_komponentu` table. The `switchable` flag covers the
+`turnOn` / `turnOff` / `switch` family: every output answers it except
+`rgbw`, which the M-SERV drives through `setColors` alone. The library's
+`turn_off()` sends `setColors 0/0/0/0` for it, while `turn_on()` and
+`toggle()` raise `ValueError` - turning a color light on means choosing
+a color, which is the consumer's call via `set_color()`.
 
-| `typ_komponentu`  | `OutputKind.key` | Dimmable | Color | Cover | Position | Tilt | Platform shape                    |
-| ----------------- | ---------------- | -------- | ----- | ----- | -------- | ---- | --------------------------------- |
-| `przekaznik`      | `relay`          | no       | no    | no    | no       | no   | switch                            |
-| `led`             | `dimmer`         | yes      | no    | no    | no       | no   | light with brightness             |
-| `rgbw`            | `rgbw`           | no       | yes   | no    | no       | no   | light with RGBW colour            |
-| `roleta`          | `cover`          | no       | no    | yes   | no       | no   | cover, open/close/stop only       |
-| `roleta_procenty` | `cover_position` | no       | no    | yes   | yes      | no   | cover with position               |
-| `roleta_lamelki`  | `cover_tilt`     | no       | no    | yes   | yes      | yes  | cover with position and slat tilt |
+| `typ_komponentu`  | `OutputKind.key` | Dimmable | Color | Cover | Position | Tilt | Switchable | Platform shape                    |
+| ----------------- | ---------------- | -------- | ----- | ----- | -------- | ---- | ---------- | --------------------------------- |
+| `przekaznik`      | `relay`          | no       | no    | no    | no       | no   | yes        | switch                            |
+| `led`             | `dimmer`         | yes      | no    | no    | no       | no   | yes        | light with brightness             |
+| `rgbw`            | `rgbw`           | no       | yes   | no    | no       | no   | no         | light with RGBW colour            |
+| `roleta`          | `cover`          | no       | no    | yes   | no       | no   | yes        | cover, open/close/stop only       |
+| `roleta_procenty` | `cover_position` | no       | no    | yes   | yes      | no   | yes        | cover with position               |
+| `roleta_lamelki`  | `cover_tilt`     | no       | no    | yes   | yes      | yes  | yes        | cover with position and slat tilt |
 
 `roleta_lamelki` is what the Ampio app writes when a cover's type is set
 to "blinds - slats"; the same cover reads back as `roleta_procenty` while

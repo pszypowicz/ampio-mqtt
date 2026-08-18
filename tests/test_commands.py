@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from conftest import API_TOPIC, USER, FakeBroker
+from conftest import API_TOPIC, DETAILS_TOPIC, USER, FakeBroker, details, feed
 
 from ampio_mqtt import AmpioClient, AmpioConnectionError
 
@@ -109,6 +109,75 @@ async def test_command_requires_a_connection() -> None:
     client = AmpioClient("host", username=USER)
     with pytest.raises(AmpioConnectionError):
         await client.turn_on(64)
+
+
+# --- the rgbw switch-verb exception ----------------------------------------
+
+
+def _learn(client: AmpioClient, oid: int, typ: str) -> None:
+    """Teach the store one object's type via a catalogue reply."""
+    feed(client, DETAILS_TOPIC, details({"id": oid, "typ_komponentu": typ}))
+
+
+async def test_turn_off_on_rgbw_routes_through_set_colors(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """The M-SERV ignores `turnOff` for rgbw objects (no effect, no reply);
+    off is unambiguous, so the library sends the one verb that works."""
+    client, broker = connected
+    _learn(client, 50, "rgbw")
+    await client.turn_off(50)
+    assert broker.published == [(API_TOPIC, b"/api/set/50/setColors/0/0/0/0")]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [lambda c: c.turn_on(50), lambda c: c.toggle(50)],
+)
+async def test_turn_on_and_toggle_on_rgbw_are_rejected(
+    connected: tuple[AmpioClient, FakeBroker], call
+) -> None:
+    """`turnOn` and `switch` are dropped silently by the M-SERV for rgbw,
+    and turning a color light on means choosing a color - the consumer's
+    call via `set_color()`. Rejecting before the wire beats a silent no-op,
+    exactly as the range checks do."""
+    client, broker = connected
+    _learn(client, 50, "rgbw")
+    with pytest.raises(ValueError):
+        await call(client)
+    assert broker.published == []
+
+
+async def test_switch_verbs_pass_through_for_other_outputs(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """Only rgbw carries the exception; a dimmer answers all three verbs."""
+    client, broker = connected
+    _learn(client, 111, "led")
+    await client.turn_on(111)
+    await client.toggle(111)
+    await client.turn_off(111)
+    assert broker.published == [
+        (API_TOPIC, b"/api/set/111/turnOn"),
+        (API_TOPIC, b"/api/set/111/switch"),
+        (API_TOPIC, b"/api/set/111/turnOff"),
+    ]
+
+
+async def test_switch_verbs_pass_through_when_kind_is_unknown(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """Before metadata arrives the library cannot know better than the
+    caller, so the plain verbs go out unfiltered."""
+    client, broker = connected
+    await client.turn_on(99)
+    await client.toggle(99)
+    await client.turn_off(99)
+    assert broker.published == [
+        (API_TOPIC, b"/api/set/99/turnOn"),
+        (API_TOPIC, b"/api/set/99/switch"),
+        (API_TOPIC, b"/api/set/99/turnOff"),
+    ]
 
 
 # --- cover tilt ------------------------------------------------------------
