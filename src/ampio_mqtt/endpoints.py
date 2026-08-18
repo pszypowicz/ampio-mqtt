@@ -40,6 +40,30 @@ from enum import Enum
 # reply lands on ``ampio/fromDB/<user>/<resp_surface>/<resp_leaf>``.
 
 
+# The reserved administrator login. The app refuses to create a user of
+# this name, and the broker authenticates it at CONNACK, so holding a
+# session under it IS being the administrator - the account tier is a
+# constructor fact, not a discovered one.
+ADMIN_USERNAME = "admin"
+
+
+class AccessTier(Enum):
+    """Account tier, decided by the authenticated login name.
+
+    The M-SERV gates the ``config`` surface (and the raw ``ampio/from/#``
+    channel tree) on the account being the reserved ``admin`` login; the
+    per-user app permissions do not affect it. A non-admin account, however
+    permissioned, is served only the app-sync ``data`` surface. ``UNKNOWN``
+    appears only on :pyattr:`AmpioServerInfo.access_tier` - the wire's own
+    confirmation via the info reply's account id - for a reply carrying no
+    identity, which no baseline server produces.
+    """
+
+    UNKNOWN = "unknown"
+    ADMIN = "admin"  # the reserved `admin` login: full catalogue + modules
+    RESTRICTED = "restricted"  # an app-created user: app-sync view only
+
+
 @dataclass(frozen=True, slots=True)
 class Endpoint:
     """One M-SERV request/response endpoint."""
@@ -52,25 +76,57 @@ class Endpoint:
     # Part of the initial-discovery set awaited by start() /
     # wait_for_initial_discovery(). The rooms/scenes endpoints are on-demand.
     initial: bool = False
+    # The one tier this endpoint answers for, or None for both. The M-SERV
+    # serves the `config` catalogues to administrators only, and an admin
+    # session never needs the app-sync pair (it repeats the `config` view).
+    tier: AccessTier | None = None
 
 
 ENDPOINTS: tuple[Endpoint, ...] = (
-    Endpoint("details", "config", "devicesDetails", "config", "devicesDetails", True),
-    Endpoint("devices", "config", "devices", "config", "devices", True),
-    Endpoint("states", "states", "", "data", "states", True),
-    Endpoint("info", "info", "", "data", "info", True),
+    Endpoint(
+        "details",
+        "config",
+        "devicesDetails",
+        "config",
+        "devicesDetails",
+        initial=True,
+        tier=AccessTier.ADMIN,
+    ),
+    Endpoint(
+        "devices",
+        "config",
+        "devices",
+        "config",
+        "devices",
+        initial=True,
+        tier=AccessTier.ADMIN,
+    ),
+    Endpoint("states", "states", "", "data", "states", initial=True),
+    Endpoint("info", "info", "", "data", "info", initial=True),
     # App-sync object catalogue. Same wire keyword as the module list above but
     # on the `data` surface, and a different payload: DB objects (the
     # `devicesDetails` row shape minus `params`/`stan_json`), filtered to the
-    # objects the account was granted in the Ampio app. Unlike the `config`
-    # surface it answers for every account, so it is the discovery fallback
-    # for non-admin accounts.
-    Endpoint("data_devices", "data", "devices", "data", "devices", True),
+    # objects the account was granted in the Ampio app.
+    Endpoint(
+        "data_devices",
+        "data",
+        "devices",
+        "data",
+        "devices",
+        initial=True,
+        tier=AccessTier.RESTRICTED,
+    ),
     # Per-object `params` bitfields for the app-sync catalogue. NOT
     # grant-filtered: every account receives the full table, which is what
     # lets a restricted account apply the hidden-flag visibility rule.
     Endpoint(
-        "params_devices", "data", "params_devices", "data", "params_devices", True
+        "params_devices",
+        "data",
+        "params_devices",
+        "data",
+        "params_devices",
+        initial=True,
+        tier=AccessTier.RESTRICTED,
     ),
     Endpoint("groups", "data", "groups", "data", "groups"),
     Endpoint("group_devices", "data", "group_devices", "data", "group_devices"),
@@ -88,28 +144,6 @@ ENDPOINT_BY_NAME: dict[str, Endpoint] = {ep.name: ep for ep in ENDPOINTS}
 # also reported serverRevision 409 and mqttVersion 5.133.11, recorded in the
 # README; only serverVersion is compared.
 BASELINE_SERVER_VERSION = (1865,)
-
-
-class AccessTier(Enum):
-    """Account tier, derived from the account id in the server-info reply.
-
-    The M-SERV gates the ``config`` surface (and the raw ``ampio/from/#``
-    channel tree) on the account being the reserved ``admin`` login; the
-    per-user app permissions do not affect it. A non-admin account, however
-    permissioned, is served only the app-sync ``data`` surface.
-    """
-
-    UNKNOWN = "unknown"  # no info reply yet (a baseline server always ids it)
-    ADMIN = "admin"  # the reserved `admin` login: full catalogue + modules
-    RESTRICTED = "restricted"  # an app-created user: app-sync view only
-
-
-# Initial-discovery endpoint groups by tier. Discovery is complete when the
-# common pair plus the catalogue pair of the account's tier have latched;
-# the tier is read from the info reply (see `AmpioServerInfo.access_tier`).
-DISCOVERY_COMMON: tuple[str, ...] = ("states", "info")
-DISCOVERY_ADMIN: tuple[str, ...] = ("details", "devices")
-DISCOVERY_FALLBACK: tuple[str, ...] = ("data_devices", "params_devices")
 
 
 # --- Commands --------------------------------------------------------------
@@ -183,11 +217,3 @@ RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
 # command surface, works on both tiers, and is bounded by nothing - not object
 # grants, and not the per-event rights the app displays.
 RAW_EVENT_WILDCARD = "ampio/from/+/event"
-
-# The whole raw-tree filter set. The broker denies it to a standard account
-# by design, so a SUBACK rejection of these filters is the normal state for
-# the recommended account shape - unlike any other filter, whose rejection
-# means a broken broker or ACL.
-RAW_TREE_FILTERS: frozenset[str] = frozenset(
-    (*RAW_INPUT_WILDCARDS, RAW_DIAGNOSTICS_WILDCARD, RAW_EVENT_WILDCARD)
-)

@@ -64,12 +64,13 @@ listeners see the same push as for any other update. The event
 wildcard feeds `BusEvent` subscribers - a different surface with its
 own semantics, described in [`protocol.md`](protocol.md).
 
-The whole tree is administrator-only, and the broker says so
-explicitly: on a standard account all four filters are rejected in the
-SUBACK with reason code 128. The client records the verdicts in
-`ConnectionStats.subscribe_failures` and degrades to the per-object
-path as designed; judging them is the consumer's call, since the
-rejection is the normal state for the recommended account shape.
+The whole tree is administrator-only (the broker rejects the filters
+for any other account in the SUBACK with reason code 128), and only
+the `admin` login subscribes to it - a standard client never asks, so
+its connect carries no rejections at all. A rejection the admin client
+does receive lands in `ConnectionStats.subscribe_failures` and warns:
+with a tier-shaped subscribe set it can only mean a broken broker or
+ACL.
 
 ## Module diagnostics (`b/4F`)
 

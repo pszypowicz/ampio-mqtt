@@ -36,44 +36,27 @@ for the `start()` / `stop()` lifecycle that joins them.
    capped-exponential reconnect loop. The first successful connect
    stamps `stats.started_at`; each subsequent one bumps
    `stats.reconnect_count`.
-2. **Subscribe** - the per-user topics (`ob/+/state`, the nine
-   response topics) plus the global raw-channel wildcards, sent as one
-   QoS 1 SUBSCRIBE packet. The SUBACK verdicts are read: a filter the
-   broker rejects lands in `stats.subscribe_failures` while the
-   connection stays up. A rejected raw-tree filter is the designed
-   state for a standard account and logs at debug only - judging it is
-   the consumer's call; a rejected filter anywhere else means a broken
-   broker or ACL and warns. See [`protocol.md`](protocol.md) and
-   [`raw-channel-bridge.md`](raw-channel-bridge.md) for the full
-   subscribe list.
-3. **Publish the auto-discovery keywords** on the matching control
-   surfaces:
-   - `devicesDetails` on `config` - object catalogue (admin tier).
-   - `devices` on `config` - module catalogue (admin tier).
-   - `devices` on `data` - app-sync object catalogue (every tier,
-     grant-filtered).
-   - `params_devices` on `data` - full-catalogue `params` table
-     (every tier).
-   - empty payload on `info` - server self-report.
-   - empty payload on `states` - bulk snapshot of current values.
-
-   All six go out while the tier is unknown. Once the info reply has
-   settled it, later refreshes (each reconnect issues one) skip the
-   other tier's pair: a restricted account's `config` requests would
-   never be answered, and the admin account's app-sync pair only
-   repeats what its `config` catalogue already carries.
+2. **Subscribe** - the tier's topic set, sent as one QoS 1 SUBSCRIBE
+   packet: `ob/+/state`, the response topics of the endpoints the tier
+   uses, and - on the `admin` login only - the global raw-channel
+   wildcards. The set is decided at construction from the authenticated
+   username (see [`account-tiers.md`](account-tiers.md)), so every
+   filter must be granted; a SUBACK rejection lands in
+   `stats.subscribe_failures` and warns, because it means a broken
+   broker or ACL. See [`protocol.md`](protocol.md) and
+   [`raw-channel-bridge.md`](raw-channel-bridge.md) for the topics.
+3. **Publish the tier's auto-discovery keywords** on the matching
+   control surfaces - four requests either way:
+   - admin: `devicesDetails` and `devices` on `config` (object and
+     module catalogues), plus `states` and `info`.
+   - standard: `devices` and `params_devices` on `data` (grant-filtered
+     app-sync catalogue and the full `params` table), plus `states`
+     and `info`.
 
 4. **Await** completion or the `discovery_timeout` deadline, whichever
    comes first - this step is `wait_for_initial_discovery()`, which
-   `start()` calls with `timeout=discovery_timeout`. It first awaits
-   `states` and `info`, reads the account tier off the info reply
-   (`AmpioServerInfo.access_tier` - see
-   [`account-tiers.md`](account-tiers.md)), then awaits that tier's
-   catalogue pair: the `config` pair for the administrator, the `data`
-   pair otherwise. A tier the info reply does not settle (a
-   below-baseline server - see the README's supported versions) also
-   waits on the `data` pair, which answers for every account. Each
-   dispatched message bumps
+   `start()` calls with `timeout=discovery_timeout`: one wait on the
+   four replies of step 3. Each dispatched message bumps
    `stats.last_message_at`. The signals latch, so a later
    `wait_for_initial_discovery()` call returns immediately once its
    set has fired (and stays correct across reconnects).

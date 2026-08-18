@@ -14,6 +14,7 @@ from dataclasses import fields, replace
 
 import pytest
 from conftest import (
+    ADMIN_USER,
     DATA_DEVICES_TOPIC,
     DETAILS_TOPIC,
     DEVICES_TOPIC,
@@ -469,21 +470,18 @@ def test_an_evicted_objects_raw_channel_no_longer_routes() -> None:
 
 
 def test_the_app_sync_catalogue_evicts_only_on_the_restricted_tier() -> None:
-    data_topic = f"ampio/fromDB/{USER}/data/devices"
-    info_topic = f"ampio/fromDB/{USER}/data/info"
-
-    # Admin tier: data/devices is a second view, not the authority.
-    store = _store()
-    store.apply(info_topic, '{"Results": {"mac": 1, "userId": "-1"}}')
+    # Admin store: data/devices is a second view, not the authority.
+    store = AmpioStore(ADMIN_USER)
+    data_topic = f"ampio/fromDB/{ADMIN_USER}/data/devices"
     store.apply(data_topic, _flaga_details((10, 1), (11, 1)))
     applied = store.apply(data_topic, _flaga_details((10, 1)))
     assert _removed(applied) == []
     assert set(store.objects) == {10, 11}
 
-    # Restricted tier: the grant bounds the store, so the reply is complete
-    # for the account and a vanished row is a revocation.
+    # Restricted store: the grant bounds it, so the reply is complete for
+    # the account and a vanished row is a revocation.
     store = _store()
-    store.apply(info_topic, '{"Results": {"mac": 1, "userId": "4"}}')
+    data_topic = f"ampio/fromDB/{USER}/data/devices"
     store.apply(data_topic, _flaga_details((10, 1), (11, 1)))
     applied = store.apply(data_topic, _flaga_details((10, 1)))
     assert [o.id for o in _removed(applied)] == [11]

@@ -274,9 +274,11 @@ def test_groups_payloads_are_retained() -> None:
     assert client.last_payloads["group_devices"] == group_devices.decode()
 
 
-def test_access_tier_is_unknown_before_any_info_reply() -> None:
-    """The userId-to-tier mapping itself is covered in test_protocol."""
-    assert _client().access_tier is AccessTier.UNKNOWN
+def test_access_tier_is_the_authenticated_username() -> None:
+    """The broker authenticates the login at CONNACK and only the reserved
+    `admin` name is the administrator, so the tier is a constructor fact."""
+    assert _client().access_tier is AccessTier.RESTRICTED
+    assert AmpioClient("host", username="admin").access_tier is AccessTier.ADMIN
 
 
 def test_colliding_macs_surface_through_the_client() -> None:

@@ -18,7 +18,6 @@ from contextlib import suppress
 
 import aiomqtt
 
-from .endpoints import RAW_TREE_FILTERS
 from .errors import AmpioAuthError, AmpioConnectionError, AmpioTimeoutError
 from .models import ConnectionStats
 
@@ -263,18 +262,10 @@ class Connection:
                         for topic, code in zip(self._topics, codes, strict=True)
                         if _code_value(code) >= 0x80
                     }
-                    # A raw-tree denial is by design for a standard account
-                    # (the consumer judges those from `subscribe_failures`);
-                    # every other filter must be granted on every tier, so
-                    # its rejection is a fault worth a warning.
+                    # The subscribe set is tier-shaped, so every filter must
+                    # be granted; a rejection means a broken broker or ACL.
                     for topic, code in self._stats.subscribe_failures.items():
-                        level = (
-                            logging.DEBUG
-                            if topic in RAW_TREE_FILTERS
-                            else logging.WARNING
-                        )
-                        _LOGGER.log(
-                            level,
+                        _LOGGER.warning(
                             "Ampio broker rejected subscription to %s "
                             "(reason code %d); no messages will arrive on it",
                             topic,

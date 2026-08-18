@@ -357,7 +357,11 @@ class AmpioServerInfo:
 
     @property
     def access_tier(self) -> AccessTier:
-        """Account tier, derived from the account id in the info reply.
+        """Account tier per the account id in the info reply.
+
+        The wire's own confirmation for a config flow reading a
+        :meth:`AmpioClient.test_connection` result; a running client's
+        operational tier comes from the authenticated username instead.
 
         The M-SERV's administrator is the reserved ``admin`` login, reported
         as the pseudo-user id ``-1``; app-created users carry their positive

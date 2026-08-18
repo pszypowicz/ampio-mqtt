@@ -76,14 +76,18 @@ it away.
   `obj.kind`, `module.model`, `module.capabilities` - and the kind-key
   vocabulary exports cover the exhaustiveness-testing case; they stay
   importable from their submodules.
-- **Raw-tree SUBACK rejections log at debug, not warning.** A standard
-  account is denied the four raw filters on every connect by design,
-  and the old per-connect warnings would have landed in every Home
-  Assistant user's log. Those verdicts stay in
-  `ConnectionStats.subscribe_failures` for the consumer to judge (an
-  admin account denied is its case to surface). A rejection of any
-  other filter still warns - a denied `fromDB` topic means a broken
-  broker or ACL.
+- **The account tier is the authenticated username.** The broker
+  verifies the login at CONNACK and the app cannot create another
+  `admin`, so `username == "admin"` decides the tier at construction:
+  `AmpioClient.access_tier` is a constant, `UNKNOWN` leaves the client
+  (it survives only on `AmpioServerInfo.access_tier`, the wire's own
+  confirmation for config flows), the subscription set and discovery
+  requests are tier-shaped from the first connect (four requests either
+  way, no request-everything round), the discovery wait is one gather,
+  and the store's eviction rule reads the username instead of the info
+  reply. A standard client never subscribes to the raw tree, so every
+  SUBACK rejection is a genuine fault again and warns - no rejection
+  reaches a correctly configured install's log on either tier.
 - **A message-processing bug costs one message, not the connection.**
   The client guards each inbound message: a payload whose processing
   raises is dropped with a logged traceback (once per topic; repeats at

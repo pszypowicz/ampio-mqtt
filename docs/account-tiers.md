@@ -9,12 +9,15 @@ and per-user app permissions do not move an account between tiers: a
 standard account granted every permission in the app is still a standard
 account.
 
-The tier is read from the account id the `info` reply reports on every
-tier: `-1` for the admin pseudo-user, the users-table row id for an app
-user - see `AmpioServerInfo.access_tier`.
-`AmpioClient.access_tier` exposes it on a running client,
-settled by the time `wait_for_initial_discovery()` returns True, and
-`test_connection()` reports it at validation time, so a config flow can
+The tier is the authenticated login name: the broker verifies the
+username at CONNACK and the app cannot create another `admin`, so a
+held session under that name IS the administrator. The library decides
+everything on it at construction - `AmpioClient.access_tier` is a
+constant, the subscription set and discovery requests are tier-shaped
+from the first connect. The `info` reply's account id (`-1` for the
+admin pseudo-user, the users-table row id for an app user -
+`AmpioServerInfo.access_tier`) is the wire's own confirmation, which
+`test_connection()` reports at validation time so a config flow can
 reject an account whose tier will not support what the consumer needs
 (e.g. `modules`/`mserv_id`, which the standard tier never receives).
 

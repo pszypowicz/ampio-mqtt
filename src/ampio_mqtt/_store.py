@@ -16,7 +16,7 @@ from functools import partial
 
 from . import _protocol
 from .classification import classify, input_channel_prefix
-from .endpoints import AccessTier, Endpoint
+from .endpoints import ADMIN_USERNAME, Endpoint
 from .events import (
     BusEvent,
     ModuleRemoved,
@@ -53,6 +53,7 @@ class AmpioStore:
     """Applies M-SERV messages to the object, module and server state."""
 
     def __init__(self, user: str) -> None:
+        self._is_admin = user == ADMIN_USERNAME
         self.objects: dict[int, AmpioObject] = {}
         self.modules: dict[int, AmpioModule] = {}
         self.server_info: AmpioServerInfo | None = None
@@ -123,8 +124,7 @@ class AmpioStore:
 
         The two surfaces carry the same rows: the app-sync one simply omits
         ``params`` (which the ``params_devices`` table supplies instead) and
-        ``stan_json``, so one merge covers both. On the admin tier both answer,
-        and the second pass changes nothing.
+        ``stan_json``, so one merge covers both.
         """
         items = _protocol.parse_details(payload)
         if items is None:
@@ -155,10 +155,8 @@ class AmpioStore:
         observed server produces one, and honoring it would tell a consumer
         to drop every entity it has.
         """
-        if surface == "data/devices":
-            info = self.server_info
-            if info is None or info.access_tier is not AccessTier.RESTRICTED:
-                return False
+        if surface == "data/devices" and self._is_admin:
+            return False
         missing = [oid for oid in self.objects if oid not in present]
         if not missing:
             return False

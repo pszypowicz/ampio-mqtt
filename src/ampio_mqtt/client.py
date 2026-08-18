@@ -19,9 +19,7 @@ from ._store import AmpioStore
 from .classification import OutputKind
 from .device_types import Capability
 from .endpoints import (
-    DISCOVERY_ADMIN,
-    DISCOVERY_COMMON,
-    DISCOVERY_FALLBACK,
+    ADMIN_USERNAME,
     ENDPOINT_BY_NAME,
     ENDPOINTS,
     KEEP_POSITION,
@@ -123,6 +121,15 @@ class AmpioClient:
                 "username is required - the Ampio topics are namespaced by account"
             )
         self._username = username
+        # The tier is the authenticated login name: the broker verifies it
+        # at CONNACK and the app cannot create another `admin`, so a held
+        # session under that name IS the administrator.
+        self._tier = (
+            AccessTier.ADMIN if username == ADMIN_USERNAME else AccessTier.RESTRICTED
+        )
+        self._initial_endpoints = tuple(
+            ep.name for ep in ENDPOINTS if ep.initial and ep.tier in (None, self._tier)
+        )
         self._store = AmpioStore(self._username)
         self.stats = ConnectionStats()
         self._connection = _connection.Connection(
@@ -157,13 +164,23 @@ class AmpioClient:
 
     def _subscriptions(self) -> list[str]:
         """Every topic the client needs on each (re)connect."""
-        return [
-            *(response_topic(ep, self._username) for ep in ENDPOINTS),
+        topics = [
+            *(
+                response_topic(ep, self._username)
+                for ep in ENDPOINTS
+                if ep.tier in (None, self._tier)
+            ),
             ob_state_wildcard(self._username),
-            *RAW_INPUT_WILDCARDS,
-            RAW_DIAGNOSTICS_WILDCARD,
-            RAW_EVENT_WILDCARD,
         ]
+        if self._tier is AccessTier.ADMIN:
+            # The raw tree is served to the admin login alone; any other
+            # client never asks, so a SUBACK rejection is always a fault.
+            topics += [
+                *RAW_INPUT_WILDCARDS,
+                RAW_DIAGNOSTICS_WILDCARD,
+                RAW_EVENT_WILDCARD,
+            ]
+        return topics
 
     def _handle_message(self, topic: str, payload: str) -> None:
         """Apply one message, then dispatch what it changed.
@@ -305,18 +322,15 @@ class AmpioClient:
 
     @property
     def access_tier(self) -> AccessTier:
-        """Detected account tier, read from the server-info reply.
+        """The account tier: the reserved ``admin`` login, or restricted.
 
-        ``UNKNOWN`` until the info reply arrives, or when it carries no
-        account id (a below-baseline server, warned at discovery). Settled
-        by the time :meth:`wait_for_initial_discovery` returns True; a
-        config flow can read the same answer from :meth:`test_connection`'s
-        result before any client exists. See :class:`AccessTier` for what
-        each tier is served and :pyattr:`AmpioServerInfo.access_tier` for
-        how the tier is derived.
+        Decided by the authenticated username at construction - see
+        :class:`AccessTier` for what each tier is served. A config flow can
+        read the wire's own confirmation from :meth:`test_connection`'s
+        result (:pyattr:`AmpioServerInfo.access_tier`) before any client
+        exists.
         """
-        info = self._store.server_info
-        return info.access_tier if info is not None else AccessTier.UNKNOWN
+        return self._tier
 
     @property
     def last_payloads(self) -> dict[str, str]:
@@ -462,13 +476,12 @@ class AmpioClient:
     async def wait_for_initial_discovery(self, *, timeout: float = 8.0) -> bool:
         """Block until the initial discovery cycle has populated the client.
 
-        Waits for the states snapshot and info replies, reads the account
-        tier off the info reply, then waits for that tier's object catalogue
-        pair: the admin ``config`` pair (devicesDetails -> ``objects``,
-        devices -> ``modules``) or the ``data`` pair (data/devices ->
-        grant-filtered ``objects``, data/params_devices -> visibility flags).
-        An ``UNKNOWN`` tier waits on the ``data`` pair, which answers for
-        every account. Returns True on completion and False if ``timeout``
+        Waits for the tier's initial replies: the states snapshot, the
+        server info, and the account's object catalogue pair - the admin
+        ``config`` pair (devicesDetails -> ``objects``, devices ->
+        ``modules``) or the app-sync ``data`` pair (data/devices ->
+        grant-filtered ``objects``, data/params_devices -> visibility
+        flags). Returns True on completion and False if ``timeout``
         elapses first.
 
         This is the contract a consumer relies on when it must read
@@ -484,15 +497,14 @@ class AmpioClient:
         latch on first completion, so once discovery has happened this returns
         immediately.
         """
-
-        async def _all(names: tuple[str, ...]) -> None:
-            await asyncio.gather(*(self._channels[n].received.wait() for n in names))
-
         try:
             async with asyncio.timeout(timeout):
-                await _all(DISCOVERY_COMMON)
-                admin = self.access_tier is AccessTier.ADMIN
-                await _all(DISCOVERY_ADMIN if admin else DISCOVERY_FALLBACK)
+                await asyncio.gather(
+                    *(
+                        self._channels[name].received.wait()
+                        for name in self._initial_endpoints
+                    )
+                )
         except TimeoutError:
             return False
         return True
@@ -509,27 +521,13 @@ class AmpioClient:
         await self._connection.close()
 
     async def refresh(self) -> None:
-        """Re-request the initial-discovery set for the account's tier.
+        """Re-request the tier's initial-discovery set.
 
-        ``start()`` issues this once on every (re)connect; call it to force a
-        fresh discovery cycle without reconnecting. Once the info reply has
-        settled the tier, the other tier's catalogue pair is skipped: the
-        M-SERV never answers the ``config`` requests for a RESTRICTED
-        account (and the login's admin bit cannot change mid-session), and
-        on the ADMIN tier the app-sync pair repeats what the ``config``
-        catalogue already carries. An UNKNOWN tier (before the first info
-        reply) requests everything, which is what makes first discovery work
-        on either tier.
+        ``start()`` issues this once on every (re)connect; call it to force
+        a fresh discovery cycle without reconnecting.
         """
-        tier = self.access_tier
-        skip: tuple[str, ...] = ()
-        if tier is AccessTier.RESTRICTED:
-            skip = DISCOVERY_ADMIN
-        elif tier is AccessTier.ADMIN:
-            skip = DISCOVERY_FALLBACK
-        for ep in ENDPOINTS:
-            if ep.initial and ep.name not in skip:
-                await self._publish(ep)
+        for name in self._initial_endpoints:
+            await self._publish(ENDPOINT_BY_NAME[name])
 
     async def fetch_rooms(self, timeout: float = 5.0) -> dict[int, str]:
         """Return ``{ampio_object_id: room_name}`` for objects assigned to a room.
