@@ -18,6 +18,12 @@ upgrade path.
 
 ### Added
 
+- `stop_cover()`: halts a cover wherever it is (#62). Confirmed on a
+  tilt-capable blind: mid-travel the position freezes at the halt point
+  and the commanded target is never reached, a stop during the
+  pre-travel slat rotation cancels the pending move, and a stop on a
+  stationary cover is a silent no-op. This is what lets a consumer offer
+  Home Assistant's cover stop button.
 - A transport seam: `AmpioClient` and `test_connection` accept a
   keyword-only `mqtt_client_factory` (a zero-argument callable returning
   the MQTT session object for one connect attempt), defaulting to the real

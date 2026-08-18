@@ -630,6 +630,17 @@ class AmpioClient:
         """Drive a cover to fully closed (position 0)."""
         await self.command(object_id, "close")
 
+    async def stop_cover(self, object_id: int) -> None:
+        """Halt a cover wherever it is.
+
+        Mid-travel the position freezes at the halt point and the state
+        stream reports the resting value; sent during the slat-rotation
+        phase that precedes travel it cancels the pending move; on a
+        stationary cover it is a silent no-op. Whether it can also catch
+        the ~2 s slat rotation itself mid-turn is unknown (#62).
+        """
+        await self.command(object_id, "stop")
+
     async def set_cover_position(
         self, object_id: int, position: int, *, lamella: int | None = None
     ) -> None:

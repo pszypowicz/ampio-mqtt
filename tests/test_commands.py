@@ -135,6 +135,14 @@ async def test_tilt_only_move_leaves_the_position_alone(
     assert broker.published == [(API_TOPIC, b"/api/set/66/setRollerPos/101/50")]
 
 
+async def test_stop_cover_publishes_the_stop_verb(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
+    await client.stop_cover(66)
+    assert broker.published == [(API_TOPIC, b"/api/set/66/stop")]
+
+
 async def test_both_axes_move_in_one_command(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
