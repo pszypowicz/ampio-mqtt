@@ -134,6 +134,16 @@ async def test_connection_returns_info_without_identity_as_is() -> None:
     assert info.access_tier is AccessTier.UNKNOWN
 
 
+async def test_connection_maps_unparseable_info_reply_to_timeout() -> None:
+    """A corrupt reply gets the same retryable shape as silence."""
+    broker = FakeBroker()
+    broker.scripted_messages = [Message(INFO_TOPIC, b"not json at all")]
+    with pytest.raises(AmpioTimeoutError):
+        await AmpioClient.test_connection(
+            "h", 1883, USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
+        )
+
+
 async def test_connection_raises_auth_error_on_bad_credentials() -> None:
     broker = FakeBroker()
     broker.enter_errors = [_auth_rejection()]

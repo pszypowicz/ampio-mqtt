@@ -410,9 +410,9 @@ class AmpioClient:
         """Connect, request the server info, and return it.
 
         Raises ``AmpioAuthError`` on credential rejection, ``AmpioTimeoutError``
-        when the connection succeeds but no info reply arrives within
-        ``info_timeout`` (slow or overloaded broker - worth retrying), and
-        ``AmpioConnectionError`` on any other connection failure. The info
+        when the connection succeeds but no parseable info reply arrives
+        within ``info_timeout`` (slow or overloaded broker - worth retrying),
+        and ``AmpioConnectionError`` on any other connection failure. The info
         surface answers with full identity for every account tier, so a reply
         that arrives without identity fields is returned as-is rather than
         raised: it means the server is answering but has nothing to say, not
@@ -446,6 +446,12 @@ class AmpioClient:
                 f"No server-info reply from the Ampio broker within {info_timeout}s"
             )
         parsed = _protocol.parse_server_info(payload)
+        if parsed is None:
+            # A corrupt reply gets the same retryable shape as silence:
+            # something answered, but not with an info document.
+            raise AmpioTimeoutError(
+                "The Ampio broker answered with an unparseable server-info reply"
+            )
         _protocol.warn_if_below_baseline(parsed.server_version)
         return parsed
 

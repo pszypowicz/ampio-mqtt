@@ -298,29 +298,40 @@ def parse_rooms(groups_payload: str, group_devices_payload: str) -> dict[int, st
     return room_map
 
 
-def parse_server_info(payload: str) -> AmpioServerInfo:
+def _to_str(value: Any) -> str | None:
+    """Coerce a field to a non-empty string, or None.
+
+    The info fields are typed as strings; coercing keeps that true even if
+    a number arrives on the wire - `server_below_baseline` splits the
+    version, so a non-str value there would raise instead of comparing.
+    """
+    return str(value) if value not in (None, "") else None
+
+
+def parse_server_info(payload: str) -> AmpioServerInfo | None:
     """Parse a server-info payload, keeping only the safe fields.
 
-    The baseline server wraps the fields in a ``Results`` object; anything
-    else parses as empty. Returns an empty `AmpioServerInfo` on parse
-    failure - callers treat that as "info not available yet" rather than an
-    error.
+    The baseline server wraps the fields in a ``Results`` object; a payload
+    without that shape returns None, exactly as the sibling parsers report
+    an unparseable reply. A ``Results`` object with fields missing still
+    parses: an identity-less reply is the server answering with nothing to
+    say, which the store handles as its own case.
     """
     try:
         outer = json.loads(payload)
     except (ValueError, TypeError):
-        return AmpioServerInfo()
+        return None
     data = outer.get("Results") if isinstance(outer, dict) else None
     if not isinstance(data, dict):
-        return AmpioServerInfo()
+        return None
     return AmpioServerInfo(
         mac=to_int(data.get("mac")),
         user_id=to_int(data.get("userId")),
-        server_version=data.get("serverVersion") or None,
-        server_revision=data.get("serverRevision") or None,
-        mqtt_version=data.get("mqttVersion") or None,
-        local_ip=data.get("local_ip") or None,
-        device_id=data.get("device_id") or None,
+        server_version=_to_str(data.get("serverVersion")),
+        server_revision=_to_str(data.get("serverRevision")),
+        mqtt_version=_to_str(data.get("mqttVersion")),
+        local_ip=_to_str(data.get("local_ip")),
+        device_id=_to_str(data.get("device_id")),
     )
 
 

@@ -320,6 +320,42 @@ def test_a_baseline_server_does_not_warn(caplog: pytest.LogCaptureFixture) -> No
     assert caplog.records == []
 
 
+def test_a_corrupt_info_reply_never_wipes_held_identity(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The discovery latch never clears, so a True wait_for_initial_discovery
+    must keep implying a populated identity on every later read - an
+    unparseable info reply must not take it away, and must not trip the
+    below-baseline warning off the wiped version."""
+    store = _store()
+    topic = f"ampio/fromDB/{USER}/data/info"
+    store.apply(topic, '{"Results": {"mac": 1, "serverVersion": "1865"}}')
+    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
+        applied = store.apply(topic, "not json at all")
+    assert applied.parsed is False
+    assert store.server_info is not None
+    assert store.server_info.mac == 1
+    assert store.server_info.server_version == "1865"
+    assert not any("baseline" in r.getMessage() for r in caplog.records)
+    assert any("Could not parse" in r.getMessage() for r in caplog.records)
+
+
+def test_an_identityless_info_reply_never_wipes_held_identity(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A reply that carries no identity cannot take a held one away; the
+    refusal is warned so a misbehaving server stays visible."""
+    store = _store()
+    topic = f"ampio/fromDB/{USER}/data/info"
+    store.apply(topic, '{"Results": {"mac": 1, "serverVersion": "1865"}}')
+    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
+        applied = store.apply(topic, '{"Results": {}}')
+    assert applied.parsed is False
+    assert store.server_info is not None
+    assert store.server_info.mac == 1
+    assert any("no server mac" in r.getMessage() for r in caplog.records)
+
+
 def test_on_demand_reply_parseability_gates_parsed(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

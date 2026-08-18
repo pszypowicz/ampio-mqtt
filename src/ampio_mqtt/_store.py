@@ -272,25 +272,37 @@ class AmpioStore:
         return True
 
     def _handle_info(self, payload: str, applied: Applied) -> bool:
-        previous = self.server_info
         info = _protocol.parse_server_info(payload)
-        self.server_info = info
-        # Warn when the version first becomes known or changes, not on the
-        # re-request every reconnect issues.
-        if previous is None or previous.server_version != info.server_version:
-            _protocol.warn_if_below_baseline(info.server_version)
+        if info is None:
+            _LOGGER.warning("Could not parse Ampio info reply")
+            return False
+        previous = self.server_info
         if info.mac is None:
             # Without the server identity there is nothing to scope a
             # consumer's registry by, so discovery must not read complete -
             # a True wait_for_initial_discovery() promises a populated
-            # `key`. No baseline server answers without a mac.
-            if previous is None or previous.mac is not None:
+            # `key`. And because the discovery latch never clears, a reply
+            # that carries no identity must not take a held one away: the
+            # promise covers every read after the True, not just the first.
+            # No baseline server answers without a mac.
+            if previous is None:
+                self.server_info = info
                 _LOGGER.warning(
                     "Ampio info reply carries no server mac; initial "
                     "discovery stays incomplete until an identified "
                     "reply arrives"
                 )
+            elif previous.mac is not None:
+                _LOGGER.warning(
+                    "Ampio info reply carries no server mac; keeping the "
+                    "identified info already held"
+                )
             return False
+        # Warn when the version first becomes known or changes, not on the
+        # re-request every reconnect issues.
+        if previous is None or previous.server_version != info.server_version:
+            _protocol.warn_if_below_baseline(info.server_version)
+        self.server_info = info
         return True
 
     def _handle_states_snapshot(self, payload: str, applied: Applied) -> bool:

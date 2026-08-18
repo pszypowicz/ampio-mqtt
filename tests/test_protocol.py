@@ -214,17 +214,30 @@ def test_parse_server_info_extracts_safe_fields() -> None:
         }
     )
     info = parse_server_info(payload)
+    assert info is not None
     assert info.mac == 1234
     assert info.user_id == -1
     assert info.server_version == "3.4.5"
     assert info.local_ip == "192.168.1.10"
 
 
-def test_parse_server_info_bad_payload_returns_empty() -> None:
-    assert parse_server_info("not json") == AmpioServerInfo()
-    assert parse_server_info(json.dumps([1, 2, 3])) == AmpioServerInfo()
+def test_parse_server_info_bad_payload_returns_none() -> None:
+    assert parse_server_info("not json") is None
+    assert parse_server_info(json.dumps([1, 2, 3])) is None
     # The baseline server always wraps the fields in `Results`.
-    assert parse_server_info(json.dumps({"mac": 1})) == AmpioServerInfo()
+    assert parse_server_info(json.dumps({"mac": 1})) is None
+
+
+def test_parse_server_info_coerces_numeric_version_fields() -> None:
+    """The version fields are typed str; an int wire value must land as a
+    string, or `server_below_baseline` would raise on splitting it."""
+    payload = json.dumps(
+        {"Results": {"mac": 1, "serverVersion": 1865, "serverRevision": 409}}
+    )
+    info = parse_server_info(payload)
+    assert info is not None
+    assert info.server_version == "1865"
+    assert info.server_revision == "409"
 
 
 @pytest.mark.parametrize(
