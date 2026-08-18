@@ -32,12 +32,16 @@ dependencies = [
 Homepage = "https://github.com/pszypowicz/ampio-mqtt"
 Issues = "https://github.com/pszypowicz/ampio-mqtt/issues"
 
-[project.optional-dependencies]
-test = [
+# PEP 735 dev tooling; not part of the published package's metadata.
+# ruff is pinned exactly so a new release cannot break CI without a
+# reviewed bump (dependabot proposes them).
+[dependency-groups]
+dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
   "pytest-cov>=4",
   "mypy>=1.10",
+  "ruff==0.16.3",
 ]
 
 [tool.hatch.version]
