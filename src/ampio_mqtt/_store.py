@@ -13,6 +13,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from functools import partial
+from typing import Literal
 
 from . import _protocol
 from .classification import classify, input_channel_prefix
@@ -61,8 +62,10 @@ class AmpioStore:
         self._router = _protocol.Router(user)
         # Raw-channel bridge: (module mac, prefix, channel) -> object id.
         self._input_index: dict[tuple[int, str, int], int] = {}
-        # Effective bus mac -> module, for routing a module's own broadcasts.
-        self._module_by_mac: dict[int, AmpioModule] = {}
+        # Effective bus mac -> module id, for routing a module's own
+        # broadcasts. Ids, not instances: modules are frozen and replaced on
+        # every change, so a cached instance would go stale.
+        self._module_id_by_mac: dict[int, int] = {}
         # Macs the devices catalogue reports on more than one module. Nothing
         # on the wire enforces uniqueness, so this is the signal a consumer
         # keying devices on mac needs to avoid silently merging two modules.
@@ -184,26 +187,28 @@ class AmpioStore:
         obj = self.objects.get(meta.id)
         if obj is None:
             obj = AmpioObject(id=meta.id)
-            self.objects[meta.id] = obj
-        before = _identity(obj)
-        obj.device_id = meta.device_id
-        obj.typ_komponentu = meta.typ_komponentu
-        obj.name = meta.name or obj.name
-        obj.interpretacja = meta.interpretacja
-        obj.funkcja = meta.funkcja
-        obj.leaf_id = meta.leaf_id
         # A row without the column leaves the params_devices value standing.
         params = (
             meta.params if meta.params is not None else self._params_by_id.get(meta.id)
         )
-        if params is not None:
-            obj.params = params
-        obj.kind = classify(meta.typ_komponentu, meta.interpretacja)
-        changed = before != _identity(obj)
+        updated = replace(
+            obj,
+            device_id=meta.device_id,
+            typ_komponentu=meta.typ_komponentu,
+            name=meta.name or obj.name,
+            interpretacja=meta.interpretacja,
+            funkcja=meta.funkcja,
+            leaf_id=meta.leaf_id,
+            params=obj.params if params is None else params,
+            kind=classify(meta.typ_komponentu, meta.interpretacja),
+        )
+        changed = _identity(updated) != _identity(obj)
         if meta.stan_json is not None:
-            changed |= self._apply_stan_json(obj, meta.stan_json)
+            updated, seeded = self._apply_stan_json(updated, meta.stan_json)
+            changed |= seeded
+        self.objects[meta.id] = updated
         if changed:
-            self._record(obj, applied)
+            self._record(updated, applied)
         return changed
 
     def _handle_devices(self, payload: str, applied: Applied) -> bool:
@@ -215,16 +220,19 @@ class AmpioStore:
         for module in modules:
             previous = self.modules.get(module.id)
             if previous is not None:
-                module.last_seen = previous.last_seen
-                module.supply_voltage = previous.supply_voltage
-                module.temperature = previous.temperature
+                module = replace(
+                    module,
+                    last_seen=previous.last_seen,
+                    supply_voltage=previous.supply_voltage,
+                    temperature=previous.temperature,
+                )
             self.modules[module.id] = module
             # A new module or a changed catalogue row is news, exactly as an
             # object catalogue row is; the live fields were carried over
             # above, so any difference left is the catalogue's.
             if previous != module:
                 changed = True
-                applied.events.append(ModuleUpdated(replace(module)))
+                applied.events.append(ModuleUpdated(module))
         # The module list is admin-only and complete, so its arrival is the
         # authority to evict what it stopped listing - with the same
         # empty-reply guard the object catalogues apply.
@@ -261,7 +269,8 @@ class AmpioStore:
         for oid, params in table.items():
             obj = self.objects.get(oid)
             if obj is not None and obj.params != params:
-                obj.params = params
+                obj = replace(obj, params=params)
+                self.objects[oid] = obj
                 self._record(obj, applied)
         return True
 
@@ -284,10 +293,11 @@ class AmpioStore:
             obj = self.objects.get(entry.id)
             if obj is None:
                 obj = AmpioObject(id=entry.id, kind=classify(None, None))
-                self.objects[entry.id] = obj
-            if entry.stan_json is not None and self._apply_stan_json(
-                obj, entry.stan_json
-            ):
+            changed = False
+            if entry.stan_json is not None:
+                obj, changed = self._apply_stan_json(obj, entry.stan_json)
+            self.objects[entry.id] = obj
+            if changed:
                 self._record(obj, applied)
         return True
 
@@ -306,24 +316,29 @@ class AmpioStore:
                     or obj.updated_at is None
                     or reported_at >= obj.updated_at
                 ):
-                    obj.updated_at = reported_at
-                    obj.updated_at_clock = "server"
+                    self.objects[update.id] = replace(
+                        obj, updated_at=reported_at, updated_at_clock="server"
+                    )
                 self._touch_module(obj.device_id)
             return
         if obj is None:
             # State raced ahead of the catalogues -> generic sensor until
             # metadata lands.
             obj = AmpioObject(id=update.id, kind=classify(None, None))
-            self.objects[update.id] = obj
-        obj.value = update.value
-        if update.tilt is not None:
-            obj.tilt_position = update.tilt
+        stamp: float
+        clock: Literal["server", "local"]
         if update.on_ms:
-            obj.updated_at = float(update.on_ms) / 1000.0
-            obj.updated_at_clock = "server"
+            stamp, clock = float(update.on_ms) / 1000.0, "server"
         else:
-            obj.updated_at = time.time()
-            obj.updated_at_clock = "local"
+            stamp, clock = time.time(), "local"
+        obj = replace(
+            obj,
+            value=update.value,
+            tilt_position=update.tilt if update.tilt is not None else obj.tilt_position,
+            updated_at=stamp,
+            updated_at_clock=clock,
+        )
+        self.objects[update.id] = obj
         self._touch_module(obj.device_id)
         self._record(obj, applied)
 
@@ -333,51 +348,64 @@ class AmpioStore:
         oid = self._input_index.get((edge.mac, edge.prefix, edge.channel))
         if oid is None:
             return  # channel has no exposed Designer object - ignore
-        obj = self.objects[oid]
-        obj.raw_proven = True
-        obj.value = edge.value
-        obj.updated_at = time.time()
-        obj.updated_at_clock = "local"
+        obj = replace(
+            self.objects[oid],
+            raw_proven=True,
+            value=edge.value,
+            updated_at=time.time(),
+            updated_at_clock="local",
+        )
+        self.objects[oid] = obj
         self._touch_module(obj.device_id)
         self._record(obj, applied)
 
     def _apply_diagnostics(
         self, mac: int, diagnostics: _protocol.ModuleDiagnostics, applied: Applied
     ) -> None:
-        module = self._module_by_mac.get(mac)
-        if module is None:
+        mid = self._module_id_by_mac.get(mac)
+        if mid is None:
             return  # a module the catalogue does not list
-        module.supply_voltage = diagnostics.supply_voltage
-        module.temperature = diagnostics.temperature
-        module.last_seen = time.time()
-        applied.events.append(ModuleUpdated(replace(module)))
+        module = replace(
+            self.modules[mid],
+            supply_voltage=diagnostics.supply_voltage,
+            temperature=diagnostics.temperature,
+            last_seen=time.time(),
+        )
+        self.modules[mid] = module
+        applied.events.append(ModuleUpdated(module))
 
     # --- helpers ----------------------------------------------------------
 
-    def _apply_stan_json(self, obj: AmpioObject, stan_json: str) -> bool:
-        """Apply a bulk-snapshot value to `obj` when it is not older than what it holds.
+    def _apply_stan_json(
+        self, obj: AmpioObject, stan_json: str
+    ) -> tuple[AmpioObject, bool]:
+        """Return `obj` with a bulk-snapshot value applied when it supersedes.
 
         The per-object topics are not retained, so this snapshot is the only
         resync after a reconnect - during which the object may well have
         changed. It must therefore be able to correct a stale value, while
         still losing to the live push that can arrive first on a fresh
-        connection.
+        connection. The bool reports whether the visible state changed; the
+        returned instance can differ even when it did not (a newer timestamp
+        on the same value).
         """
         seed = _protocol.parse_stan_json(stan_json)
         if seed is None:
-            return False
+            return obj, False
         reported_at = None if seed.on_ms is None else float(seed.on_ms) / 1000.0
         if seed.value is None or not self._supersedes(obj, reported_at):
-            return False
+            return obj, False
         changed = obj.value != seed.value or (
             seed.tilt is not None and obj.tilt_position != seed.tilt
         )
-        obj.value = seed.value
-        if seed.tilt is not None:
-            obj.tilt_position = seed.tilt
-        obj.updated_at = reported_at
-        obj.updated_at_clock = None if reported_at is None else "server"
-        return changed
+        obj = replace(
+            obj,
+            value=seed.value,
+            tilt_position=seed.tilt if seed.tilt is not None else obj.tilt_position,
+            updated_at=reported_at,
+            updated_at_clock=None if reported_at is None else "server",
+        )
+        return obj, changed
 
     def _supersedes(self, obj: AmpioObject, reported_at: float | None) -> bool:
         """Whether a server-dated snapshot report should replace what `obj` holds.
@@ -413,7 +441,7 @@ class AmpioStore:
             return
         module = self.modules.get(module_id)
         if module is not None:
-            module.last_seen = time.time()
+            self.modules[module_id] = replace(module, last_seen=time.time())
 
     def _rebuild_indexes(self) -> None:
         """Rebuild the routing tables for the raw tree.
@@ -439,8 +467,8 @@ class AmpioStore:
                 continue
             index[(module.mac, prefix, obj.funkcja)] = obj.id
         self._input_index = index
-        self._module_by_mac = {
-            module.mac: module
+        self._module_id_by_mac = {
+            module.mac: module.id
             for module in self.modules.values()
             if module.mac is not None and module.mac not in self._colliding_macs
         }
@@ -449,7 +477,7 @@ class AmpioStore:
         covered = set(index.values())
         for oid, obj in self.objects.items():
             if obj.raw_proven and oid not in covered:
-                obj.raw_proven = False
+                self.objects[oid] = replace(obj, raw_proven=False)
 
     def _refresh_colliding_macs(self) -> None:
         """Recompute the colliding-mac set, warning when it changes.
@@ -481,7 +509,7 @@ class AmpioStore:
         self._colliding_macs = colliding
 
     def _record(self, obj: AmpioObject, applied: Applied) -> None:
-        applied.events.append(ObjectUpdated(replace(obj)))
+        applied.events.append(ObjectUpdated(obj))
 
     # --- read surface -----------------------------------------------------
 

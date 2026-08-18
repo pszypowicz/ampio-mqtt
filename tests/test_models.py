@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from ampio_mqtt import AmpioObject, classify
@@ -114,5 +116,4 @@ def test_is_thermostat_and_the_running_flag() -> None:
     obj = AmpioObject(id=138, typ_komponentu="reg", kind=classify("reg", None))
     assert obj.is_thermostat
     assert not (obj.is_sensor or obj.is_input or obj.is_output)
-    obj.value = "1"
-    assert obj.is_on  # the surfaced value is the running flag
+    assert replace(obj, value="1").is_on  # the surfaced value is the running flag

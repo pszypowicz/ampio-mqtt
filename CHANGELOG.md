@@ -24,6 +24,14 @@ it away.
 
 ### Changed
 
+- **The read surface is immutable.** `AmpioObject`, `AmpioModule`,
+  `AmpioScene`, and `AmpioServerInfo` are frozen dataclasses, and
+  `client.objects` / `client.modules` return read-only views (typed
+  `Mapping`). Consumer code can no longer corrupt the store through the
+  documented read API - a deleted entry used to dangle the raw-channel
+  index and kill the connection on the next raw edge - and events carry
+  the same immutable instances, so the snapshot guarantee from 0.20.0
+  holds by construction instead of by per-event copying.
 - **`OutputKind.switchable`** (default `True`, `False` for `rgbw`) says
   whether an object answers the switch-verb family, so a consumer picks
   its wiring from the kind instead of discovering a silent no-op.

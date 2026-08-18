@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import fields
+from dataclasses import fields, replace
 
 import pytest
 from conftest import details, devices, info
@@ -379,16 +379,15 @@ def test_echo_anchors_a_raw_edge_to_the_server_clock() -> None:
         json.dumps({"state": "255", "on": echo_on}),
     )
     assert _updated(applied) == []  # no re-notify
-    obj = store.objects[10]
-    assert obj.value == "1"  # raw form kept
-    assert obj.updated_at == echo_on / 1000.0  # anchored
+    assert store.objects[10].value == "1"  # raw form kept
+    assert store.objects[10].updated_at == echo_on / 1000.0  # anchored
 
     stale = store.apply(STATES_TOPIC, _snapshot("0", echo_on - 10_000))
-    assert _updated(stale) == [] and obj.value == "1"
+    assert _updated(stale) == [] and store.objects[10].value == "1"
 
     resync = store.apply(STATES_TOPIC, _snapshot("0", echo_on + 10_000))
     assert [o.id for o in _updated(resync)] == [10]
-    assert obj.value == "0"
+    assert store.objects[10].value == "0"
 
 
 def test_a_dated_snapshot_beats_an_undated_seed() -> None:
@@ -813,7 +812,7 @@ def test_devices_redelivery_preserves_last_seen() -> None:
         DEVICES_TOPIC,
         devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
     )
-    store.modules[17].last_seen = 1700000000.0
+    store.modules[17] = replace(store.modules[17], last_seen=1700000000.0)
     # Re-deliver the devices list (e.g. on reconnect) - last_seen must persist.
     store.apply(
         DEVICES_TOPIC,
@@ -1202,11 +1201,11 @@ def test_devices_reply_dispatches_module_updated_for_new_and_changed() -> None:
 
 def test_object_updated_carries_a_snapshot() -> None:
     """A dispatched event freezes the state it announced; later changes to
-    the same object must not reach a listener that deferred processing."""
+    the same object must not reach a listener that deferred processing.
+    Objects are frozen, so the store publishes a new instance per change."""
     store = _store()
     state_topic = f"ampio/fromDB/{USER}/ob/5/state"
     (event,) = _updated(store.apply(state_topic, '{"state": "1", "on": 2000}'))
-    assert event is not store.objects[5]
     store.apply(state_topic, '{"state": "2", "on": 3000}')
     assert event.value == "1"
     assert store.objects[5].value == "2"
@@ -1216,7 +1215,6 @@ def test_module_updated_carries_a_snapshot() -> None:
     store = _diag_store()
     diag_topic = "ampio/from/CAFE/b/4F"
     (event,) = _mod_updated(store.apply(diag_topic, '{"d":[254,79,60,110],"m":0}'))
-    assert event is not store.modules[7]
     store.apply(diag_topic, '{"d":[254,79,70,110],"m":0}')
     assert event.supply_voltage == 12.0
     assert store.modules[7].supply_voltage == 14.0

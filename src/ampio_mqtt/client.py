@@ -10,7 +10,8 @@ import asyncio
 import logging
 import math
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from types import MappingProxyType
 from typing import Any, TypeVar, cast, overload
 
 from . import _connection, _protocol
@@ -189,14 +190,19 @@ class AmpioClient:
     # --- public API -------------------------------------------------------
 
     @property
-    def objects(self) -> dict[int, AmpioObject]:
-        """All known objects keyed by id."""
-        return self._store.objects
+    def objects(self) -> Mapping[int, AmpioObject]:
+        """All known objects keyed by id.
+
+        A read-only live view of frozen instances: it always reflects the
+        store's current state, and neither the mapping nor an object in it
+        can be mutated from consumer code.
+        """
+        return MappingProxyType(self._store.objects)
 
     @property
-    def modules(self) -> dict[int, AmpioModule]:
-        """All known physical modules keyed by id."""
-        return self._store.modules
+    def modules(self) -> Mapping[int, AmpioModule]:
+        """All known physical modules keyed by id, as a read-only live view."""
+        return MappingProxyType(self._store.modules)
 
     @property
     def server_info(self) -> AmpioServerInfo | None:

@@ -24,9 +24,15 @@ from .endpoints import AccessTier
 _HIDDEN_FLAG = 1 << 4
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class AmpioObject:
-    """A logical Ampio object (DB object) and its latest state."""
+    """A logical Ampio object (DB object) and its latest state.
+
+    Frozen: an instance is an immutable snapshot. The store publishes a new
+    instance on every change, so the one carried by an event stays what the
+    event announced, and consumer code cannot corrupt the library's state
+    through the read surface.
+    """
 
     # Volatile: `id` (and `device_id`, the owning id_urzadzenia) are DB
     # autoincrement ids assigned in hardware (`mac_global`) order. They change
@@ -195,9 +201,12 @@ class AmpioObject:
         return bool(self.leaf_id) or self.is_system
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class AmpioModule:
-    """A physical Ampio module (urzadzenie) that owns objects."""
+    """A physical Ampio module (urzadzenie) that owns objects.
+
+    Frozen, exactly as :class:`AmpioObject` is.
+    """
 
     id: int
     # Designer-assignable CAN bus address (the "MAC override"). This is the
@@ -229,7 +238,7 @@ class AmpioModule:
     temperature: float | None = None  # °C
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class AmpioScene:
     """A named multi-action preset defined in the Ampio app."""
 
@@ -244,7 +253,7 @@ class AmpioScene:
     object_ids: frozenset[int] = field(default_factory=frozenset)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class AmpioServerInfo:
     """A safe subset of the Ampio M-SERV self-reported info.
 
