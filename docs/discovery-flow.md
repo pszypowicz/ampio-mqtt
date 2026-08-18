@@ -100,6 +100,20 @@ Both helpers accept an explicit `timeout` (default 5.0 s) and raise
 `AmpioTimeoutError` on timeout, so a flaky broker fails loud rather
 than silently returning an empty result.
 
+## Finding the M-SERV on the LAN
+
+`discover()` resolves `ampio.local` with an explicit multicast DNS
+A-record query driven by `python-zeroconf` (a hard runtime dependency),
+then TCP-probes the resolved address on the broker port. The M-SERV
+publishes only its hostname over Avahi, with no service type and no TXT
+records, which is why the lookup targets the well-known name. Because
+the query runs inside the process, it behaves the same on macOS, HAOS,
+plain Linux, and Docker, without host-side `nss-mdns`/avahi
+configuration. A Home Assistant integration passes its shared
+`AsyncZeroconf` via `discover(zeroconf=...)` instead of opening a second
+multicast socket. The result is a hint based on the hostname alone;
+confirm identity with `test_connection()` once credentials are known.
+
 ## Liveness counters
 
 `client.stats` (a `ConnectionStats` dataclass) is what the HA
