@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Literal
 
 from .classification import (
     InputKind,
@@ -74,23 +73,19 @@ class AmpioObject:
     # What this object is, once metadata has arrived. Exactly one kind applies.
     kind: ObjectKind | None = None
     value: str | None = None
-    # Epoch seconds of the report `value` came from, in whichever domain
-    # `updated_at_clock` names. Lets a later bulk snapshot be compared
-    # against what is already held instead of being applied or dropped blind.
+    # Epoch seconds of the report `value` came from: the M-SERV's own `on`
+    # timestamp when the report carried one (every dated report on the
+    # baseline wire does), the local receive time for the undated raw tree.
+    # Lets a later bulk snapshot be compared against what is already held
+    # instead of being applied or dropped blind. None until any report
+    # arrives, or when an undated seed supplied the value.
     updated_at: float | None = None
-    # Which clock stamped `updated_at`: "server" for the M-SERV's own `on`
-    # field, "local" for the receive clock of the undated raw tree (whose
-    # per-object echo, due ~150 ms after an edge, re-anchors the object to
-    # the server clock). Timestamps are only comparable within one domain -
-    # an unsynced M-SERV's RTC can be arbitrarily wrong - and the library
-    # never compares across them; neither should a consumer. None until any
-    # report arrives, or when an undated seed supplied the value.
-    updated_at_clock: Literal["server", "local"] | None = None
     # Whether this input's raw-channel form has been observed. From then on
-    # the raw path is authoritative: the slower per-object echo no longer
-    # re-notifies or overwrites, and only anchors `updated_at` to the server
-    # clock. Only ever True on the admin tier, which alone receives the raw
-    # tree; cleared when the raw index stops covering the object.
+    # the raw path owns the object: the slower per-object echo is ignored
+    # whole, and snapshot rows are skipped - resync comes from the broker's
+    # retained raw table, replayed on every subscribe. Only ever True on
+    # the admin tier, which alone receives the raw tree; cleared when the
+    # raw index stops covering the object.
     raw_proven: bool = False
     # Slat angle percent, from the `lammel` state field. Only tilt-capable
     # covers report it.
@@ -158,8 +153,7 @@ class AmpioObject:
 
         Only a color output (`OutputKind.color`) reads non-None - a
         dimmer's 0-255 level must not masquerade as a color. The packed
-        form is ``R | G<<8 | B<<16 | W<<24``, live-verified against the
-        module's own raw channel echo. A negative value is the same word
+        form is ``R | G<<8 | B<<16 | W<<24``. A negative value is the same word
         in signed 32-bit form - the M-SERV's own Matter bridge emits that
         shape - and decodes identically. None when the value is missing,
         not an integer, or outside 32 bits.
@@ -246,8 +240,8 @@ class AmpioObject:
 
         ``leafId`` embeds the module's Designer override mac - the
         replacement-stable ``AmpioModule.mac``, not the factory
-        ``mac_global`` (live-verified: the M-SERV's objects embed its
-        override ``1``, not its factory id). Because ``leafId`` is served
+        ``mac_global`` - the M-SERV's own objects embed its override ``1``,
+        not its factory id. Because ``leafId`` is served
         identically on both account tiers, this is the module key a
         consumer can group entities by even on a restricted account, which
         never receives the module catalogue - an entry set up with a

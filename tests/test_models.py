@@ -157,8 +157,6 @@ def _colored(value: str | None) -> AmpioObject:
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
-        # Live-verified packing: ob/63's packed word against its own raw
-        # channel echo 254,28,0,132.
         ("2214599934", (254, 28, 0, 132)),
         # The same word in signed 32-bit form, as the Matter bridge emits.
         ("-2080367362", (254, 28, 0, 132)),

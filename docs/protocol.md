@@ -7,10 +7,11 @@ The M-SERV speaks two parallel topic trees on the same MQTT broker:
   one of the control surfaces, get a JSON response on the matching
   `fromDB` topic. Per-object live state arrives on `.../ob/<id>/state`.
 - **Raw tree** - `ampio/from/<MAC>/state/...`. Global, not user-scoped,
-  and served only to administrator accounts (the broker ACL returns
-  nothing on it for standard accounts). Carries decoded
-  CAN per-channel state, keyed by the module's effective bus MAC. Used
-  as a low-latency input bridge - see
+  retained (the broker holds every channel's last value and replays it
+  on each subscribe), and served only to administrator accounts (the
+  broker ACL returns nothing on it for standard accounts). Carries
+  decoded CAN per-channel state, keyed by the module's effective bus
+  MAC. Used as a low-latency, self-resyncing input bridge - see
   [`raw-channel-bridge.md`](raw-channel-bridge.md).
 
 All topic helpers live in
@@ -94,7 +95,7 @@ which works on both tiers.
 | `setColor`                         | 24-bit `R \| G<<8 \| B<<16` | Dead on the baseline server: in the spec enum, but a live send to an `rgbw` object had no effect and no reply. Use `setColors`.                                                                                                                                                                                                                           |
 | `setColorW`                        | `<rgb24>/<white>`           | Dead on the baseline server, same observation as `setColor`. Use `setColors`.                                                                                                                                                                                                                                                                             |
 | `setTemperature`                   | `<°C>`                      | Regulator (`reg`) setpoint; echoed as `setTemperature` in the reg state push (see Live state). Absent from the spec enum (Ampio's MQTT API note only), yet works.                                                                                                                                                                                         |
-| `setHeatingMode`                   | mode letter                 | `M` switched a regulator from Schedule to Manual (state push `mode` went `S` -> `M`); sending `S` back was silently ignored, so only `M` is mapped of the claimed `A,S,M,H`; #73 tracks pinning the full mode vocabulary.                                                                                                                                                                              |
+| `setHeatingMode`                   | mode letter                 | `M` switched a regulator from Schedule to Manual (state push `mode` went `S` -> `M`); sending `S` back was silently ignored, so only `M` is mapped of the claimed `A,S,M,H`; #73 tracks pinning the full mode vocabulary.                                                                                                                                 |
 | `arm`, `disarm`                    | `<pin>`                     | Flip a `satel_alarm` object's armed state, ~1 s echo; the `satel_` types cover alarm integrations generally (verified on a Jablotron behind an M-CON). Absent from the spec enum, yet works. The paired "alarmed" object also reads 1 while the panel is in its exit-delay `arming` phase - on its own it is not a siren indicator.                       |
 | `setVolume`, `setInput`, `setSeek` | radio module                | In the spec enum. Untestable here - no radio module.                                                                                                                                                                                                                                                                                                      |
 | `setText`                          | `<text>`                    | Sets the `desc` field of the object's state push (`state` unchanged), fanned out to every user namespace.                                                                                                                                                                                                                                                 |

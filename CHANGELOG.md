@@ -60,6 +60,17 @@ it away.
 
 ### Changed
 
+- **Bridged inputs are raw-owned, and the clock domains are gone.** The
+  raw `f`/`i` tree turned out to be retained: the broker holds every
+  channel's last value and replays the complete input state on each
+  subscribe, making the raw path self-resyncing across reconnects. A
+  raw-proven object now ignores its per-object echo entirely and is
+  skipped by the bulk snapshot; on a first connect the snapshot seeds
+  initial values and raw ownership begins with the first raw message.
+  With the echo-anchoring gone, `AmpioObject.updated_at_clock` is
+  removed: every dated report on the baseline wire carries the
+  M-SERV's own clock, so `updated_at` is simply the report's `on`
+  timestamp, or the receive time for the undated raw tree.
 - **`classify`, `module_model`, and `module_capabilities` left the
   top-level API.** All three are pre-digested by the models -
   `obj.kind`, `module.model`, `module.capabilities` - and the kind-key

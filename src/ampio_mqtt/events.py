@@ -35,8 +35,8 @@ class ObjectRemoved:
 
     Carries the final state; by dispatch time the id is gone from
     :pyattr:`AmpioClient.objects`. What triggers it differs by tier,
-    because deletion differs by tool (live-verified; see
-    docs/identity.md). An app-side object delete soft-deletes: the
+    because deletion differs by tool (see docs/identity.md). An app-side
+    object delete soft-deletes: the
     ``config`` row stays with the hidden bit set - the admin tier sees an
     ``ObjectUpdated`` turning ``hidden``, never an eviction - while the
     app-sync surfaces drop the row, so the restricted tier evicts at its

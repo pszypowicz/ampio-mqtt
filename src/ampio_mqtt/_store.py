@@ -13,7 +13,6 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from functools import partial
-from typing import Literal
 
 from . import _protocol
 from .classification import classify, input_channel_prefix
@@ -318,37 +317,25 @@ class AmpioStore:
     def _apply_state(self, update: _protocol.StateUpdate, applied: Applied) -> None:
         obj = self.objects.get(update.id)
         if obj is not None and obj.raw_proven:
-            # The raw path is authoritative for this input, so the echo
-            # neither re-notifies nor overwrites; it only anchors the object
-            # to the server clock - see `AmpioObject.raw_proven`.
-            if update.on_ms is not None:
-                reported_at = float(update.on_ms) / 1000.0
-                if (
-                    obj.updated_at_clock == "local"
-                    or obj.updated_at is None
-                    or reported_at >= obj.updated_at
-                ):
-                    self.objects[update.id] = replace(
-                        obj, updated_at=reported_at, updated_at_clock="server"
-                    )
-                self._touch_module(obj.device_id)
+            # The raw path owns this object: the per-object echo repeats
+            # what the raw edge already delivered ~150 ms earlier, and
+            # resync comes from the broker's retained raw table on every
+            # subscribe, so the echo is dropped whole. It still counts as
+            # live evidence of the module.
+            self._touch_module(obj.device_id)
             return
         if obj is None:
             # State raced ahead of the catalogues -> generic sensor until
             # metadata lands.
             obj = AmpioObject(id=update.id, kind=classify(None, None))
-        stamp: float
-        clock: Literal["server", "local"]
-        if update.on_ms is not None:
-            stamp, clock = float(update.on_ms) / 1000.0, "server"
-        else:
-            stamp, clock = time.time(), "local"
+        stamp = (
+            float(update.on_ms) / 1000.0 if update.on_ms is not None else time.time()
+        )
         obj = replace(
             obj,
             value=update.value,
             tilt_position=update.tilt if update.tilt is not None else obj.tilt_position,
             updated_at=stamp,
-            updated_at_clock=clock,
         )
         self.objects[update.id] = obj
         self._touch_module(obj.device_id)
@@ -365,7 +352,6 @@ class AmpioStore:
             raw_proven=True,
             value=edge.value,
             updated_at=time.time(),
-            updated_at_clock="local",
         )
         self.objects[oid] = obj
         self._touch_module(obj.device_id)
@@ -399,8 +385,12 @@ class AmpioStore:
         still losing to the live push that can arrive first on a fresh
         connection. The bool reports whether the visible state changed; the
         returned instance can differ even when it did not (a newer timestamp
-        on the same value).
+        on the same value). A raw-proven object is skipped outright: its
+        resync is the broker's retained raw table, and a DB snapshot may be
+        staler than that raw truth with no comparable clock to prove it.
         """
+        if obj.raw_proven:
+            return obj, False
         seed = _protocol.parse_stan_json(stan_json)
         if seed is None:
             return obj, False
@@ -415,21 +405,17 @@ class AmpioStore:
             value=seed.value,
             tilt_position=seed.tilt if seed.tilt is not None else obj.tilt_position,
             updated_at=reported_at,
-            updated_at_clock=None if reported_at is None else "server",
         )
         return obj, changed
 
     def _supersedes(self, obj: AmpioObject, reported_at: float | None) -> bool:
-        """Whether a server-dated snapshot report should replace what `obj` holds.
+        """Whether a dated snapshot report should replace what `obj` holds.
 
         Undated reports only fill a gap. A dated report beats an undated
-        value, and beats a server-dated one from the same instant onwards -
-        both sides are then the M-SERV's own clock, so RTC skew cancels out.
-        A locally-dated value (a raw edge whose anchoring echo has not
-        arrived yet) is never compared against the server clock: the two can
-        disagree by an arbitrary RTC error, so the report is rejected and
-        the echo, due within ~150 ms, re-anchors the object for the next
-        comparison.
+        value, and beats a dated one from the same instant onwards - every
+        dated report on the baseline wire carries the M-SERV's own clock,
+        so RTC skew cancels out. Raw-proven objects never reach this
+        comparison: their snapshot rows are skipped before it.
         """
         if obj.value is None:
             return True
@@ -437,8 +423,6 @@ class AmpioStore:
             return False
         if obj.updated_at is None:
             return True
-        if obj.updated_at_clock == "local":
-            return False
         return reported_at >= obj.updated_at
 
     def _touch_module(self, module_id: int | None) -> None:

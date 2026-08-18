@@ -8,14 +8,29 @@ The M-SERV publishes the same data twice:
   (`{state, desc, on}`, `desc` optional) and the one the library's
   per-object dispatcher consumes.
 - On the **raw channel tree** `ampio/from/<MAC>/state/<prefix>/<channel>`,
-  global, NOT user-scoped. This is the decoded-CAN form: plain-text
-  payloads (`"0"`, `"1"`, ...) keyed by the module's effective bus MAC
-  and a per-prefix channel index.
+  global, NOT user-scoped, and **retained**: the broker holds every
+  channel's last value (edges republish retained), so a subscriber
+  receives the complete current input state of the install the moment it
+  subscribes. This is the decoded-CAN form: plain-text payloads
+  (`"0"`, `"1"`, ...) keyed by the module's effective bus MAC and a
+  per-prefix channel index.
 
 The raw form arrives **first** for input changes (the M-SERV decodes
 CAN and publishes the raw value before re-encoding the per-object
 record). For an input platform that wants minimum latency on a
 button-press or flag toggle, the raw form is the right source.
+
+Once an object has produced a raw message it is **raw-owned**
+(`AmpioObject.raw_proven`): the slower per-object echo is ignored
+whole, and the bulk `states` snapshot skips the object - its resync is
+the retained raw table itself, re-delivered at every reconnect's
+subscribe and routed through the index that persists across sessions.
+On the first connect the retained tables arrive before the catalogues
+can build that index, so initial values come from the snapshot and raw
+ownership begins with the object's first raw message. An input whose
+module publishes no raw table (the M-SERV's own virtual objects) never
+becomes raw-owned and lives on the per-object path with snapshot
+resync, unchanged.
 
 The raw tree is served only to **administrator** accounts: the broker
 ACL delivers nothing on `ampio/from/#` to a standard account, retained
