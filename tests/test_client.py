@@ -10,6 +10,7 @@ import dataclasses
 import aiomqtt
 import pytest
 from conftest import (
+    ADMIN_USER,
     DATA_DEVICES_TOPIC,
     DETAILS_TOPIC,
     DEVICES_TOPIC,
@@ -50,13 +51,18 @@ def _client() -> AmpioClient:
     return AmpioClient("host", username=USER)
 
 
+def _admin_client() -> AmpioClient:
+    """For the module-catalogue machinery, which only the admin tier is served."""
+    return AmpioClient("host", username=ADMIN_USER)
+
+
 def test_mserv_prefers_info_mac_cross_check() -> None:
     """mserv is the module row whose mac_global matches info.mac."""
-    client = _client()
+    client = _admin_client()
     # Two modules with typ != 10 plus the actual M-SERV (typ=10, mac_global=47846).
     feed(
         client,
-        f"ampio/fromDB/{USER}/config/devices",
+        f"ampio/fromDB/{ADMIN_USER}/config/devices",
         devices(
             {
                 "id": 1,
@@ -76,7 +82,7 @@ def test_mserv_prefers_info_mac_cross_check() -> None:
     )
     feed(
         client,
-        f"ampio/fromDB/{USER}/data/info",
+        f"ampio/fromDB/{ADMIN_USER}/data/info",
         info(serverVersion="1", mac="47846"),
     )
     mserv = client.mserv
@@ -88,10 +94,10 @@ def test_mserv_prefers_info_mac_cross_check() -> None:
 def test_mserv_falls_back_to_unique_hub_module(hub_type: int) -> None:
     """Without info, the unique hub-typed module identifies the M-SERV,
     with a VIRTUAL hub resolving exactly like an M-SERV one."""
-    client = _client()
+    client = _admin_client()
     feed(
         client,
-        f"ampio/fromDB/{USER}/config/devices",
+        f"ampio/fromDB/{ADMIN_USER}/config/devices",
         devices(
             {
                 "id": 5,
@@ -117,10 +123,10 @@ def test_mserv_matches_the_override_mac_arm() -> None:
     """The cross-check accepts the Designer override mac as well as the
     factory id: after a hardware swap mac_global changes but the
     re-stamped override does not."""
-    client = _client()
+    client = _admin_client()
     feed(
         client,
-        f"ampio/fromDB/{USER}/config/devices",
+        f"ampio/fromDB/{ADMIN_USER}/config/devices",
         devices(
             {
                 "id": 4,
@@ -131,7 +137,7 @@ def test_mserv_matches_the_override_mac_arm() -> None:
             }
         ),
     )
-    feed(client, f"ampio/fromDB/{USER}/data/info", info(mac="47846"))
+    feed(client, f"ampio/fromDB/{ADMIN_USER}/data/info", info(mac="47846"))
     mserv = client.mserv
     assert mserv is not None and mserv.id == 4
 
@@ -139,9 +145,17 @@ def test_mserv_matches_the_override_mac_arm() -> None:
 def test_read_surface_is_immutable() -> None:
     """Neither the mappings nor the frozen instances in them can be mutated
     from consumer code - the promise core builds its entity layer on."""
-    client = _client()
-    feed(client, f"ampio/fromDB/{USER}/config/devicesDetails", details(_flaga(41, 3)))
-    feed(client, f"ampio/fromDB/{USER}/config/devices", devices({"id": 7, "mac": 1}))
+    client = _admin_client()
+    feed(
+        client,
+        f"ampio/fromDB/{ADMIN_USER}/config/devicesDetails",
+        details(_flaga(41, 3)),
+    )
+    feed(
+        client,
+        f"ampio/fromDB/{ADMIN_USER}/config/devices",
+        devices({"id": 7, "mac": 1}),
+    )
     with pytest.raises(TypeError):
         client.objects[99] = client.objects[41]  # type: ignore[index]
     with pytest.raises(TypeError):
@@ -156,10 +170,10 @@ def test_read_surface_is_immutable() -> None:
 
 def test_mserv_none_when_ambiguous_and_no_info() -> None:
     """If multiple modules are typ=10 and no info reply, do not guess."""
-    client = _client()
+    client = _admin_client()
     feed(
         client,
-        f"ampio/fromDB/{USER}/config/devices",
+        f"ampio/fromDB/{ADMIN_USER}/config/devices",
         devices(
             {
                 "id": 1,
@@ -184,7 +198,7 @@ def test_state_updates_object_and_notifies() -> None:
     client = _client()
     feed(
         client,
-        f"ampio/fromDB/{USER}/config/devicesDetails",
+        DATA_DEVICES_TOPIC,
         details(
             {
                 "id": 41,
@@ -213,7 +227,7 @@ def test_object_removal_listener_fires_after_eviction() -> None:
     unsubscribe = client.subscribe(
         lambda e: removed.append(e.object.id), of=ObjectRemoved
     )
-    topic = f"ampio/fromDB/{USER}/config/devicesDetails"
+    topic = DATA_DEVICES_TOPIC
     feed(client, topic, details(_flaga(41, 3), _flaga(42, 4)))
     feed(client, topic, details(_flaga(41, 3)))
     assert removed == [42]
@@ -225,11 +239,41 @@ def test_object_removal_listener_fires_after_eviction() -> None:
     assert removed == [42]
 
 
-def test_module_removal_dispatches_module_removed() -> None:
+def test_unsubscribe_is_idempotent() -> None:
+    """Consumer teardown lists routinely invoke a cleanup callback twice;
+    the second call must be a no-op, not a ValueError."""
     client = _client()
+    unsubscribe = client.subscribe(lambda e: None, of=ObjectRemoved)
+    unsubscribe()
+    unsubscribe()
+
+
+def test_unsubscribe_removes_only_its_own_registration() -> None:
+    """The same listener registered twice is dispatched twice; either
+    unsubscribe drops exactly its own registration, however often called."""
+    client = _client()
+    seen: list[int] = []
+
+    def listener(e: ObjectUpdated) -> None:
+        seen.append(e.object.id)
+
+    first = client.subscribe(listener, of=ObjectUpdated)
+    client.subscribe(listener, of=ObjectUpdated)
+    topic = DATA_DEVICES_TOPIC
+    feed(client, topic, details(_flaga(41, 3)))
+    assert seen == [41, 41]
+
+    first()
+    first()  # repeat must not touch the surviving registration
+    feed(client, topic, details(_flaga(41, 4)))
+    assert seen == [41, 41, 41]
+
+
+def test_module_removal_dispatches_module_removed() -> None:
+    client = _admin_client()
     removed: list[int] = []
     client.subscribe(lambda e: removed.append(e.module.id), of=ModuleRemoved)
-    topic = f"ampio/fromDB/{USER}/config/devices"
+    topic = f"ampio/fromDB/{ADMIN_USER}/config/devices"
     feed(client, topic, devices({"id": 1, "mac": 1}, {"id": 2, "mac": 2}))
     feed(client, topic, devices({"id": 1, "mac": 1}))
     assert removed == [2]
@@ -243,7 +287,7 @@ def test_subscribe_filters_and_preserves_order() -> None:
     only_updates: list[object] = []
     client.subscribe(everything.append)
     client.subscribe(only_updates.append, of=ObjectUpdated)
-    topic = f"ampio/fromDB/{USER}/config/devicesDetails"
+    topic = DATA_DEVICES_TOPIC
     feed(client, topic, details(_flaga(41, 3), _flaga(42, 4)))
     feed(client, topic, details(_flaga(41, 3)))
     assert [type(e).__name__ for e in everything] == [
@@ -308,10 +352,11 @@ def test_last_payloads_retained_for_each_handler() -> None:
     assert client.last_payloads["groups"] == groups_payload
     assert client.last_payloads["group_devices"] == group_devices_payload
 
-    # An admin-surface reply on a restricted client still updates the
-    # store but latches no channel - the tier is not served that surface.
+    # An admin-surface topic on a restricted client is unroutable: the
+    # tier is not served that surface, so nothing is retained for it.
     feed(client, f"ampio/fromDB/{USER}/config/devices", devices_payload)
     assert "devices" not in client.last_payloads
+    assert client.modules == {}
 
 
 def test_access_tier_is_the_authenticated_username() -> None:
@@ -373,12 +418,11 @@ async def test_discovery_stays_incomplete_without_server_identity(
     wait promises the identity a consumer scopes its registry by (#78)."""
     client, _broker = connected
     feed(client, STATES_TOPIC, devices())
-    feed(client, INFO_TOPIC, info())  # parses, but carries no identity
+    feed(client, INFO_TOPIC, info())  # unparseable: carries no identity
     feed(client, DATA_DEVICES_TOPIC, details())
     feed(client, PARAMS_DEVICES_TOPIC, devices())
     assert await client.wait_for_initial_discovery(timeout=0.05) is False
-    assert client.server_info is not None
-    assert client.server_info.key is None
+    assert client.server_info is None
 
     feed(client, INFO_TOPIC, info(mac=555, userId=-1, serverVersion="1865"))
     feed(client, DETAILS_TOPIC, details())

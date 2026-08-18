@@ -2,7 +2,10 @@
 
 One stream carries everything the library learns: object and module news
 from the store, bus events, and connection-state transitions, in the order
-they were produced. Every class is a frozen dataclass, so a ``match``
+they were produced. Two cross-class orderings are guaranteed: removals
+follow the updates of the catalogue reply that caused them, and
+``AvailabilityChanged(False)`` precedes a terminal ``AuthFailed`` /
+``ConnectionDied``. Every class is a frozen dataclass, so a ``match``
 statement destructures them positionally and instances compare by value.
 Update and removal events carry a snapshot taken as the change was
 applied - a listener that defers processing still sees the state the
@@ -34,18 +37,10 @@ class ObjectRemoved:
     """The account's authoritative catalogue stopped listing an object.
 
     Carries the final state; by dispatch time the id is gone from
-    :pyattr:`AmpioClient.objects`. What triggers it differs by tier,
-    because deletion differs by tool (see docs/identity.md). An app-side
-    object delete soft-deletes: the
-    ``config`` row stays with the hidden bit set - the admin tier sees an
-    ``ObjectUpdated`` turning ``hidden``, never an eviction - while the
-    app-sync surfaces drop the row, so the restricted tier evicts at its
-    next catalogue reply, as it does on a grant revocation. A Designer
-    save rebuilds the configuration (restarting the M-SERV along the
-    way), and objects it deleted vanish from the ``config`` catalogue -
-    the admin-tier eviction. Either way this is the signal to drop
-    whatever entity was built on the object. An empty catalogue reply
-    never mass-removes - see the store's eviction guard.
+    :pyattr:`AmpioClient.objects`. This is the signal to drop whatever
+    entity was built on the object. What triggers it differs by tier
+    because deletion differs by tool - the wire mechanics (app-side
+    soft-delete vs a Designer save) live in docs/identity.md.
     """
 
     object: AmpioObject

@@ -16,6 +16,10 @@ integration while staying Home Assistant agnostic itself.
 pip install ampio-mqtt
 ```
 
+LAN discovery (`discover()`) needs the `discovery` extra
+(`pip install ampio-mqtt[discovery]`), which pulls in `zeroconf`. Home
+Assistant ships `zeroconf` itself, so the integration needs no extra.
+
 ## Quickstart
 
 ```python

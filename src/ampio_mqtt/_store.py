@@ -10,8 +10,9 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from functools import partial
+from typing import Any
 
 from . import _protocol
 from .classification import classify, input_channel_prefix
@@ -36,9 +37,8 @@ _LOGGER = logging.getLogger(__name__)
 class Applied:
     """What one inbound message did to the store."""
 
-    # The endpoint whose reply this was, if any, and whether its payload could
-    # be read - together they tell the caller when discovery has advanced.
-    endpoint: _protocol.Endpoint | None = None
+    # Whether the payload could be read - an endpoint reply that could not
+    # must not advance discovery or resolve a fetch.
     parsed: bool = True
     # Everything the message changed, in processing order, ready to dispatch.
     # Update events carry a snapshot taken as the change was applied, so a
@@ -48,16 +48,17 @@ class Applied:
 
 
 class AmpioStore:
-    """Applies M-SERV messages to the object, module and server state."""
+    """Applies typed M-SERV messages to the object, module and server state.
 
-    def __init__(self, user: str) -> None:
-        self._is_admin = user == _protocol.ADMIN_USERNAME
+    Tier-agnostic by design: which surfaces can deliver is decided upstream
+    (the client subscribes and routes only the account tier's endpoints),
+    so every message that reaches ``apply`` is one the account is served.
+    """
+
+    def __init__(self) -> None:
         self.objects: dict[int, AmpioObject] = {}
         self.modules: dict[int, AmpioModule] = {}
         self.server_info: AmpioServerInfo | None = None
-        # The single home of topic-shape knowledge; the store only ever sees
-        # typed inbound messages.
-        self._router = _protocol.Router(user)
         # Raw-channel bridge: (module mac, prefix, channel) -> object id.
         self._input_index: dict[tuple[int, str, int], int] = {}
         # Effective bus mac -> module id, for routing a module's own
@@ -73,9 +74,17 @@ class AmpioStore:
         # column either, and only the catalogues decide which objects exist -
         # a snapshot row for an id no catalogue established creates nothing.
         self._stan_by_id: dict[int, str] = {}
+        # Latest live push per id no catalogue has established, with its
+        # local receive time as the undated fallback stamp. Only the
+        # catalogues decide which objects exist, so a push that races ahead
+        # of them (startup, an object just added in the app) waits here and
+        # surfaces with the catalogue row - creating from it would dispatch
+        # updates for an object the next catalogue reply then evicts.
+        self._pending_state: dict[int, tuple[_protocol.StateUpdate, float]] = {}
         # Endpoints whose reply mutates state, each reporting whether the
-        # payload parsed. The rest are pure request/response - the client keeps
-        # their payload and parses it on demand.
+        # payload parsed. The rest are pure request/response, parsed by the
+        # dispatcher with the endpoint's own `parses` gate and never sent
+        # here.
         self._handlers: dict[str, Callable[[str, Applied], bool]] = {
             "details": partial(self._handle_catalogue, "devicesDetails"),
             "data_devices": partial(self._handle_catalogue, "data/devices"),
@@ -84,25 +93,26 @@ class AmpioStore:
             "states": self._handle_states_snapshot,
             "info": self._handle_info,
         }
+        # The endpoint table and this handler table are edited separately;
+        # a name typo between them would otherwise surface as a silent
+        # discovery hang, so misalignment fails construction instead.
+        handler_gated = {ep.name for ep in _protocol.ENDPOINTS if ep.parses is None}
+        if set(self._handlers) != handler_gated:
+            raise RuntimeError(
+                f"store handlers {sorted(self._handlers)} do not match the "
+                f"handler-gated endpoints {sorted(handler_gated)}"
+            )
 
     # --- routing ----------------------------------------------------------
 
-    def apply(self, topic: str, payload: str) -> Applied:
-        """Apply one message and report what it changed."""
+    def apply(self, msg: _protocol.Inbound) -> Applied:
+        """Apply one typed message and report what it changed."""
         applied = Applied()
-        match self._router.route(topic, payload):
+        match msg:
             case _protocol.EndpointReply(endpoint=endpoint, payload=body):
-                applied.endpoint = endpoint
-                handler = self._handlers.get(endpoint.name)
-                if handler is not None:
-                    applied.parsed = handler(body, applied)
-                else:
-                    # Pure request/response endpoints mutate nothing here;
-                    # their gate is the endpoint's own reply parser, so a
-                    # reply that resolves a fetch parses by construction.
-                    applied.parsed = endpoint.parses(body) is not None
-                    if not applied.parsed:
-                        _LOGGER.warning("Could not parse Ampio %s reply", endpoint.name)
+                # Only handler-gated replies reach the store - the dispatcher
+                # parses pure request/response replies itself.
+                applied.parsed = self._handlers[endpoint.name](body, applied)
             case _protocol.StateUpdate() as update:
                 self._apply_state(update, applied)
             case _protocol.RawChannelEdge() as edge:
@@ -129,40 +139,27 @@ class AmpioStore:
         touched = False
         for meta in items:
             touched |= self._merge_metadata(meta, applied)
-        evicted = self._evict_missing_objects(
-            surface, {meta.id for meta in items}, applied
-        )
+        evicted = self._evict_missing_objects({meta.id for meta in items}, applied)
         if touched or evicted:
             self._rebuild_indexes()
         return True
 
-    def _evict_missing_objects(
-        self, surface: str, present: set[int], applied: Applied
-    ) -> bool:
+    def _evict_missing_objects(self, present: set[int], applied: Applied) -> bool:
         """Drop objects the authoritative catalogue no longer lists.
 
-        A reply proves absence only when it is complete for the account. The
-        ``config`` catalogue always is - the M-SERV serves it to
-        administrators only, so its arrival is itself the proof. The
-        app-sync catalogue is complete only for a RESTRICTED account (its
-        grant bounds everything the store could ever hold); on the admin
-        tier it is a second, differently-scoped view and must not evict. An
-        empty reply against a populated store is refused outright: no
-        observed server produces one, and honoring it would tell a consumer
-        to drop every entity it has.
+        Each tier's catalogue is complete for its account - the ``config``
+        catalogue by being admin-only, the app-sync one because the grant
+        bounds everything a restricted store could ever hold - so a reply's
+        arrival is the authority to evict what it stopped listing, an empty
+        reply included (a full grant revocation empties the app-sync view).
         """
-        if surface == "data/devices" and self._is_admin:
-            return False
+        # The same completeness proves a buffered push's id will never gain
+        # a catalogue row; without the prune, ghost-row pushes accumulate.
+        for oid in list(self._pending_state):
+            if oid not in present:
+                del self._pending_state[oid]
         missing = [oid for oid in self.objects if oid not in present]
         if not missing:
-            return False
-        if not present:
-            _LOGGER.warning(
-                "Ampio %s catalogue reply is empty while %d objects are known; "
-                "refusing to evict them",
-                surface,
-                len(missing),
-            )
             return False
         for oid in missing:
             obj = self.objects.pop(oid)
@@ -181,22 +178,15 @@ class AmpioStore:
         obj = self.objects.get(meta.id)
         if obj is None:
             obj = AmpioObject(id=meta.id)
+        updates: dict[str, Any] = {
+            name: getattr(meta, name) for name in _METADATA_FIELDS
+        }
         # A row without the column leaves the params_devices value standing.
-        params = (
-            meta.params if meta.params is not None else self._params_by_id.get(meta.id)
-        )
-        updated = replace(
-            obj,
-            device_id=meta.device_id,
-            typ_komponentu=meta.typ_komponentu,
-            name=meta.name,
-            interpretacja=meta.interpretacja,
-            funkcja=meta.funkcja,
-            leaf_id=meta.leaf_id,
-            params=obj.params if params is None else params,
-            kind=classify(meta.typ_komponentu, meta.interpretacja),
-        )
-        changed = _identity(updated) != _identity(obj)
+        if updates["params"] is None:
+            updates["params"] = self._params_by_id.get(meta.id, obj.params)
+        updates["kind"] = classify(meta.typ_komponentu, meta.interpretacja)
+        changed = any(getattr(obj, name) != value for name, value in updates.items())
+        updated = replace(obj, **updates)
         # A row without the column (the app-sync shape) falls back to the
         # buffered snapshot value, so reply order never decides whether an
         # object starts with its state.
@@ -208,6 +198,31 @@ class AmpioStore:
         if stan_json is not None:
             updated, seeded = self._apply_stan_json(updated, stan_json)
             changed |= seeded
+        # A live push that raced ahead of this row waits in the pending
+        # buffer; replay it under the same dated-supersedes rule the
+        # snapshot uses, so the fresher of push and stan_json seed wins.
+        pending = self._pending_state.pop(meta.id, None)
+        if pending is not None:
+            update, received_at = pending
+            stamp = (
+                float(update.on_ms) / 1000.0
+                if update.on_ms is not None
+                else received_at
+            )
+            if self._supersedes(updated, stamp):
+                changed |= updated.value != update.value or (
+                    update.tilt is not None and updated.tilt_position != update.tilt
+                )
+                updated = replace(
+                    updated,
+                    value=update.value,
+                    tilt_position=(
+                        update.tilt
+                        if update.tilt is not None
+                        else updated.tilt_position
+                    ),
+                    updated_at=stamp,
+                )
         self.objects[meta.id] = updated
         if changed:
             self._record(updated, applied)
@@ -236,21 +251,13 @@ class AmpioStore:
                 changed = True
                 applied.events.append(ModuleUpdated(module))
         # The module list is admin-only and complete, so its arrival is the
-        # authority to evict what it stopped listing - with the same
-        # empty-reply guard the object catalogues apply.
+        # authority to evict what it stopped listing.
         present = {module.id for module in modules}
         missing = [mid for mid in self.modules if mid not in present]
         evicted = False
-        if missing and not present:
-            _LOGGER.warning(
-                "Ampio devices reply is empty while %d modules are known; "
-                "refusing to evict them",
-                len(missing),
-            )
-        else:
-            for mid in missing:
-                evicted = True
-                applied.events.append(ModuleRemoved(self.modules.pop(mid)))
+        for mid in missing:
+            evicted = True
+            applied.events.append(ModuleRemoved(self.modules.pop(mid)))
         if changed or evicted:
             self._rebuild_indexes()
         return True
@@ -279,30 +286,12 @@ class AmpioStore:
     def _handle_info(self, payload: str, applied: Applied) -> bool:
         info = _protocol.parse_server_info(payload)
         if info is None:
+            # Covers the identity-less reply too: without a server mac there
+            # is nothing to scope a consumer's registry by, so it must
+            # neither complete discovery nor displace an identified info.
             _LOGGER.warning("Could not parse Ampio info reply")
             return False
         previous = self.server_info
-        if info.mac is None:
-            # Without the server identity there is nothing to scope a
-            # consumer's registry by, so discovery must not read complete -
-            # a True wait_for_initial_discovery() promises a populated
-            # `key`. And because the discovery latch never clears, a reply
-            # that carries no identity must not take a held one away: the
-            # promise covers every read after the True, not just the first.
-            # No baseline server answers without a mac.
-            if previous is None:
-                self.server_info = info
-                _LOGGER.warning(
-                    "Ampio info reply carries no server mac; initial "
-                    "discovery stays incomplete until an identified "
-                    "reply arrives"
-                )
-            elif previous.mac is not None:
-                _LOGGER.warning(
-                    "Ampio info reply carries no server mac; keeping the "
-                    "identified info already held"
-                )
-            return False
         # Warn when the version first becomes known or changes, not on the
         # re-request every reconnect issues.
         if previous is None or previous.server_version != info.server_version:
@@ -339,7 +328,10 @@ class AmpioStore:
 
     def _apply_state(self, update: _protocol.StateUpdate, applied: Applied) -> None:
         obj = self.objects.get(update.id)
-        if obj is not None and obj.raw_proven:
+        if obj is None:
+            self._pending_state[update.id] = (update, time.time())
+            return
+        if obj.raw_proven:
             # The raw path owns this object: the per-object echo repeats
             # what the raw edge already delivered ~150 ms earlier, and
             # resync comes from the broker's retained raw table on every
@@ -347,10 +339,6 @@ class AmpioStore:
             # live evidence of the module.
             self._touch_module(obj.device_id)
             return
-        if obj is None:
-            # State raced ahead of the catalogues -> generic sensor until
-            # metadata lands.
-            obj = AmpioObject(id=update.id, kind=classify(None, None))
         stamp = (
             float(update.on_ms) / 1000.0 if update.on_ms is not None else time.time()
         )
@@ -498,15 +486,11 @@ class AmpioStore:
         applied.events.append(ObjectUpdated(obj))
 
 
-def _identity(obj: AmpioObject) -> tuple[object, ...]:
-    """The metadata fields a catalogue row can change."""
-    return (
-        obj.device_id,
-        obj.typ_komponentu,
-        obj.name,
-        obj.interpretacja,
-        obj.funkcja,
-        obj.leaf_id,
-        obj.params,
-        obj.kind,
-    )
+# The catalogue-owned object fields, derived from the wire row's own shape
+# so a new column is added in one place and flows through the merge; `id`
+# keys the merge and `stan_json` seeds state, so neither is metadata.
+_METADATA_FIELDS = tuple(
+    f.name
+    for f in fields(_protocol.ObjectMetadata)
+    if f.name not in ("id", "stan_json")
+)

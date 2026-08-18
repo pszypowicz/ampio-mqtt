@@ -107,10 +107,10 @@ _LIN_WEJ_BY_INTERP: dict[int, SensorKind] = {
     7: SensorKind("co2", "CO2", "ppm", "carbon_dioxide", precision=0),
 }
 
-# Generic value-only sensor for an object with no usable metadata (a state
-# push that raced ahead of the catalogues, or a `typ_komponentu` missing from
-# TYPE_PROFILES). The value may be non-numeric, so it claims neither a state
-# class nor a precision - both would make Home Assistant reject a text value.
+# Generic value-only sensor for a catalogue row with no usable metadata
+# (a `typ_komponentu` missing from TYPE_PROFILES). The value may be
+# non-numeric, so it claims neither a state class nor a precision - both
+# would make Home Assistant reject a text value.
 _GENERIC_SENSOR = SensorKind(
     "value", "Value", None, None, state_class=None, precision=None
 )
@@ -224,11 +224,8 @@ def _kind_keys() -> tuple[
 
 
 # The complete static `kind.key` vocabulary, derived from the tables above
-# at import time so a new row is part of it with no second edit. A consumer
-# mapping `kind.key` to its own entity descriptions should assert in its CI
-# that every key here is either mapped or deliberately excluded - a library
-# upgrade that adds a kind then fails a test instead of silently dropping
-# entities.
+# at import time so a new row is part of it with no second edit. The
+# consumer-CI contract built on these lives in docs/classification.md.
 SENSOR_KIND_KEYS, INPUT_KIND_KEYS, OUTPUT_KIND_KEYS, THERMOSTAT_KIND_KEYS = _kind_keys()
 
 # The two open families: keys minted with the object's `interpretacja`

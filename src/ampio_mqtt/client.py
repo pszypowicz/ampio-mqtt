@@ -73,10 +73,11 @@ class _ReplyChannel:
     def __init__(self) -> None:
         self.received = asyncio.Event()
         self.last_payload: str | None = None
-        self.waiters: list[asyncio.Future[str]] = []
+        self.waiters: list[asyncio.Future[Any]] = []
 
-    def deliver(self, payload: str, parsed: bool) -> None:
-        """Record one reply; only a parsed one latches and resolves waiters.
+    def deliver(self, payload: str, parsed: object | None) -> None:
+        """Record one reply; ``parsed`` is its parsed form, None when the
+        payload could not be read.
 
         A malformed reply must neither falsely complete discovery nor hand a
         fetch garbage - the fetch keeps waiting and times out into the same
@@ -84,13 +85,13 @@ class _ReplyChannel:
         ``last_payload``: they are exactly what a diagnostics report needs.
         """
         self.last_payload = payload
-        if not parsed:
+        if parsed is None:
             return
         self.received.set()
         waiters, self.waiters = self.waiters, []
         for future in waiters:
             if not future.done():
-                future.set_result(payload)
+                future.set_result(parsed)
 
 
 class AmpioClient:
@@ -121,14 +122,17 @@ class AmpioClient:
                 "username is required - the Ampio topics are namespaced by account"
             )
         self._username = username
-        # The tier is the authenticated login name - see AccessTier.
+        # The tier is the authenticated login name - see AccessTier. It
+        # shapes everything downstream: the endpoints served, and from them
+        # the subscriptions, the router, the reply channels, and the
+        # initial-discovery set.
         self._tier = (
             AccessTier.ADMIN if username == ADMIN_USERNAME else AccessTier.RESTRICTED
         )
-        self._initial_endpoints = tuple(
-            ep.name for ep in ENDPOINTS if ep.initial and ep.tier in (None, self._tier)
-        )
-        self._store = AmpioStore(self._username)
+        self._served = tuple(ep for ep in ENDPOINTS if ep.tier in (None, self._tier))
+        self._initial_endpoints = tuple(ep.name for ep in self._served if ep.initial)
+        self._router = _protocol.Router(username, self._served)
+        self._store = AmpioStore()
         self.stats = ConnectionStats()
         self._connection = _connection.Connection(
             host,
@@ -152,12 +156,10 @@ class AmpioClient:
         ] = []
 
         # One reply channel per endpoint-table row the tier is served -
-        # see _ReplyChannel. A reply on an unserved surface still updates
-        # the store; it just latches and resolves nothing here.
+        # see _ReplyChannel. The router covers the same set, so every
+        # routed reply has a channel.
         self._channels: dict[str, _ReplyChannel] = {
-            ep.name: _ReplyChannel()
-            for ep in ENDPOINTS
-            if ep.tier in (None, self._tier)
+            ep.name: _ReplyChannel() for ep in self._served
         }
 
         # Topics whose messages have failed processing, so a recurring
@@ -167,11 +169,7 @@ class AmpioClient:
     def _subscriptions(self) -> list[str]:
         """Every topic the client needs on each (re)connect."""
         topics = [
-            *(
-                response_topic(ep, self._username)
-                for ep in ENDPOINTS
-                if ep.tier in (None, self._tier)
-            ),
+            *(response_topic(ep, self._username) for ep in self._served),
             ob_state_wildcard(self._username),
         ]
         if self._tier is AccessTier.ADMIN:
@@ -197,11 +195,26 @@ class AmpioClient:
         """
         self.stats.last_message_at = time.time()
         try:
-            applied = self._store.apply(topic, payload)
-            if applied.endpoint is not None:
-                channel = self._channels.get(applied.endpoint.name)
-                if channel is not None:
-                    channel.deliver(payload, applied.parsed)
+            msg = self._router.route(topic, payload)
+            if msg is None:
+                return
+            if (
+                isinstance(msg, _protocol.EndpointReply)
+                and msg.endpoint.parses is not None
+            ):
+                # Pure request/response: the endpoint's own parser is the
+                # gate, run exactly once - its output is what a fetch
+                # returns. Nothing here mutates the store.
+                parsed = msg.endpoint.parses(payload)
+                if parsed is None:
+                    _LOGGER.warning("Could not parse Ampio %s reply", msg.endpoint.name)
+                self._channels[msg.endpoint.name].deliver(payload, parsed)
+                return
+            applied = self._store.apply(msg)
+            if isinstance(msg, _protocol.EndpointReply):
+                self._channels[msg.endpoint.name].deliver(
+                    payload, applied.parsed or None
+                )
         except Exception:
             if topic in self._poisoned_topics:
                 _LOGGER.debug("Dropped another failing Ampio message on %s", topic)
@@ -262,10 +275,9 @@ class AmpioClient:
     def server_info(self) -> AmpioServerInfo | None:
         """The Ampio M-SERV self-reported info, if discovered.
 
-        Guaranteed non-None with a populated ``mac`` (and so a non-None
-        :pyattr:`AmpioServerInfo.key`) once
-        :meth:`wait_for_initial_discovery` has returned True - an info
-        reply without an identity does not complete discovery.
+        Guaranteed non-None once :meth:`wait_for_initial_discovery` has
+        returned True; every held info carries a populated
+        :pyattr:`AmpioServerInfo.key` by construction.
         """
         return self._store.server_info
 
@@ -281,7 +293,7 @@ class AmpioClient:
         row at all: see :pyattr:`AmpioObject.is_server_owned`.
         """
         info = self._store.server_info
-        if info is not None and info.mac is not None:
+        if info is not None:
             for mod in self._store.modules.values():
                 if info.mac in (mod.mac_global, mod.mac):
                     return mod
@@ -357,12 +369,10 @@ class AmpioClient:
     ) -> Callable[[], None]:
         """Register ``listener`` on the event stream; returns an unsubscribe.
 
-        Everything the client learns flows through this one stream, in the
-        order it was produced: ``ObjectUpdated``, ``ObjectRemoved``,
-        ``ModuleUpdated``, ``ModuleRemoved``, ``BusEvent``,
-        ``AvailabilityChanged``, ``AuthFailed``, and ``ConnectionDied`` -
-        see :mod:`ampio_mqtt.events` for what each means and which account
-        tiers produce it. ``of`` narrows the subscription to one event class
+        Everything the client learns flows through this one stream in the
+        order it was produced - :mod:`ampio_mqtt.events` documents each
+        event class, its ordering guarantees, and which account tiers
+        produce it. ``of`` narrows the subscription to one event class
         (which also types the callback parameter precisely) or a tuple of
         classes::
 
@@ -370,16 +380,17 @@ class AmpioClient:
             client.subscribe(on_object, of=ObjectUpdated)
             client.subscribe(on_gone, of=(ObjectRemoved, ModuleRemoved))
 
-        Ordering across kinds is guaranteed: the availability drop precedes
-        the terminal ``AuthFailed`` / ``ConnectionDied``, and removals
-        follow the updates of the catalogue reply that caused them.
+        The returned unsubscribe removes exactly its own registration and
+        is idempotent - consumer teardown lists routinely invoke a cleanup
+        callback more than once, and the same listener registered twice
+        keeps its other registration.
         """
         only = (of,) if isinstance(of, type) else of
         entry = (listener, only)
         self._listeners.append(entry)
 
         def _unsubscribe() -> None:
-            self._listeners.remove(entry)
+            self._listeners = [e for e in self._listeners if e is not entry]
 
         return _unsubscribe
 
@@ -398,11 +409,10 @@ class AmpioClient:
         Raises ``AmpioAuthError`` on credential rejection, ``AmpioTimeoutError``
         when the connection succeeds but no parseable info reply arrives
         within ``info_timeout`` (slow or overloaded broker - worth retrying),
-        and ``AmpioConnectionError`` on any other connection failure. The info
-        surface answers with full identity for every account tier, so a reply
-        that arrives without identity fields is returned as-is rather than
-        raised: it means the server is answering but has nothing to say, not
-        that the request was too slow.
+        and ``AmpioConnectionError`` on any other connection failure. A reply
+        without the server identity is unparseable like any other corrupt
+        shape, so a returned info always has a populated
+        :pyattr:`AmpioServerInfo.key` for the config flow's unique id.
 
         The result's ``access_tier`` tells a config flow what the account
         will get before any client exists: a ``RESTRICTED`` account never
@@ -478,11 +488,10 @@ class AmpioClient:
         This is the contract a consumer relies on when it must read
         ``objects``/``server_info`` (and, on the admin tier, ``modules``)
         before building anything on top of the client. A True additionally
-        guarantees the server identity: ``server_info`` is populated with a
-        non-None ``mac``, so :pyattr:`AmpioServerInfo.key` is a string - an
-        info reply without an identity (which no baseline server produces)
-        leaves discovery incomplete. It never raises on timeout - discovery
-        continues opportunistically and this simply returns False.
+        guarantees the server identity: ``server_info`` is populated, and
+        :pyattr:`AmpioServerInfo.key` is a string by construction. It never
+        raises on timeout - discovery continues opportunistically and this
+        simply returns False.
 
         Safe to call repeatedly and after reconnects - the underlying signals
         latch on first completion, so once discovery has happened this returns
@@ -533,12 +542,12 @@ class AmpioClient:
         if the broker is not connected and ``AmpioTimeoutError`` if either
         response does not arrive within ``timeout``.
         """
-        payloads = await self._fetch(
+        replies = await self._fetch(
             ("groups", "group_devices"),
             timeout,
             "Timed out fetching room map from Ampio broker",
         )
-        return _protocol.parse_rooms(payloads["groups"], payloads["group_devices"])
+        return _protocol.parse_rooms(replies["groups"], replies["group_devices"])
 
     async def fetch_scenes(self, timeout: float = 5.0) -> list[AmpioScene]:
         """Return the scene catalogue defined in the Ampio app.
@@ -547,23 +556,18 @@ class AmpioClient:
         if the broker is not connected and ``AmpioTimeoutError`` if the
         response does not arrive within ``timeout``.
         """
-        payloads = await self._fetch(
+        replies = await self._fetch(
             ("scenes",), timeout, "Timed out fetching scenes from Ampio broker"
         )
-        # The store's parsed gate admits only {"List": [...]} documents - the
-        # one shape parse_scenes returns None for - and the row parser
-        # degrades malformed fields instead of raising, so a payload that
-        # resolved the fetch parses by construction.
-        return cast("list[AmpioScene]", _protocol.parse_scenes(payloads["scenes"]))
+        # The channel resolved with the scenes endpoint's own parser output;
+        # the cast recovers the type the table's Callable field erases.
+        return cast("list[AmpioScene]", replies["scenes"])
 
     async def send_event(self, event_number: int) -> None:
         """Raise a bus event, running whatever Ampio logic is bound to it.
 
-        Works on both account tiers and is bounded by neither object grants
-        nor the per-event rights the Ampio app shows: a standard account
-        raises any event number it likes. Since the logic behind an event can
-        drive anything, this is the one way an account reaches objects it
-        cannot command directly.
+        Works on both account tiers and is bounded by nothing - see the
+        bus-events section of docs/protocol.md for the rights model.
         """
         _check_range("event_number", event_number, 1, 65535)
         await self._connection.publish(
@@ -583,11 +587,8 @@ class AmpioClient:
         await self._scene_command(scene_id, "undo")
 
     async def _scene_command(self, scene_id: int, verb: str) -> None:
-        """Publish a scene command; the M-SERV replays the scene's own actions.
-
-        Like any other command these are bounded by the account's grant, so a
-        scene touching objects outside it does nothing.
-        """
+        """Publish a scene command; the M-SERV replays the scene's own
+        actions, grant-scoped like any other command (docs/protocol.md)."""
         await self._connection.publish(
             command_topic(self._username), scene_payload(scene_id, verb).encode()
         )
@@ -599,20 +600,11 @@ class AmpioClient:
 
         Publishes ``/api/set/<object_id>/<verb>[/<arg>...]`` at QoS 1 and
         returns once the broker acknowledges it - "the broker accepted the
-        command", not "the M-SERV applied it". The M-SERV applies it
-        asynchronously and the resulting state arrives through the normal
-        object listeners (typically within a few hundred ms). Nothing is echoed
-        back for an unknown verb or an object that cannot perform it - the
-        M-SERV simply ignores it.
-
-        This is the escape hatch for the verbs the library does not wrap: the
-        vocabulary is the M-SERV's own, so anything its HTTP API accepts works
-        here (``setTemperature``, ``arm``, ``setVolume``, ``setText``, ...).
-        See docs/protocol.md.
-
-        Commands are grant-scoped exactly as reads are: on a standard
-        account a command for an object outside the grant is dropped with
-        no effect and no reply, while an administrator commands any object.
+        command", not "the M-SERV applied it"; the resulting state arrives
+        through the normal object listeners. This is the escape hatch for
+        the verbs the library does not wrap - docs/protocol.md carries the
+        verb table, the grant-scoping rules, and what the M-SERV silently
+        ignores.
 
         Raises ``AmpioConnectionError`` when the broker is unreachable and
         ``AmpioTimeoutError`` when it fails to acknowledge in time; never an
@@ -627,9 +619,9 @@ class AmpioClient:
         """Turn an object fully on.
 
         Raises ``ValueError`` for an output whose kind says the switch verbs
-        do not apply (``rgbw``): the M-SERV drops the command with no effect
-        and no reply, and turning a color light on means choosing a color -
-        the consumer's call, via :meth:`set_color`.
+        do not apply (``rgbw``): turning a color light on means choosing a
+        color - the consumer's call, via :meth:`set_color` (the rgbw
+        replay pattern in docs/protocol.md).
         """
         self._check_switchable(object_id, "turnOn")
         await self.command(object_id, "turnOn")
@@ -640,7 +632,7 @@ class AmpioClient:
         A color output that does not answer the switch verbs (``rgbw``) is
         turned off with ``setColors 0/0/0/0`` instead - off is unambiguous,
         so the library routes it. An object whose kind is not yet known gets
-        the plain verb; the library cannot know better than the caller.
+        the plain verb.
         """
         kind = self._output_kind(object_id)
         if kind is not None and not kind.switchable and kind.color:
@@ -664,13 +656,9 @@ class AmpioClient:
         return kind if isinstance(kind, OutputKind) else None
 
     def _check_switchable(self, object_id: int, verb: str) -> None:
-        """Reject a switch-family verb for an output known not to answer it.
-
-        The M-SERV drops the command with no effect and no reply, so sending
-        it would silently do nothing - the same trap ``_check_range`` guards
-        against for malformed arguments. An object with no metadata yet
-        passes through.
-        """
+        """Reject a switch-family verb for an output known not to answer it -
+        the M-SERV would drop it with no effect and no reply. An object
+        with no metadata yet passes through."""
         kind = self._output_kind(object_id)
         if kind is not None and not kind.switchable:
             raise ValueError(
@@ -698,8 +686,7 @@ class AmpioClient:
     async def set_temperature(self, object_id: int, temperature: float) -> None:
         """Set a thermostat's (``reg``) target temperature in °C.
 
-        The M-SERV echoes the new setpoint in the regulator's rich state
-        push, of which the library surfaces only the running flag until the
+        The library surfaces only the regulator's running flag until the
         climate readback lands (#73). Bools and non-finite floats are
         rejected: both would serialize as text the M-SERV silently drops.
         """
@@ -735,14 +722,9 @@ class AmpioClient:
         await self.command(object_id, "close")
 
     async def stop_cover(self, object_id: int) -> None:
-        """Halt a cover wherever it is, on either axis.
-
-        Mid-travel the position freezes at the halt point and the state
-        stream reports the resting value; a slat rotation is caught the
-        same way, freezing the slats at an intermediate angle; sent during
-        the slat-rotation phase that precedes travel it also cancels the
-        pending move; on a stationary cover it is a silent no-op.
-        """
+        """Halt a cover wherever it is, on either axis - a stationary cover
+        is a silent no-op. The `stop` row of docs/protocol.md details the
+        mid-travel and mid-rotation behavior."""
         await self.command(object_id, "stop")
 
     async def set_cover_position(
@@ -751,12 +733,10 @@ class AmpioClient:
         """Drive a cover to ``position`` percent (0 closed, 100 open).
 
         ``lamella`` sets the slat angle of a blind that has one, in the same
-        command. Omitting it sends no angle, which is not the same as holding
-        one: travel drags the slats along mechanically and leaves them closed
-        after a downward move and open after an upward one, so pass
-        ``lamella`` to land on a chosen angle. Position updates stream in as
-        the cover travels, so a consumer sees the movement rather than one
-        jump to the target.
+        command; omitting it sends no angle, which lets travel drag the
+        slats along mechanically - pass it to land on a chosen angle (the
+        slat-drag note in docs/protocol.md). Position updates stream in as
+        the cover travels.
         """
         _check_range("position", position, 0, 100)
         if lamella is not None:
@@ -781,21 +761,22 @@ class AmpioClient:
 
     async def _fetch(
         self, names: tuple[str, ...], timeout: float, timeout_message: str
-    ) -> dict[str, str]:
-        """Request the given endpoints and return each reply payload by name.
+    ) -> dict[str, Any]:
+        """Request the given endpoints and return each parsed reply by name.
 
         One future per endpoint correlates this caller with the next parseable
         reply, so concurrent fetches never disturb each other and the
         discovery latches stay untouched; every concurrent caller of the same
-        endpoint receives the same reply. The wire carries no correlation
-        ids - a reply already in flight from an earlier request can satisfy a
-        later ask, which for these idempotent read endpoints is the intended
-        semantics. A reply that does not parse resolves nothing (see
-        ``_handle_message``), so a corrupt reply ends in the same retryable
-        ``AmpioTimeoutError`` as no reply at all.
+        endpoint receives the same reply, already parsed by the endpoint's
+        own gate. The wire carries no correlation ids - a reply already in
+        flight from an earlier request can satisfy a later ask, which for
+        these idempotent read endpoints is the intended semantics. A reply
+        that does not parse resolves nothing (see ``_handle_message``), so a
+        corrupt reply ends in the same retryable ``AmpioTimeoutError`` as no
+        reply at all.
         """
         loop = asyncio.get_running_loop()
-        futures: dict[str, asyncio.Future[str]] = {
+        futures: dict[str, asyncio.Future[Any]] = {
             name: loop.create_future() for name in names
         }
         for name, future in futures.items():

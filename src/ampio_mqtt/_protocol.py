@@ -285,8 +285,10 @@ def parse_scenes(payload: str) -> list[AmpioScene] | None:
     return out
 
 
-def parse_rooms(groups_payload: str, group_devices_payload: str) -> dict[int, str]:
-    """Join `data/groups` and `data/group_devices` replies into a room map.
+def parse_rooms(
+    groups_rows: list[Any], group_devices_rows: list[Any]
+) -> dict[int, str]:
+    """Join parsed `data/groups` and `data/group_devices` rows into a room map.
 
     Returns ``{ampio_object_id: room_name}``. Objects assigned to multiple
     groups map to the first room encountered - the join table has no
@@ -295,7 +297,7 @@ def parse_rooms(groups_payload: str, group_devices_payload: str) -> dict[int, st
     allows one area per device. Mistyped rows are skipped.
     """
     group_names: dict[int, str] = {}
-    for row in list_rows(groups_payload) or []:
+    for row in groups_rows:
         if not isinstance(row, dict):
             continue
         gid = row.get("id")
@@ -303,7 +305,7 @@ def parse_rooms(groups_payload: str, group_devices_payload: str) -> dict[int, st
         if isinstance(gid, int) and isinstance(name, str) and name:
             group_names[gid] = name
     room_map: dict[int, str] = {}
-    for row in list_rows(group_devices_payload) or []:
+    for row in group_devices_rows:
         if not isinstance(row, dict):
             continue
         oid = row.get("id_obiektu")
@@ -331,11 +333,11 @@ def _to_str(value: Any) -> str | None:
 def parse_server_info(payload: str) -> AmpioServerInfo | None:
     """Parse a server-info payload, keeping only the safe fields.
 
-    The baseline server wraps the fields in a ``Results`` object; a payload
-    without that shape returns None, exactly as the sibling parsers report
-    an unparseable reply. A ``Results`` object with fields missing still
-    parses: an identity-less reply is the server answering with nothing to
-    say, which the store handles as its own case.
+    The baseline server wraps the fields in a ``Results`` object and always
+    reports its ``mac`` - the identity every consumer scopes a registry by.
+    A payload without either is unparseable, exactly as the sibling parsers
+    report a corrupt reply, so a parsed info always carries a populated
+    :pyattr:`AmpioServerInfo.key`.
     """
     try:
         outer = json.loads(payload)
@@ -344,8 +346,11 @@ def parse_server_info(payload: str) -> AmpioServerInfo | None:
     data = outer.get("Results") if isinstance(outer, dict) else None
     if not isinstance(data, dict):
         return None
+    mac = to_int(data.get("mac"))
+    if mac is None:
+        return None
     return AmpioServerInfo(
-        mac=to_int(data.get("mac")),
+        mac=mac,
         user_id=to_int(data.get("userId")),
         server_version=_to_str(data.get("serverVersion")),
         server_revision=_to_str(data.get("serverRevision")),
@@ -488,12 +493,12 @@ class Endpoint:
     # serves the `config` catalogues to administrators only, and an admin
     # session never needs the app-sync pair (it repeats the `config` view).
     tier: AccessTier | None = None
-    # The reply parser gating a pure request/response endpoint: a reply
-    # that does not parse must neither resolve a fetch nor latch discovery,
-    # so the gate IS the parser a fetch will run - never a stand-in shape
-    # check. Endpoints whose replies mutate state are gated by their
-    # AmpioStore handler instead and never read this field.
-    parses: Callable[[str], object | None] = list_rows
+    # The reply parser for a pure request/response endpoint. The dispatcher
+    # runs it exactly once: a reply that does not parse neither resolves a
+    # fetch nor latches discovery, and the parsed value is what a fetch
+    # returns. None marks an endpoint whose reply mutates state - its
+    # AmpioStore handler is the gate instead.
+    parses: Callable[[str], object | None] | None = None
 
 
 ENDPOINTS: tuple[Endpoint, ...] = (
@@ -542,8 +547,15 @@ ENDPOINTS: tuple[Endpoint, ...] = (
         initial=True,
         tier=AccessTier.RESTRICTED,
     ),
-    Endpoint("groups", "data", "groups", "data", "groups"),
-    Endpoint("group_devices", "data", "group_devices", "data", "group_devices"),
+    Endpoint("groups", "data", "groups", "data", "groups", parses=list_rows),
+    Endpoint(
+        "group_devices",
+        "data",
+        "group_devices",
+        "data",
+        "group_devices",
+        parses=list_rows,
+    ),
     Endpoint("scenes", "data", "scenes", "data", "scenes", parses=parse_scenes),
 )
 
@@ -612,24 +624,16 @@ def ob_state_wildcard(user: str) -> str:
     return f"ampio/fromDB/{user}/ob/+/state"
 
 
-# Raw, module-scoped channel topics carry decoded CAN state per channel index
-# and are NOT namespaced by user (the `ampio/from/<MAC>/...` tree is global).
-# We subscribe only to the two input prefixes - `f` (flags) and `i` (digital
-# inputs) - because they publish on-change and are the low-latency source for
-# input objects. The high-rate prefixes (`a`/`t`/`rgbw`/`o`) are intentionally
-# excluded; those object types already arrive on the per-object topic.
+# The raw `ampio/from/<MAC>/...` tree: global (not user-namespaced), retained,
+# admin-only. docs/raw-channel-bridge.md is the home for why only the two
+# on-change input prefixes are subscribed and the high-rate ones are not.
 RAW_INPUT_WILDCARDS = ("ampio/from/+/state/f/+", "ampio/from/+/state/i/+")
 
-# Modules periodically broadcast a diagnostics frame on `ampio/from/<MAC>/b/4F`
-# carrying their CAN supply voltage and, on the modules that measure it, their
-# own temperature. Like the rest of the raw tree this is administrator-only.
+# Per-module diagnostics broadcasts (CAN supply voltage, own temperature).
 RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
 
-# Bus events are logical signals (1-65535) that Ampio logic raises and reacts
-# to - a wall-panel press can raise one, and a scenario can be bound to one.
-# Receiving them rides the administrator-only raw tree. Raising one goes to the
-# command surface, works on both tiers, and is bounded by nothing - not object
-# grants, and not the per-event rights the app displays.
+# Bus events (1-65535); receiving rides the admin-only raw tree, raising goes
+# to the command surface - the rights model is in docs/protocol.md.
 RAW_EVENT_WILDCARD = "ampio/from/+/event"
 
 
@@ -680,17 +684,19 @@ class Router:
     and anything unroutable - an unknown shape, a non-hex mac, a non-integer
     object id, channel, or event number, an unparseable diagnostics frame -
     returns None. The store then applies typed messages and never inspects a
-    topic. Endpoint reply and per-object state topics are namespaced by the
-    connecting account (hence ``user``); the raw ``ampio/from`` tree is
-    global.
+    topic. ``endpoints`` is the subset the connection subscribes to (the
+    account tier's served surfaces), so a reply topic outside it is
+    unroutable like any other unknown shape. Endpoint reply and per-object
+    state topics are namespaced by the connecting account (hence ``user``);
+    the raw ``ampio/from`` tree is global.
     """
 
     __slots__ = ("_by_response", "_user")
 
-    def __init__(self, user: str) -> None:
+    def __init__(self, user: str, endpoints: tuple[Endpoint, ...]) -> None:
         self._user = user
         self._by_response: dict[str, Endpoint] = {
-            response_topic(ep, user): ep for ep in ENDPOINTS
+            response_topic(ep, user): ep for ep in endpoints
         }
 
     def route(self, topic: str, payload: str) -> Inbound | None:

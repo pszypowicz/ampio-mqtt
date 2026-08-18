@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from conftest import API_TOPIC, DETAILS_TOPIC, USER, FakeBroker, details, feed
+from conftest import API_TOPIC, DATA_DEVICES_TOPIC, USER, FakeBroker, details, feed
 
 from ampio_mqtt import AmpioClient, AmpioConnectionError
 
@@ -149,7 +149,7 @@ async def test_command_requires_a_connection() -> None:
 
 def _learn(client: AmpioClient, oid: int, typ: str) -> None:
     """Teach the store one object's type via a catalogue reply."""
-    feed(client, DETAILS_TOPIC, details({"id": oid, "typ_komponentu": typ}))
+    feed(client, DATA_DEVICES_TOPIC, details({"id": oid, "typ_komponentu": typ}))
 
 
 async def test_turn_off_on_rgbw_routes_through_set_colors(

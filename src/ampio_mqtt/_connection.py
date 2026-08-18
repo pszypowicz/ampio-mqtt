@@ -103,6 +103,13 @@ class Connection:
         self._client_factory = client_factory or self._default_client
         self._client: aiomqtt.Client | None = None
         self._runner: asyncio.Task[None] | None = None
+        # Serializes open()/close(): without it, overlapping open() calls
+        # tear down each other's runner (one caller returns success on a
+        # session the other just killed). close() cannot wait its turn
+        # behind a full connect timeout, so it trips the abort event first
+        # and the in-flight open() bails out promptly.
+        self._lifecycle = asyncio.Lock()
+        self._abort_open = asyncio.Event()
         self._connected = asyncio.Event()
         self._auth_failed = asyncio.Event()
         self._auth_error_message: str | None = None
@@ -129,48 +136,61 @@ class Connection:
     async def open(self, timeout: float) -> None:
         """Start the loop and wait for the first connection.
 
-        Raises ``AmpioAuthError`` if the broker rejects the credentials and
-        ``AmpioConnectionError`` if nothing comes up within ``timeout``.
-        A loop left running by an earlier ``open()`` is closed first: the
-        two would otherwise share one client id and take the session from
-        each other on every reconnect, flapping availability forever.
+        Raises ``AmpioAuthError`` if the broker rejects the credentials,
+        ``AmpioConnectionError`` if nothing comes up within ``timeout`` or
+        ``close()`` is called while this connect is in flight. Concurrent
+        ``open()`` calls run one after another, each closing whatever loop
+        the previous one left: the two would otherwise share one client id
+        and take the session from each other on every reconnect, flapping
+        availability forever.
         """
-        await self.close()
-        self._stop = False
-        self._closing = False
-        self._connected.clear()
-        self._auth_failed.clear()
-        self._auth_error_message = None
-        self._died.clear()
-        self._fatal_message = None
-        self._runner = asyncio.create_task(self._run())
+        async with self._lifecycle:
+            # Swapped in before the first await so any close() arriving
+            # while this open holds the lock lands its abort on THIS event.
+            abort = self._abort_open = asyncio.Event()
+            await self._shutdown()
+            # The run counters restart with the run: a deliberate stop()/
+            # start() must not read as a reconnect in a diagnostics blob.
+            self._stats.started_at = None
+            self._stats.reconnect_count = 0
+            self._stop = False
+            self._closing = False
+            self._connected.clear()
+            self._auth_failed.clear()
+            self._auth_error_message = None
+            self._died.clear()
+            self._fatal_message = None
+            self._runner = asyncio.create_task(self._run())
 
-        waiters = [
-            asyncio.create_task(self._connected.wait()),
-            asyncio.create_task(self._auth_failed.wait()),
-            asyncio.create_task(self._died.wait()),
-        ]
-        try:
-            await asyncio.wait(
-                waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
-            )
-        finally:
-            for task in waiters:
-                if not task.done():
-                    task.cancel()
-        # Connected wins even when a terminal signal raced in behind it: the
-        # session did come up, so the crash/rejection is post-open news and
-        # reaches the consumer through the event stream instead.
-        if self._connected.is_set():
-            return
-        if self._auth_failed.is_set():
-            await self.close()
-            raise AmpioAuthError(self._auth_error_message or _AUTH_REJECTED)
-        if self._died.is_set():
-            await self.close()
-            raise AmpioConnectionError(self._fatal_message or "Connection loop died")
-        await self.close()
-        raise AmpioConnectionError("Timed out connecting to Ampio")
+            waiters = [
+                asyncio.create_task(self._connected.wait()),
+                asyncio.create_task(self._auth_failed.wait()),
+                asyncio.create_task(self._died.wait()),
+                asyncio.create_task(abort.wait()),
+            ]
+            try:
+                await asyncio.wait(
+                    waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                for task in waiters:
+                    if not task.done():
+                        task.cancel()
+            # Connected wins even when a terminal signal raced in behind it:
+            # the session did come up, so the crash/rejection is post-open
+            # news and reaches the consumer through the event stream instead.
+            if self._connected.is_set():
+                return
+            await self._shutdown()
+            if self._auth_failed.is_set():
+                raise AmpioAuthError(self._auth_error_message or _AUTH_REJECTED)
+            if self._died.is_set():
+                raise AmpioConnectionError(
+                    self._fatal_message or "Connection loop died"
+                )
+            if abort.is_set():
+                raise AmpioConnectionError("Client stopped while connecting")
+            raise AmpioConnectionError("Timed out connecting to Ampio")
 
     async def close(self) -> None:
         """Stop the loop, reporting rather than raising whatever ended it.
@@ -178,22 +198,23 @@ class Connection:
         A deliberate stop is not an availability event: the consumer asked
         for it, so the availability listeners are not invoked, unlike every
         other way the connection goes down. ``available`` still reads False
-        afterwards.
+        afterwards. An ``open()`` in flight is woken first and raises to
+        its caller rather than waiting out its connect timeout.
         """
+        self._abort_open.set()
+        async with self._lifecycle:
+            await self._shutdown()
+
+    async def _shutdown(self) -> None:
+        """Reap the runner; the lock-holding half of ``close()``."""
         self._closing = True
         self._stop = True
         runner, self._runner = self._runner, None
         if runner is None:
             return
         runner.cancel()
-        try:
+        with suppress(asyncio.CancelledError):
             await runner
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            # Unreachable while _run's own catch-all holds; kept because
-            # stop() promises never to raise into a consumer's teardown.
-            _LOGGER.exception("Ampio connection loop failed")
 
     async def publish(self, topic: str, payload: bytes) -> None:
         """Publish at QoS 1, returning once the broker acknowledges it.
@@ -240,13 +261,8 @@ class Connection:
                 self._on_fatal(self._fatal_message)
 
     def _default_client(self) -> aiomqtt.Client:
-        return aiomqtt.Client(
-            hostname=self._host,
-            port=self._port,
-            username=self._username,
-            password=self._password,
-            identifier=self._client_id,
-            timeout=10,
+        return _mqtt_client(
+            self._host, self._port, self._username, self._password, self._client_id
         )
 
     async def _loop(self) -> None:
@@ -365,13 +381,8 @@ async def probe(
     Returns None when the connection is fine but nothing answers in time.
     """
     factory = client_factory or (
-        lambda: aiomqtt.Client(
-            hostname=host,
-            port=port,
-            username=username,
-            password=password,
-            identifier=f"ampio_mqtt_test_{uuid.uuid4().hex}",
-            timeout=10,
+        lambda: _mqtt_client(
+            host, port, username, password, f"ampio_mqtt_test_{uuid.uuid4().hex}"
         )
     )
     try:
@@ -390,6 +401,20 @@ async def probe(
             raise AmpioAuthError(str(err)) from err
         raise AmpioConnectionError(str(err)) from err
     return None
+
+
+def _mqtt_client(
+    host: str, port: int, username: str, password: str | None, identifier: str
+) -> aiomqtt.Client:
+    """One session object, however the library connects (loop or probe)."""
+    return aiomqtt.Client(
+        hostname=host,
+        port=port,
+        username=username,
+        password=password,
+        identifier=identifier,
+        timeout=10,
+    )
 
 
 def _is_auth_error(err: BaseException) -> bool:

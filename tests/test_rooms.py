@@ -29,73 +29,59 @@ def _payload(rows: list[object]) -> str:
 
 
 def test_parse_rooms_happy_path() -> None:
-    groups = _payload(
-        [
-            {"id": 8, "id_rodzica": 4, "opis_menu": "Salon"},
-            {"id": 7, "id_rodzica": 4, "opis_menu": "Jadalnia"},
-        ]
-    )
-    group_devices = _payload(
-        [
-            {"id_grupy": 8, "id_obiektu": 31},
-            {"id_grupy": 7, "id_obiektu": 28},
-        ]
-    )
+    groups = [
+        {"id": 8, "id_rodzica": 4, "opis_menu": "Salon"},
+        {"id": 7, "id_rodzica": 4, "opis_menu": "Jadalnia"},
+    ]
+    group_devices = [
+        {"id_grupy": 8, "id_obiektu": 31},
+        {"id_grupy": 7, "id_obiektu": 28},
+    ]
     assert parse_rooms(groups, group_devices) == {31: "Salon", 28: "Jadalnia"}
 
 
 def test_parse_rooms_first_match_wins_for_multi_group_objects() -> None:
     """Object 50 appears in groups 15 (Schody) and 11 (Korytarz) - first wins."""
-    groups = _payload(
-        [
-            {"id": 15, "opis_menu": "Schody"},
-            {"id": 11, "opis_menu": "Korytarz"},
-        ]
-    )
-    group_devices = _payload(
-        [
-            {"id_grupy": 15, "id_obiektu": 50},
-            {"id_grupy": 11, "id_obiektu": 50},
-        ]
-    )
+    groups = [
+        {"id": 15, "opis_menu": "Schody"},
+        {"id": 11, "opis_menu": "Korytarz"},
+    ]
+    group_devices = [
+        {"id_grupy": 15, "id_obiektu": 50},
+        {"id_grupy": 11, "id_obiektu": 50},
+    ]
     assert parse_rooms(groups, group_devices) == {50: "Schody"}
 
 
 def test_parse_rooms_skips_malformed_entries() -> None:
-    groups = _payload(
-        [
-            {"id": 1, "opis_menu": "OK"},
-            {"id": None, "opis_menu": "Missing id"},
-            {"id": 2, "opis_menu": ""},
-            {"id": 3, "opis_menu": None},
-            "not an object",
-            {"id": 4, "opis_menu": "Used"},
-        ]
-    )
-    group_devices = _payload(
-        [
-            {"id_grupy": 1, "id_obiektu": 100},
-            {"id_grupy": 2, "id_obiektu": 101},
-            {"id_grupy": 3, "id_obiektu": 102},
-            {"id_grupy": 4, "id_obiektu": None},
-            {"id_grupy": None, "id_obiektu": 103},
-            "not an object",
-            {"id_grupy": 4, "id_obiektu": 104},
-        ]
-    )
+    groups = [
+        {"id": 1, "opis_menu": "OK"},
+        {"id": None, "opis_menu": "Missing id"},
+        {"id": 2, "opis_menu": ""},
+        {"id": 3, "opis_menu": None},
+        "not an object",
+        {"id": 4, "opis_menu": "Used"},
+    ]
+    group_devices = [
+        {"id_grupy": 1, "id_obiektu": 100},
+        {"id_grupy": 2, "id_obiektu": 101},
+        {"id_grupy": 3, "id_obiektu": 102},
+        {"id_grupy": 4, "id_obiektu": None},
+        {"id_grupy": None, "id_obiektu": 103},
+        "not an object",
+        {"id_grupy": 4, "id_obiektu": 104},
+    ]
     assert parse_rooms(groups, group_devices) == {100: "OK", 104: "Used"}
 
 
 def test_parse_rooms_ignores_devices_pointing_at_unknown_groups() -> None:
-    groups = _payload([{"id": 1, "opis_menu": "OK"}])
-    group_devices = _payload([{"id_grupy": 99, "id_obiektu": 5}])
+    groups = [{"id": 1, "opis_menu": "OK"}]
+    group_devices = [{"id_grupy": 99, "id_obiektu": 5}]
     assert parse_rooms(groups, group_devices) == {}
 
 
-def test_parse_rooms_tolerates_empty_and_unparseable_payloads() -> None:
-    assert parse_rooms("", "") == {}
-    assert parse_rooms("not json", "[]") == {}
-    assert parse_rooms(_payload([]), _payload([])) == {}
+def test_parse_rooms_of_empty_tables_is_empty() -> None:
+    assert parse_rooms([], []) == {}
 
 
 # --- AmpioClient.fetch_rooms() MQTT orchestration -------------------------
@@ -180,9 +166,9 @@ async def test_fetch_rooms_treats_malformed_response_as_no_response(
 async def test_concurrent_fetch_does_not_steal_the_first_callers_reply(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
-    """Regression for the latch-clear race: caller B entering between the
-    replies landing and caller A's wakeup used to pop A's payloads, handing A
-    a silently empty map. Each caller now correlates through its own future."""
+    """Caller B entering between the replies landing and caller A's wakeup
+    must not consume A's replies: each caller correlates through its own
+    future, so A's map arrives intact."""
     client, _ = connected
     groups = json.dumps({"List": [{"id": 8, "opis_menu": "Salon"}]})
     group_devices = json.dumps({"List": [{"id_grupy": 8, "id_obiektu": 31}]})

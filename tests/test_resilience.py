@@ -1,14 +1,14 @@
 """The connection must survive bad input and bad consumers.
 
-Each test here stands for a way the client used to die silently: once the
-runner task ends, nothing reconnects and every entity is frozen for the
-lifetime of the process, so these are about staying alive rather than about
-any single message.
+Once the runner task ends, nothing reconnects and every entity is frozen
+for the lifetime of the process, so these tests are about staying alive
+rather than about any single message.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import pytest
@@ -21,11 +21,21 @@ def _client() -> AmpioClient:
     return AmpioClient("host", username=USER)
 
 
+def _establish(client: AmpioClient, *oids: int) -> None:
+    """Catalogue rows establishing the objects the live pushes then update."""
+    feed(
+        client,
+        f"ampio/fromDB/{USER}/data/devices",
+        json.dumps({"List": [{"id": oid} for oid in oids]}),
+    )
+
+
 # --- listeners are consumer code and may raise ------------------------------
 
 
 def test_a_raising_listener_does_not_stop_the_others() -> None:
     client = _client()
+    _establish(client, 41)
     seen: list[int] = []
     client.subscribe(lambda e: (_ for _ in ()).throw(ValueError("boom")))
     client.subscribe(lambda e: seen.append(e.object.id), of=ObjectUpdated)
@@ -37,6 +47,7 @@ def test_a_raising_listener_does_not_stop_the_others() -> None:
 
 def test_a_raising_listener_does_not_stop_later_messages() -> None:
     client = _client()
+    _establish(client, 41)
     client.subscribe(lambda e: (_ for _ in ()).throw(ValueError("boom")))
 
     feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1"}')
@@ -69,6 +80,7 @@ def test_malformed_replies_never_escape_the_dispatcher(
 
 def test_a_malformed_reply_does_not_stop_later_messages() -> None:
     client = _client()
+    _establish(client, 41)
     feed(client, f"ampio/fromDB/{USER}/config/devicesDetails", b"null")
     feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"77"}')
     assert client.objects[41].value == "77"
@@ -79,10 +91,10 @@ def test_a_malformed_reply_does_not_stop_later_messages() -> None:
     [b'{"d":[254,79,null,0]}', b'{"d":[254,79,"x",0]}', b'{"d":"nope"}', b"null"],
 )
 def test_malformed_diagnostics_frames_are_ignored(payload: bytes) -> None:
-    client = _client()
+    client = AmpioClient("host", username="admin")
     feed(
         client,
-        f"ampio/fromDB/{USER}/config/devices",
+        "ampio/fromDB/admin/config/devices",
         b'{"List":[{"id":7,"mac":51966}]}',
     )
     feed(client, "ampio/from/CAFE/b/4F", payload)  # must not raise
@@ -124,6 +136,7 @@ def test_backoff_stays_finite_and_capped(attempt: int) -> None:
 
 def test_updated_at_tracks_the_report_a_value_came_from() -> None:
     client = _client()
+    _establish(client, 41)
     feed(
         client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1","on":1786700100000}'
     )
@@ -142,12 +155,13 @@ async def test_poison_message_does_not_kill_the_connection(
     payload is dropped with one logged traceback, the connection stays
     up, and later messages process normally."""
     client, _broker = connected
+    _establish(client, 5)
     original = client._store.apply
 
-    def fragile(topic: str, payload: str) -> object:
-        if payload == "POISON":
+    def fragile(msg: object) -> object:
+        if getattr(msg, "value", None) == "POISON":
             raise RuntimeError("simulated processing defect")
-        return original(topic, payload)
+        return original(msg)  # type: ignore[arg-type]
 
     client._store.apply = fragile  # type: ignore[method-assign]
     topic = f"ampio/fromDB/{USER}/ob/5/state"

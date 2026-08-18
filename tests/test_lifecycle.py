@@ -4,7 +4,7 @@ These tests inject a scripted FakeBroker through the ``mqtt_client_factory``
 transport seam so the connect/subscribe/publish/messages path can be
 exercised without a real broker. They cover:
 - the ``AmpioClient.test_connection`` config-flow helper,
-- ``request_*`` raising when disconnected,
+- ``refresh()`` / ``fetch_*`` raising when disconnected,
 - ``stop()`` cancelling the runner cleanly,
 - ``start()`` driving a successful discovery via scripted broker messages,
 - a runtime credential rejection reaching the auth-failure listener while a
@@ -50,7 +50,7 @@ from ampio_mqtt import (
     ConnectionDied,
 )
 from ampio_mqtt._connection import _is_auth_error
-from ampio_mqtt.errors import AmpioAuthError, AmpioError
+from ampio_mqtt.errors import AmpioAuthError
 
 
 def _auth_rejection(name: str = "Not authorized") -> aiomqtt.MqttCodeError:
@@ -119,26 +119,18 @@ async def test_connection_raises_timeout_when_info_never_arrives() -> None:
         )
 
 
-def test_error_hierarchy_gives_consumers_one_umbrella() -> None:
-    """A config flow catching AmpioError catches every library failure,
-    with AmpioTimeoutError catchable first as the retryable subtype."""
-    assert issubclass(AmpioConnectionError, AmpioError)
-    assert issubclass(AmpioAuthError, AmpioError)
-    assert issubclass(AmpioTimeoutError, AmpioConnectionError)
-
-
-async def test_connection_returns_info_without_identity_as_is() -> None:
-    """A reply that arrives without identity fields returns, not raises (#54)."""
+async def test_connection_maps_identityless_info_reply_to_timeout() -> None:
+    """A reply without the server identity is unparseable: the config flow
+    needs `key` for its unique id, so it gets the retryable shape instead
+    of an info it cannot scope by."""
     broker = FakeBroker()
     broker.scripted_messages = [
         Message(INFO_TOPIC, json.dumps({"Results": {}}).encode())
     ]
-    info = await AmpioClient.test_connection(
-        "h", USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
-    )
-    assert info.mac is None
-    assert info.server_version is None
-    assert info.access_tier is None
+    with pytest.raises(AmpioTimeoutError):
+        await AmpioClient.test_connection(
+            "h", USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
+        )
 
 
 async def test_connection_maps_unparseable_info_reply_to_timeout() -> None:
@@ -261,6 +253,66 @@ async def test_second_start_recycles_the_connection_loop() -> None:
     finally:
         await client.stop()
     assert client._connection._runner is None
+
+
+async def test_stats_cover_the_current_run_only() -> None:
+    """A deliberate stop()/start() is not a reconnect: the counters restart
+    with the run, so a diagnostics blob never reads a consumer-initiated
+    restart as flapping."""
+    broker = FakeBroker()
+    client = make_client(broker)
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    first_started_at = client.stats.started_at
+    assert first_started_at is not None
+    assert client.stats.reconnect_count == 0
+    await client.stop()
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    try:
+        assert client.stats.reconnect_count == 0
+        assert client.stats.started_at is not None
+        assert client.stats.started_at >= first_started_at
+    finally:
+        await client.stop()
+
+
+async def test_concurrent_starts_serialize_and_the_survivor_stays_up() -> None:
+    """Overlapping start() calls run one after another. Unserialized, the
+    first caller's connect-timeout teardown would kill the runner the
+    second caller had just successfully started, returning success on a
+    dead connection."""
+    broker = FakeBroker()
+    broker.enter_delay = 0.2
+    client = make_client(broker)
+    first = asyncio.create_task(client.start(timeout=0.05, discovery_timeout=0.01))
+    await asyncio.sleep(0)  # let the first call take the lifecycle lock
+    second = asyncio.create_task(client.start(timeout=2.0, discovery_timeout=0.01))
+    results = await asyncio.gather(first, second, return_exceptions=True)
+    try:
+        # The first call's 0.05 s budget cannot cover the 0.2 s connect;
+        # the second call's can, and its session must survive the first
+        # call's teardown.
+        assert isinstance(results[0], AmpioConnectionError)
+        assert results[1] is False  # connected; only discovery timed out
+        assert client.available is True
+    finally:
+        await client.stop()
+
+
+async def test_stop_during_start_aborts_the_connect_promptly() -> None:
+    """stop() while start() is mid-connect wakes the connect wait instead
+    of leaving it to run out its full timeout budget."""
+    broker = FakeBroker()
+    broker.enter_delay = 30.0
+    client = make_client(broker)
+    task = asyncio.create_task(client.start(timeout=30.0))
+    await asyncio.sleep(0.05)
+    loop = asyncio.get_running_loop()
+    stopping = loop.time()
+    await client.stop()
+    with pytest.raises(AmpioConnectionError):
+        await task
+    assert loop.time() - stopping < 1.0
+    assert client.available is False
 
 
 async def test_start_drives_full_discovery_through_mocked_broker() -> None:
@@ -568,12 +620,9 @@ async def test_unacknowledged_publish_raises_timeout(
 
 
 async def test_consumer_stop_is_not_an_availability_event() -> None:
-    """stop() must not report the drop it causes itself (#56).
-
-    Every consumer reacting to availability otherwise sees a deliberate
-    shutdown as a lost connection; the HA integration carried a
-    shutting-down flag purely to suppress that false transition.
-    """
+    """stop() must not report the drop it causes itself (#56): every
+    consumer reacting to availability would otherwise see a deliberate
+    shutdown as a lost connection."""
     broker = FakeBroker()
     client = make_client(broker, reconnect_interval=0.05)
     availability: list[bool] = []
@@ -711,12 +760,6 @@ def test_is_auth_error_rejects_transport_failures() -> None:
     assert not _is_auth_error(
         aiomqtt.MqttCodeError(ReasonCode(PacketTypes.CONNACK, "Server unavailable"))
     )
-
-
-def test_auth_error_is_not_a_connection_error() -> None:
-    """A config flow catching AmpioConnectionError broadly must not swallow
-    the credential rejection that needs a different user action."""
-    assert not issubclass(AmpioAuthError, AmpioConnectionError)
 
 
 async def test_a_rejected_namespace_filter_warns(

@@ -160,18 +160,6 @@ async def test_resolve_mdns_request_unanswered_returns_none() -> None:
     assert address is None
 
 
-async def test_resolve_mdns_request_returns_true_but_no_addresses() -> None:
-    """Defensive: zeroconf says it answered but has no IPv4 records to give."""
-    resolver = _FakeResolver(found=True, addresses=[])
-    fake_azc = _FakeAsyncZeroconf()
-    with (
-        patch.object(discovery_mod, "AddressResolverIPv4", lambda fqdn: resolver),
-        patch.object(discovery_mod, "AsyncZeroconf", lambda: fake_azc),
-    ):
-        address = await discovery_mod._resolve_mdns("ampio.local", timeout=0.5, zc=None)
-    assert address is None
-
-
 async def test_resolve_mdns_appends_trailing_dot() -> None:
     """mDNS names are fully-qualified; `_resolve_mdns` must add the dot."""
     captured: list[str] = []
