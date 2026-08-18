@@ -263,6 +263,26 @@ async def test_second_start_recycles_the_connection_loop() -> None:
     assert client._connection._runner is None
 
 
+async def test_stats_cover_the_current_run_only() -> None:
+    """A deliberate stop()/start() is not a reconnect: the counters restart
+    with the run, so a diagnostics blob never reads a consumer-initiated
+    restart as flapping."""
+    broker = FakeBroker()
+    client = make_client(broker)
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    first_started_at = client.stats.started_at
+    assert first_started_at is not None
+    assert client.stats.reconnect_count == 0
+    await client.stop()
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    try:
+        assert client.stats.reconnect_count == 0
+        assert client.stats.started_at is not None
+        assert client.stats.started_at >= first_started_at
+    finally:
+        await client.stop()
+
+
 async def test_concurrent_starts_serialize_and_the_survivor_stays_up() -> None:
     """Overlapping start() calls run one after another. Unserialized, the
     first caller's connect-timeout teardown would kill the runner the

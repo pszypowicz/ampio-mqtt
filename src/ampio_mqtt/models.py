@@ -409,16 +409,18 @@ class AmpioServerInfo:
 class ConnectionStats:
     """Lightweight liveness counters surfaced for downstream diagnostics.
 
-    Updated by the connection layer (`last_message_at` by the client);
-    values are monotonic except `last_error` (overwritten on every
-    reconnect attempt). Intended for HA's per-config-
-    entry diagnostics blob so a maintainer can correlate a "flapping" report
-    with the actual reconnect count seen by the client.
+    Updated by the connection layer (`last_message_at` by the client).
+    `started_at` and `reconnect_count` cover the current ``start()`` run -
+    a deliberate stop/start restarts them, so a diagnostics blob never
+    reads a consumer-initiated restart as a flapping connection.
+    `last_error` and `last_message_at` roll across runs. Intended for HA's
+    per-config-entry diagnostics blob so a maintainer can correlate a
+    "flapping" report with the actual reconnect count seen by the client.
     """
 
-    reconnect_count: int = 0
-    last_error: str | None = None
-    started_at: float | None = None  # epoch seconds of first successful connect
+    reconnect_count: int = 0  # reconnects within the current run
+    last_error: str | None = None  # overwritten on every failed attempt
+    started_at: float | None = None  # epoch seconds of the run's first connect
     last_message_at: float | None = None  # epoch seconds of last MQTT message in
     # Subscriptions the broker rejected in the SUBACK of the latest
     # (re)connect: topic -> reason code. Replaced wholesale on every connect,
