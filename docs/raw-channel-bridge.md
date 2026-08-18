@@ -66,9 +66,10 @@ own semantics, described in [`protocol.md`](protocol.md).
 
 The whole tree is administrator-only, and the broker says so
 explicitly: on a standard account all four filters are rejected in the
-SUBACK with reason code 128 (the client logs the
-rejections and records them in `ConnectionStats.subscribe_failures`,
-then degrades to the per-object path as designed).
+SUBACK with reason code 128. The client records the verdicts in
+`ConnectionStats.subscribe_failures` and degrades to the per-object
+path as designed; judging them is the consumer's call, since the
+rejection is the normal state for the recommended account shape.
 
 ## Module diagnostics (`b/4F`)
 

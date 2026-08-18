@@ -671,12 +671,13 @@ async def test_wait_for_initial_discovery_returns_false_on_timeout() -> None:
 # --- subscription verdicts -------------------------------------------------
 
 
-async def test_rejected_subscriptions_are_warned_and_recorded(
+async def test_rejected_subscriptions_are_recorded_without_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A SUBACK failure code must surface in the log and in the stats while
-    the connection stays up - a denied raw-tree topic is expected for a
-    standard account, and silence would read as a mysteriously dead topic."""
+    """A SUBACK failure code lands in the stats while the connection stays
+    up, and nothing reaches the warning level: a denied raw-tree topic is
+    the designed state for a standard account, so the consumer judges the
+    verdicts from `subscribe_failures` instead of the log."""
     denied = "ampio/from/+/state/f/+"
     broker = FakeBroker()
     broker.suback_codes = {denied: 0x87}
@@ -690,9 +691,7 @@ async def test_rejected_subscriptions_are_warned_and_recorded(
             assert client.stats.subscribe_failures == {denied: 0x87}
         finally:
             await client.stop()
-    assert any(
-        denied in r.getMessage() and "135" in r.getMessage() for r in caplog.records
-    )
+    assert not any(denied in r.getMessage() for r in caplog.records)
 
 
 async def test_granted_subscriptions_leave_no_failures() -> None:
@@ -749,3 +748,23 @@ def test_auth_error_is_not_a_connection_error() -> None:
     """A config flow catching AmpioConnectionError broadly must not swallow
     the credential rejection that needs a different user action."""
     assert not issubclass(AmpioAuthError, AmpioConnectionError)
+
+
+async def test_a_rejected_namespace_filter_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only the raw tree is expected to be denied; a rejected fromDB filter
+    means a broken broker or ACL and must be loud."""
+    denied = DETAILS_TOPIC
+    broker = FakeBroker()
+    broker.suback_codes = {denied: 0x87}
+    client = AmpioClient(
+        "h", username=USER, reconnect_interval=0.05, mqtt_client_factory=broker.factory
+    )
+    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._connection"):
+        await client.start(timeout=2.0, discovery_timeout=0.05)
+        try:
+            assert client.stats.subscribe_failures == {denied: 0x87}
+        finally:
+            await client.stop()
+    assert any(denied in r.getMessage() for r in caplog.records)

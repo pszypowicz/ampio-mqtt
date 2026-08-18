@@ -183,3 +183,11 @@ RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
 # command surface, works on both tiers, and is bounded by nothing - not object
 # grants, and not the per-event rights the app displays.
 RAW_EVENT_WILDCARD = "ampio/from/+/event"
+
+# The whole raw-tree filter set. The broker denies it to a standard account
+# by design, so a SUBACK rejection of these filters is the normal state for
+# the recommended account shape - unlike any other filter, whose rejection
+# means a broken broker or ACL.
+RAW_TREE_FILTERS: frozenset[str] = frozenset(
+    (*RAW_INPUT_WILDCARDS, RAW_DIAGNOSTICS_WILDCARD, RAW_EVENT_WILDCARD)
+)

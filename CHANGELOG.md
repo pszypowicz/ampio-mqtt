@@ -76,6 +76,14 @@ it away.
   `obj.kind`, `module.model`, `module.capabilities` - and the kind-key
   vocabulary exports cover the exhaustiveness-testing case; they stay
   importable from their submodules.
+- **Raw-tree SUBACK rejections log at debug, not warning.** A standard
+  account is denied the four raw filters on every connect by design,
+  and the old per-connect warnings would have landed in every Home
+  Assistant user's log. Those verdicts stay in
+  `ConnectionStats.subscribe_failures` for the consumer to judge (an
+  admin account denied is its case to surface). A rejection of any
+  other filter still warns - a denied `fromDB` topic means a broken
+  broker or ACL.
 - **A message-processing bug costs one message, not the connection.**
   The client guards each inbound message: a payload whose processing
   raises is dropped with a logged traceback (once per topic; repeats at

@@ -39,10 +39,11 @@ for the `start()` / `stop()` lifecycle that joins them.
 2. **Subscribe** - the per-user topics (`ob/+/state`, the nine
    response topics) plus the global raw-channel wildcards, sent as one
    QoS 1 SUBSCRIBE packet. The SUBACK verdicts are read: a filter the
-   broker rejects logs a warning and lands in
-   `stats.subscribe_failures` while the connection stays up - on the
-   baseline server a standard account is denied the four raw-tree
-   filters this way. See [`protocol.md`](protocol.md) and
+   broker rejects lands in `stats.subscribe_failures` while the
+   connection stays up. A rejected raw-tree filter is the designed
+   state for a standard account and logs at debug only - judging it is
+   the consumer's call; a rejected filter anywhere else means a broken
+   broker or ACL and warns. See [`protocol.md`](protocol.md) and
    [`raw-channel-bridge.md`](raw-channel-bridge.md) for the full
    subscribe list.
 3. **Publish the auto-discovery keywords** on the matching control
