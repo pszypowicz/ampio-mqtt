@@ -33,7 +33,7 @@ for the `start()` / `stop()` lifecycle that joins them.
 ## Sequence
 
 1. **Connect** - TCP to the broker; authenticate; start the
-   capped-exponential reconnect loop. The first successful connect
+   capped-exponential reconnect loop. The run's first successful connect
    stamps `stats.started_at`; each subsequent one bumps
    `stats.reconnect_count`.
 2. **Subscribe** - the tier's topic set, sent as one QoS 1 SUBSCRIBE
@@ -85,10 +85,6 @@ decides when - and whether - to call them:
   `run_scene()` / `turn_scene_off()` / `undo_scene()`. Same rationale:
   a consumer that surfaces no scenes never pays for the fetch.
 
-Both helpers accept an explicit `timeout` (default 5.0 s) and raise
-`AmpioTimeoutError` on timeout, so a flaky broker fails loud rather
-than silently returning an empty result.
-
 ## Finding the M-SERV on the LAN
 
 `discover()` resolves `ampio.local` with an explicit multicast DNS
@@ -106,22 +102,8 @@ confirm identity with `test_connection()` once credentials are known.
 
 ## Liveness counters
 
-`client.stats` (a `ConnectionStats` dataclass) is what the HA
-integration's diagnostics blob reads for connection health
-(the blob also carries `last_payloads`).
-The fields are:
-
-- `reconnect_count` - monotonic; useful for a "works intermittently"
-  report.
-- `last_error` - the most recent connection failure: transport error
-  text, or the crash reason of a dead loop; `None` before the first
-  failure.
-- `started_at` - epoch seconds of the first successful connect.
-- `last_message_at` - epoch seconds of the most recently dispatched
-  inbound message (any topic).
-- `subscribe_failures` - filters the broker rejected in the latest
-  connect's SUBACK, topic to reason code; empty when everything was
-  granted.
-
-These are intentionally cheap to read and cheap to update - on the
+`client.stats` (a `ConnectionStats` dataclass, whose docstrings carry
+the field contracts) is what the HA integration's diagnostics blob reads
+for connection health; the blob also carries `last_payloads`. The
+counters are intentionally cheap to read and cheap to update - on the
 dispatch hot path, only `last_message_at` is touched.

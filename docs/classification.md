@@ -11,82 +11,50 @@ a measurement, a boolean input, something controllable, or a thermostat,
 never two, so the four are alternatives rather than optional slots on
 the object.
 
-Authoritative source:
+The tables themselves live in
 [`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py)
-(`classify`, the `TYPE_PROFILES` table, and `_LIN_WEJ_BY_INTERP`).
+and are not repeated here: `TYPE_PROFILES` is one row per known
+`typ_komponentu` (its kind, raw-bridge channel prefix, and system flag),
+`_LIN_WEJ_BY_INTERP` maps a `lin_wej` object's `interpretacja` to its
+measurement, and the `OutputKind` flags say which command verbs an
+output answers. A type absent from `TYPE_PROFILES` (and an
+`interpretacja` absent from the analog map) still surfaces, as the
+generic value sensor / `analog_<n>` fallback.
 
-## `typ_komponentu` truth table
+## Wire notes the tables cannot carry
 
-Each row here is one `TYPE_PROFILES` entry in `classification.py`: its
-`kind` (a fixed kind instance, or the analog/numeric selector for the
-`interpretacja`-keyed families) plus the `system` flag - keep that table
-in sync when a new type is added.
+- `reg` state is the running flag; #73 tracks the rich climate readback
+  (measured and target temperature, mode, cooling).
+- `detekcja` and `symulacja` are system objects: always exposed by the
+  M-SERV, visible even with an empty `leafId` (unless hidden).
+  `symulacja`'s raw-channel prefix is not yet bridged (#26).
+- `roleta_lamelki` is what the Ampio app writes when a cover's type is
+  set to "blinds - slats"; the same cover reads back as
+  `roleta_procenty` while it is set to "blinds - percentage". Only the
+  slats variant reports a `lammel` angle in its state payload, surfaced
+  as `AmpioObject.tilt_position`.
+- `rgbw` is the one output that ignores the `turnOn`/`turnOff`/`switch`
+  family; the replay pattern Ampio's own consumers use for on/off is in
+  [`protocol.md`](protocol.md).
+- Ampio's vocabulary also carries `rgb`, `rgbww`, `ledww`, `ac`,
+  `radio`, `ip_radio`, and `satel_alarm` - types absent from
+  `TYPE_PROFILES` that classify as the generic value sensor.
+  `satel_alarm` is the armed/alarmed flags of an alarm integration (a
+  Jablotron behind an M-CON, so the prefix is not Satel-specific).
 
-| `typ_komponentu`                              | Sensor? | Input? | System? | Note                                                                                                                                       |
-| --------------------------------------------- | ------- | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `temp`                                        | yes     | no     | no      | Temperature reading, °C.                                                                                                                   |
-| `lin_wej`                                     | yes     | no     | no      | Analog input - kind set by `interpretacja` (see below).                                                                                    |
-| `bit32`                                       | yes     | no     | no      | Generic 32-bit measurement (units unknown).                                                                                                |
-| `bit8`                                        | yes     | no     | no      | Generic 8-bit measurement, same treatment as `bit32`.                                                                                      |
-| `reg`                                         | no      | no     | no      | Temperature controller (`ThermostatKind`, climate platform) - state is the running flag; #73 tracks the rich readback.                     |
-| `flaga`                                       | no      | yes    | no      | Generic boolean flag (logic flag, button-press hold, etc.).                                                                                |
-| `detekcja`                                    | no      | yes    | yes     | Motion-style detection. Visible even without `leafId` (unless hidden).                                                                     |
-| `symulacja`                                   | no      | yes    | yes     | Presence simulation. Visible even without `leafId` (unless hidden). Raw-channel prefix not yet bridged.                                    |
-| `przekaznik`                                  | no      | no     | no      | Relay output - see the output table below.                                                                                                 |
-| `rgbw`, `led`                                 | no      | no     | no      | Light outputs - see the output table below.                                                                                                |
-| `roleta`, `roleta_procenty`, `roleta_lamelki` | no      | no     | no      | Cover outputs - see the output table below.                                                                                                |
-| (anything else)                               | "value" | no     | no      | Generic value-only sensor with no state class - the fallback for objects whose metadata has not arrived or whose type is not in the table. |
+## Platform shapes
 
-## Output truth table
+What each `OutputKind.key` maps to on the consumer side - guidance the
+code deliberately does not encode:
 
-Controllable types get an `OutputKind` whose flags say which command
-verbs the object answers, so a consumer picks a platform and feature set
-without its own `typ_komponentu` table. The `switchable` flag covers the
-`turnOn` / `turnOff` / `switch` family: every output answers it except
-`rgbw`, which the M-SERV drives through `setColors` alone. The library's
-`turn_off()` sends `setColors 0/0/0/0` for it, while `turn_on()` and
-`toggle()` raise `ValueError` - turning a color light on means choosing
-a color, which is the consumer's call via `set_color()`.
-
-| `typ_komponentu`  | `OutputKind.key` | Dimmable | Color | Cover | Position | Tilt | Switchable | Platform shape                    |
-| ----------------- | ---------------- | -------- | ----- | ----- | -------- | ---- | ---------- | --------------------------------- |
-| `przekaznik`      | `relay`          | no       | no    | no    | no       | no   | yes        | switch                            |
-| `led`             | `dimmer`         | yes      | no    | no    | no       | no   | yes        | light with brightness             |
-| `rgbw`            | `rgbw`           | no       | yes   | no    | no       | no   | no         | light with RGBW colour            |
-| `roleta`          | `cover`          | no       | no    | yes   | no       | no   | yes        | cover, open/close/stop only       |
-| `roleta_procenty` | `cover_position` | no       | no    | yes   | yes      | no   | yes        | cover with position               |
-| `roleta_lamelki`  | `cover_tilt`     | no       | no    | yes   | yes      | yes  | yes        | cover with position and slat tilt |
-
-`roleta_lamelki` is what the Ampio app writes when a cover's type is set
-to "blinds - slats"; the same cover reads back as `roleta_procenty` while
-it is set to "blinds - percentage". Only the slats variant reports a
-`lammel` angle in its state payload, surfaced as
-`AmpioObject.tilt_position`.
-
-Ampio's own vocabulary also carries `rgb`, `rgbww`, `ledww`, `ac`,
-`radio`, `ip_radio`, and `satel_alarm` - types absent from
-`TYPE_PROFILES` that classify as the generic value sensor.
-`satel_alarm` is the armed/alarmed flags of an alarm integration (a
-Jablotron behind an M-CON, so the prefix is not Satel-specific).
-
-## `lin_wej` interpretation table
-
-For a `lin_wej` object the measurement is selected by `interpretacja`
-(`_LIN_WEJ_BY_INTERP` in
-[`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py)):
-
-| `interpretacja` | `SensorKind.key` | Unit  | HA device class        |
-| --------------- | ---------------- | ----- | ---------------------- |
-| 1               | `humidity`       | `%`   | `humidity`             |
-| 2               | `pressure_abs`   | `hPa` | `atmospheric_pressure` |
-| 3               | `loudness`       | `dB`  | `sound_pressure`       |
-| 4               | `illuminance`    | `lx`  | `illuminance`          |
-| 5               | `iaq`            | -     | `aqi`                  |
-| 6               | `pressure_rel`   | `hPa` | `pressure`             |
-| 7               | `co2`            | `ppm` | `carbon_dioxide`       |
-
-Unknown values fall through to a generic `analog_<n>` SensorKind with no
-device class, so a future M-SENS variant still surfaces as a sensor.
+| `OutputKind.key` | Platform shape                    |
+| ---------------- | --------------------------------- |
+| `relay`          | switch                            |
+| `dimmer`         | light with brightness             |
+| `rgbw`           | light with RGBW colour            |
+| `cover`          | cover, open/close/stop only       |
+| `cover_position` | cover with position               |
+| `cover_tilt`     | cover with position and slat tilt |
 
 ## The kind-key vocabulary
 

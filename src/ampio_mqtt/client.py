@@ -371,22 +371,16 @@ class AmpioClient:
     ) -> Callable[[], None]:
         """Register ``listener`` on the event stream; returns an unsubscribe.
 
-        Everything the client learns flows through this one stream, in the
-        order it was produced: ``ObjectUpdated``, ``ObjectRemoved``,
-        ``ModuleUpdated``, ``ModuleRemoved``, ``BusEvent``,
-        ``AvailabilityChanged``, ``AuthFailed``, and ``ConnectionDied`` -
-        see :mod:`ampio_mqtt.events` for what each means and which account
-        tiers produce it. ``of`` narrows the subscription to one event class
+        Everything the client learns flows through this one stream in the
+        order it was produced - :mod:`ampio_mqtt.events` documents each
+        event class, its ordering guarantees, and which account tiers
+        produce it. ``of`` narrows the subscription to one event class
         (which also types the callback parameter precisely) or a tuple of
         classes::
 
             client.subscribe(on_any_event)
             client.subscribe(on_object, of=ObjectUpdated)
             client.subscribe(on_gone, of=(ObjectRemoved, ModuleRemoved))
-
-        Ordering across kinds is guaranteed: the availability drop precedes
-        the terminal ``AuthFailed`` / ``ConnectionDied``, and removals
-        follow the updates of the catalogue reply that caused them.
 
         The returned unsubscribe removes exactly its own registration and
         is idempotent - consumer teardown lists routinely invoke a cleanup
@@ -574,11 +568,8 @@ class AmpioClient:
     async def send_event(self, event_number: int) -> None:
         """Raise a bus event, running whatever Ampio logic is bound to it.
 
-        Works on both account tiers and is bounded by neither object grants
-        nor the per-event rights the Ampio app shows: a standard account
-        raises any event number it likes. Since the logic behind an event can
-        drive anything, this is the one way an account reaches objects it
-        cannot command directly.
+        Works on both account tiers and is bounded by nothing - see the
+        bus-events section of docs/protocol.md for the rights model.
         """
         _check_range("event_number", event_number, 1, 65535)
         await self._connection.publish(
@@ -598,11 +589,8 @@ class AmpioClient:
         await self._scene_command(scene_id, "undo")
 
     async def _scene_command(self, scene_id: int, verb: str) -> None:
-        """Publish a scene command; the M-SERV replays the scene's own actions.
-
-        Like any other command these are bounded by the account's grant, so a
-        scene touching objects outside it does nothing.
-        """
+        """Publish a scene command; the M-SERV replays the scene's own
+        actions, grant-scoped like any other command (docs/protocol.md)."""
         await self._connection.publish(
             command_topic(self._username), scene_payload(scene_id, verb).encode()
         )
@@ -614,20 +602,11 @@ class AmpioClient:
 
         Publishes ``/api/set/<object_id>/<verb>[/<arg>...]`` at QoS 1 and
         returns once the broker acknowledges it - "the broker accepted the
-        command", not "the M-SERV applied it". The M-SERV applies it
-        asynchronously and the resulting state arrives through the normal
-        object listeners (typically within a few hundred ms). Nothing is echoed
-        back for an unknown verb or an object that cannot perform it - the
-        M-SERV simply ignores it.
-
-        This is the escape hatch for the verbs the library does not wrap: the
-        vocabulary is the M-SERV's own, so anything its HTTP API accepts works
-        here (``setTemperature``, ``arm``, ``setVolume``, ``setText``, ...).
-        See docs/protocol.md.
-
-        Commands are grant-scoped exactly as reads are: on a standard
-        account a command for an object outside the grant is dropped with
-        no effect and no reply, while an administrator commands any object.
+        command", not "the M-SERV applied it"; the resulting state arrives
+        through the normal object listeners. This is the escape hatch for
+        the verbs the library does not wrap - docs/protocol.md carries the
+        verb table, the grant-scoping rules, and what the M-SERV silently
+        ignores.
 
         Raises ``AmpioConnectionError`` when the broker is unreachable and
         ``AmpioTimeoutError`` when it fails to acknowledge in time; never an
@@ -642,9 +621,9 @@ class AmpioClient:
         """Turn an object fully on.
 
         Raises ``ValueError`` for an output whose kind says the switch verbs
-        do not apply (``rgbw``): the M-SERV drops the command with no effect
-        and no reply, and turning a color light on means choosing a color -
-        the consumer's call, via :meth:`set_color`.
+        do not apply (``rgbw``): turning a color light on means choosing a
+        color - the consumer's call, via :meth:`set_color` (the rgbw
+        replay pattern in docs/protocol.md).
         """
         self._check_switchable(object_id, "turnOn")
         await self.command(object_id, "turnOn")
@@ -655,7 +634,7 @@ class AmpioClient:
         A color output that does not answer the switch verbs (``rgbw``) is
         turned off with ``setColors 0/0/0/0`` instead - off is unambiguous,
         so the library routes it. An object whose kind is not yet known gets
-        the plain verb; the library cannot know better than the caller.
+        the plain verb.
         """
         kind = self._output_kind(object_id)
         if kind is not None and not kind.switchable and kind.color:
@@ -679,13 +658,9 @@ class AmpioClient:
         return kind if isinstance(kind, OutputKind) else None
 
     def _check_switchable(self, object_id: int, verb: str) -> None:
-        """Reject a switch-family verb for an output known not to answer it.
-
-        The M-SERV drops the command with no effect and no reply, so sending
-        it would silently do nothing - the same trap ``_check_range`` guards
-        against for malformed arguments. An object with no metadata yet
-        passes through.
-        """
+        """Reject a switch-family verb for an output known not to answer it -
+        the M-SERV would drop it with no effect and no reply. An object
+        with no metadata yet passes through."""
         kind = self._output_kind(object_id)
         if kind is not None and not kind.switchable:
             raise ValueError(
@@ -713,8 +688,7 @@ class AmpioClient:
     async def set_temperature(self, object_id: int, temperature: float) -> None:
         """Set a thermostat's (``reg``) target temperature in °C.
 
-        The M-SERV echoes the new setpoint in the regulator's rich state
-        push, of which the library surfaces only the running flag until the
+        The library surfaces only the regulator's running flag until the
         climate readback lands (#73). Bools and non-finite floats are
         rejected: both would serialize as text the M-SERV silently drops.
         """
@@ -750,14 +724,9 @@ class AmpioClient:
         await self.command(object_id, "close")
 
     async def stop_cover(self, object_id: int) -> None:
-        """Halt a cover wherever it is, on either axis.
-
-        Mid-travel the position freezes at the halt point and the state
-        stream reports the resting value; a slat rotation is caught the
-        same way, freezing the slats at an intermediate angle; sent during
-        the slat-rotation phase that precedes travel it also cancels the
-        pending move; on a stationary cover it is a silent no-op.
-        """
+        """Halt a cover wherever it is, on either axis - a stationary cover
+        is a silent no-op. The `stop` row of docs/protocol.md details the
+        mid-travel and mid-rotation behavior."""
         await self.command(object_id, "stop")
 
     async def set_cover_position(
@@ -766,12 +735,10 @@ class AmpioClient:
         """Drive a cover to ``position`` percent (0 closed, 100 open).
 
         ``lamella`` sets the slat angle of a blind that has one, in the same
-        command. Omitting it sends no angle, which is not the same as holding
-        one: travel drags the slats along mechanically and leaves them closed
-        after a downward move and open after an upward one, so pass
-        ``lamella`` to land on a chosen angle. Position updates stream in as
-        the cover travels, so a consumer sees the movement rather than one
-        jump to the target.
+        command; omitting it sends no angle, which lets travel drag the
+        slats along mechanically - pass it to land on a chosen angle (the
+        slat-drag note in docs/protocol.md). Position updates stream in as
+        the cover travels.
         """
         _check_range("position", position, 0, 100)
         if lamella is not None:

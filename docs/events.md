@@ -47,7 +47,7 @@ _raise_ bus events (`send_event`); it never receives them.
 
 ## Ordering and the terminal events
 
-The contract lives on the `AmpioClient.subscribe` docstring and the
+The contract lives on the `ampio_mqtt.events` module docstring and the
 event classes themselves. In one line: removals follow the updates of
 the catalogue reply that caused them, and `AvailabilityChanged(False)`
 precedes a terminal `AuthFailed` / `ConnectionDied`, after which only a

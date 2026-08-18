@@ -59,52 +59,38 @@ class AmpioObject:
     through the read surface.
     """
 
-    # Volatile: `id` (and `device_id`, the owning id_urzadzenia) are DB
-    # autoincrement ids assigned in hardware (`mac_global`) order. They change
-    # when a module is replaced - do NOT use them as durable identity across a
-    # hardware swap. See `funkcja` and `AmpioModule.mac` for replacement-stable
-    # values.
+    # Volatile: `id` (and `device_id`) are DB autoincrement ids that change
+    # when a module is replaced - never durable identity across a hardware
+    # swap. docs/identity.md is the home for the identity model.
     id: int
-    device_id: int | None = None  # id_urzadzenia (physical module); see note above
+    device_id: int | None = None  # id_urzadzenia (physical module)
     typ_komponentu: str | None = None
     name: str | None = None
     interpretacja: int | None = None
-    # Physical channel index within the module (obiekty.funkcja). Survives module
-    # replacement (it is part of the re-loaded Designer config), but is NOT a
-    # unique object id - multiple objects, even active ones, can share a funkcja
-    # (the same physical signal exposed as several Designer objects). Used to
-    # route raw channel events to this object.
+    # Physical channel index within the module (obiekty.funkcja);
+    # replacement-stable but NOT unique - objects can share one. Routes raw
+    # channel events to this object.
     funkcja: int | None = None
-    # `leafId` from `devicesDetails` / the app-sync `data/devices` catalogue -
-    # a short token like ``0_cb8f_76_0_0``, identical on both surfaces. The
-    # wire payload sets it for every "real" object; ghost rows that survived a
-    # Designer removal AND system objects (Simulation / Detection) both come
-    # back with an empty string. Doubles as the visibility marker (see
-    # `visible`) and the stable identity source (see `stable_key`).
+    # `leafId`, identical on both discovery surfaces; empty for ghost rows
+    # and system objects. Doubles as the visibility marker (`visible`) and
+    # the stable identity source (`stable_key`) - docs/identity.md.
     leaf_id: str = ""
-    # `params` bitfield from `devicesDetails` (admin tier) or the
-    # `data/params_devices` table (every tier). Replacement-stable Designer
-    # config flags; see `_HIDDEN_FLAG`, `hidden`, and `visible`.
-    # Defaults to 0 so a payload without the column reads as
-    # "nothing hidden" and the visibility rule falls back to the leaf_id
-    # heuristic alone.
+    # `params` bitfield (Designer config flags; see `hidden`/`visible`).
+    # Defaults to 0 so a payload without the column reads "nothing hidden".
     params: int = 0
     # What this object is, once metadata has arrived. Exactly one kind applies.
     kind: ObjectKind | None = None
     value: str | None = None
     # Epoch seconds of the report `value` came from: the M-SERV's own `on`
-    # timestamp when the report carried one (every dated report on the
-    # baseline wire does), the local receive time for the undated raw tree.
-    # Lets a later bulk snapshot be compared against what is already held
-    # instead of being applied or dropped blind. None until any report
+    # timestamp when the report carried one, the local receive time for the
+    # undated raw tree. Lets a later bulk snapshot be compared against what
+    # is held instead of applied or dropped blind. None until any report
     # arrives, or when an undated seed supplied the value.
     updated_at: float | None = None
-    # Whether this input's raw-channel form has been observed. From then on
-    # the raw path owns the object: the slower per-object echo is ignored
-    # whole, and snapshot rows are skipped - resync comes from the broker's
-    # retained raw table, replayed on every subscribe. Only ever True on
-    # the admin tier, which alone receives the raw tree; cleared when the
-    # raw index stops covering the object.
+    # Whether the raw path owns this object (its raw-channel form has been
+    # observed): per-object echoes and snapshot rows are then skipped -
+    # resync is the broker's retained raw table. Admin tier only; cleared
+    # when the raw index stops covering the object. docs/raw-channel-bridge.md.
     raw_proven: bool = False
     # Slat angle percent, from the `lammel` state field. Only tilt-capable
     # covers report it.
@@ -241,15 +227,11 @@ class AmpioObject:
     def stable_key(self) -> str | None:
         """Replacement-stable identity token (``leaf_<leaf_id>``), or None.
 
-        The recommended per-object unique id (see docs/identity.md).
-        ``leaf_id`` is part of the reloaded Designer config, so it survives a
-        module swap; the ``config`` and ``data`` discovery surfaces report the
-        same value, so the key is identical on both access tiers; and it is
-        unique among ``visible`` objects - hidden phantom stubs share their
-        twin's ``leaf_id``, so filter on ``visible`` first. Objects with an
-        empty ``leaf_id`` (system objects, ghost rows) return None; a consumer
-        surfacing those needs its own fallback key. Scope the key per M-SERV
-        by prefixing with the server identifier, ``AmpioServerInfo.key``.
+        The recommended per-object unique id, identical on both access
+        tiers and unique among ``visible`` objects - filter on ``visible``
+        first, and scope per M-SERV with ``AmpioServerInfo.key``. None for
+        an empty ``leaf_id`` (system objects, ghost rows): a consumer
+        surfacing those needs its own fallback key. See docs/identity.md.
         """
         return f"leaf_{self.leaf_id}" if self.leaf_id else None
 
@@ -257,19 +239,11 @@ class AmpioObject:
     def module_mac(self) -> int | None:
         """The owning module's effective bus mac, parsed from ``leaf_id``.
 
-        ``leafId`` embeds the module's Designer override mac - the
-        replacement-stable ``AmpioModule.mac``, not the factory
-        ``mac_global`` - the M-SERV's own objects embed its override ``1``,
-        not its factory id. Because ``leafId`` is served
-        identically on both account tiers, this is the module key a
-        consumer can group entities by even on a restricted account, which
-        never receives the module catalogue - an entry set up with a
-        standard account and later switched to an administrator keeps its
-        entity-to-device mapping and only gains metadata.
-
-        None when ``leaf_id`` is empty - system objects, ghost rows, and
-        the window before an object's catalogue metadata arrives - or, on
-        no observed install, when it has an unexpected shape.
+        The replacement-stable ``AmpioModule.mac``, served identically on
+        both account tiers - the module key a consumer can group entities
+        by even on a restricted account, which never receives the module
+        catalogue (docs/identity.md). None when ``leaf_id`` is empty or,
+        on no observed install, has an unexpected shape.
         """
         match = _LEAF_ID_RE.fullmatch(self.leaf_id)
         return int(match.group(1), 16) if match is not None else None
@@ -278,12 +252,10 @@ class AmpioObject:
     def is_server_owned(self) -> bool:
         """Whether this object belongs to the M-SERV itself.
 
-        True when ``leaf_id`` embeds the M-SERV's override mac. ``leafId``
-        is served identically on both account tiers, so a consumer can
-        anchor server-owned objects to its hub device even on a restricted
-        account, which never receives the module catalogue. False when
-        ``leaf_id`` is empty - system objects, ghost rows, and the window
-        before catalogue metadata arrives.
+        True when ``leaf_id`` embeds the M-SERV's override mac; works on
+        both account tiers, so a consumer can anchor server-owned objects
+        to its hub device without the module catalogue. False when
+        ``leaf_id`` is empty.
         """
         return self.module_mac == _MSERV_MAC
 
@@ -312,15 +284,12 @@ class AmpioModule:
     """
 
     id: int
-    # Designer-assignable CAN bus address (the "MAC override"). This is the
-    # effective address the module uses on the bus and the one the raw
-    # `ampio/from/<MAC>/...` topics are keyed by. It is replacement-stable: a
-    # replacement unit is re-stamped with the dead one's value so other devices'
-    # CAN logic needs no reprogramming. May be a non-unique default (the M-SERV
-    # is 1). Prefer this over `mac_global` for a replacement-stable module key.
+    # The effective bus address (Designer "MAC override"), keying the raw
+    # `ampio/from/<MAC>/...` topics. Replacement-stable - prefer it over
+    # `mac_global` as the module key; may be a non-unique default (the
+    # M-SERV is 1). docs/identity.md carries the full identity model.
     mac: int | None = None  # devices.mac (override / effective bus address)
-    # Factory-burned, globally-unique hardware id. CHANGES when the physical unit
-    # is replaced, so it is not stable identity across a hardware swap.
+    # Factory-burned hardware id; CHANGES when the unit is replaced.
     mac_global: int | None = None  # devices.mac_global (factory id)
     name: str | None = None  # nazwa_urzadzenia (user-given module name)
     type: int | None = None  # typ_urzadzenia
@@ -392,13 +361,10 @@ class AmpioServerInfo:
         The wire's own confirmation for a config flow reading a
         :meth:`AmpioClient.test_connection` result; a running client's
         operational tier comes from the authenticated username instead.
-
-        The M-SERV's administrator is the reserved ``admin`` login, reported
-        as the pseudo-user id ``-1``; app-created users carry their positive
-        users-table row id and are always the standard tier - the app offers
-        no administrator toggle for them, and their per-object permissions
-        never open the admin-only surfaces. None when the reply carried no
-        ``userId``, which no baseline server produces.
+        The reserved ``admin`` login reports the pseudo-user id ``-1``;
+        app-created users carry a positive row id and are always the
+        standard tier (docs/account-tiers.md). None when the reply carried
+        no ``userId``.
         """
         if self.user_id is None:
             return None

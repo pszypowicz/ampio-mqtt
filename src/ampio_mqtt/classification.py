@@ -224,11 +224,8 @@ def _kind_keys() -> tuple[
 
 
 # The complete static `kind.key` vocabulary, derived from the tables above
-# at import time so a new row is part of it with no second edit. A consumer
-# mapping `kind.key` to its own entity descriptions should assert in its CI
-# that every key here is either mapped or deliberately excluded - a library
-# upgrade that adds a kind then fails a test instead of silently dropping
-# entities.
+# at import time so a new row is part of it with no second edit. The
+# consumer-CI contract built on these lives in docs/classification.md.
 SENSOR_KIND_KEYS, INPUT_KIND_KEYS, OUTPUT_KIND_KEYS, THERMOSTAT_KIND_KEYS = _kind_keys()
 
 # The two open families: keys minted with the object's `interpretacja`

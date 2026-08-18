@@ -624,24 +624,16 @@ def ob_state_wildcard(user: str) -> str:
     return f"ampio/fromDB/{user}/ob/+/state"
 
 
-# Raw, module-scoped channel topics carry decoded CAN state per channel index
-# and are NOT namespaced by user (the `ampio/from/<MAC>/...` tree is global).
-# We subscribe only to the two input prefixes - `f` (flags) and `i` (digital
-# inputs) - because they publish on-change and are the low-latency source for
-# input objects. The high-rate prefixes (`a`/`t`/`rgbw`/`o`) are intentionally
-# excluded; those object types already arrive on the per-object topic.
+# The raw `ampio/from/<MAC>/...` tree: global (not user-namespaced), retained,
+# admin-only. docs/raw-channel-bridge.md is the home for why only the two
+# on-change input prefixes are subscribed and the high-rate ones are not.
 RAW_INPUT_WILDCARDS = ("ampio/from/+/state/f/+", "ampio/from/+/state/i/+")
 
-# Modules periodically broadcast a diagnostics frame on `ampio/from/<MAC>/b/4F`
-# carrying their CAN supply voltage and, on the modules that measure it, their
-# own temperature. Like the rest of the raw tree this is administrator-only.
+# Per-module diagnostics broadcasts (CAN supply voltage, own temperature).
 RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
 
-# Bus events are logical signals (1-65535) that Ampio logic raises and reacts
-# to - a wall-panel press can raise one, and a scenario can be bound to one.
-# Receiving them rides the administrator-only raw tree. Raising one goes to the
-# command surface, works on both tiers, and is bounded by nothing - not object
-# grants, and not the per-event rights the app displays.
+# Bus events (1-65535); receiving rides the admin-only raw tree, raising goes
+# to the command surface - the rights model is in docs/protocol.md.
 RAW_EVENT_WILDCARD = "ampio/from/+/event"
 
 
