@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from ampio_mqtt import Capability, module_capabilities, module_model
+from ampio_mqtt import Capability
+from ampio_mqtt.device_types import module_capabilities, module_model
 
 # --- module_model ---------------------------------------------------------
 

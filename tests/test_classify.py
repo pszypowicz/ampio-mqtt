@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from ampio_mqtt import classify
 from ampio_mqtt.classification import (
     INPUT_KIND_KEYS,
     OPEN_SENSOR_KEY_PREFIXES,
@@ -16,6 +15,7 @@ from ampio_mqtt.classification import (
     OutputKind,
     SensorKind,
     ThermostatKind,
+    classify,
 )
 
 

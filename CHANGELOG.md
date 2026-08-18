@@ -60,6 +60,11 @@ it away.
 
 ### Changed
 
+- **`classify`, `module_model`, and `module_capabilities` left the
+  top-level API.** All three are pre-digested by the models -
+  `obj.kind`, `module.model`, `module.capabilities` - and the kind-key
+  vocabulary exports cover the exhaustiveness-testing case; they stay
+  importable from their submodules.
 - **A message-processing bug costs one message, not the connection.**
   The client guards each inbound message: a payload whose processing
   raises is dropped with a logged traceback (once per topic; repeats at

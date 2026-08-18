@@ -13,10 +13,9 @@ from .classification import (
     OutputKind,
     SensorKind,
     ThermostatKind,
-    classify,
 )
 from .client import AmpioClient
-from .device_types import Capability, module_capabilities, module_model
+from .device_types import Capability
 from .discovery import DiscoveryResult, discover
 from .endpoints import AccessTier
 from .errors import (
@@ -77,10 +76,7 @@ __all__ = [
     "OutputKind",
     "SensorKind",
     "ThermostatKind",
-    "classify",
     "discover",
-    "module_capabilities",
-    "module_model",
 ]
 
 __version__ = "0.21.0"

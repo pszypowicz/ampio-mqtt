@@ -6,7 +6,8 @@ from dataclasses import replace
 
 import pytest
 
-from ampio_mqtt import AmpioObject, AmpioServerInfo, classify
+from ampio_mqtt import AmpioObject, AmpioServerInfo
+from ampio_mqtt.classification import classify
 
 
 @pytest.mark.parametrize(
