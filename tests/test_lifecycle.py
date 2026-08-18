@@ -127,18 +127,18 @@ def test_error_hierarchy_gives_consumers_one_umbrella() -> None:
     assert issubclass(AmpioTimeoutError, AmpioConnectionError)
 
 
-async def test_connection_returns_info_without_identity_as_is() -> None:
-    """A reply that arrives without identity fields returns, not raises (#54)."""
+async def test_connection_maps_identityless_info_reply_to_timeout() -> None:
+    """A reply without the server identity is unparseable: the config flow
+    needs `key` for its unique id, so it gets the retryable shape instead
+    of an info it cannot scope by."""
     broker = FakeBroker()
     broker.scripted_messages = [
         Message(INFO_TOPIC, json.dumps({"Results": {}}).encode())
     ]
-    info = await AmpioClient.test_connection(
-        "h", USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
-    )
-    assert info.mac is None
-    assert info.server_version is None
-    assert info.access_tier is None
+    with pytest.raises(AmpioTimeoutError):
+        await AmpioClient.test_connection(
+            "h", USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
+        )
 
 
 async def test_connection_maps_unparseable_info_reply_to_timeout() -> None:

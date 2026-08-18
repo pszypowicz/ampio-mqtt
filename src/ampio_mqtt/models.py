@@ -363,7 +363,7 @@ class AmpioServerInfo:
     (geolocation, cloud endpoint, public key, user permissions).
     """
 
-    mac: int | None = None  # the M-SERV's own CAN mac (matches a module's mac_global)
+    mac: int  # the M-SERV's own CAN mac (matches a module's mac_global)
     # The asking account's id: -1 for the reserved `admin` login, the
     # users-table row id for an app-created user. See `access_tier`.
     user_id: int | None = None
@@ -374,17 +374,16 @@ class AmpioServerInfo:
     device_id: str | None = None  # hardware identifier of the host
 
     @property
-    def key(self) -> str | None:
+    def key(self) -> str:
         """Canonical scoping key for this M-SERV, for consumer registries.
 
         The string to prefix per-server artifacts with - unique ids, device
         identifiers: the decimal form of ``mac``, which is what every known
         consumer already derived by hand. The format is a stable promise;
-        never parse or reformat it. None only while ``mac`` is unknown,
-        which a True :meth:`AmpioClient.wait_for_initial_discovery` rules
-        out - the info reply gates discovery on carrying an identity.
+        never parse or reformat it. An info reply without a ``mac`` does not
+        parse, so every :class:`AmpioServerInfo` a consumer can hold has one.
         """
-        return str(self.mac) if self.mac is not None else None
+        return str(self.mac)
 
     @property
     def access_tier(self) -> AccessTier | None:

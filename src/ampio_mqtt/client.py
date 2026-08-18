@@ -262,10 +262,9 @@ class AmpioClient:
     def server_info(self) -> AmpioServerInfo | None:
         """The Ampio M-SERV self-reported info, if discovered.
 
-        Guaranteed non-None with a populated ``mac`` (and so a non-None
-        :pyattr:`AmpioServerInfo.key`) once
-        :meth:`wait_for_initial_discovery` has returned True - an info
-        reply without an identity does not complete discovery.
+        Guaranteed non-None once :meth:`wait_for_initial_discovery` has
+        returned True; every held info carries a populated
+        :pyattr:`AmpioServerInfo.key` by construction.
         """
         return self._store.server_info
 
@@ -281,7 +280,7 @@ class AmpioClient:
         row at all: see :pyattr:`AmpioObject.is_server_owned`.
         """
         info = self._store.server_info
-        if info is not None and info.mac is not None:
+        if info is not None:
             for mod in self._store.modules.values():
                 if info.mac in (mod.mac_global, mod.mac):
                     return mod
@@ -398,11 +397,10 @@ class AmpioClient:
         Raises ``AmpioAuthError`` on credential rejection, ``AmpioTimeoutError``
         when the connection succeeds but no parseable info reply arrives
         within ``info_timeout`` (slow or overloaded broker - worth retrying),
-        and ``AmpioConnectionError`` on any other connection failure. The info
-        surface answers with full identity for every account tier, so a reply
-        that arrives without identity fields is returned as-is rather than
-        raised: it means the server is answering but has nothing to say, not
-        that the request was too slow.
+        and ``AmpioConnectionError`` on any other connection failure. A reply
+        without the server identity is unparseable like any other corrupt
+        shape, so a returned info always has a populated
+        :pyattr:`AmpioServerInfo.key` for the config flow's unique id.
 
         The result's ``access_tier`` tells a config flow what the account
         will get before any client exists: a ``RESTRICTED`` account never
@@ -478,11 +476,10 @@ class AmpioClient:
         This is the contract a consumer relies on when it must read
         ``objects``/``server_info`` (and, on the admin tier, ``modules``)
         before building anything on top of the client. A True additionally
-        guarantees the server identity: ``server_info`` is populated with a
-        non-None ``mac``, so :pyattr:`AmpioServerInfo.key` is a string - an
-        info reply without an identity (which no baseline server produces)
-        leaves discovery incomplete. It never raises on timeout - discovery
-        continues opportunistically and this simply returns False.
+        guarantees the server identity: ``server_info`` is populated, and
+        :pyattr:`AmpioServerInfo.key` is a string by construction. It never
+        raises on timeout - discovery continues opportunistically and this
+        simply returns False.
 
         Safe to call repeatedly and after reconnects - the underlying signals
         latch on first completion, so once discovery has happened this returns

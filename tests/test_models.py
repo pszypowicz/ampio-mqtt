@@ -156,10 +156,8 @@ def test_is_server_owned_reads_the_mserv_override_mac(
     assert AmpioObject(id=1, leaf_id=leaf_id).is_server_owned is server_owned
 
 
-@pytest.mark.parametrize(
-    ("mac", "expected"), [(47846, "47846"), (1, "1"), (None, None)]
-)
-def test_server_key_is_the_decimal_mac(mac: int | None, expected: str | None) -> None:
+@pytest.mark.parametrize(("mac", "expected"), [(47846, "47846"), (1, "1")])
+def test_server_key_is_the_decimal_mac(mac: int, expected: str) -> None:
     """The canonical registry-scoping string; its format is a promise."""
     assert AmpioServerInfo(mac=mac).key == expected
 

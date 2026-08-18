@@ -373,12 +373,11 @@ async def test_discovery_stays_incomplete_without_server_identity(
     wait promises the identity a consumer scopes its registry by (#78)."""
     client, _broker = connected
     feed(client, STATES_TOPIC, devices())
-    feed(client, INFO_TOPIC, info())  # parses, but carries no identity
+    feed(client, INFO_TOPIC, info())  # unparseable: carries no identity
     feed(client, DATA_DEVICES_TOPIC, details())
     feed(client, PARAMS_DEVICES_TOPIC, devices())
     assert await client.wait_for_initial_discovery(timeout=0.05) is False
-    assert client.server_info is not None
-    assert client.server_info.key is None
+    assert client.server_info is None
 
     feed(client, INFO_TOPIC, info(mac=555, userId=-1, serverVersion="1865"))
     feed(client, DETAILS_TOPIC, details())

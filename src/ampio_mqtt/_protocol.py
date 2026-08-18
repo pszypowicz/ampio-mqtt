@@ -331,11 +331,11 @@ def _to_str(value: Any) -> str | None:
 def parse_server_info(payload: str) -> AmpioServerInfo | None:
     """Parse a server-info payload, keeping only the safe fields.
 
-    The baseline server wraps the fields in a ``Results`` object; a payload
-    without that shape returns None, exactly as the sibling parsers report
-    an unparseable reply. A ``Results`` object with fields missing still
-    parses: an identity-less reply is the server answering with nothing to
-    say, which the store handles as its own case.
+    The baseline server wraps the fields in a ``Results`` object and always
+    reports its ``mac`` - the identity every consumer scopes a registry by.
+    A payload without either is unparseable, exactly as the sibling parsers
+    report a corrupt reply, so a parsed info always carries a populated
+    :pyattr:`AmpioServerInfo.key`.
     """
     try:
         outer = json.loads(payload)
@@ -344,8 +344,11 @@ def parse_server_info(payload: str) -> AmpioServerInfo | None:
     data = outer.get("Results") if isinstance(outer, dict) else None
     if not isinstance(data, dict):
         return None
+    mac = to_int(data.get("mac"))
+    if mac is None:
+        return None
     return AmpioServerInfo(
-        mac=to_int(data.get("mac")),
+        mac=mac,
         user_id=to_int(data.get("userId")),
         server_version=_to_str(data.get("serverVersion")),
         server_revision=_to_str(data.get("serverRevision")),

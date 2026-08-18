@@ -281,8 +281,9 @@ def test_a_corrupt_info_reply_never_wipes_held_identity(
 def test_an_identityless_info_reply_never_wipes_held_identity(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A reply that carries no identity cannot take a held one away; the
-    refusal is warned so a misbehaving server stays visible."""
+    """A reply without a server mac is unparseable, so it neither takes a
+    held identity away nor is stored - `AmpioServerInfo.key` stays
+    populated by construction."""
     store = _store()
     topic = f"ampio/fromDB/{USER}/data/info"
     store.apply(topic, '{"Results": {"mac": 1, "serverVersion": "1865"}}')
@@ -291,7 +292,22 @@ def test_an_identityless_info_reply_never_wipes_held_identity(
     assert applied.parsed is False
     assert store.server_info is not None
     assert store.server_info.mac == 1
-    assert any("no server mac" in r.getMessage() for r in caplog.records)
+    assert any("Could not parse" in r.getMessage() for r in caplog.records)
+
+
+def test_below_baseline_warning_survives_an_identityless_reply_arriving_first(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An identity-less reply is never stored, so it cannot pre-seat the
+    version and suppress the warning the identified reply should trip."""
+    store = _store()
+    topic = f"ampio/fromDB/{USER}/data/info"
+    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
+        store.apply(topic, '{"Results": {"serverVersion": "100"}}')
+        store.apply(topic, '{"Results": {"mac": 1, "serverVersion": "100"}}')
+    warnings = [r for r in caplog.records if "baseline" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "100" in warnings[0].getMessage()
 
 
 def test_on_demand_reply_parseability_gates_parsed(

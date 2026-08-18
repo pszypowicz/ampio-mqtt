@@ -208,6 +208,10 @@ def test_parse_server_info_bad_payload_returns_none() -> None:
     assert parse_server_info(json.dumps([1, 2, 3])) is None
     # The baseline server always wraps the fields in `Results`.
     assert parse_server_info(json.dumps({"mac": 1})) is None
+    # ... and always reports its mac: an identity-less reply is unparseable,
+    # which is what keeps `AmpioServerInfo.key` populated by construction.
+    assert parse_server_info(json.dumps({"Results": {}})) is None
+    assert parse_server_info(json.dumps({"Results": {"serverVersion": "1865"}})) is None
 
 
 def test_parse_server_info_coerces_numeric_version_fields() -> None:
@@ -251,7 +255,7 @@ def test_server_below_baseline(version: str | None, below: bool) -> None:
 def test_server_info_access_tier_from_account_id(
     user_id: int | None, tier: AccessTier | None
 ) -> None:
-    assert AmpioServerInfo(user_id=user_id).access_tier is tier
+    assert AmpioServerInfo(mac=1, user_id=user_id).access_tier is tier
 
 
 def test_state_route_json_payload() -> None:
