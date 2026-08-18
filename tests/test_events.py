@@ -27,15 +27,6 @@ def test_a_raw_channel_message_is_not_a_bus_event() -> None:
     assert seen == []
 
 
-def test_event_listener_can_be_removed() -> None:
-    client = AmpioClient("host", username=USER)
-    seen: list[BusEvent] = []
-    unsubscribe = client.subscribe(seen.append, of=BusEvent)
-    unsubscribe()
-    feed(client, "ampio/from/1/event", b"189")
-    assert seen == []
-
-
 async def test_send_event_builds_the_payload(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:

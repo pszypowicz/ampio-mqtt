@@ -9,14 +9,12 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from functools import partial
 
 from . import _protocol
 from .classification import classify, input_channel_prefix
-from .endpoints import ADMIN_USERNAME, Endpoint
 from .events import (
     BusEvent,
     ModuleRemoved,
@@ -40,7 +38,7 @@ class Applied:
 
     # The endpoint whose reply this was, if any, and whether its payload could
     # be read - together they tell the caller when discovery has advanced.
-    endpoint: Endpoint | None = None
+    endpoint: _protocol.Endpoint | None = None
     parsed: bool = True
     # Everything the message changed, in processing order, ready to dispatch.
     # Update events carry a snapshot taken as the change was applied, so a
@@ -53,7 +51,7 @@ class AmpioStore:
     """Applies M-SERV messages to the object, module and server state."""
 
     def __init__(self, user: str) -> None:
-        self._is_admin = user == ADMIN_USERNAME
+        self._is_admin = user == _protocol.ADMIN_USERNAME
         self.objects: dict[int, AmpioObject] = {}
         self.modules: dict[int, AmpioModule] = {}
         self.server_info: AmpioServerInfo | None = None
@@ -66,14 +64,15 @@ class AmpioStore:
         # broadcasts. Ids, not instances: modules are frozen and replaced on
         # every change, so a cached instance would go stale.
         self._module_id_by_mac: dict[int, int] = {}
-        # Macs the devices catalogue reports on more than one module. Nothing
-        # on the wire enforces uniqueness, so this is the signal a consumer
-        # keying devices on mac needs to avoid silently merging two modules.
-        self._colliding_macs: frozenset[int] = frozenset()
         # Full-catalogue `{object_id: params}` from `data/params_devices`, kept
         # because the app-sync catalogue carries no params column and the two
         # replies arrive in no fixed order.
         self._params_by_id: dict[int, int] = {}
+        # `{object_id: stan_json}` from the last `data/states` snapshot, kept
+        # for the same reason: the app-sync catalogue carries no stan_json
+        # column either, and only the catalogues decide which objects exist -
+        # a snapshot row for an id no catalogue established creates nothing.
+        self._stan_by_id: dict[int, str] = {}
         # Endpoints whose reply mutates state, each reporting whether the
         # payload parsed. The rest are pure request/response - the client keeps
         # their payload and parses it on demand.
@@ -98,13 +97,10 @@ class AmpioStore:
                 if handler is not None:
                     applied.parsed = handler(body, applied)
                 else:
-                    # Pure request/response endpoints mutate nothing here, but
-                    # their parseability still gates the reply signal - a
-                    # corrupt reply must not complete a fetch. Every one of
-                    # them answers with a {"List": [...]} document, so that
-                    # shape check stands in for a handler; an endpoint with a
-                    # different reply shape needs its own _handlers entry.
-                    applied.parsed = _protocol.list_rows(body) is not None
+                    # Pure request/response endpoints mutate nothing here;
+                    # their gate is the endpoint's own reply parser, so a
+                    # reply that resolves a fetch parses by construction.
+                    applied.parsed = endpoint.parses(body) is not None
                     if not applied.parsed:
                         _LOGGER.warning("Could not parse Ampio %s reply", endpoint.name)
             case _protocol.StateUpdate() as update:
@@ -171,6 +167,7 @@ class AmpioStore:
         for oid in missing:
             obj = self.objects.pop(oid)
             self._params_by_id.pop(oid, None)
+            self._stan_by_id.pop(oid, None)
             applied.events.append(ObjectRemoved(obj))
         return True
 
@@ -200,8 +197,16 @@ class AmpioStore:
             kind=classify(meta.typ_komponentu, meta.interpretacja),
         )
         changed = _identity(updated) != _identity(obj)
-        if meta.stan_json is not None:
-            updated, seeded = self._apply_stan_json(updated, meta.stan_json)
+        # A row without the column (the app-sync shape) falls back to the
+        # buffered snapshot value, so reply order never decides whether an
+        # object starts with its state.
+        stan_json = (
+            meta.stan_json
+            if meta.stan_json is not None
+            else self._stan_by_id.get(meta.id)
+        )
+        if stan_json is not None:
+            updated, seeded = self._apply_stan_json(updated, stan_json)
             changed |= seeded
         self.objects[meta.id] = updated
         if changed:
@@ -272,25 +277,37 @@ class AmpioStore:
         return True
 
     def _handle_info(self, payload: str, applied: Applied) -> bool:
-        previous = self.server_info
         info = _protocol.parse_server_info(payload)
-        self.server_info = info
-        # Warn when the version first becomes known or changes, not on the
-        # re-request every reconnect issues.
-        if previous is None or previous.server_version != info.server_version:
-            _protocol.warn_if_below_baseline(info.server_version)
+        if info is None:
+            _LOGGER.warning("Could not parse Ampio info reply")
+            return False
+        previous = self.server_info
         if info.mac is None:
             # Without the server identity there is nothing to scope a
             # consumer's registry by, so discovery must not read complete -
             # a True wait_for_initial_discovery() promises a populated
-            # `key`. No baseline server answers without a mac.
-            if previous is None or previous.mac is not None:
+            # `key`. And because the discovery latch never clears, a reply
+            # that carries no identity must not take a held one away: the
+            # promise covers every read after the True, not just the first.
+            # No baseline server answers without a mac.
+            if previous is None:
+                self.server_info = info
                 _LOGGER.warning(
                     "Ampio info reply carries no server mac; initial "
                     "discovery stays incomplete until an identified "
                     "reply arrives"
                 )
+            elif previous.mac is not None:
+                _LOGGER.warning(
+                    "Ampio info reply carries no server mac; keeping the "
+                    "identified info already held"
+                )
             return False
+        # Warn when the version first becomes known or changes, not on the
+        # re-request every reconnect issues.
+        if previous is None or previous.server_version != info.server_version:
+            _protocol.warn_if_below_baseline(info.server_version)
+        self.server_info = info
         return True
 
     def _handle_states_snapshot(self, payload: str, applied: Applied) -> bool:
@@ -298,13 +315,21 @@ class AmpioStore:
         if entries is None:
             _LOGGER.warning("Could not parse Ampio states snapshot")
             return False
+        self._stan_by_id = {
+            entry.id: entry.stan_json
+            for entry in entries
+            if entry.stan_json is not None
+        }
         for entry in entries:
             obj = self.objects.get(entry.id)
-            if obj is None:
-                obj = AmpioObject(id=entry.id, kind=classify(None, None))
-            changed = False
-            if entry.stan_json is not None:
-                obj, changed = self._apply_stan_json(obj, entry.stan_json)
+            if obj is None or entry.stan_json is None:
+                # An id no catalogue established stays out of the store: the
+                # snapshot replays DB rows, ghost rows included, and creating
+                # from it would later evict an object no consumer was ever
+                # told existed. The value waits in _stan_by_id for the
+                # catalogue row that may establish it.
+                continue
+            obj, changed = self._apply_stan_json(obj, entry.stan_json)
             self.objects[entry.id] = obj
             if changed:
                 self._record(obj, applied)
@@ -445,10 +470,8 @@ class AmpioStore:
         raw-topic MAC on replaced modules. `(mac, prefix, channel)` routes an
         input channel to its object, covering only bridgeable input types with
         a known channel and module mac; `mac` alone routes a module's own
-        diagnostics broadcast. A colliding mac routes nothing - see
-        :pyattr:`AmpioClient.colliding_macs` for the contract.
+        diagnostics broadcast.
         """
-        self._refresh_colliding_macs()
         index: dict[tuple[int, str, int], int] = {}
         for obj in self.objects.values():
             prefix = input_channel_prefix(obj.typ_komponentu)
@@ -457,14 +480,12 @@ class AmpioStore:
             module = self.modules.get(obj.device_id)
             if module is None or module.mac is None:
                 continue
-            if module.mac in self._colliding_macs:
-                continue
             index[(module.mac, prefix, obj.funkcja)] = obj.id
         self._input_index = index
         self._module_id_by_mac = {
             module.mac: module.id
             for module in self.modules.values()
-            if module.mac is not None and module.mac not in self._colliding_macs
+            if module.mac is not None
         }
         # An object the index no longer covers must go back to its per-object
         # updates, or a mac change in Designer would freeze it for good.
@@ -473,43 +494,8 @@ class AmpioStore:
             if obj.raw_proven and oid not in covered:
                 self.objects[oid] = replace(obj, raw_proven=False)
 
-    def _refresh_colliding_macs(self) -> None:
-        """Recompute the colliding-mac set, warning when it changes.
-
-        Warns only on a change, not on every catalogue parse - the catalogue
-        is re-requested on every reconnect, and repeating a standing collision
-        each time would drown the log in old news. A collision that resolves
-        clears the set silently.
-        """
-        counts = Counter(
-            module.mac for module in self.modules.values() if module.mac is not None
-        )
-        colliding = frozenset(mac for mac, n in counts.items() if n > 1)
-        if colliding and colliding != self._colliding_macs:
-            details = "; ".join(
-                f"mac {mac} shared by "
-                + ", ".join(
-                    f"module {module.id} ({module.name or 'unnamed'})"
-                    for module in self.modules.values()
-                    if module.mac == mac
-                )
-                for mac in sorted(colliding)
-            )
-            _LOGGER.warning(
-                "Ampio devices catalogue reports colliding module macs; "
-                "raw-channel and diagnostics routing for them is disabled: %s",
-                details,
-            )
-        self._colliding_macs = colliding
-
     def _record(self, obj: AmpioObject, applied: Applied) -> None:
         applied.events.append(ObjectUpdated(obj))
-
-    # --- read surface -----------------------------------------------------
-
-    @property
-    def colliding_macs(self) -> frozenset[int]:
-        return self._colliding_macs
 
 
 def _identity(obj: AmpioObject) -> tuple[object, ...]:

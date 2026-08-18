@@ -15,10 +15,7 @@ from types import MappingProxyType
 from typing import Any, TypeVar, cast, overload
 
 from . import _connection, _protocol
-from ._store import AmpioStore
-from .classification import OutputKind
-from .device_types import Capability
-from .endpoints import (
+from ._protocol import (
     ADMIN_USERNAME,
     ENDPOINT_BY_NAME,
     ENDPOINTS,
@@ -26,7 +23,6 @@ from .endpoints import (
     RAW_DIAGNOSTICS_WILDCARD,
     RAW_EVENT_WILDCARD,
     RAW_INPUT_WILDCARDS,
-    AccessTier,
     Endpoint,
     command_payload,
     command_topic,
@@ -36,6 +32,9 @@ from .endpoints import (
     response_topic,
     scene_payload,
 )
+from ._store import AmpioStore
+from .classification import OutputKind
+from .device_types import is_hub
 from .errors import AmpioTimeoutError
 from .events import (
     AuthFailed,
@@ -44,6 +43,7 @@ from .events import (
     ConnectionDied,
 )
 from .models import (
+    AccessTier,
     AmpioModule,
     AmpioObject,
     AmpioScene,
@@ -99,17 +99,17 @@ class AmpioClient:
     def __init__(
         self,
         host: str,
-        port: int = 1883,
-        username: str | None = None,
+        username: str,
         password: str | None = None,
         *,
+        port: int = 1883,
         reconnect_interval: float = 5.0,
         mqtt_client_factory: _connection.MqttClientFactory | None = None,
     ) -> None:
-        """Initialize the client. `username` is required: it names the
-        Ampio account and namespaces every MQTT topic, so without one the
-        client would subscribe to a namespace no M-SERV serves and fail
-        only minutes later as "discovery never completes".
+        """Initialize the client. `username` names the Ampio account and
+        namespaces every MQTT topic; an empty one is rejected here because
+        the client would otherwise subscribe to a namespace no M-SERV
+        serves and fail only minutes later as "discovery never completes".
 
         ``mqtt_client_factory`` is the transport seam: a zero-argument
         callable returning the MQTT session object for one connect attempt.
@@ -121,9 +121,7 @@ class AmpioClient:
                 "username is required - the Ampio topics are namespaced by account"
             )
         self._username = username
-        # The tier is the authenticated login name: the broker verifies it
-        # at CONNACK and the app cannot create another `admin`, so a held
-        # session under that name IS the administrator.
+        # The tier is the authenticated login name - see AccessTier.
         self._tier = (
             AccessTier.ADMIN if username == ADMIN_USERNAME else AccessTier.RESTRICTED
         )
@@ -153,9 +151,13 @@ class AmpioClient:
             tuple[Callable[[Any], None], tuple[type[ClientEvent], ...] | None]
         ] = []
 
-        # One reply channel per endpoint-table row - see _ReplyChannel.
+        # One reply channel per endpoint-table row the tier is served -
+        # see _ReplyChannel. A reply on an unserved surface still updates
+        # the store; it just latches and resolves nothing here.
         self._channels: dict[str, _ReplyChannel] = {
-            ep.name: _ReplyChannel() for ep in ENDPOINTS
+            ep.name: _ReplyChannel()
+            for ep in ENDPOINTS
+            if ep.tier in (None, self._tier)
         }
 
         # Topics whose messages have failed processing, so a recurring
@@ -197,7 +199,9 @@ class AmpioClient:
         try:
             applied = self._store.apply(topic, payload)
             if applied.endpoint is not None:
-                self._channels[applied.endpoint.name].deliver(payload, applied.parsed)
+                channel = self._channels.get(applied.endpoint.name)
+                if channel is not None:
+                    channel.deliver(payload, applied.parsed)
         except Exception:
             if topic in self._poisoned_topics:
                 _LOGGER.debug("Dropped another failing Ampio message on %s", topic)
@@ -266,40 +270,22 @@ class AmpioClient:
         return self._store.server_info
 
     @property
-    def colliding_macs(self) -> frozenset[int]:
-        """Effective bus macs the devices catalogue reports on 2+ modules.
+    def mserv(self) -> AmpioModule | None:
+        """The M-SERV's own module row, for naming the hub device.
 
-        Empty on a correctly commissioned install; nothing on the wire
-        enforces uniqueness, so a misconfigured or mid-commissioning install
-        can collide. A colliding mac makes `AmpioModule.mac` - the
-        recommended replacement-stable module key - ambiguous: a consumer
-        keying devices on it should skip or disambiguate these modules
-        instead of silently merging them. While a mac collides the library
-        routes no raw-channel input events or diagnostics broadcasts for it
-        (the sender is unknowable); affected inputs still update through the
-        per-object state path. A warning naming the modules is logged when
-        a collision appears; one that resolves clears the set silently.
-        """
-        return self._store.colliding_macs
-
-    @property
-    def mserv_id(self) -> int | None:
-        """Resolve the module id of the M-SERV server.
-
-        Prefers cross-validating the server's self-reported mac against each
-        module's mac_global/mac; falls back to the unique module the device
-        catalogue marks as a hub.
+        Prefers cross-validating the server's self-reported mac against
+        each module's mac_global/mac; falls back to the unique hub-typed
+        module. None when neither identifies one - ambiguity included -
+        and always None on the restricted tier, which never receives the
+        module catalogue. Tier-independent device grouping needs no module
+        row at all: see :pyattr:`AmpioObject.is_server_owned`.
         """
         info = self._store.server_info
         if info is not None and info.mac is not None:
-            for mid, mod in self._store.modules.items():
+            for mod in self._store.modules.values():
                 if info.mac in (mod.mac_global, mod.mac):
-                    return mid
-        candidates = [
-            mid
-            for mid, mod in self._store.modules.items()
-            if Capability.HUB in mod.capabilities
-        ]
+                    return mod
+        candidates = [mod for mod in self._store.modules.values() if is_hub(mod.type)]
         if len(candidates) == 1:
             return candidates[0]
         return None
@@ -315,8 +301,9 @@ class AmpioClient:
 
         ``None`` while the credentials are accepted, including through outages
         the client is still trying to reconnect across. Once set, the
-        connection loop has stopped for good and only a fresh ``start()`` -
-        presumably with new credentials - clears it.
+        connection loop has stopped for good. A fresh ``start()`` clears it
+        but retries the constructor credentials; recovering from a genuinely
+        changed password means building a new client.
         """
         return self._connection.auth_failure
 
@@ -337,12 +324,11 @@ class AmpioClient:
         """Verbatim last response payload per endpoint, keyed by endpoint name.
 
         Retained for the HA integration's diagnostics blob so a report can
-        include the actual JSON the M-SERV emitted. Keys are endpoint names
-        (``details``, ``devices``, ``states``, ``info``, ``data_devices``,
-        ``params_devices``, ``groups``, ``group_devices``, ``scenes``); an
-        endpoint absent until its first reply lands. A
-        payload that failed to parse is retained too - the bad bytes are
-        exactly what a diagnostics report needs.
+        include the actual JSON the M-SERV emitted. Keyed by endpoint name,
+        covering the endpoints the account tier is served; an endpoint is
+        absent until its first reply lands. A payload that failed to parse
+        is retained too - the bad bytes are exactly what a diagnostics
+        report needs.
         """
         return {
             name: channel.last_payload
@@ -400,19 +386,19 @@ class AmpioClient:
     @staticmethod
     async def test_connection(
         host: str,
-        port: int,
-        username: str | None,
+        username: str,
         password: str | None,
         *,
+        port: int = 1883,
         info_timeout: float = 5.0,
         mqtt_client_factory: _connection.MqttClientFactory | None = None,
     ) -> AmpioServerInfo:
         """Connect, request the server info, and return it.
 
         Raises ``AmpioAuthError`` on credential rejection, ``AmpioTimeoutError``
-        when the connection succeeds but no info reply arrives within
-        ``info_timeout`` (slow or overloaded broker - worth retrying), and
-        ``AmpioConnectionError`` on any other connection failure. The info
+        when the connection succeeds but no parseable info reply arrives
+        within ``info_timeout`` (slow or overloaded broker - worth retrying),
+        and ``AmpioConnectionError`` on any other connection failure. The info
         surface answers with full identity for every account tier, so a reply
         that arrives without identity fields is returned as-is rather than
         raised: it means the server is answering but has nothing to say, not
@@ -421,23 +407,22 @@ class AmpioClient:
         The result's ``access_tier`` tells a config flow what the account
         will get before any client exists: a ``RESTRICTED`` account never
         receives the module list, so a consumer that needs ``modules`` or
-        ``mserv_id`` can reject it here with an accurate message instead of
+        ``mserv`` can reject it here with an accurate message instead of
         failing at setup.
         """
         if not username:
             raise ValueError(
                 "username is required - the Ampio topics are namespaced by account"
             )
-        user = username
         info = ENDPOINT_BY_NAME["info"]
         payload = await _connection.probe(
             host,
             port,
             username,
             password,
-            request_topic=request_topic(info, user),
+            request_topic=request_topic(info, username),
             request_payload=info.req_payload,
-            reply_topic=response_topic(info, user),
+            reply_topic=response_topic(info, username),
             timeout=info_timeout,
             client_factory=mqtt_client_factory,
         )
@@ -446,6 +431,12 @@ class AmpioClient:
                 f"No server-info reply from the Ampio broker within {info_timeout}s"
             )
         parsed = _protocol.parse_server_info(payload)
+        if parsed is None:
+            # A corrupt reply gets the same retryable shape as silence:
+            # something answered, but not with an info document.
+            raise AmpioTimeoutError(
+                "The Ampio broker answered with an unparseable server-info reply"
+            )
         _protocol.warn_if_below_baseline(parsed.server_version)
         return parsed
 
@@ -559,8 +550,10 @@ class AmpioClient:
         payloads = await self._fetch(
             ("scenes",), timeout, "Timed out fetching scenes from Ampio broker"
         )
-        # A payload that resolved the fetch passed the store's parsed gate,
-        # so it is a {"List": [...]} document and parses by construction.
+        # The store's parsed gate admits only {"List": [...]} documents - the
+        # one shape parse_scenes returns None for - and the row parser
+        # degrades malformed fields instead of raising, so a payload that
+        # resolved the fetch parses by construction.
         return cast("list[AmpioScene]", _protocol.parse_scenes(payloads["scenes"]))
 
     async def send_event(self, event_number: int) -> None:

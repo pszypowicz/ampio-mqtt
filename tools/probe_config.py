@@ -4,7 +4,7 @@
 Discovery on this protocol works by publishing a keyword to
 ``ampio/control/<user>/<surface>`` and reading the reply on
 ``ampio/fromDB/<user>/<surface>/<keyword>``. The endpoint table in
-``src/ampio_mqtt/endpoints.py`` holds the confirmed keywords; this tool
+``src/ampio_mqtt/_protocol.py`` holds the confirmed keywords; this tool
 fuzzes candidate keywords the library does not consume yet (see
 docs/untapped-surfaces.md). ``--surface data`` probes the app-sync surface,
 which answers on every account tier; ``config`` is administrator-only.

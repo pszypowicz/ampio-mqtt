@@ -15,4 +15,4 @@ there, so this page cannot drift from them.
 Picking one up: verify the wire shape live first
 (`tools/probe_config.py` publishes candidate keywords and prints the
 replies), then follow the add-an-endpoint recipe on the `ENDPOINTS`
-table in [`src/ampio_mqtt/endpoints.py`](../src/ampio_mqtt/endpoints.py).
+table in [`src/ampio_mqtt/_protocol.py`](../src/ampio_mqtt/_protocol.py).

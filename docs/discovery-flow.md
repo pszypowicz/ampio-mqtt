@@ -9,7 +9,7 @@ elapsed first - `client.objects` and
 arrives via push from that point on.
 
 A consumer that **depends** on those collections being populated before
-it does anything else - the canonical case is resolving `mserv_id` to
+it does anything else - the canonical case is resolving `mserv` to
 pre-register the M-SERV device so other modules' `via_device` parents
 resolve - should not rely on `start()`'s blocking as an implementation
 detail. It should call `await client.wait_for_initial_discovery()`
@@ -64,17 +64,14 @@ for the `start()` / `stop()` lifecycle that joins them.
    catalogues; live state arrives via push on the per-object topic
    (and, for inputs, the raw-channel topics).
 
-Every catalogue reply also evicts what it stopped listing (the admin
-`config` catalogue and module list always; the app-sync `data/devices`
-only on the restricted tier, where the grant bounds the store), fired
-to consumers as `ObjectRemoved` / `ModuleRemoved` events. Since
-catalogues are request/response,
-a server-side deletion is noticed at the next reply - the refresh a
-reconnect issues, or an explicit `refresh()`; an app-side module
-deletion commits without restarting the M-SERV (a Designer save is the
-case that restarts it), so a consumer that wants prompt removals
-refreshes on its own schedule. An empty reply
-never mass-evicts a populated store.
+Every catalogue reply also evicts what it stopped listing, fired as
+`ObjectRemoved` / `ModuleRemoved` - the per-tier rules and the
+deletion-tool differences live on the event docstrings and in
+[`identity.md`](identity.md). Since catalogues are request/response, a
+server-side deletion is noticed at the next reply (the refresh a
+reconnect issues, or an explicit `refresh()`), so a consumer that wants
+prompt removals refreshes on its own schedule. An empty reply never
+mass-evicts a populated store.
 
 ## What runs on demand, not automatically
 
@@ -115,7 +112,9 @@ The fields are:
 
 - `reconnect_count` - monotonic; useful for a "works intermittently"
   report.
-- `last_error` - the most recent `aiomqtt.MqttError` text, or `None`.
+- `last_error` - the most recent connection failure: transport error
+  text, or the crash reason of a dead loop; `None` before the first
+  failure.
 - `started_at` - epoch seconds of the first successful connect.
 - `last_message_at` - epoch seconds of the most recently dispatched
   inbound message (any topic).

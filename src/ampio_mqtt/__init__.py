@@ -15,9 +15,7 @@ from .classification import (
     ThermostatKind,
 )
 from .client import AmpioClient
-from .device_types import Capability
 from .discovery import DiscoveryResult, discover
-from .endpoints import AccessTier
 from .errors import (
     AmpioAuthError,
     AmpioConnectionError,
@@ -36,6 +34,7 @@ from .events import (
     ObjectUpdated,
 )
 from .models import (
+    AccessTier,
     AmpioModule,
     AmpioObject,
     AmpioScene,
@@ -62,7 +61,6 @@ __all__ = [
     "AuthFailed",
     "AvailabilityChanged",
     "BusEvent",
-    "Capability",
     "ClientEvent",
     "ConnectionDied",
     "ConnectionStats",
@@ -79,4 +77,4 @@ __all__ = [
     "discover",
 ]
 
-__version__ = "0.21.0"
+__version__ = "0.22.0"

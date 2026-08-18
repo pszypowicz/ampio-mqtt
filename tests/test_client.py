@@ -5,7 +5,7 @@ covered in test_store.py; the pure model properties in test_models.py."""
 from __future__ import annotations
 
 import asyncio
-import json
+import dataclasses
 
 import aiomqtt
 import pytest
@@ -50,8 +50,8 @@ def _client() -> AmpioClient:
     return AmpioClient("host", username=USER)
 
 
-def test_mserv_id_prefers_info_mac_cross_check() -> None:
-    """mserv_id matches the module whose mac_global matches info.mac."""
+def test_mserv_prefers_info_mac_cross_check() -> None:
+    """mserv is the module row whose mac_global matches info.mac."""
     client = _client()
     # Two modules with typ != 10 plus the actual M-SERV (typ=10, mac_global=47846).
     feed(
@@ -79,17 +79,15 @@ def test_mserv_id_prefers_info_mac_cross_check() -> None:
         f"ampio/fromDB/{USER}/data/info",
         info(serverVersion="1", mac="47846"),
     )
-    assert client.mserv_id == 1
+    mserv = client.mserv
+    assert mserv is not None and mserv.id == 1 and mserv.name == "MSERV"
 
 
-# Type 10 is the M-SERV-s; type 0 is VIRTUAL. Both map to Capability.HUB.
+# Type 10 is the M-SERV-s; type 0 is VIRTUAL. Both are hub types.
 @pytest.mark.parametrize("hub_type", [10, 0])
-def test_mserv_id_falls_back_to_unique_hub_module(hub_type: int) -> None:
-    """Without info, the unique hub-capability module identifies the M-SERV.
-
-    The rule reads Capability.HUB off the module catalogue, not the raw type
-    code, so a VIRTUAL hub resolves exactly like an M-SERV one.
-    """
+def test_mserv_falls_back_to_unique_hub_module(hub_type: int) -> None:
+    """Without info, the unique hub-typed module identifies the M-SERV,
+    with a VIRTUAL hub resolving exactly like an M-SERV one."""
     client = _client()
     feed(
         client,
@@ -111,10 +109,52 @@ def test_mserv_id_falls_back_to_unique_hub_module(hub_type: int) -> None:
             },
         ),
     )
-    assert client.mserv_id == 5
+    mserv = client.mserv
+    assert mserv is not None and mserv.id == 5
 
 
-def test_mserv_id_none_when_ambiguous_and_no_info() -> None:
+def test_mserv_matches_the_override_mac_arm() -> None:
+    """The cross-check accepts the Designer override mac as well as the
+    factory id: after a hardware swap mac_global changes but the
+    re-stamped override does not."""
+    client = _client()
+    feed(
+        client,
+        f"ampio/fromDB/{USER}/config/devices",
+        devices(
+            {
+                "id": 4,
+                "mac": 47846,
+                "mac_global": 999,
+                "typ_urzadzenia": 4,
+                "nazwa_urzadzenia": "SWAPPED",
+            }
+        ),
+    )
+    feed(client, f"ampio/fromDB/{USER}/data/info", info(mac="47846"))
+    mserv = client.mserv
+    assert mserv is not None and mserv.id == 4
+
+
+def test_read_surface_is_immutable() -> None:
+    """Neither the mappings nor the frozen instances in them can be mutated
+    from consumer code - the promise core builds its entity layer on."""
+    client = _client()
+    feed(client, f"ampio/fromDB/{USER}/config/devicesDetails", details(_flaga(41, 3)))
+    feed(client, f"ampio/fromDB/{USER}/config/devices", devices({"id": 7, "mac": 1}))
+    with pytest.raises(TypeError):
+        client.objects[99] = client.objects[41]  # type: ignore[index]
+    with pytest.raises(TypeError):
+        del client.objects[41]  # type: ignore[attr-defined]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        client.objects[41].name = "TAMPERED"  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        client.modules[99] = client.modules[7]  # type: ignore[index]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        client.modules[7].name = "TAMPERED"  # type: ignore[misc]
+
+
+def test_mserv_none_when_ambiguous_and_no_info() -> None:
     """If multiple modules are typ=10 and no info reply, do not guess."""
     client = _client()
     feed(
@@ -137,7 +177,7 @@ def test_mserv_id_none_when_ambiguous_and_no_info() -> None:
             },
         ),
     )
-    assert client.mserv_id is None
+    assert client.mserv is None
 
 
 def test_state_updates_object_and_notifies() -> None:
@@ -229,49 +269,49 @@ async def test_start_times_out_without_auth_error() -> None:
         mqtt_client_factory=broker.factory,
     )
     with pytest.raises(AmpioConnectionError):
-        await client.start(timeout=0.5, discovery_timeout=0.1)
+        await client.start(timeout=0.1, discovery_timeout=0.05)
 
 
 def test_last_payloads_retained_for_each_handler() -> None:
-    """Each discovery handler stashes the verbatim payload for diagnostics."""
-    client = _client()
+    """Each discovery handler stashes the verbatim payload for diagnostics,
+    keyed by endpoint name and scoped to the endpoints the tier is served."""
+    admin = AmpioClient("host", username="admin")
     devices_payload = devices({"id": 1, "mac": 1, "typ_urzadzenia": 10})
     details_payload = details(
         {"id": 5, "id_urzadzenia": 1, "typ_komponentu": "temp", "interpretacja": 1}
     )
+    feed(admin, "ampio/fromDB/admin/config/devices", devices_payload)
+    feed(admin, "ampio/fromDB/admin/config/devicesDetails", details_payload)
+    assert admin.last_payloads["devices"] == devices_payload
+    assert admin.last_payloads["details"] == details_payload
+
+    client = _client()
     info_payload = info(mac=12345, serverVersion="2025")
-
-    feed(client, f"ampio/fromDB/{USER}/config/devices", devices_payload)
-    feed(client, f"ampio/fromDB/{USER}/config/devicesDetails", details_payload)
-    feed(client, f"ampio/fromDB/{USER}/data/info", info_payload)
-
-    assert client.last_payloads["devices"] == devices_payload
-    assert client.last_payloads["details"] == details_payload
-    assert client.last_payloads["info"] == info_payload
-
     states_payload = devices({"id": 5, "stan_json": '{"state":"1"}'})
     data_devices_payload = details({"id": 5, "typ_komponentu": "temp"})
     params_payload = devices({"id": 5, "params": 17})
     scenes_payload = devices({"id": 3, "sceneName": "Evening"})
+    groups_payload = devices({"id": 1, "opis_menu": "Salon"})
+    group_devices_payload = devices({"id_grupy": 1, "id_obiektu": 5})
+    feed(client, f"ampio/fromDB/{USER}/data/info", info_payload)
     feed(client, f"ampio/fromDB/{USER}/data/states", states_payload)
     feed(client, f"ampio/fromDB/{USER}/data/devices", data_devices_payload)
     feed(client, f"ampio/fromDB/{USER}/data/params_devices", params_payload)
     feed(client, f"ampio/fromDB/{USER}/data/scenes", scenes_payload)
+    feed(client, f"ampio/fromDB/{USER}/data/groups", groups_payload)
+    feed(client, f"ampio/fromDB/{USER}/data/group_devices", group_devices_payload)
+    assert client.last_payloads["info"] == info_payload
     assert client.last_payloads["states"] == states_payload
     assert client.last_payloads["data_devices"] == data_devices_payload
     assert client.last_payloads["params_devices"] == params_payload
     assert client.last_payloads["scenes"] == scenes_payload
+    assert client.last_payloads["groups"] == groups_payload
+    assert client.last_payloads["group_devices"] == group_devices_payload
 
-
-def test_groups_payloads_are_retained() -> None:
-    """`data/groups` and `data/group_devices` populate the last_payloads map."""
-    client = _client()
-    groups = json.dumps({"List": [{"id": 1, "opis_menu": "Salon"}]}).encode()
-    group_devices = json.dumps({"List": [{"id_grupy": 1, "id_obiektu": 5}]}).encode()
-    feed(client, f"ampio/fromDB/{USER}/data/groups", groups)
-    feed(client, f"ampio/fromDB/{USER}/data/group_devices", group_devices)
-    assert client.last_payloads["groups"] == groups.decode()
-    assert client.last_payloads["group_devices"] == group_devices.decode()
+    # An admin-surface reply on a restricted client still updates the
+    # store but latches no channel - the tier is not served that surface.
+    feed(client, f"ampio/fromDB/{USER}/config/devices", devices_payload)
+    assert "devices" not in client.last_payloads
 
 
 def test_access_tier_is_the_authenticated_username() -> None:
@@ -279,16 +319,6 @@ def test_access_tier_is_the_authenticated_username() -> None:
     `admin` name is the administrator, so the tier is a constructor fact."""
     assert _client().access_tier is AccessTier.RESTRICTED
     assert AmpioClient("host", username="admin").access_tier is AccessTier.ADMIN
-
-
-def test_colliding_macs_surface_through_the_client() -> None:
-    client = _client()
-    feed(
-        client,
-        f"ampio/fromDB/{USER}/config/devices",
-        devices({"id": 1, "mac": 5}, {"id": 2, "mac": 5}),
-    )
-    assert client.colliding_macs == frozenset({5})
 
 
 def test_dispatch_updates_last_message_at() -> None:
@@ -365,4 +395,4 @@ async def test_username_is_required(username: str | None) -> None:
     with pytest.raises(ValueError):
         AmpioClient("host", username=username)
     with pytest.raises(ValueError):
-        await AmpioClient.test_connection("host", 1883, username, None)
+        await AmpioClient.test_connection("host", username, None)

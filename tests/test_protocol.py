@@ -69,12 +69,10 @@ def test_parse_details_returns_metadata() -> None:
     assert items[0].name == "Salon"
     assert items[0].funkcja == 7
     assert items[0].leaf_id == "0_cb8f_76_0_0"
-    assert items[0].params == 137438953473  # parsed as a >32-bit int
     assert items[0].stan_json is not None
     assert items[1].name is None and items[1].stan_json is None
     assert items[1].funkcja is None  # absent -> None
     assert items[1].leaf_id == ""  # absent -> empty string
-    assert items[1].params is None  # absent column, distinct from "no flags"
 
 
 @pytest.mark.parametrize(
@@ -142,17 +140,13 @@ def test_state_route_non_dict_payload() -> None:
     assert update.value == "[1, 2]" and update.on_ms is None
 
 
-def test_parse_devices_populates_capabilities_for_known_type() -> None:
-    """capabilities set is populated from device_types.module_capabilities."""
-    from ampio_mqtt import Capability
-
+def test_parse_devices_resolves_the_model_name() -> None:
+    """The model column is derived from the type code; unknown or missing
+    types resolve to None rather than failing the row."""
     payload = json.dumps(
         {
             "List": [
                 {"id": 1, "typ_urzadzenia": 44},  # M-SENS
-                {"id": 2, "typ_urzadzenia": 4},  # M-REL-8s
-                {"id": 3, "typ_urzadzenia": 12},  # M-OC-4s
-                {"id": 4, "typ_urzadzenia": 14},  # M-INOC-8s
                 {"id": 5, "typ_urzadzenia": 999},  # unknown type
                 {"id": 6},  # no typ_urzadzenia
             ]
@@ -161,21 +155,9 @@ def test_parse_devices_populates_capabilities_for_known_type() -> None:
     modules = parse_devices(payload)
     assert modules is not None
     by_id = {m.id: m for m in modules}
-    # M-SENS: env sensors + IR output (no digital outputs)
-    assert Capability.ENV_SENSOR in by_id[1].capabilities
-    assert Capability.DIGITAL_OUTPUT not in by_id[1].capabilities
-    # M-REL-8s: digital out AND digital in
-    assert Capability.DIGITAL_OUTPUT in by_id[2].capabilities
-    assert Capability.DIGITAL_INPUT in by_id[2].capabilities
-    # M-OC-4s: drives RGBW + has analog inputs
-    assert Capability.RGBW_OUTPUT in by_id[3].capabilities
-    assert Capability.ANALOG_INPUT in by_id[3].capabilities
-    # M-INOC-8s hybrid
-    assert Capability.DIGITAL_OUTPUT in by_id[4].capabilities
-    assert Capability.ANALOG_INPUT in by_id[4].capabilities
-    # Unknown / missing types yield empty capabilities set
-    assert by_id[5].capabilities == frozenset()
-    assert by_id[6].capabilities == frozenset()
+    assert by_id[1].model == "M-SENS"
+    assert by_id[5].model is None
+    assert by_id[6].model is None
 
 
 def test_parse_devices_returns_modules() -> None:
@@ -214,17 +196,30 @@ def test_parse_server_info_extracts_safe_fields() -> None:
         }
     )
     info = parse_server_info(payload)
+    assert info is not None
     assert info.mac == 1234
     assert info.user_id == -1
     assert info.server_version == "3.4.5"
     assert info.local_ip == "192.168.1.10"
 
 
-def test_parse_server_info_bad_payload_returns_empty() -> None:
-    assert parse_server_info("not json") == AmpioServerInfo()
-    assert parse_server_info(json.dumps([1, 2, 3])) == AmpioServerInfo()
+def test_parse_server_info_bad_payload_returns_none() -> None:
+    assert parse_server_info("not json") is None
+    assert parse_server_info(json.dumps([1, 2, 3])) is None
     # The baseline server always wraps the fields in `Results`.
-    assert parse_server_info(json.dumps({"mac": 1})) == AmpioServerInfo()
+    assert parse_server_info(json.dumps({"mac": 1})) is None
+
+
+def test_parse_server_info_coerces_numeric_version_fields() -> None:
+    """The version fields are typed str; an int wire value must land as a
+    string, or `server_below_baseline` would raise on splitting it."""
+    payload = json.dumps(
+        {"Results": {"mac": 1, "serverVersion": 1865, "serverRevision": 409}}
+    )
+    info = parse_server_info(payload)
+    assert info is not None
+    assert info.server_version == "1865"
+    assert info.server_revision == "409"
 
 
 @pytest.mark.parametrize(
@@ -250,23 +245,13 @@ def test_server_below_baseline(version: str | None, below: bool) -> None:
         (-1, AccessTier.ADMIN),
         (4, AccessTier.RESTRICTED),
         (0, AccessTier.RESTRICTED),
-        (None, AccessTier.UNKNOWN),
+        (None, None),
     ],
 )
 def test_server_info_access_tier_from_account_id(
-    user_id: int | None, tier: AccessTier
+    user_id: int | None, tier: AccessTier | None
 ) -> None:
     assert AmpioServerInfo(user_id=user_id).access_tier is tier
-
-
-def test_parse_states_snapshot() -> None:
-    payload = json.dumps(
-        {"List": [{"id": 1, "stan_json": '{"state":"on"}'}, {"id": "x"}]}
-    )
-    entries = parse_states_snapshot(payload)
-    assert entries is not None
-    assert len(entries) == 1
-    assert entries[0].id == 1 and entries[0].stan_json is not None
 
 
 def test_state_route_json_payload() -> None:

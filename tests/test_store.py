@@ -235,68 +235,6 @@ def test_the_store_is_the_only_thing_holding_state() -> None:
     assert all(isinstance(o, AmpioObject) for o in store.objects.values())
 
 
-def test_colliding_macs_keep_both_modules_and_warn_once(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    store = _store()
-    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
-        store.apply(DEVICES_TOPIC, _devices(7, 7))
-    assert store.colliding_macs == {7}
-    assert sorted(store.modules) == [1, 2]
-    warnings = [r for r in caplog.records if "colliding module macs" in r.getMessage()]
-    assert len(warnings) == 1
-    assert "module 1 (A)" in warnings[0].getMessage()
-    assert "module 2 (B)" in warnings[0].getMessage()
-
-    # A reconnect re-requests the catalogue; a standing collision is old news.
-    caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
-        store.apply(DEVICES_TOPIC, _devices(7, 7))
-    assert caplog.records == []
-    assert store.colliding_macs == {7}
-
-
-def test_a_resolved_collision_clears_the_set() -> None:
-    store = _store()
-    store.apply(DEVICES_TOPIC, _devices(7, 7))
-    store.apply(DEVICES_TOPIC, _devices(7, 8))
-    assert store.colliding_macs == frozenset()
-
-
-def test_unique_macs_produce_no_collision_signal(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    store = _store()
-    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
-        store.apply(DEVICES_TOPIC, _devices(7, 8))
-    assert store.colliding_macs == frozenset()
-    assert caplog.records == []
-
-
-def test_a_colliding_mac_routes_no_diagnostics() -> None:
-    """The sender is unknowable, and a wrong attribution would stand silently."""
-    store = _store()
-    store.apply(DEVICES_TOPIC, _devices(7, 7))
-    applied = store.apply("ampio/from/7/b/4F", '{"d":[254,79,63,142]}')
-    assert _mod_updated(applied) == []
-    assert all(m.supply_voltage is None for m in store.modules.values())
-
-
-def test_a_colliding_mac_routes_no_raw_edges_but_per_object_still_updates() -> None:
-    store = _store()
-    store.apply(DEVICES_TOPIC, _devices(7, 7))
-    store.apply(DETAILS_TOPIC, _flaga_details((301, 1), (302, 2)))
-
-    applied = store.apply("ampio/from/7/state/f/3", "1")
-    assert _updated(applied) == []
-    assert store.objects[301].value is None
-    assert store.objects[302].value is None
-
-    applied = store.apply(f"ampio/fromDB/{USER}/ob/301/state", '{"state":"1"}')
-    assert [o.id for o in _updated(applied)] == [301]
-    assert store.objects[301].value == "1"
-
-
 def test_a_below_baseline_server_warns_once(caplog: pytest.LogCaptureFixture) -> None:
     store = _store()
     topic = f"ampio/fromDB/{USER}/data/info"
@@ -318,6 +256,42 @@ def test_a_baseline_server_does_not_warn(caplog: pytest.LogCaptureFixture) -> No
             '{"Results": {"mac": 1, "serverVersion": "1865"}}',
         )
     assert caplog.records == []
+
+
+def test_a_corrupt_info_reply_never_wipes_held_identity(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The discovery latch never clears, so a True wait_for_initial_discovery
+    must keep implying a populated identity on every later read - an
+    unparseable info reply must not take it away, and must not trip the
+    below-baseline warning off the wiped version."""
+    store = _store()
+    topic = f"ampio/fromDB/{USER}/data/info"
+    store.apply(topic, '{"Results": {"mac": 1, "serverVersion": "1865"}}')
+    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
+        applied = store.apply(topic, "not json at all")
+    assert applied.parsed is False
+    assert store.server_info is not None
+    assert store.server_info.mac == 1
+    assert store.server_info.server_version == "1865"
+    assert not any("baseline" in r.getMessage() for r in caplog.records)
+    assert any("Could not parse" in r.getMessage() for r in caplog.records)
+
+
+def test_an_identityless_info_reply_never_wipes_held_identity(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A reply that carries no identity cannot take a held one away; the
+    refusal is warned so a misbehaving server stays visible."""
+    store = _store()
+    topic = f"ampio/fromDB/{USER}/data/info"
+    store.apply(topic, '{"Results": {"mac": 1, "serverVersion": "1865"}}')
+    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
+        applied = store.apply(topic, '{"Results": {}}')
+    assert applied.parsed is False
+    assert store.server_info is not None
+    assert store.server_info.mac == 1
+    assert any("no server mac" in r.getMessage() for r in caplog.records)
 
 
 def test_on_demand_reply_parseability_gates_parsed(
@@ -384,6 +358,7 @@ def test_the_echo_of_a_raw_edge_is_ignored_whole() -> None:
 
 def test_a_dated_snapshot_beats_an_undated_seed() -> None:
     store = _store()
+    store.apply(DETAILS_TOPIC, _flaga_details((10, 1)))
     store.apply(STATES_TOPIC, _snapshot("5", None))
     assert store.objects[10].value == "5"
     assert store.objects[10].updated_at is None
@@ -695,17 +670,89 @@ def test_states_snapshot_does_not_overwrite_live_value() -> None:
     assert store.objects[41].value == "fresh"
 
 
-def test_states_snapshot_creates_placeholder_for_unknown_object() -> None:
-    """A state for an object whose metadata is not yet known is still tracked."""
+def test_states_snapshot_creates_nothing_for_unknown_ids() -> None:
+    """Only the catalogues decide which objects exist. The snapshot replays
+    DB rows, ghost rows included - creating from it would later evict an
+    object no consumer was ever told existed."""
     store = _store()
     store.apply(
-        STATES_TOPIC,
-        devices({"id": 999, "stan_json": '{"state": "1", "on": 1779560000000}'}),
+        DATA_DEVICES_TOPIC,
+        details({"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"}),
     )
-    assert store.objects[999].value == "1"
-    # The kind is the generic fallback because no metadata existed.
-    assert store.objects[999].kind is not None
-    assert store.objects[999].kind.key == "value"
+    applied = store.apply(
+        STATES_TOPIC,
+        devices(
+            {"id": 5, "stan_json": '{"state": "1", "on": 1779560000000}'},
+            {"id": 999, "stan_json": '{"state": "1", "on": 1779560000000}'},
+        ),
+    )
+    assert 999 not in store.objects
+    assert [o.id for o in _updated(applied)] == [5]
+
+    # The catalogue re-request that would have evicted the phantom now
+    # removes nothing.
+    applied = store.apply(
+        DATA_DEVICES_TOPIC,
+        details({"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"}),
+    )
+    assert _removed(applied) == []
+
+
+def test_snapshot_before_catalogue_seeds_the_value_at_merge() -> None:
+    """The snapshot and catalogue replies arrive in no fixed order, and the
+    app-sync catalogue carries no stan_json column - a snapshot that lands
+    first must still hand the object its value when the catalogue
+    establishes it, in the one update that also carries the metadata."""
+    store = _store()
+    applied = store.apply(
+        STATES_TOPIC,
+        devices({"id": 20, "stan_json": '{"state": "7", "on": 1779560000000}'}),
+    )
+    assert 20 not in store.objects
+    assert _updated(applied) == []
+
+    applied = store.apply(
+        DATA_DEVICES_TOPIC,
+        details({"id": 20, "typ_komponentu": "temp", "opis_menu": "T"}),
+    )
+    assert [o.id for o in _updated(applied)] == [20]
+    assert store.objects[20].value == "7"
+    assert store.objects[20].updated_at == 1779560000.0
+    assert store.objects[20].name == "T"
+
+
+def test_eviction_prunes_the_buffered_snapshot_value() -> None:
+    """An evicted object's buffered seed must not resurface if a later
+    catalogue re-establishes the id."""
+    store = _store()
+    store.apply(
+        DATA_DEVICES_TOPIC,
+        details(
+            {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"},
+            {"id": 6, "typ_komponentu": "flaga", "opis_menu": "G"},
+        ),
+    )
+    store.apply(
+        STATES_TOPIC,
+        devices(
+            {"id": 5, "stan_json": '{"state": "1", "on": 1779560000000}'},
+            {"id": 6, "stan_json": '{"state": "1", "on": 1779560000000}'},
+        ),
+    )
+    applied = store.apply(
+        DATA_DEVICES_TOPIC,
+        details({"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"}),
+    )
+    assert [o.id for o in _removed(applied)] == [6]
+
+    store.apply(
+        DATA_DEVICES_TOPIC,
+        details(
+            {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"},
+            {"id": 6, "typ_komponentu": "flaga", "opis_menu": "G"},
+        ),
+    )
+    assert store.objects[6].value is None
 
 
 def test_details_stan_json_seed_does_not_touch_last_seen() -> None:
@@ -1077,6 +1124,10 @@ def test_plain_cover_reports_no_tilt() -> None:
 def test_states_snapshot_seeds_tilt_position() -> None:
     store = _store()
     store.apply(
+        DETAILS_TOPIC,
+        details({"id": 66, "typ_komponentu": "roleta_lamelki", "opis_menu": "B"}),
+    )
+    store.apply(
         STATES_TOPIC,
         devices(
             {
@@ -1192,6 +1243,7 @@ def test_updated_at_takes_the_report_date_or_the_receipt_time() -> None:
     assert updated_at is not None and before <= updated_at <= time.time()
 
     seeded = _store()
+    seeded.apply(DETAILS_TOPIC, _flaga_details((9, 1)))
     seeded.apply(
         STATES_TOPIC,
         json.dumps({"List": [{"id": 9, "stan_json": json.dumps({"state": "5"})}]}),

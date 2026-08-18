@@ -15,11 +15,15 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
+from typing import TYPE_CHECKING, cast
 
 import aiomqtt
 
 from .errors import AmpioAuthError, AmpioConnectionError, AmpioTimeoutError
 from .models import ConnectionStats
+
+if TYPE_CHECKING:
+    from paho.mqtt.reasoncodes import ReasonCode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,7 +71,7 @@ class Connection:
         self,
         host: str,
         port: int,
-        username: str | None,
+        username: str,
         password: str | None,
         *,
         reconnect_interval: float,
@@ -187,6 +191,8 @@ class Connection:
         except asyncio.CancelledError:
             pass
         except Exception:
+            # Unreachable while _run's own catch-all holds; kept because
+            # stop() promises never to raise into a consumer's teardown.
             _LOGGER.exception("Ampio connection loop failed")
 
     async def publish(self, topic: str, payload: bytes) -> None:
@@ -253,14 +259,20 @@ class Connection:
                     # verdicts are read: a broker may reject individual
                     # filters (the Ampio raw tree is admin-only), and a
                     # rejected topic that is never diagnosed reads as a
-                    # mysteriously silent connection.
-                    codes = await client.subscribe(
-                        [(t, _SUBSCRIBE_QOS) for t in self._topics]
+                    # mysteriously silent connection. The cast narrows away
+                    # the plain-int arm of aiomqtt's annotation: it is the
+                    # pre-VERSION2 callback shape, and the aiomqtt floor
+                    # exists to pin VERSION2 (see the pyproject rationale).
+                    codes = cast(
+                        "list[ReasonCode]",
+                        await client.subscribe(
+                            [(t, _SUBSCRIBE_QOS) for t in self._topics]
+                        ),
                     )
                     self._stats.subscribe_failures = {
-                        topic: _code_value(code)
+                        topic: code.value
                         for topic, code in zip(self._topics, codes, strict=True)
-                        if _code_value(code) >= 0x80
+                        if code.is_failure
                     }
                     # The subscribe set is tier-shaped, so every filter must
                     # be granted; a rejection means a broken broker or ACL.
@@ -337,7 +349,7 @@ class Connection:
 async def probe(
     host: str,
     port: int,
-    username: str | None,
+    username: str,
     password: str | None,
     *,
     request_topic: str,
@@ -401,15 +413,3 @@ def _is_auth_error(err: BaseException) -> bool:
             return True
         current = current.__cause__
     return False
-
-
-def _code_value(code: object) -> int:
-    """A SUBACK entry as an int, whichever shape paho handed over.
-
-    VERSION2 callbacks deliver ``ReasonCode`` (v5-normalized on every wire
-    protocol); older paths deliver plain granted-QoS ints. Both put the
-    failure bit at 0x80. An unreadable entry counts as failed rather than
-    granted.
-    """
-    value = getattr(code, "value", code)
-    return value if isinstance(value, int) else 0x80

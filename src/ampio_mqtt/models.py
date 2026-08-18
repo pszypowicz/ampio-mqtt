@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
+from enum import Enum
 
 from .classification import (
     InputKind,
@@ -14,8 +15,20 @@ from .classification import (
     ThermostatKind,
     is_system_type,
 )
-from .device_types import Capability
-from .endpoints import AccessTier
+
+
+class AccessTier(Enum):
+    """Account tier, decided by the authenticated login name.
+
+    The M-SERV gates the ``config`` surface (and the raw ``ampio/from/#``
+    channel tree) on the account being the reserved ``admin`` login; the
+    per-user app permissions do not affect it. A non-admin account, however
+    permissioned, is served only the app-sync ``data`` surface.
+    """
+
+    ADMIN = "admin"  # the reserved `admin` login: full catalogue + modules
+    RESTRICTED = "restricted"  # an app-created user: app-sync view only
+
 
 # Bit flags inside the `params` integer (`obiekty.params`); the semantics
 # match the M-SERV's own Matter bridge (docs/identity.md). Bit 4 is the
@@ -28,6 +41,12 @@ _HIDDEN_FLAG = 1 << 4
 # segment is extracted; the F segments' meaning stays opaque. Strict on
 # purpose - a half-parsed mac that is wrong is worse than None.
 _LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_[^_]+_[^_]+_[^_]+\Z")
+
+# The M-SERV's Designer override mac: its objects' leafId embeds this value
+# (not the factory mac_global), and its own module row reports it as
+# `AmpioModule.mac`. The one place the rule lives - consumers read
+# `AmpioObject.is_server_owned` instead of comparing macs themselves.
+_MSERV_MAC = 1
 
 
 @dataclass(slots=True, frozen=True)
@@ -230,7 +249,7 @@ class AmpioObject:
         twin's ``leaf_id``, so filter on ``visible`` first. Objects with an
         empty ``leaf_id`` (system objects, ghost rows) return None; a consumer
         surfacing those needs its own fallback key. Scope the key per M-SERV
-        by prefixing with a server identifier (e.g. ``AmpioServerInfo.mac``).
+        by prefixing with the server identifier, ``AmpioServerInfo.key``.
         """
         return f"leaf_{self.leaf_id}" if self.leaf_id else None
 
@@ -254,6 +273,19 @@ class AmpioObject:
         """
         match = _LEAF_ID_RE.fullmatch(self.leaf_id)
         return int(match.group(1), 16) if match is not None else None
+
+    @property
+    def is_server_owned(self) -> bool:
+        """Whether this object belongs to the M-SERV itself.
+
+        True when ``leaf_id`` embeds the M-SERV's override mac. ``leafId``
+        is served identically on both account tiers, so a consumer can
+        anchor server-owned objects to its hub device even on a restricted
+        account, which never receives the module catalogue. False when
+        ``leaf_id`` is empty - system objects, ghost rows, and the window
+        before catalogue metadata arrives.
+        """
+        return self.module_mac == _MSERV_MAC
 
     @property
     def visible(self) -> bool:
@@ -293,7 +325,6 @@ class AmpioModule:
     name: str | None = None  # nazwa_urzadzenia (user-given module name)
     type: int | None = None  # typ_urzadzenia
     model: str | None = None  # resolved model name for `type`
-    capabilities: frozenset[Capability] = field(default_factory=frozenset)
     sw_version: int | None = None  # wersja_softu
     hw_version: int | None = None  # wersja_pcb
     # Local epoch seconds when this process last received live evidence of
@@ -336,7 +367,7 @@ class AmpioServerInfo:
     # The asking account's id: -1 for the reserved `admin` login, the
     # users-table row id for an app-created user. See `access_tier`.
     user_id: int | None = None
-    server_version: str | None = None  # ampio_mqtt application version
+    server_version: str | None = None  # the M-SERV server application's version
     server_revision: str | None = None
     mqtt_version: str | None = None  # broker version
     local_ip: str | None = None  # used for the configuration_url
@@ -356,8 +387,8 @@ class AmpioServerInfo:
         return str(self.mac) if self.mac is not None else None
 
     @property
-    def access_tier(self) -> AccessTier:
-        """Account tier per the account id in the info reply.
+    def access_tier(self) -> AccessTier | None:
+        """Account tier per the account id in the info reply, or None.
 
         The wire's own confirmation for a config flow reading a
         :meth:`AmpioClient.test_connection` result; a running client's
@@ -367,12 +398,11 @@ class AmpioServerInfo:
         as the pseudo-user id ``-1``; app-created users carry their positive
         users-table row id and are always the standard tier - the app offers
         no administrator toggle for them, and their per-object permissions
-        never open the admin-only surfaces. ``UNKNOWN`` when the reply
-        carried no ``userId``, which no baseline server produces (see the
-        supported-versions policy in the README).
+        never open the admin-only surfaces. None when the reply carried no
+        ``userId``, which no baseline server produces.
         """
         if self.user_id is None:
-            return AccessTier.UNKNOWN
+            return None
         return AccessTier.ADMIN if self.user_id == -1 else AccessTier.RESTRICTED
 
 
@@ -380,8 +410,9 @@ class AmpioServerInfo:
 class ConnectionStats:
     """Lightweight liveness counters surfaced for downstream diagnostics.
 
-    Updated by `AmpioClient` itself; values are monotonic except `last_error`
-    (overwritten on every reconnect attempt). Intended for HA's per-config-
+    Updated by the connection layer (`last_message_at` by the client);
+    values are monotonic except `last_error` (overwritten on every
+    reconnect attempt). Intended for HA's per-config-
     entry diagnostics blob so a maintainer can correlate a "flapping" report
     with the actual reconnect count seen by the client.
     """

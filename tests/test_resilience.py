@@ -12,9 +12,9 @@ import asyncio
 import logging
 
 import pytest
-from conftest import USER, FakeBroker, feed
+from conftest import USER, FakeBroker, feed, make_client
 
-from ampio_mqtt import AmpioClient, ObjectUpdated
+from ampio_mqtt import AmpioClient, ConnectionDied, ObjectUpdated
 
 
 def _client() -> AmpioClient:
@@ -92,17 +92,18 @@ def test_malformed_diagnostics_frames_are_ignored(payload: bytes) -> None:
 # --- lifecycle --------------------------------------------------------------
 
 
-async def test_stop_reports_a_failed_runner_instead_of_raising() -> None:
-    client = _client()
-
-    async def explode() -> None:
-        raise RuntimeError("connection loop died")
-
-    client._connection._runner = asyncio.create_task(explode())
-    await asyncio.sleep(0)
-
+async def test_stop_after_the_loop_died_does_not_raise() -> None:
+    broker = FakeBroker()
+    broker.stream_error = RuntimeError("injected bug")
+    client = make_client(broker)
+    died: list[ConnectionDied] = []
+    client.subscribe(died.append, of=ConnectionDied)
+    await client.start(timeout=2.0, discovery_timeout=0.05)
+    async with asyncio.timeout(2.0):
+        while not died:
+            await asyncio.sleep(0.01)
     await client.stop()  # must not raise
-    assert client._connection._runner is None
+    assert client.available is False
 
 
 async def test_stop_is_idempotent() -> None:

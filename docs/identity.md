@@ -19,11 +19,6 @@ The M-SERV's default `mac` is `1`, which is not unique. Treat `mac` as
 unique _within a single install_ (the user assigns the overrides), not
 globally.
 
-Nothing on the wire enforces that uniqueness, so a misconfigured or
-mid-commissioning install can deliver two modules sharing a `mac`.
-`AmpioClient.colliding_macs` is the signal and its docstring the full
-contract: skip or disambiguate those modules rather than merge them.
-
 ## Objects
 
 | Field                     | Stable across module replacement?                                                                                                                                        | Notes |
@@ -86,6 +81,13 @@ set up with a standard account and later switched to an administrator
 keeps its entity-to-device mapping and only gains metadata. The parse
 is strict: any shape other than `0_<macHex>_<F2>_<F3>_<F4>` reads as
 None, exactly like the empty `leafId` of system objects and ghost rows.
+
+Two helpers close the loop for a consumer building devices on
+`module_mac`: `AmpioObject.is_server_owned` marks the objects that
+belong to the M-SERV itself (their `leafId` embeds its override mac),
+so they anchor to the hub device identically on both tiers, and
+`AmpioClient.mserv` returns the M-SERV's own module row - name, model,
+versions - on the admin tier that has the catalogue.
 
 ## Visibility (`AmpioObject.visible`)
 

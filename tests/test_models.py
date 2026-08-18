@@ -141,6 +141,22 @@ def test_module_mac_parses_strictly(leaf_id: str, expected: int | None) -> None:
 
 
 @pytest.mark.parametrize(
+    ("leaf_id", "server_owned"),
+    [
+        ("0_1_10_0_0", True),  # the M-SERV's override mac
+        ("0_cb8f_76_0_0", False),  # another module's object
+        ("", False),  # system objects and ghost rows
+    ],
+)
+def test_is_server_owned_reads_the_mserv_override_mac(
+    leaf_id: str, server_owned: bool
+) -> None:
+    """Served identically on both tiers via leafId, so server-owned
+    objects anchor to the hub device without a module catalogue."""
+    assert AmpioObject(id=1, leaf_id=leaf_id).is_server_owned is server_owned
+
+
+@pytest.mark.parametrize(
     ("mac", "expected"), [(47846, "47846"), (1, "1"), (None, None)]
 )
 def test_server_key_is_the_decimal_mac(mac: int | None, expected: str | None) -> None:

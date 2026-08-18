@@ -47,13 +47,9 @@ _raise_ bus events (`send_event`); it never receives them.
 
 ## Ordering and the terminal events
 
-Ordering across kinds is guaranteed: removals follow the updates of the
-catalogue reply that caused them, and the `AvailabilityChanged(False)`
-drop precedes a terminal `AuthFailed` / `ConnectionDied`, so entities
-already read unavailable when the terminal signal arrives. After a
-terminal event the loop has stopped for good: `AuthFailed` is the cue
-to drive a reauthentication flow (the reason also stays readable at
-`client.auth_failure`), `ConnectionDied` means an internal bug was
-logged and a fresh `start()` is the only recovery. A rejection or crash
-during `start()` itself raises `AmpioAuthError` /
-`AmpioConnectionError` there instead and dispatches nothing.
+The contract lives on the `AmpioClient.subscribe` docstring and the
+event classes themselves. In one line: removals follow the updates of
+the catalogue reply that caused them, and `AvailabilityChanged(False)`
+precedes a terminal `AuthFailed` / `ConnectionDied`, after which only a
+fresh `start()` continues (a genuinely changed password means a new
+client).

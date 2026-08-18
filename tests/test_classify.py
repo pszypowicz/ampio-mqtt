@@ -35,7 +35,6 @@ def test_temperature() -> None:
     assert kind.key == "temperature"
     assert kind.unit == "°C"
     assert kind.device_class == "temperature"
-    assert kind.precision == 1
 
 
 @pytest.mark.parametrize(

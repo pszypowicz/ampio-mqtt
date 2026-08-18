@@ -1,21 +1,35 @@
-"""Pure parsers for the Ampio DB-object MQTT protocol.
+"""Everything wire-shaped for the Ampio DB-object MQTT protocol.
 
-These helpers turn raw MQTT payloads into typed structures with no I/O and no
-state mutation - the `AmpioStore` is what applies them to its state.
-Keeping the parsing isolated makes it trivially unit-testable.
+One module owns both directions: the endpoint table with its topic and
+command builders (what the client says), and the pure parsers with the
+Router (what the wire says back). No I/O and no state mutation - the
+`AmpioStore` applies the typed results to its state.
+
+Topics are namespaced by the connecting account:
+  state:     ampio/fromDB/<user>/ob/<id>/state   -> {"state","desc","on"}
+  objects:   publish ampio/control/<user>/config = "devicesDetails"
+             -> ampio/fromDB/<user>/config/devicesDetails = {"Status":0,"List":[...]}
+  modules:   publish ampio/control/<user>/config = "devices"
+             -> ampio/fromDB/<user>/config/devices = {"List":[...]}
+
+The same ampio/control/<user>/config topic carries every discovery request;
+the payload keyword selects what the server publishes back. The `config`
+surface answers only for administrator accounts; non-admin accounts are
+served the app-sync `data` surface instead - see :class:`AccessTier` and
+the endpoint table below.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from .device_types import module_capabilities, module_model
-from .endpoints import BASELINE_SERVER_VERSION, ENDPOINTS, Endpoint, response_topic
+from .device_types import module_model
 from .events import BusEvent
-from .models import AmpioModule, AmpioScene, AmpioServerInfo
+from .models import AccessTier, AmpioModule, AmpioScene, AmpioServerInfo
 
 
 @dataclass(slots=True)
@@ -197,7 +211,6 @@ def parse_devices(payload: str) -> list[AmpioModule] | None:
                 name=item.get("nazwa_urzadzenia") or None,
                 type=typ,
                 model=module_model(typ),
-                capabilities=module_capabilities(typ),
                 sw_version=to_int(item.get("wersja_softu")),
                 hw_version=to_int(item.get("wersja_pcb")),
             )
@@ -248,15 +261,22 @@ def parse_scenes(payload: str) -> list[AmpioScene] | None:
         # unknown state beats silently hiding the catalogue if the column
         # ever drifts.
         raw_active = to_int(item.get("active"))
+        # Malformed row fields degrade in the same spirit as `active` above:
+        # the scene itself is real and runnable (the M-SERV replays its
+        # actions server-side), so a broken annex must not hide it - and the
+        # store's parse gate covers only the outer List shape, so nothing
+        # row-shaped may escape fetch_scenes as a bare exception.
+        infos = item.get("Infos")
         objects = {
             oid
-            for info in item.get("Infos", [])
+            for info in (infos if isinstance(infos, list) else [])
             if isinstance(info, dict) and (oid := to_int(info.get("id"))) is not None
         }
+        name = item.get("sceneName")
         out.append(
             AmpioScene(
                 id=sid,
-                name=item.get("sceneName") or "",
+                name=name if isinstance(name, str) else "",
                 active=raw_active != 0 if raw_active is not None else True,
                 parent_id=parent if parent is not None and parent >= 0 else None,
                 object_ids=frozenset(objects),
@@ -298,29 +318,40 @@ def parse_rooms(groups_payload: str, group_devices_payload: str) -> dict[int, st
     return room_map
 
 
-def parse_server_info(payload: str) -> AmpioServerInfo:
+def _to_str(value: Any) -> str | None:
+    """Coerce a field to a non-empty string, or None.
+
+    The info fields are typed as strings; coercing keeps that true even if
+    a number arrives on the wire - `server_below_baseline` splits the
+    version, so a non-str value there would raise instead of comparing.
+    """
+    return str(value) if value not in (None, "") else None
+
+
+def parse_server_info(payload: str) -> AmpioServerInfo | None:
     """Parse a server-info payload, keeping only the safe fields.
 
-    The baseline server wraps the fields in a ``Results`` object; anything
-    else parses as empty. Returns an empty `AmpioServerInfo` on parse
-    failure - callers treat that as "info not available yet" rather than an
-    error.
+    The baseline server wraps the fields in a ``Results`` object; a payload
+    without that shape returns None, exactly as the sibling parsers report
+    an unparseable reply. A ``Results`` object with fields missing still
+    parses: an identity-less reply is the server answering with nothing to
+    say, which the store handles as its own case.
     """
     try:
         outer = json.loads(payload)
     except (ValueError, TypeError):
-        return AmpioServerInfo()
+        return None
     data = outer.get("Results") if isinstance(outer, dict) else None
     if not isinstance(data, dict):
-        return AmpioServerInfo()
+        return None
     return AmpioServerInfo(
         mac=to_int(data.get("mac")),
         user_id=to_int(data.get("userId")),
-        server_version=data.get("serverVersion") or None,
-        server_revision=data.get("serverRevision") or None,
-        mqtt_version=data.get("mqttVersion") or None,
-        local_ip=data.get("local_ip") or None,
-        device_id=data.get("device_id") or None,
+        server_version=_to_str(data.get("serverVersion")),
+        server_revision=_to_str(data.get("serverRevision")),
+        mqtt_version=_to_str(data.get("mqttVersion")),
+        local_ip=_to_str(data.get("local_ip")),
+        device_id=_to_str(data.get("device_id")),
     )
 
 
@@ -415,6 +446,191 @@ def parse_stan_json(stan_json: str) -> StanJsonSeed | None:
         on_ms=on_ms,
         tilt=to_int(data.get("lammel")),
     )
+
+
+# --- Endpoint table --------------------------------------------------------
+#
+# Every request/response endpoint the M-SERV exposes is one row here, and that
+# row is the single source of truth: the client derives its subscriptions,
+# topic-to-handler routing, discovery-completion signals, and retained payloads
+# from this table. Adding an endpoint is one row, not edits in four places:
+# verify the wire shape live first (tools/probe_config.py publishes candidate
+# keywords and prints the replies), add the row, give the reply an
+# `AmpioStore._handlers` entry only if it mutates state, and expose a
+# `fetch_<name>()` awaiting `AmpioClient._fetch` - `fetch_scenes()` is the
+# three-line reference shape.
+#
+# A request publishes ``req_payload`` (a keyword, or "" for the dedicated
+# ``states``/``info`` surfaces) to ``ampio/control/<user>/<req_surface>``; the
+# reply lands on ``ampio/fromDB/<user>/<resp_surface>/<resp_leaf>``.
+
+
+# The reserved administrator login. The app refuses to create a user of
+# this name, and the broker authenticates it at CONNACK, so holding a
+# session under it IS being the administrator - the account tier is a
+# constructor fact, not a discovered one.
+ADMIN_USERNAME = "admin"
+
+
+@dataclass(frozen=True, slots=True)
+class Endpoint:
+    """One M-SERV request/response endpoint."""
+
+    name: str
+    req_surface: str  # control sub-topic: "config" | "states" | "info" | "data"
+    req_payload: str  # request keyword, or "" for the states/info surfaces
+    resp_surface: str  # fromDB sub-topic: "config" | "data"
+    resp_leaf: str  # final response-topic segment
+    # Part of the initial-discovery set awaited by start() /
+    # wait_for_initial_discovery(). The rooms/scenes endpoints are on-demand.
+    initial: bool = False
+    # The one tier this endpoint answers for, or None for both. The M-SERV
+    # serves the `config` catalogues to administrators only, and an admin
+    # session never needs the app-sync pair (it repeats the `config` view).
+    tier: AccessTier | None = None
+    # The reply parser gating a pure request/response endpoint: a reply
+    # that does not parse must neither resolve a fetch nor latch discovery,
+    # so the gate IS the parser a fetch will run - never a stand-in shape
+    # check. Endpoints whose replies mutate state are gated by their
+    # AmpioStore handler instead and never read this field.
+    parses: Callable[[str], object | None] = list_rows
+
+
+ENDPOINTS: tuple[Endpoint, ...] = (
+    Endpoint(
+        "details",
+        "config",
+        "devicesDetails",
+        "config",
+        "devicesDetails",
+        initial=True,
+        tier=AccessTier.ADMIN,
+    ),
+    Endpoint(
+        "devices",
+        "config",
+        "devices",
+        "config",
+        "devices",
+        initial=True,
+        tier=AccessTier.ADMIN,
+    ),
+    Endpoint("states", "states", "", "data", "states", initial=True),
+    Endpoint("info", "info", "", "data", "info", initial=True),
+    # App-sync object catalogue. Same wire keyword as the module list above but
+    # on the `data` surface, and a different payload: DB objects (the
+    # `devicesDetails` row shape minus `params`/`stan_json`), filtered to the
+    # objects the account was granted in the Ampio app.
+    Endpoint(
+        "data_devices",
+        "data",
+        "devices",
+        "data",
+        "devices",
+        initial=True,
+        tier=AccessTier.RESTRICTED,
+    ),
+    # Per-object `params` bitfields for the app-sync catalogue. NOT
+    # grant-filtered: every account receives the full table, which is what
+    # lets a restricted account apply the hidden-flag visibility rule.
+    Endpoint(
+        "params_devices",
+        "data",
+        "params_devices",
+        "data",
+        "params_devices",
+        initial=True,
+        tier=AccessTier.RESTRICTED,
+    ),
+    Endpoint("groups", "data", "groups", "data", "groups"),
+    Endpoint("group_devices", "data", "group_devices", "data", "group_devices"),
+    Endpoint("scenes", "data", "scenes", "data", "scenes", parses=parse_scenes),
+)
+
+ENDPOINT_BY_NAME: dict[str, Endpoint] = {ep.name: ep for ep in ENDPOINTS}
+
+
+# The M-SERV software baseline this library is developed and live-tested
+# against, as the server self-reports it on the info surface. This is the
+# compatibility floor, not a promise about anything older: a lower (or
+# missing) serverVersion logs a warning at discovery and behavior on such a
+# server is undefined - the fix is upgrading the M-SERV. The baseline server
+# also reported serverRevision 409 and mqttVersion 5.133.11, recorded in the
+# README; only serverVersion is compared.
+BASELINE_SERVER_VERSION = (1865,)
+
+
+# --- Commands --------------------------------------------------------------
+#
+# Writes go to one control topic per account as plain text:
+# ``/api/set/<object_id>/<verb>[/<arg>...]``. The verb vocabulary is the
+# M-SERV's own HTTP API, re-exposed over MQTT; see docs/protocol.md for
+# the verb table.
+#
+# The per-user grant bounds writes as it bounds reads: a command for an object
+# outside the account's grant is dropped with no effect and no reply.
+
+
+def command_topic(user: str) -> str:
+    """Control topic that carries object commands for an account."""
+    return f"ampio/control/{user}/api"
+
+
+def command_payload(object_id: int, verb: str, args: Sequence[object] = ()) -> str:
+    """Build an ``/api/set`` command payload."""
+    return f"/api/set/{object_id}/{verb}" + "".join(f"/{a}" for a in args)
+
+
+def event_payload(event_number: int) -> str:
+    """Build the payload that raises a bus event."""
+    return f"/api/setEvent/{event_number}"
+
+
+def scene_payload(scene_id: int, verb: str) -> str:
+    """Build a scene command payload; ``verb`` is run, off, or undo."""
+    return f"/api/{verb}/scene/{scene_id}"
+
+
+# `setRollerPos` takes a position and a lamella angle. 101 on either axis means
+# "leave this one where it is", so one command can move either axis alone or
+# both together.
+KEEP_POSITION = 101
+
+
+def request_topic(ep: Endpoint, user: str) -> str:
+    """Control topic an endpoint's request keyword is published to."""
+    return f"ampio/control/{user}/{ep.req_surface}"
+
+
+def response_topic(ep: Endpoint, user: str) -> str:
+    """fromDB topic an endpoint's reply arrives on."""
+    return f"ampio/fromDB/{user}/{ep.resp_surface}/{ep.resp_leaf}"
+
+
+def ob_state_wildcard(user: str) -> str:
+    """Wildcard for all object state topics for an account."""
+    return f"ampio/fromDB/{user}/ob/+/state"
+
+
+# Raw, module-scoped channel topics carry decoded CAN state per channel index
+# and are NOT namespaced by user (the `ampio/from/<MAC>/...` tree is global).
+# We subscribe only to the two input prefixes - `f` (flags) and `i` (digital
+# inputs) - because they publish on-change and are the low-latency source for
+# input objects. The high-rate prefixes (`a`/`t`/`rgbw`/`o`) are intentionally
+# excluded; those object types already arrive on the per-object topic.
+RAW_INPUT_WILDCARDS = ("ampio/from/+/state/f/+", "ampio/from/+/state/i/+")
+
+# Modules periodically broadcast a diagnostics frame on `ampio/from/<MAC>/b/4F`
+# carrying their CAN supply voltage and, on the modules that measure it, their
+# own temperature. Like the rest of the raw tree this is administrator-only.
+RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
+
+# Bus events are logical signals (1-65535) that Ampio logic raises and reacts
+# to - a wall-panel press can raise one, and a scenario can be bound to one.
+# Receiving them rides the administrator-only raw tree. Raising one goes to the
+# command surface, works on both tiers, and is bounded by nothing - not object
+# grants, and not the per-event rights the app displays.
+RAW_EVENT_WILDCARD = "ampio/from/+/event"
 
 
 # --- topic routing ---------------------------------------------------------

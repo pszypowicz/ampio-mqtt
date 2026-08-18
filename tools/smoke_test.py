@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
 
 
 async def run(args: argparse.Namespace) -> int:
-    client = AmpioClient(args.host, args.port, args.username, args.password)
+    client = AmpioClient(args.host, args.username, args.password, port=args.port)
 
     def on_object(obj: AmpioObject) -> None:
         if obj.is_sensor and obj.value is not None and obj.kind is not None:

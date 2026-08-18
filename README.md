@@ -25,12 +25,11 @@ from ampio_mqtt import AmpioClient, ObjectUpdated, discover
 
 
 async def main() -> None:
-    candidates = await discover()  # mDNS lookup of ampio.local
-    if not candidates:
+    found = await discover()  # mDNS lookup of ampio.local
+    if found is None:
         raise SystemExit("No Ampio M-SERV found on the LAN")
-    host = candidates[0].address or candidates[0].host
 
-    client = AmpioClient(host, username="user", password="secret")
+    client = AmpioClient(found.address, "user", "secret")
     client.subscribe(
         lambda e: print(e.object.id, e.object.kind, e.object.value),
         of=ObjectUpdated,
@@ -57,8 +56,8 @@ carry the API detail.
   reconnect, and one typed event stream that includes the terminal
   `AuthFailed` and `ConnectionDied` signals
   ([`docs/events.md`](docs/events.md)).
-- Discovery of the object and module catalogues on either account tier,
-  with the detected tier exposed for setup flows
+- Discovery of the object catalogue on either account tier (the module
+  catalogue is admin-only), with the detected tier exposed for setup flows
   ([`docs/account-tiers.md`](docs/account-tiers.md)).
 - Classification of every object into a sensor, input, output, or
   thermostat kind with Home-Assistant-compatible hints
