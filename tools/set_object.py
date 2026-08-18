@@ -28,10 +28,14 @@ def parse_args() -> argparse.Namespace:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p.add_argument("--host", default=os.environ.get("AMPIO_HOST"))
-    p.add_argument("--port", type=int, default=int(os.environ.get("AMPIO_PORT", "1883")))
+    p.add_argument(
+        "--port", type=int, default=int(os.environ.get("AMPIO_PORT", "1883"))
+    )
     p.add_argument("--username", default=os.environ.get("AMPIO_USERNAME"))
     p.add_argument("--password", default=os.environ.get("AMPIO_PASSWORD"))
-    p.add_argument("--object-id", type=int, required=True, help="DB object id to command")
+    p.add_argument(
+        "--object-id", type=int, required=True, help="DB object id to command"
+    )
 
     action = p.add_mutually_exclusive_group(required=True)
     action.add_argument("--on", action="store_true", help="turnOn")
@@ -44,13 +48,23 @@ def parse_args() -> argparse.Namespace:
     action.add_argument("--color", help="RGBW as R,G,B,W (each 0-255)")
     action.add_argument("--verb", help="raw verb for anything not wrapped above")
 
-    p.add_argument("--arg", action="append", default=[], help="argument for --verb (repeatable)")
-    p.add_argument("--lamella", type=int, help="slat angle for --position; left alone if omitted")
+    p.add_argument(
+        "--arg", action="append", default=[], help="argument for --verb (repeatable)"
+    )
+    p.add_argument(
+        "--lamella", type=int, help="slat angle for --position; left alone if omitted"
+    )
     p.add_argument("--pulse-ms", type=int, help="revert --value after this many ms")
-    p.add_argument("--watch", type=float, default=10.0, help="seconds to watch state (default 10)")
+    p.add_argument(
+        "--watch", type=float, default=10.0, help="seconds to watch state (default 10)"
+    )
     args = p.parse_args()
     if not args.host:
         p.error("missing --host (or AMPIO_HOST env)")
+    if not args.username:
+        # An empty username namespaces every topic as ampio/.../ /... and the
+        # run just hangs; fail loud instead.
+        p.error("missing --username (or AMPIO_USERNAME env)")
     return args
 
 
@@ -91,14 +105,18 @@ async def run(a: argparse.Namespace) -> int:
     print(f"Connected as {a.username!r} (tier: {client.access_tier.value})")
 
     obj = client.objects.get(a.object_id)
-    print(f"before: ob/{a.object_id} = {obj.value if obj else '<not in this account view>'}")
+    print(
+        f"before: ob/{a.object_id} = {obj.value if obj else '<not in this account view>'}"
+    )
 
     await send(client, a)
     print(f"command sent; watching {a.watch}s ...")
     await asyncio.sleep(a.watch)
 
     obj = client.objects.get(a.object_id)
-    print(f"after:  ob/{a.object_id} = {obj.value if obj else '<not in this account view>'}")
+    print(
+        f"after:  ob/{a.object_id} = {obj.value if obj else '<not in this account view>'}"
+    )
     await client.stop()
     return 0
 

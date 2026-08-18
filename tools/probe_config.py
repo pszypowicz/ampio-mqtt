@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Probe the Ampio DB-object API for additional config endpoints.
+"""Probe the Ampio DB-object API for additional endpoints.
 
 Discovery on this protocol works by publishing a keyword to
-``ampio/control/<user>/config`` and reading the reply on
-``ampio/fromDB/<user>/config/<keyword>``. ``devicesDetails`` is the only
-keyword confirmed so far; this tool tries a list of candidate keywords to find
-ones that return module names, rooms, or other structure useful for naming
-Home Assistant devices.
+``ampio/control/<user>/<surface>`` and reading the reply on
+``ampio/fromDB/<user>/<surface>/<keyword>``. The endpoint table in
+``src/ampio_mqtt/endpoints.py`` holds the confirmed keywords; this tool
+fuzzes candidate keywords the library does not consume yet (see
+docs/untapped-surfaces.md). ``--surface data`` probes the app-sync surface,
+which answers on every account tier; ``config`` is administrator-only.
 
 All requests are read-oriented config queries (the same mechanism the official
 app/Matter bridge uses for discovery); nothing here changes device state.
@@ -58,9 +59,18 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--host", default=os.environ.get("AMPIO_HOST"))
-    p.add_argument("--port", type=int, default=int(os.environ.get("AMPIO_PORT", "1883")))
+    p.add_argument(
+        "--port", type=int, default=int(os.environ.get("AMPIO_PORT", "1883"))
+    )
     p.add_argument("--username", default=os.environ.get("AMPIO_USERNAME"))
     p.add_argument("--password", default=os.environ.get("AMPIO_PASSWORD"))
+    p.add_argument(
+        "--surface",
+        choices=("config", "data"),
+        default="config",
+        help="Control surface to probe (config is admin-only; data answers "
+        "for every tier)",
+    )
     p.add_argument(
         "--keywords",
         default=None,
@@ -99,8 +109,8 @@ async def run(a: argparse.Namespace) -> int:
         if a.keywords
         else DEFAULT_KEYWORDS
     )
-    control_topic = f"ampio/control/{user}/config"
-    reply_filter = f"ampio/fromDB/{user}/config/#"
+    control_topic = f"ampio/control/{user}/{a.surface}"
+    reply_filter = f"ampio/fromDB/{user}/{a.surface}/#"
     seen: set[str] = set()
 
     try:
@@ -112,14 +122,13 @@ async def run(a: argparse.Namespace) -> int:
             identifier="ampio_mqtt_probe",
             timeout=10,
         ) as client:
-            await client.subscribe(reply_filter)
+            # QoS 1 keeps the broker's at-least-once leg, matching the library.
+            await client.subscribe(reply_filter, qos=1)
             print(f"Subscribed to {reply_filter!r}")
 
             async def reader() -> None:
                 async for message in client.messages:
-                    payload = message.payload
-                    if isinstance(payload, bytes):
-                        payload = payload.decode("utf-8", "replace")
+                    payload = message.payload.decode("utf-8", "replace")
                     topic = str(message.topic)
                     sub = topic.rsplit("/", 1)[-1]
                     seen.add(sub)
@@ -128,7 +137,7 @@ async def run(a: argparse.Namespace) -> int:
 
             async def publisher() -> None:
                 for kw in keywords:
-                    await client.publish(control_topic, kw.encode())
+                    await client.publish(control_topic, kw.encode(), qos=1)
                     print(f">>> requested {kw!r}")
                     await asyncio.sleep(a.gap)
 
