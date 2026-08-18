@@ -85,6 +85,12 @@ it away.
 
 ### Fixed
 
+- **A fetch's `timeout` bounds the whole call.** `fetch_rooms` /
+  `fetch_scenes` published their requests before starting the timeout
+  window, and each publish awaits its PUBACK under the connection's own
+  5 s deadline - so a broker slow to acknowledge could stretch a
+  `timeout=5.0` rooms fetch to ~15 s. The publishes now sit inside the
+  window, making the documented contract true.
 - **`turn_off()` works on rgbw objects.** A known color output that does
   not answer `turnOff` is turned off with `setColors 0/0/0/0` - off is
   unambiguous, so the library routes it. An object whose metadata has

@@ -56,6 +56,9 @@ class FakeBroker:
         # simulating the broker dropping an established connection.
         self.stream_error: BaseException | None = None
         self.publish_errors: list[BaseException | None] = []
+        # Seconds each publish stalls before its PUBACK, simulating a
+        # broker slow to acknowledge.
+        self.publish_delay: float = 0.0
         self.scripted_messages: list[Message] = []
         self.published: list[tuple[str, bytes]] = []
         self.published_qos: list[int] = []
@@ -93,6 +96,8 @@ class FakeBroker:
         return [self.suback_codes.get(t, 0) for t, _q in entries]
 
     async def publish(self, topic: str, payload: bytes = b"", qos: int = 0) -> None:
+        if self.publish_delay:
+            await asyncio.sleep(self.publish_delay)
         error = self.publish_errors.pop(0) if self.publish_errors else None
         if error is not None:
             raise error

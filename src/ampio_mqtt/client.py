@@ -799,9 +799,14 @@ class AmpioClient:
         for name, future in futures.items():
             self._channels[name].waiters.append(future)
         try:
-            for name in names:
-                await self._publish(ENDPOINT_BY_NAME[name])
+            # The publishes sit inside the window so `timeout` bounds the
+            # whole call: each one otherwise awaits its PUBACK under the
+            # connection's own deadline, and a slow-to-ack broker would
+            # stretch a "5 s" fetch to three times that before the reply
+            # wait even began.
             async with asyncio.timeout(timeout):
+                for name in names:
+                    await self._publish(ENDPOINT_BY_NAME[name])
                 await asyncio.gather(*futures.values())
         except TimeoutError as err:
             raise AmpioTimeoutError(timeout_message) from err
