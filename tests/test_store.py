@@ -160,7 +160,9 @@ def test_an_unreadable_reply_reports_its_endpoint_but_not_parsed() -> None:
 def test_live_messages_carry_no_endpoint(
     topic: str, payload: str, event_type: type
 ) -> None:
-    applied = _store().apply(topic, payload)
+    store = _store()
+    store.apply(DETAILS_TOPIC, details({"id": 41}))
+    applied = store.apply(topic, payload)
     assert applied.endpoint is None
     assert [e for e in applied.events if isinstance(e, event_type)]
 
@@ -386,6 +388,7 @@ def test_a_dated_snapshot_beats_an_undated_seed() -> None:
 def test_an_undated_snapshot_only_fills_a_gap() -> None:
     """An undated report never replaces a value, however the value is dated."""
     store = _store()
+    store.apply(DETAILS_TOPIC, details({"id": 10}))
     store.apply(f"ampio/fromDB/{USER}/ob/10/state", '{"state":"live"}')
     applied = store.apply(STATES_TOPIC, _snapshot("undated", None))
     assert _updated(applied) == []
@@ -397,6 +400,7 @@ def test_a_newer_snapshot_corrects_a_value_that_changed_during_an_outage() -> No
     topics are not retained), so a dated-newer report must overwrite the
     value a pre-outage live push left behind."""
     store = _store()
+    store.apply(DETAILS_TOPIC, details({"id": 10}))
     store.apply(
         f"ampio/fromDB/{USER}/ob/10/state", '{"state":"255","on":1786700100000}'
     )
@@ -846,15 +850,49 @@ def test_devices_redelivery_preserves_last_seen() -> None:
     assert store.modules[17].last_seen == 1700000000.0
 
 
-def test_state_without_metadata_creates_generic_sensor() -> None:
+def test_a_push_for_an_uncatalogued_id_waits_for_its_catalogue_row() -> None:
+    """Only the catalogues decide which objects exist. A push that races
+    ahead of them dispatches nothing and creates nothing; the catalogue
+    row surfaces the object already carrying the buffered value, so there
+    is no update/remove churn around a catalogue reply."""
     store = _store()
-    store.apply(
-        f"ampio/fromDB/{USER}/ob/93/state",
-        '{"state":"187.6","desc":"187.6 "}',
-    )
+    state_topic = f"ampio/fromDB/{USER}/ob/93/state"
+    applied = store.apply(state_topic, '{"state":"187.6","desc":"187.6 "}')
+    assert applied.events == []
+    assert 93 not in store.objects
+
+    applied = store.apply(DETAILS_TOPIC, details({"id": 93}))
     obj = store.objects[93]
-    assert obj.is_sensor is True  # generic fallback
+    assert obj.is_sensor is True  # no typ_komponentu -> generic fallback
     assert obj.value == "187.6"
+    assert [o.value for o in _updated(applied)] == ["187.6"]
+
+
+def test_a_buffered_push_loses_to_a_newer_dated_stan_json_seed() -> None:
+    """The catalogue replay uses the same dated-supersedes rule as the
+    snapshot: the fresher of push and stan_json seed wins."""
+    store = _store()
+    state_topic = f"ampio/fromDB/{USER}/ob/93/state"
+    store.apply(state_topic, '{"state":"old","on":1000}')
+    row = {"id": 93, "stan_json": json.dumps({"state": "new", "on": 2000})}
+    store.apply(DETAILS_TOPIC, details(row))
+    assert store.objects[93].value == "new"
+
+    fresh = _store()
+    fresh.apply(state_topic, '{"state":"newer","on":3000}')
+    fresh.apply(DETAILS_TOPIC, details(row))
+    assert fresh.objects[93].value == "newer"
+
+
+def test_a_buffered_push_for_a_ghost_id_is_pruned_by_a_complete_catalogue() -> None:
+    """A catalogue that does not list the pushed id proves it will never
+    gain a row; the buffered value must not resurface if the id later
+    appears (a DB id reassignment, not the same object)."""
+    store = _store()
+    store.apply(f"ampio/fromDB/{USER}/ob/99/state", '{"state":"ghost"}')
+    store.apply(DETAILS_TOPIC, details({"id": 41}))
+    store.apply(DETAILS_TOPIC, details({"id": 41}, {"id": 99}))
+    assert store.objects[99].value is None
 
 
 @pytest.mark.parametrize(
@@ -904,6 +942,7 @@ def test_stan_json_with_no_state_field_does_not_overwrite_value() -> None:
 def test_numeric_value_none_for_bare_nan_state_push() -> None:
     """A bare NaN literal parses (Python's json accepts it) but reads as None."""
     store = _store()
+    store.apply(DETAILS_TOPIC, details({"id": 12}))
     store.apply(f"ampio/fromDB/{USER}/ob/12/state", '{"state": NaN}')
     obj = store.objects[12]
     assert obj.value == "nan"
@@ -1217,6 +1256,7 @@ def test_object_updated_carries_a_snapshot() -> None:
     the same object must not reach a listener that deferred processing.
     Objects are frozen, so the store publishes a new instance per change."""
     store = _store()
+    store.apply(DETAILS_TOPIC, details({"id": 5}))
     state_topic = f"ampio/fromDB/{USER}/ob/5/state"
     (event,) = _updated(store.apply(state_topic, '{"state": "1", "on": 2000}'))
     store.apply(state_topic, '{"state": "2", "on": 3000}')
@@ -1250,6 +1290,7 @@ def test_updated_at_takes_the_report_date_or_the_receipt_time() -> None:
     """A dated report stamps the M-SERV's own `on` (0 is a value, not
     absence); an undated push stamps receipt; an undated seed leaves None."""
     store = _store()
+    store.apply(DETAILS_TOPIC, details({"id": 9}))
     topic = f"ampio/fromDB/{USER}/ob/9/state"
     store.apply(topic, '{"state": "1", "on": 0}')
     assert store.objects[9].updated_at == 0.0

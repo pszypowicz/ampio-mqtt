@@ -107,10 +107,10 @@ _LIN_WEJ_BY_INTERP: dict[int, SensorKind] = {
     7: SensorKind("co2", "CO2", "ppm", "carbon_dioxide", precision=0),
 }
 
-# Generic value-only sensor for an object with no usable metadata (a state
-# push that raced ahead of the catalogues, or a `typ_komponentu` missing from
-# TYPE_PROFILES). The value may be non-numeric, so it claims neither a state
-# class nor a precision - both would make Home Assistant reject a text value.
+# Generic value-only sensor for a catalogue row with no usable metadata
+# (a `typ_komponentu` missing from TYPE_PROFILES). The value may be
+# non-numeric, so it claims neither a state class nor a precision - both
+# would make Home Assistant reject a text value.
 _GENERIC_SENSOR = SensorKind(
     "value", "Value", None, None, state_class=None, precision=None
 )

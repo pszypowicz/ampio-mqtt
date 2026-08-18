@@ -9,6 +9,7 @@ any single message.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 import pytest
@@ -21,11 +22,21 @@ def _client() -> AmpioClient:
     return AmpioClient("host", username=USER)
 
 
+def _establish(client: AmpioClient, *oids: int) -> None:
+    """Catalogue rows establishing the objects the live pushes then update."""
+    feed(
+        client,
+        f"ampio/fromDB/{USER}/data/devices",
+        json.dumps({"List": [{"id": oid} for oid in oids]}),
+    )
+
+
 # --- listeners are consumer code and may raise ------------------------------
 
 
 def test_a_raising_listener_does_not_stop_the_others() -> None:
     client = _client()
+    _establish(client, 41)
     seen: list[int] = []
     client.subscribe(lambda e: (_ for _ in ()).throw(ValueError("boom")))
     client.subscribe(lambda e: seen.append(e.object.id), of=ObjectUpdated)
@@ -37,6 +48,7 @@ def test_a_raising_listener_does_not_stop_the_others() -> None:
 
 def test_a_raising_listener_does_not_stop_later_messages() -> None:
     client = _client()
+    _establish(client, 41)
     client.subscribe(lambda e: (_ for _ in ()).throw(ValueError("boom")))
 
     feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1"}')
@@ -69,6 +81,7 @@ def test_malformed_replies_never_escape_the_dispatcher(
 
 def test_a_malformed_reply_does_not_stop_later_messages() -> None:
     client = _client()
+    _establish(client, 41)
     feed(client, f"ampio/fromDB/{USER}/config/devicesDetails", b"null")
     feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"77"}')
     assert client.objects[41].value == "77"
@@ -124,6 +137,7 @@ def test_backoff_stays_finite_and_capped(attempt: int) -> None:
 
 def test_updated_at_tracks_the_report_a_value_came_from() -> None:
     client = _client()
+    _establish(client, 41)
     feed(
         client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1","on":1786700100000}'
     )
@@ -142,6 +156,7 @@ async def test_poison_message_does_not_kill_the_connection(
     payload is dropped with one logged traceback, the connection stays
     up, and later messages process normally."""
     client, _broker = connected
+    _establish(client, 5)
     original = client._store.apply
 
     def fragile(topic: str, payload: str) -> object:

@@ -73,6 +73,13 @@ class AmpioStore:
         # column either, and only the catalogues decide which objects exist -
         # a snapshot row for an id no catalogue established creates nothing.
         self._stan_by_id: dict[int, str] = {}
+        # Latest live push per id no catalogue has established, with its
+        # local receive time as the undated fallback stamp. Only the
+        # catalogues decide which objects exist, so a push that races ahead
+        # of them (startup, an object just added in the app) waits here and
+        # surfaces with the catalogue row - creating from it would dispatch
+        # updates for an object the next catalogue reply then evicts.
+        self._pending_state: dict[int, tuple[_protocol.StateUpdate, float]] = {}
         # Endpoints whose reply mutates state, each reporting whether the
         # payload parsed. The rest are pure request/response - the client keeps
         # their payload and parses it on demand.
@@ -153,6 +160,13 @@ class AmpioStore:
         """
         if surface == "data/devices" and self._is_admin:
             return False
+        # The same completeness proves a buffered push's id will never gain
+        # a catalogue row; without the prune, ghost-row pushes accumulate.
+        # An empty reply proves nothing here either - see the guard below.
+        if present:
+            for oid in list(self._pending_state):
+                if oid not in present:
+                    del self._pending_state[oid]
         missing = [oid for oid in self.objects if oid not in present]
         if not missing:
             return False
@@ -208,6 +222,31 @@ class AmpioStore:
         if stan_json is not None:
             updated, seeded = self._apply_stan_json(updated, stan_json)
             changed |= seeded
+        # A live push that raced ahead of this row waits in the pending
+        # buffer; replay it under the same dated-supersedes rule the
+        # snapshot uses, so the fresher of push and stan_json seed wins.
+        pending = self._pending_state.pop(meta.id, None)
+        if pending is not None:
+            update, received_at = pending
+            stamp = (
+                float(update.on_ms) / 1000.0
+                if update.on_ms is not None
+                else received_at
+            )
+            if self._supersedes(updated, stamp):
+                changed |= updated.value != update.value or (
+                    update.tilt is not None and updated.tilt_position != update.tilt
+                )
+                updated = replace(
+                    updated,
+                    value=update.value,
+                    tilt_position=(
+                        update.tilt
+                        if update.tilt is not None
+                        else updated.tilt_position
+                    ),
+                    updated_at=stamp,
+                )
         self.objects[meta.id] = updated
         if changed:
             self._record(updated, applied)
@@ -321,7 +360,10 @@ class AmpioStore:
 
     def _apply_state(self, update: _protocol.StateUpdate, applied: Applied) -> None:
         obj = self.objects.get(update.id)
-        if obj is not None and obj.raw_proven:
+        if obj is None:
+            self._pending_state[update.id] = (update, time.time())
+            return
+        if obj.raw_proven:
             # The raw path owns this object: the per-object echo repeats
             # what the raw edge already delivered ~150 ms earlier, and
             # resync comes from the broker's retained raw table on every
@@ -329,10 +371,6 @@ class AmpioStore:
             # live evidence of the module.
             self._touch_module(obj.device_id)
             return
-        if obj is None:
-            # State raced ahead of the catalogues -> generic sensor until
-            # metadata lands.
-            obj = AmpioObject(id=update.id, kind=classify(None, None))
         stamp = (
             float(update.on_ms) / 1000.0 if update.on_ms is not None else time.time()
         )
