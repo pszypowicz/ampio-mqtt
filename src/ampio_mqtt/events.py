@@ -120,8 +120,11 @@ class AuthFailed:
 class ConnectionDied:
     """Terminal: the connection loop crashed and will not retry.
 
-    The shape an internal bug produces - anything the loop does not
-    recognize as a transport or credential failure. Dispatched after
+    The shape a bug in the connection loop itself produces - anything the
+    loop does not recognize as a transport or credential failure. A bug
+    triggered by one message's processing is not this: the client guards
+    per message, dropping the failing payload with a logged traceback
+    while the connection stays up. Dispatched after
     ``AvailabilityChanged(False)``, with the traceback logged and the
     reason kept in ``ConnectionStats.last_error``; without it a dead loop
     is indistinguishable from an outage the client is still retrying.

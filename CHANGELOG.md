@@ -60,6 +60,13 @@ it away.
 
 ### Changed
 
+- **A message-processing bug costs one message, not the connection.**
+  The client guards each inbound message: a payload whose processing
+  raises is dropped with a logged traceback (once per topic; repeats at
+  debug) while the connection stays up. Previously any such exception
+  took the terminal `ConnectionDied` path, so a retained poison payload
+  would kill the client seconds after every restart. Bugs in the
+  connection loop itself remain terminal.
 - **The read surface is immutable.** `AmpioObject`, `AmpioModule`,
   `AmpioScene`, and `AmpioServerInfo` are frozen dataclasses, and
   `client.objects` / `client.modules` return read-only views (typed

@@ -144,6 +144,10 @@ class AmpioClient:
             ep.name: _ReplyChannel() for ep in ENDPOINTS
         }
 
+        # Topics whose messages have failed processing, so a recurring
+        # poison payload logs its traceback once instead of per delivery.
+        self._poisoned_topics: set[str] = set()
+
     def _subscriptions(self) -> list[str]:
         """Every topic the client needs on each (re)connect."""
         return [
@@ -155,11 +159,33 @@ class AmpioClient:
         ]
 
     def _handle_message(self, topic: str, payload: str) -> None:
-        """Apply one message, then dispatch what it changed."""
+        """Apply one message, then dispatch what it changed.
+
+        Guarded per message: a processing bug costs the one message that
+        triggered it, never the connection - unguarded, the exception would
+        reach the connection loop's terminal path, and a retained poison
+        payload would then kill the client seconds after every restart.
+        The traceback is logged once per topic (repeats at debug, the
+        anti-drowning convention); bugs in the connection loop itself
+        remain terminal.
+        """
         self.stats.last_message_at = time.time()
-        applied = self._store.apply(topic, payload)
-        if applied.endpoint is not None:
-            self._channels[applied.endpoint.name].deliver(payload, applied.parsed)
+        try:
+            applied = self._store.apply(topic, payload)
+            if applied.endpoint is not None:
+                self._channels[applied.endpoint.name].deliver(payload, applied.parsed)
+        except Exception:
+            if topic in self._poisoned_topics:
+                _LOGGER.debug("Dropped another failing Ampio message on %s", topic)
+            else:
+                self._poisoned_topics.add(topic)
+                _LOGGER.exception(
+                    "Dropped an Ampio message that failed processing "
+                    "(topic %s, payload %.200r); the connection stays up",
+                    topic,
+                    payload,
+                )
+            return
         for event in applied.events:
             self._dispatch(event)
 

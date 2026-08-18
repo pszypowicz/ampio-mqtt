@@ -9,9 +9,10 @@ any single message.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
-from conftest import USER, feed
+from conftest import USER, FakeBroker, feed
 
 from ampio_mqtt import AmpioClient, ObjectUpdated
 
@@ -126,3 +127,40 @@ def test_updated_at_tracks_the_report_a_value_came_from() -> None:
         client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1","on":1786700100000}'
     )
     assert client.objects[41].updated_at == 1786700100.0
+
+
+# --- a message-processing bug costs one message, not the connection ---------
+
+
+async def test_poison_message_does_not_kill_the_connection(
+    connected: tuple[AmpioClient, FakeBroker],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The store's parsers make this unreachable today; the fragile shim
+    stands in for a future defect. The guard's contract: the failing
+    payload is dropped with one logged traceback, the connection stays
+    up, and later messages process normally."""
+    client, _broker = connected
+    original = client._store.apply
+
+    def fragile(topic: str, payload: str) -> object:
+        if payload == "POISON":
+            raise RuntimeError("simulated processing defect")
+        return original(topic, payload)
+
+    client._store.apply = fragile  # type: ignore[method-assign]
+    topic = f"ampio/fromDB/{USER}/ob/5/state"
+    with caplog.at_level(logging.ERROR):
+        feed(client, topic, b"POISON")  # must not raise
+    assert client.available
+    assert sum("failed processing" in r.message for r in caplog.records) == 1
+
+    feed(client, topic, b'{"state":"42"}')
+    assert client.objects[5].value == "42"
+
+    # A recurring poison on the same topic stays out of the error log -
+    # the traceback was already recorded once.
+    caplog.clear()
+    with caplog.at_level(logging.ERROR):
+        feed(client, topic, b"POISON")
+    assert not caplog.records
