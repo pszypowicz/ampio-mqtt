@@ -65,9 +65,13 @@ verb, the row says so.
 **Commands are grant-scoped.** The per-user grant bounds writes exactly
 as it bounds reads: a command for an object outside the account's grant
 is dropped with no effect and no reply, while the identical command from
-an administrator succeeds - checked against two non-granted objects
-of different types. The account's namespace likewise carries state only
-for granted objects, including ones it just commanded.
+an administrator succeeds. Checked against non-granted objects of
+multiple component types - most recently `setColors` on an rgbw and
+`setValue` on a dimmer, sent from the standard account while an admin
+session observed both objects stay silent, with a granted-object
+positive control from the same account confirming its command path
+works. The account's namespace likewise carries state only for granted
+objects, including ones it just commanded.
 
 The `ampio/to/<mac>/...` CAN tree is the other write path (documented in
 Ampio's own MQTT API note, with per-channel `cmd` topics and a `raw` hex
@@ -90,7 +94,7 @@ which works on both tiers.
 | `setColor`                         | 24-bit `R \| G<<8 \| B<<16` | Dead on the baseline server: in the spec enum, but a live send to an `rgbw` object had no effect and no reply. Use `setColors`.                                                                                                                                                                                                                           |
 | `setColorW`                        | `<rgb24>/<white>`           | Dead on the baseline server, same observation as `setColor`. Use `setColors`.                                                                                                                                                                                                                                                                             |
 | `setTemperature`                   | `<°C>`                      | Regulator (`reg`) setpoint; echoed as `setTemperature` in the reg state push (see Live state). Absent from the spec enum (Ampio's MQTT API note only), yet works.                                                                                                                                                                                         |
-| `setHeatingMode`                   | mode letter                 | `M` switched a regulator from Schedule to Manual (state push `mode` went `S` -> `M`); sending `S` back was silently ignored, so only `M` is mapped of the claimed `A,S,M,H`.                                                                                                                                                                              |
+| `setHeatingMode`                   | mode letter                 | `M` switched a regulator from Schedule to Manual (state push `mode` went `S` -> `M`); sending `S` back was silently ignored, so only `M` is mapped of the claimed `A,S,M,H`; #73 tracks pinning the full mode vocabulary.                                                                                                                                                                              |
 | `arm`, `disarm`                    | `<pin>`                     | Flip a `satel_alarm` object's armed state, ~1 s echo; the `satel_` types cover alarm integrations generally (verified on a Jablotron behind an M-CON). Absent from the spec enum, yet works. The paired "alarmed" object also reads 1 while the panel is in its exit-delay `arming` phase - on its own it is not a siren indicator.                       |
 | `setVolume`, `setInput`, `setSeek` | radio module                | In the spec enum. Untestable here - no radio module.                                                                                                                                                                                                                                                                                                      |
 | `setText`                          | `<text>`                    | Sets the `desc` field of the object's state push (`state` unchanged), fanned out to every user namespace.                                                                                                                                                                                                                                                 |

@@ -7,7 +7,8 @@ screen.
 
 Wire behavior documented here is verified against the baseline install
 (see the README's supported versions). Claims that are still open are
-the marked case - they carry a tracking-issue link.
+the marked case - they carry a tracking-issue link or an in-place
+caveat naming exactly what is unverified.
 
 | File                                             | Subject                                                                                                                                     |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -91,8 +91,9 @@ the capability table and the measured latency difference.
 The library is developed and live-tested against an M-SERV self-reporting
 `serverVersion` 1865 (`serverRevision` 409, `mqttVersion` 5.133.11). That
 baseline is the compatibility floor; wire behavior documented in this
-repo is verified against that install unless a tracking issue marks the
-claim open. Older servers are not supported, and
+repo is verified against that install unless marked otherwise in place -
+an open claim carries a tracking-issue link or a caveat naming exactly
+what is unverified. Older servers are not supported, and
 the library logs a warning when the connected server reports a lower or
 missing `serverVersion`. If something misbehaves on an older server,
 upgrade the M-SERV first.
