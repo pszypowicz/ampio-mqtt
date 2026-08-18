@@ -1178,3 +1178,45 @@ def test_non_diagnostics_frames_are_ignored(payload: str) -> None:
     store = _diag_store()
     store.apply("ampio/from/CAFE/b/4F", payload)
     assert store.modules[7].supply_voltage is None
+
+
+# --- module catalogue events and event snapshots ---------------------------
+
+
+def test_devices_reply_dispatches_module_updated_for_new_and_changed() -> None:
+    """The module list is news exactly as the object catalogue is: a module
+    it adds or changes dispatches ModuleUpdated; an identical re-request
+    dispatches nothing."""
+    store = _store()
+    first = store.apply(DEVICES_TOPIC, _devices(10, 20))
+    assert [m.id for m in _mod_updated(first)] == [1, 2]
+
+    again = store.apply(DEVICES_TOPIC, _devices(10, 20))
+    assert _mod_updated(again) == []
+
+    doc = json.loads(_devices(10, 20))
+    doc["List"][1]["nazwa_urzadzenia"] = "renamed"
+    changed = store.apply(DEVICES_TOPIC, json.dumps(doc))
+    assert [(m.id, m.name) for m in _mod_updated(changed)] == [(2, "renamed")]
+
+
+def test_object_updated_carries_a_snapshot() -> None:
+    """A dispatched event freezes the state it announced; later changes to
+    the same object must not reach a listener that deferred processing."""
+    store = _store()
+    state_topic = f"ampio/fromDB/{USER}/ob/5/state"
+    (event,) = _updated(store.apply(state_topic, '{"state": "1", "on": 2000}'))
+    assert event is not store.objects[5]
+    store.apply(state_topic, '{"state": "2", "on": 3000}')
+    assert event.value == "1"
+    assert store.objects[5].value == "2"
+
+
+def test_module_updated_carries_a_snapshot() -> None:
+    store = _diag_store()
+    diag_topic = "ampio/from/CAFE/b/4F"
+    (event,) = _mod_updated(store.apply(diag_topic, '{"d":[254,79,60,110],"m":0}'))
+    assert event is not store.modules[7]
+    store.apply(diag_topic, '{"d":[254,79,70,110],"m":0}')
+    assert event.supply_voltage == 12.0
+    assert store.modules[7].supply_voltage == 14.0

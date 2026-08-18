@@ -11,16 +11,12 @@ import logging
 import time
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 
 from . import _protocol
 from .classification import classify, input_channel_prefix
-from .endpoints import (
-    BASELINE_SERVER_VERSION,
-    AccessTier,
-    Endpoint,
-)
+from .endpoints import AccessTier, Endpoint
 from .events import (
     BusEvent,
     ModuleRemoved,
@@ -47,7 +43,9 @@ class Applied:
     endpoint: Endpoint | None = None
     parsed: bool = True
     # Everything the message changed, in processing order, ready to dispatch.
-    # Removal events carry final state already gone from the store.
+    # Update events carry a snapshot taken as the change was applied, so a
+    # consumer that defers processing still sees the state the event was
+    # about; removal events carry final state already gone from the store.
     events: list[StoreEvent] = field(default_factory=list)
 
 
@@ -76,7 +74,7 @@ class AmpioStore:
         # Endpoints whose reply mutates state, each reporting whether the
         # payload parsed. The rest are pure request/response - the client keeps
         # their payload and parses it on demand.
-        self._handlers: dict[str, Callable[[str], bool]] = {
+        self._handlers: dict[str, Callable[[str, Applied], bool]] = {
             "details": partial(self._handle_catalogue, "devicesDetails"),
             "data_devices": partial(self._handle_catalogue, "data/devices"),
             "devices": self._handle_devices,
@@ -84,19 +82,18 @@ class AmpioStore:
             "states": self._handle_states_snapshot,
             "info": self._handle_info,
         }
-        self._applied = Applied()
 
     # --- routing ----------------------------------------------------------
 
     def apply(self, topic: str, payload: str) -> Applied:
         """Apply one message and report what it changed."""
-        self._applied = Applied()
+        applied = Applied()
         match self._router.route(topic, payload):
             case _protocol.EndpointReply(endpoint=endpoint, payload=body):
-                self._applied.endpoint = endpoint
+                applied.endpoint = endpoint
                 handler = self._handlers.get(endpoint.name)
                 if handler is not None:
-                    self._applied.parsed = handler(body)
+                    applied.parsed = handler(body, applied)
                 else:
                     # Pure request/response endpoints mutate nothing here, but
                     # their parseability still gates the reply signal - a
@@ -104,22 +101,22 @@ class AmpioStore:
                     # them answers with a {"List": [...]} document, so that
                     # shape check stands in for a handler; an endpoint with a
                     # different reply shape needs its own _handlers entry.
-                    self._applied.parsed = _protocol._rows(body) is not None
-                    if not self._applied.parsed:
+                    applied.parsed = _protocol.list_rows(body) is not None
+                    if not applied.parsed:
                         _LOGGER.warning("Could not parse Ampio %s reply", endpoint.name)
             case _protocol.StateUpdate() as update:
-                self._apply_state(update)
+                self._apply_state(update, applied)
             case _protocol.RawChannelEdge() as edge:
-                self._apply_raw_channel(edge)
+                self._apply_raw_channel(edge, applied)
             case _protocol.DiagnosticsReport(mac=mac, diagnostics=diagnostics):
-                self._apply_diagnostics(mac, diagnostics)
+                self._apply_diagnostics(mac, diagnostics, applied)
             case BusEvent() as event:
-                self._applied.events.append(event)
-        return self._applied
+                applied.events.append(event)
+        return applied
 
     # --- catalogues -------------------------------------------------------
 
-    def _handle_catalogue(self, surface: str, payload: str) -> bool:
+    def _handle_catalogue(self, surface: str, payload: str, applied: Applied) -> bool:
         """Apply an object catalogue from either discovery surface.
 
         The two surfaces carry the same rows: the app-sync one simply omits
@@ -133,13 +130,17 @@ class AmpioStore:
             return False
         touched = False
         for meta in items:
-            touched |= self._merge_metadata(meta)
-        evicted = self._evict_missing_objects(surface, {meta.id for meta in items})
+            touched |= self._merge_metadata(meta, applied)
+        evicted = self._evict_missing_objects(
+            surface, {meta.id for meta in items}, applied
+        )
         if touched or evicted:
             self._rebuild_indexes()
         return True
 
-    def _evict_missing_objects(self, surface: str, present: set[int]) -> bool:
+    def _evict_missing_objects(
+        self, surface: str, present: set[int], applied: Applied
+    ) -> bool:
         """Drop objects the authoritative catalogue no longer lists.
 
         A reply proves absence only when it is complete for the account. The
@@ -170,10 +171,10 @@ class AmpioStore:
         for oid in missing:
             obj = self.objects.pop(oid)
             self._params_by_id.pop(oid, None)
-            self._applied.events.append(ObjectRemoved(obj))
+            applied.events.append(ObjectRemoved(obj))
         return True
 
-    def _merge_metadata(self, meta: _protocol.ObjectMetadata) -> bool:
+    def _merge_metadata(self, meta: _protocol.ObjectMetadata, applied: Applied) -> bool:
         """Fold one catalogue row into its object; True when anything changed.
 
         Only a real change is reported, so re-requesting the catalogue on every
@@ -202,14 +203,15 @@ class AmpioStore:
         if meta.stan_json is not None:
             changed |= self._apply_stan_json(obj, meta.stan_json)
         if changed:
-            self._record(obj)
+            self._record(obj, applied)
         return changed
 
-    def _handle_devices(self, payload: str) -> bool:
+    def _handle_devices(self, payload: str, applied: Applied) -> bool:
         modules = _protocol.parse_devices(payload)
         if modules is None:
             _LOGGER.warning("Could not parse Ampio devices list")
             return False
+        changed = False
         for module in modules:
             previous = self.modules.get(module.id)
             if previous is not None:
@@ -217,11 +219,18 @@ class AmpioStore:
                 module.supply_voltage = previous.supply_voltage
                 module.temperature = previous.temperature
             self.modules[module.id] = module
+            # A new module or a changed catalogue row is news, exactly as an
+            # object catalogue row is; the live fields were carried over
+            # above, so any difference left is the catalogue's.
+            if previous != module:
+                changed = True
+                applied.events.append(ModuleUpdated(replace(module)))
         # The module list is admin-only and complete, so its arrival is the
         # authority to evict what it stopped listing - with the same
         # empty-reply guard the object catalogues apply.
         present = {module.id for module in modules}
         missing = [mid for mid in self.modules if mid not in present]
+        evicted = False
         if missing and not present:
             _LOGGER.warning(
                 "Ampio devices reply is empty while %d modules are known; "
@@ -230,11 +239,13 @@ class AmpioStore:
             )
         else:
             for mid in missing:
-                self._applied.events.append(ModuleRemoved(self.modules.pop(mid)))
-        self._rebuild_indexes()
+                evicted = True
+                applied.events.append(ModuleRemoved(self.modules.pop(mid)))
+        if changed or evicted:
+            self._rebuild_indexes()
         return True
 
-    def _handle_params_devices(self, payload: str) -> bool:
+    def _handle_params_devices(self, payload: str, applied: Applied) -> bool:
         """Apply the ``data/params_devices`` params table.
 
         Stores the full table for catalogue rows that arrive later, and updates
@@ -251,27 +262,20 @@ class AmpioStore:
             obj = self.objects.get(oid)
             if obj is not None and obj.params != params:
                 obj.params = params
-                self._record(obj)
+                self._record(obj, applied)
         return True
 
-    def _handle_info(self, payload: str) -> bool:
+    def _handle_info(self, payload: str, applied: Applied) -> bool:
         previous = self.server_info
         info = _protocol.parse_server_info(payload)
         self.server_info = info
         # Warn when the version first becomes known or changes, not on the
         # re-request every reconnect issues.
-        if (
-            previous is None or previous.server_version != info.server_version
-        ) and _protocol.server_below_baseline(info.server_version):
-            _LOGGER.warning(
-                "Ampio server reports version %s, below the tested baseline %s; "
-                "behavior on this server is untested - upgrade the M-SERV",
-                info.server_version or "(none)",
-                ".".join(map(str, BASELINE_SERVER_VERSION)),
-            )
+        if previous is None or previous.server_version != info.server_version:
+            _protocol.warn_if_below_baseline(info.server_version)
         return True
 
-    def _handle_states_snapshot(self, payload: str) -> bool:
+    def _handle_states_snapshot(self, payload: str, applied: Applied) -> bool:
         entries = _protocol.parse_states_snapshot(payload)
         if entries is None:
             _LOGGER.warning("Could not parse Ampio states snapshot")
@@ -284,19 +288,17 @@ class AmpioStore:
             if entry.stan_json is not None and self._apply_stan_json(
                 obj, entry.stan_json
             ):
-                self._record(obj)
+                self._record(obj, applied)
         return True
 
     # --- live state -------------------------------------------------------
 
-    def _apply_state(self, update: _protocol.StateUpdate) -> None:
+    def _apply_state(self, update: _protocol.StateUpdate, applied: Applied) -> None:
         obj = self.objects.get(update.id)
         if obj is not None and obj.raw_proven:
-            # The faster raw-channel path is authoritative for this input, so
-            # the echo's value must neither re-notify nor clobber a newer
-            # edge. Its server timestamp is still harvested: the raw tree is
-            # undated, so the echo is what anchors a raw-proven object to the
-            # server clock and makes snapshot supersession comparable.
+            # The raw path is authoritative for this input, so the echo
+            # neither re-notifies nor overwrites; it only anchors the object
+            # to the server clock - see `AmpioObject.raw_proven`.
             if update.on_ms:
                 reported_at = float(update.on_ms) / 1000.0
                 if (
@@ -323,9 +325,11 @@ class AmpioStore:
             obj.updated_at = time.time()
             obj.updated_at_clock = "local"
         self._touch_module(obj.device_id)
-        self._record(obj)
+        self._record(obj, applied)
 
-    def _apply_raw_channel(self, edge: _protocol.RawChannelEdge) -> None:
+    def _apply_raw_channel(
+        self, edge: _protocol.RawChannelEdge, applied: Applied
+    ) -> None:
         oid = self._input_index.get((edge.mac, edge.prefix, edge.channel))
         if oid is None:
             return  # channel has no exposed Designer object - ignore
@@ -335,10 +339,10 @@ class AmpioStore:
         obj.updated_at = time.time()
         obj.updated_at_clock = "local"
         self._touch_module(obj.device_id)
-        self._record(obj)
+        self._record(obj, applied)
 
     def _apply_diagnostics(
-        self, mac: int, diagnostics: _protocol.ModuleDiagnostics
+        self, mac: int, diagnostics: _protocol.ModuleDiagnostics, applied: Applied
     ) -> None:
         module = self._module_by_mac.get(mac)
         if module is None:
@@ -346,7 +350,7 @@ class AmpioStore:
         module.supply_voltage = diagnostics.supply_voltage
         module.temperature = diagnostics.temperature
         module.last_seen = time.time()
-        self._applied.events.append(ModuleUpdated(module))
+        applied.events.append(ModuleUpdated(replace(module)))
 
     # --- helpers ----------------------------------------------------------
 
@@ -419,12 +423,8 @@ class AmpioStore:
         raw-topic MAC on replaced modules. `(mac, prefix, channel)` routes an
         input channel to its object, covering only bridgeable input types with
         a known channel and module mac; `mac` alone routes a module's own
-        diagnostics broadcast.
-
-        A mac the catalogue reports on more than one module routes nothing:
-        the sender of a raw-tree message on it is unknowable, and attributing
-        it to an arbitrary module would silently corrupt that module's state.
-        Affected inputs still update through the per-object state path.
+        diagnostics broadcast. A colliding mac routes nothing - see
+        :pyattr:`AmpioClient.colliding_macs` for the contract.
         """
         self._refresh_colliding_macs()
         index: dict[tuple[int, str, int], int] = {}
@@ -480,8 +480,8 @@ class AmpioStore:
             )
         self._colliding_macs = colliding
 
-    def _record(self, obj: AmpioObject) -> None:
-        self._applied.events.append(ObjectUpdated(obj))
+    def _record(self, obj: AmpioObject, applied: Applied) -> None:
+        applied.events.append(ObjectUpdated(replace(obj)))
 
     # --- read surface -----------------------------------------------------
 

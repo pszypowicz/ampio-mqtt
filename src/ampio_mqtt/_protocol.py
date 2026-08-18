@@ -98,7 +98,7 @@ def warn_if_below_baseline(version: str | None) -> None:
         )
 
 
-def _rows(payload: str) -> list[Any] | None:
+def list_rows(payload: str) -> list[Any] | None:
     """Rows of a ``{"List": [...]}`` reply, or None if the payload is not one.
 
     The M-SERV is the only expected publisher on these topics, but nothing on
@@ -132,7 +132,7 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
     Returns None when the payload is not parseable JSON; an empty list is a
     valid (empty) response.
     """
-    rows = _rows(payload)
+    rows = list_rows(payload)
     if rows is None:
         return None
     out: list[ObjectMetadata] = []
@@ -178,7 +178,7 @@ def parse_devices(payload: str) -> list[AmpioModule] | None:
     Returned modules have `last_seen=None`; the caller preserves any existing
     `last_seen` from a prior discovery.
     """
-    rows = _rows(payload)
+    rows = list_rows(payload)
     if rows is None:
         return None
     out: list[AmpioModule] = []
@@ -197,7 +197,7 @@ def parse_devices(payload: str) -> list[AmpioModule] | None:
                 name=item.get("nazwa_urzadzenia") or None,
                 type=typ,
                 model=module_model(typ),
-                capabilities=module_capabilities(typ) or frozenset(),
+                capabilities=module_capabilities(typ),
                 sw_version=to_int(item.get("wersja_softu")),
                 hw_version=to_int(item.get("wersja_pcb")),
             )
@@ -211,7 +211,7 @@ def parse_params_devices(payload: str) -> dict[int, int] | None:
     The table covers the full object catalogue regardless of the account's
     grants. Returns None when the payload is not parseable JSON.
     """
-    rows = _rows(payload)
+    rows = list_rows(payload)
     if rows is None:
         return None
     out: dict[int, int] = {}
@@ -232,7 +232,7 @@ def parse_scenes(payload: str) -> list[AmpioScene] | None:
     and `Infos` as their structured form. Only the object ids are kept, since
     the M-SERV replays the actions itself when a scene is run.
     """
-    rows = _rows(payload)
+    rows = list_rows(payload)
     if rows is None:
         return None
     out: list[AmpioScene] = []
@@ -275,7 +275,7 @@ def parse_rooms(groups_payload: str, group_devices_payload: str) -> dict[int, st
     allows one area per device. Mistyped rows are skipped.
     """
     group_names: dict[int, str] = {}
-    for row in _rows(groups_payload) or []:
+    for row in list_rows(groups_payload) or []:
         if not isinstance(row, dict):
             continue
         gid = row.get("id")
@@ -283,7 +283,7 @@ def parse_rooms(groups_payload: str, group_devices_payload: str) -> dict[int, st
         if isinstance(gid, int) and isinstance(name, str) and name:
             group_names[gid] = name
     room_map: dict[int, str] = {}
-    for row in _rows(group_devices_payload) or []:
+    for row in list_rows(group_devices_payload) or []:
         if not isinstance(row, dict):
             continue
         oid = row.get("id_obiektu")
@@ -326,7 +326,7 @@ def parse_server_info(payload: str) -> AmpioServerInfo:
 
 def parse_states_snapshot(payload: str) -> list[SnapshotEntry] | None:
     """Parse a bulk `data/states` snapshot."""
-    rows = _rows(payload)
+    rows = list_rows(payload)
     if rows is None:
         return None
     out: list[SnapshotEntry] = []
@@ -474,9 +474,10 @@ class Router:
     global.
     """
 
-    __slots__ = ("_by_response",)
+    __slots__ = ("_by_response", "_user")
 
     def __init__(self, user: str) -> None:
+        self._user = user
         self._by_response: dict[str, Endpoint] = {
             response_topic(ep, user): ep for ep in ENDPOINTS
         }
@@ -486,10 +487,13 @@ class Router:
         if endpoint is not None:
             return EndpointReply(endpoint=endpoint, payload=payload)
         parts = topic.split("/")
+        # The subscription is already scoped to the account's namespace, but
+        # the router owns the topic shape and must not rely on who subscribed.
         if (
             len(parts) == 6
             and parts[0] == "ampio"
             and parts[1] == "fromDB"
+            and parts[2] == self._user
             and parts[3] == "ob"
             and parts[5] == "state"
         ):

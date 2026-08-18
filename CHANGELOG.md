@@ -14,6 +14,61 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.20.0
+
+A cleanup release from a third clean-slate review, with every
+behavioural claim reproduced at runtime against a local broker harness
+before the fix and re-verified after it. The correctness fixes stop a
+repeated `start()` from leaking a second connection loop, freeze
+dispatched events into snapshots, and make the module list dispatch
+news the way the object catalogue always has. Contracts tighten:
+`module_capabilities()` always returns a set, `refresh()` is tier-aware
+in both directions, and the router refuses state topics outside the
+account's namespace. Internally the store threads its `Applied` result
+through handlers instead of mutating instance state, the below-baseline
+warning has one home, and the design stories that had grown three or
+four tellings each were consolidated to one home with pointers.
+
+### Changed
+
+- **Events are snapshots.** `ObjectUpdated` and `ModuleUpdated` carry
+  the state as the change was applied instead of a live reference into
+  the store, so a listener that defers processing still sees what the
+  event announced. Read current state from `AmpioClient.objects` /
+  `modules` when that is what you want; identity comparisons between an
+  event's payload and the store no longer hold.
+- **`ModuleUpdated` reports catalogue news.** A module the list adds or
+  changes (a rename, a version bump) now dispatches the event,
+  symmetric with the object catalogue; previously only the diagnostics
+  broadcast did. It still never fires on a standard account, since both
+  sources are administrator-only.
+- **`module_capabilities()` always returns a `frozenset`.** An unknown
+  type code reads as empty instead of `None`; `module_model()`
+  returning `None` is the unknown-type signal. `AmpioModule.capabilities`
+  could never carry the old distinction anyway - the one call site
+  flattened it.
+- **`refresh()` skips the other tier's catalogue pair.** Once the tier
+  is known, an administrator account stops re-requesting the app-sync
+  `data` pair on every reconnect (it only repeats what the `config`
+  catalogue carries), exactly as a restricted account already skipped
+  the `config` pair. First discovery, before the tier is known, still
+  requests everything.
+- The router drops per-object state topics outside the connecting
+  account's namespace. The subscriptions already scoped delivery, but
+  the topic shape is the router's to own, not the subscription list's.
+- The ruff gate extends from the default rule set to import order,
+  pyupgrade, bugbear, simplifications, ruff's own checks, and the
+  asyncio rules, with `ASYNC109` excluded because timeout parameters
+  are this library's deliberate public API shape.
+
+### Fixed
+
+- A `start()` on a running client closes the previous session before
+  opening the new one. The second call used to leak a parallel
+  connection loop that fought the first over the shared MQTT client id -
+  reproduced against a real broker as tens of availability flaps per
+  minute - and `stop()` reaped only one of them.
+
 ## 0.19.0
 
 A restructuring release from a second clean-sheet review. Event delivery,
