@@ -263,6 +263,46 @@ async def test_second_start_recycles_the_connection_loop() -> None:
     assert client._connection._runner is None
 
 
+async def test_concurrent_starts_serialize_and_the_survivor_stays_up() -> None:
+    """Overlapping start() calls run one after another. Unserialized, the
+    first caller's connect-timeout teardown would kill the runner the
+    second caller had just successfully started, returning success on a
+    dead connection."""
+    broker = FakeBroker()
+    broker.enter_delay = 0.2
+    client = make_client(broker)
+    first = asyncio.create_task(client.start(timeout=0.05, discovery_timeout=0.01))
+    await asyncio.sleep(0)  # let the first call take the lifecycle lock
+    second = asyncio.create_task(client.start(timeout=2.0, discovery_timeout=0.01))
+    results = await asyncio.gather(first, second, return_exceptions=True)
+    try:
+        # The first call's 0.05 s budget cannot cover the 0.2 s connect;
+        # the second call's can, and its session must survive the first
+        # call's teardown.
+        assert isinstance(results[0], AmpioConnectionError)
+        assert results[1] is False  # connected; only discovery timed out
+        assert client.available is True
+    finally:
+        await client.stop()
+
+
+async def test_stop_during_start_aborts_the_connect_promptly() -> None:
+    """stop() while start() is mid-connect wakes the connect wait instead
+    of leaving it to run out its full timeout budget."""
+    broker = FakeBroker()
+    broker.enter_delay = 30.0
+    client = make_client(broker)
+    task = asyncio.create_task(client.start(timeout=30.0))
+    await asyncio.sleep(0.05)
+    loop = asyncio.get_running_loop()
+    stopping = loop.time()
+    await client.stop()
+    with pytest.raises(AmpioConnectionError):
+        await task
+    assert loop.time() - stopping < 1.0
+    assert client.available is False
+
+
 async def test_start_drives_full_discovery_through_mocked_broker() -> None:
     """A scripted broker drives start() through connect + discovery to completion."""
     broker = FakeBroker()
