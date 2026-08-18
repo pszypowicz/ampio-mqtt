@@ -14,6 +14,83 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.23.0
+
+A second review round executed task by task like 0.22, with every
+runtime-verifiable defect reproduced against a broker before its fix and
+the contract re-verified after. Five lifecycle and state bugs are fixed,
+message routing is tier-scoped, and more mechanisms that guarded cases
+the wire never produces are gone under the beta posture.
+
+### Fixed
+
+- **`test_connection` no longer returns an identity-less info reply.** A
+  reply without the server mac is unparseable like any other corrupt
+  shape and raises the retryable `AmpioTimeoutError`, so a returned
+  `AmpioServerInfo` always carries the populated `key` a config flow
+  needs for its unique id. `AmpioServerInfo.mac` is now a required int
+  and `key` is always a string. An identity-less reply arriving before
+  the identified one can also no longer pre-seat the version and
+  suppress the below-baseline warning.
+- **The unsubscribe returned by `subscribe()` is idempotent.** A second
+  call used to raise `ValueError`, and with the same listener registered
+  twice the repeat call removed the other registration. Removal is now
+  by registration identity, so each unsubscribe drops exactly its own.
+- **`start()`/`stop()` interleavings are safe.** Overlapping `start()`
+  calls serialize instead of tearing down each other's session - the
+  first caller's connect-timeout cleanup could kill the session the
+  second had just opened and return success on a dead connection - and
+  `stop()` during an in-flight `start()` aborts the connect promptly
+  (the aborted `start()` raises `AmpioConnectionError`) instead of
+  letting it wait out its full timeout.
+- **A live push for an id no catalogue established creates nothing.** It
+  used to create a generic-sensor object that the next catalogue reply
+  evicted: `ObjectUpdated` then `ObjectRemoved` churn for an object no
+  catalogue ever listed, recreated on the next push. The push now waits
+  in a per-id buffer and surfaces with the catalogue row, replayed under
+  the same dated-supersedes rule the snapshot uses, and a complete reply
+  prunes buffered pushes for ids it does not list.
+- **`ConnectionStats.started_at` and `reconnect_count` cover the current
+  run.** A deliberate stop/start restarts them, so a diagnostics blob no
+  longer reads a consumer-initiated restart as a flapping connection;
+  `last_error` and `last_message_at` keep rolling across runs.
+
+### Changed
+
+- **Message routing is tier-scoped and owned by the dispatcher.** The
+  router covers exactly the endpoints the account tier is served - the
+  same set that shapes the subscriptions, reply channels, and
+  initial-discovery list - so a reply topic outside the tier's set is
+  unroutable and the store consumes typed messages with no tier
+  knowledge of its own.
+- **Pure request/response replies are parsed exactly once.** The
+  dispatcher runs the endpoint's own parser and fetch futures resolve
+  with the parsed value; `Endpoint.parses` set to None marks a
+  handler-gated endpoint, and a store handler table that disagrees with
+  the endpoint table fails at construction instead of surfacing as a
+  silent discovery hang.
+- **An empty catalogue reply evicts like any other.** It is a complete
+  reply listing nothing - a full grant revocation empties the app-sync
+  view - and the refusal guard protected a store the wire could never
+  empty.
+- **`zeroconf` moved to the optional `discovery` extra.** `import
+ampio_mqtt` works without it; touching `discover` /
+  `DiscoveryResult` without the extra raises an `ImportError` naming
+  `ampio-mqtt[discovery]`. Home Assistant provides `zeroconf` itself,
+  so the integration needs no extra.
+- **One home per contract in the prose.** Wire mechanics live under
+  `docs/`, API contracts on the docstrings, each pointing at the other;
+  the classification truth tables are pointers to the code tables, and
+  the cross-class event-ordering guarantee lives on the
+  `ampio_mqtt.events` module docstring.
+
+### Removed
+
+- The remaining guards for never-observed wire shapes: the empty-reply
+  eviction refusals (see Changed), the connection teardown's admittedly
+  unreachable exception arm, and the type check on the vendored
+  `_devtypes.json` that ships inside the wheel.
+
 ## 0.22.0
 
 A whole-codebase review executed task by task, with every claim and its
