@@ -74,6 +74,11 @@ class AmpioStore:
         # because the app-sync catalogue carries no params column and the two
         # replies arrive in no fixed order.
         self._params_by_id: dict[int, int] = {}
+        # `{object_id: stan_json}` from the last `data/states` snapshot, kept
+        # for the same reason: the app-sync catalogue carries no stan_json
+        # column either, and only the catalogues decide which objects exist -
+        # a snapshot row for an id no catalogue established creates nothing.
+        self._stan_by_id: dict[int, str] = {}
         # Endpoints whose reply mutates state, each reporting whether the
         # payload parsed. The rest are pure request/response - the client keeps
         # their payload and parses it on demand.
@@ -171,6 +176,7 @@ class AmpioStore:
         for oid in missing:
             obj = self.objects.pop(oid)
             self._params_by_id.pop(oid, None)
+            self._stan_by_id.pop(oid, None)
             applied.events.append(ObjectRemoved(obj))
         return True
 
@@ -200,8 +206,16 @@ class AmpioStore:
             kind=classify(meta.typ_komponentu, meta.interpretacja),
         )
         changed = _identity(updated) != _identity(obj)
-        if meta.stan_json is not None:
-            updated, seeded = self._apply_stan_json(updated, meta.stan_json)
+        # A row without the column (the app-sync shape) falls back to the
+        # buffered snapshot value, so reply order never decides whether an
+        # object starts with its state.
+        stan_json = (
+            meta.stan_json
+            if meta.stan_json is not None
+            else self._stan_by_id.get(meta.id)
+        )
+        if stan_json is not None:
+            updated, seeded = self._apply_stan_json(updated, stan_json)
             changed |= seeded
         self.objects[meta.id] = updated
         if changed:
@@ -310,13 +324,21 @@ class AmpioStore:
         if entries is None:
             _LOGGER.warning("Could not parse Ampio states snapshot")
             return False
+        self._stan_by_id = {
+            entry.id: entry.stan_json
+            for entry in entries
+            if entry.stan_json is not None
+        }
         for entry in entries:
             obj = self.objects.get(entry.id)
-            if obj is None:
-                obj = AmpioObject(id=entry.id, kind=classify(None, None))
-            changed = False
-            if entry.stan_json is not None:
-                obj, changed = self._apply_stan_json(obj, entry.stan_json)
+            if obj is None or entry.stan_json is None:
+                # An id no catalogue established stays out of the store: the
+                # snapshot replays DB rows, ghost rows included, and creating
+                # from it would later evict an object no consumer was ever
+                # told existed. The value waits in _stan_by_id for the
+                # catalogue row that may establish it.
+                continue
+            obj, changed = self._apply_stan_json(obj, entry.stan_json)
             self.objects[entry.id] = obj
             if changed:
                 self._record(obj, applied)

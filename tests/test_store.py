@@ -420,6 +420,7 @@ def test_the_echo_of_a_raw_edge_is_ignored_whole() -> None:
 
 def test_a_dated_snapshot_beats_an_undated_seed() -> None:
     store = _store()
+    store.apply(DETAILS_TOPIC, _flaga_details((10, 1)))
     store.apply(STATES_TOPIC, _snapshot("5", None))
     assert store.objects[10].value == "5"
     assert store.objects[10].updated_at is None
@@ -731,17 +732,89 @@ def test_states_snapshot_does_not_overwrite_live_value() -> None:
     assert store.objects[41].value == "fresh"
 
 
-def test_states_snapshot_creates_placeholder_for_unknown_object() -> None:
-    """A state for an object whose metadata is not yet known is still tracked."""
+def test_states_snapshot_creates_nothing_for_unknown_ids() -> None:
+    """Only the catalogues decide which objects exist. The snapshot replays
+    DB rows, ghost rows included - creating from it would later evict an
+    object no consumer was ever told existed."""
     store = _store()
     store.apply(
-        STATES_TOPIC,
-        devices({"id": 999, "stan_json": '{"state": "1", "on": 1779560000000}'}),
+        DATA_DEVICES_TOPIC,
+        details({"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"}),
     )
-    assert store.objects[999].value == "1"
-    # The kind is the generic fallback because no metadata existed.
-    assert store.objects[999].kind is not None
-    assert store.objects[999].kind.key == "value"
+    applied = store.apply(
+        STATES_TOPIC,
+        devices(
+            {"id": 5, "stan_json": '{"state": "1", "on": 1779560000000}'},
+            {"id": 999, "stan_json": '{"state": "1", "on": 1779560000000}'},
+        ),
+    )
+    assert 999 not in store.objects
+    assert [o.id for o in _updated(applied)] == [5]
+
+    # The catalogue re-request that would have evicted the phantom now
+    # removes nothing.
+    applied = store.apply(
+        DATA_DEVICES_TOPIC,
+        details({"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"}),
+    )
+    assert _removed(applied) == []
+
+
+def test_snapshot_before_catalogue_seeds_the_value_at_merge() -> None:
+    """The snapshot and catalogue replies arrive in no fixed order, and the
+    app-sync catalogue carries no stan_json column - a snapshot that lands
+    first must still hand the object its value when the catalogue
+    establishes it, in the one update that also carries the metadata."""
+    store = _store()
+    applied = store.apply(
+        STATES_TOPIC,
+        devices({"id": 20, "stan_json": '{"state": "7", "on": 1779560000000}'}),
+    )
+    assert 20 not in store.objects
+    assert _updated(applied) == []
+
+    applied = store.apply(
+        DATA_DEVICES_TOPIC,
+        details({"id": 20, "typ_komponentu": "temp", "opis_menu": "T"}),
+    )
+    assert [o.id for o in _updated(applied)] == [20]
+    assert store.objects[20].value == "7"
+    assert store.objects[20].updated_at == 1779560000.0
+    assert store.objects[20].name == "T"
+
+
+def test_eviction_prunes_the_buffered_snapshot_value() -> None:
+    """An evicted object's buffered seed must not resurface if a later
+    catalogue re-establishes the id."""
+    store = _store()
+    store.apply(
+        DATA_DEVICES_TOPIC,
+        details(
+            {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"},
+            {"id": 6, "typ_komponentu": "flaga", "opis_menu": "G"},
+        ),
+    )
+    store.apply(
+        STATES_TOPIC,
+        devices(
+            {"id": 5, "stan_json": '{"state": "1", "on": 1779560000000}'},
+            {"id": 6, "stan_json": '{"state": "1", "on": 1779560000000}'},
+        ),
+    )
+    applied = store.apply(
+        DATA_DEVICES_TOPIC,
+        details({"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"}),
+    )
+    assert [o.id for o in _removed(applied)] == [6]
+
+    store.apply(
+        DATA_DEVICES_TOPIC,
+        details(
+            {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"},
+            {"id": 6, "typ_komponentu": "flaga", "opis_menu": "G"},
+        ),
+    )
+    assert store.objects[6].value is None
 
 
 def test_details_stan_json_seed_does_not_touch_last_seen() -> None:
@@ -1113,6 +1186,10 @@ def test_plain_cover_reports_no_tilt() -> None:
 def test_states_snapshot_seeds_tilt_position() -> None:
     store = _store()
     store.apply(
+        DETAILS_TOPIC,
+        details({"id": 66, "typ_komponentu": "roleta_lamelki", "opis_menu": "B"}),
+    )
+    store.apply(
         STATES_TOPIC,
         devices(
             {
@@ -1228,6 +1305,7 @@ def test_updated_at_takes_the_report_date_or_the_receipt_time() -> None:
     assert updated_at is not None and before <= updated_at <= time.time()
 
     seeded = _store()
+    seeded.apply(DETAILS_TOPIC, _flaga_details((9, 1)))
     seeded.apply(
         STATES_TOPIC,
         json.dumps({"List": [{"id": 9, "stan_json": json.dumps({"state": "5"})}]}),
