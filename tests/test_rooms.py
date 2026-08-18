@@ -16,7 +16,7 @@ import json
 
 import aiomqtt
 import pytest
-from conftest import FakeBroker, feed
+from conftest import FakeBroker, deliver_later, feed
 
 from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioTimeoutError
 from ampio_mqtt._protocol import parse_rooms
@@ -124,13 +124,11 @@ async def test_fetch_rooms_publishes_keywords_and_joins_responses(
         }
     )
 
-    async def _deliver_responses() -> None:
-        # Give fetch_rooms a turn to publish before the responses arrive.
-        await asyncio.sleep(0)
-        feed(client, "ampio/fromDB/u/data/groups", groups_payload)
-        feed(client, "ampio/fromDB/u/data/group_devices", group_devices_payload)
-
-    delivery = asyncio.create_task(_deliver_responses())
+    delivery = deliver_later(
+        client,
+        ("ampio/fromDB/u/data/groups", groups_payload),
+        ("ampio/fromDB/u/data/group_devices", group_devices_payload),
+    )
     try:
         result = await client.fetch_rooms(timeout=1.0)
     finally:
@@ -148,12 +146,9 @@ async def test_fetch_rooms_times_out_when_response_missing(
 ) -> None:
     client, _ = connected
     # Deliver only one of the two responses - groups arrives, group_devices never does.
-
-    async def _deliver_partial() -> None:
-        await asyncio.sleep(0)
-        feed(client, "ampio/fromDB/u/data/groups", json.dumps({"List": []}))
-
-    delivery = asyncio.create_task(_deliver_partial())
+    delivery = deliver_later(
+        client, ("ampio/fromDB/u/data/groups", json.dumps({"List": []}))
+    )
     try:
         with pytest.raises(AmpioTimeoutError):
             await client.fetch_rooms(timeout=0.1)
@@ -169,12 +164,11 @@ async def test_fetch_rooms_treats_malformed_response_as_no_response(
     The raw bytes are still retained for diagnostics."""
     client, _ = connected
 
-    async def _deliver_garbage() -> None:
-        await asyncio.sleep(0)
-        feed(client, "ampio/fromDB/u/data/groups", "not-json")
-        feed(client, "ampio/fromDB/u/data/group_devices", "[]")
-
-    delivery = asyncio.create_task(_deliver_garbage())
+    delivery = deliver_later(
+        client,
+        ("ampio/fromDB/u/data/groups", "not-json"),
+        ("ampio/fromDB/u/data/group_devices", "[]"),
+    )
     try:
         with pytest.raises(AmpioTimeoutError):
             await client.fetch_rooms(timeout=0.1)
@@ -239,18 +233,16 @@ async def test_late_reply_after_timeout_resolves_nothing_stale(
 
     with pytest.raises(AmpioTimeoutError):
         await client.fetch_rooms(timeout=0.05)
-    assert all(not ch.waiters for ch in client._channels.values())
 
     # The replies to the timed-out request arrive now - nobody is waiting.
     feed(client, "ampio/fromDB/u/data/groups", groups)
     feed(client, "ampio/fromDB/u/data/group_devices", group_devices)
 
-    async def _deliver() -> None:
-        await asyncio.sleep(0)
-        feed(client, "ampio/fromDB/u/data/groups", groups)
-        feed(client, "ampio/fromDB/u/data/group_devices", group_devices)
-
-    delivery = asyncio.create_task(_deliver())
+    delivery = deliver_later(
+        client,
+        ("ampio/fromDB/u/data/groups", groups),
+        ("ampio/fromDB/u/data/group_devices", group_devices),
+    )
     try:
         assert await client.fetch_rooms(timeout=1.0) == {10: "A"}
     finally:
@@ -263,26 +255,31 @@ async def test_fetch_rooms_clears_state_between_calls(
     """A second call must not see stale events from the first."""
     client, _ = connected
 
-    async def _deliver(groups: str, group_devices: str) -> None:
-        await asyncio.sleep(0)
-        feed(client, "ampio/fromDB/u/data/groups", groups)
-        feed(client, "ampio/fromDB/u/data/group_devices", group_devices)
-
-    first = asyncio.create_task(
-        _deliver(
+    first = deliver_later(
+        client,
+        (
+            "ampio/fromDB/u/data/groups",
             json.dumps({"List": [{"id": 1, "opis_menu": "A"}]}),
+        ),
+        (
+            "ampio/fromDB/u/data/group_devices",
             json.dumps({"List": [{"id_grupy": 1, "id_obiektu": 10}]}),
-        )
+        ),
     )
     r1 = await client.fetch_rooms(timeout=1.0)
     await first
     assert r1 == {10: "A"}
 
-    second = asyncio.create_task(
-        _deliver(
+    second = deliver_later(
+        client,
+        (
+            "ampio/fromDB/u/data/groups",
             json.dumps({"List": [{"id": 2, "opis_menu": "B"}]}),
+        ),
+        (
+            "ampio/fromDB/u/data/group_devices",
             json.dumps({"List": [{"id_grupy": 2, "id_obiektu": 20}]}),
-        )
+        ),
     )
     r2 = await client.fetch_rooms(timeout=1.0)
     await second

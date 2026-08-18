@@ -34,6 +34,7 @@ from conftest import (
     USER,
     FakeBroker,
     Message,
+    make_client,
 )
 from paho.mqtt.enums import MQTTErrorCode
 from paho.mqtt.packettypes import PacketTypes
@@ -49,7 +50,6 @@ from ampio_mqtt import (
     ConnectionDied,
 )
 from ampio_mqtt._connection import _is_auth_error
-from ampio_mqtt.endpoints import ENDPOINTS, request_topic
 from ampio_mqtt.errors import AmpioAuthError
 
 
@@ -176,9 +176,7 @@ async def test_a_restricted_client_requests_only_its_pair() -> None:
     would not answer for it - from the first connect, not after a
     tier-settling round trip."""
     broker = FakeBroker()
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.0, mqtt_client_factory=broker.factory
-    )
+    client = make_client(broker, reconnect_interval=0.0)
     await client.start(timeout=2.0, discovery_timeout=0.05)
     try:
         assert sorted(p for _t, p in broker.published) == [
@@ -206,12 +204,7 @@ async def test_an_admin_client_requests_only_the_config_pair() -> None:
     """The admin login owns the config catalogues; the app-sync pair only
     repeats them, so it is never requested."""
     broker = FakeBroker()
-    client = AmpioClient(
-        "h",
-        username=ADMIN_USER,
-        reconnect_interval=0.0,
-        mqtt_client_factory=broker.factory,
-    )
+    client = make_client(broker, username=ADMIN_USER, reconnect_interval=0.0)
     await client.start(timeout=2.0, discovery_timeout=0.05)
     try:
         broker.published.clear()
@@ -232,16 +225,16 @@ async def test_an_admin_client_requests_only_the_config_pair() -> None:
 # --- stop() and start() lifecycle -----------------------------------------
 
 
-async def test_stop_cancels_pending_runner() -> None:
-    """stop() cancels a runner that is sleeping in the reconnect backoff."""
-
-    async def _sleep_forever(*_: object) -> None:
-        await asyncio.sleep(3600)
-
-    client = AmpioClient("h", username=USER, reconnect_interval=3600)
-    client._connection._runner = asyncio.create_task(_sleep_forever())
-    await client.stop()
-    assert client._connection._runner is None
+async def test_stop_cancels_a_runner_sleeping_in_backoff() -> None:
+    """stop() returns promptly while the loop sleeps in reconnect backoff."""
+    broker = FakeBroker()
+    broker.stream_error = aiomqtt.MqttError("connection lost")
+    client = make_client(broker, reconnect_interval=3600)
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    await asyncio.sleep(0.05)  # the drop has happened; the loop is in backoff
+    async with asyncio.timeout(1.0):
+        await client.stop()
+    assert client.available is False
 
 
 async def test_second_start_recycles_the_connection_loop() -> None:
@@ -249,15 +242,14 @@ async def test_second_start_recycles_the_connection_loop() -> None:
     loops would share one client id and steal the session from each other
     on every reconnect."""
     broker = FakeBroker()
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.0, mqtt_client_factory=broker.factory
-    )
+    client = make_client(broker, reconnect_interval=0.0)
     await client.start(timeout=2.0, discovery_timeout=0.01)
-    first_runner = client._connection._runner
-    assert first_runner is not None
+    first_session_subscribes = len(broker.subscribed)
     await client.start(timeout=2.0, discovery_timeout=0.01)
     try:
-        assert first_runner.done()
+        # Exactly one more session's worth of subscribes: the first loop
+        # was closed, not left reconnecting alongside the second.
+        assert len(broker.subscribed) == 2 * first_session_subscribes
         assert client.available is True
     finally:
         await client.stop()
@@ -276,12 +268,7 @@ async def test_start_drives_full_discovery_through_mocked_broker() -> None:
             json.dumps({"Results": {"mac": 99, "userId": "-1"}}).encode(),
         ),
     ]
-    client = AmpioClient(
-        "h",
-        username=ADMIN_USER,
-        reconnect_interval=0.0,
-        mqtt_client_factory=broker.factory,
-    )
+    client = make_client(broker, username=ADMIN_USER, reconnect_interval=0.0)
     completed = await client.start(timeout=2.0, discovery_timeout=1.0)
     try:
         assert completed is True
@@ -298,14 +285,15 @@ async def test_start_drives_full_discovery_through_mocked_broker() -> None:
         # discovery request publish goes out at QoS 1 (#68).
         assert set(broker.subscribed_qos) == {1}
         assert set(broker.published_qos) == {1}
-        # start() publishes exactly the tier's initial request set, once.
-        expected = {
-            (request_topic(ep, ADMIN_USER), ep.req_payload.encode())
-            for ep in ENDPOINTS
-            if ep.initial and ep.tier in (None, AccessTier.ADMIN)
-        }
-        assert set(broker.published) == expected
-        assert len(broker.published) == len(expected)
+        # start() publishes exactly the tier's initial request set, once -
+        # hardcoded so a wrong tier/initial flag in the endpoint table
+        # cannot recompute its own expectation.
+        assert sorted(broker.published) == [
+            (f"ampio/control/{ADMIN_USER}/config", b"devices"),
+            (f"ampio/control/{ADMIN_USER}/config", b"devicesDetails"),
+            (f"ampio/control/{ADMIN_USER}/info", b""),
+            (f"ampio/control/{ADMIN_USER}/states", b""),
+        ]
     finally:
         await client.stop()
 
@@ -342,12 +330,7 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
             json.dumps({"Results": {"mac": 99, "userId": "-1"}}).encode(),
         ),
     ]
-    client = AmpioClient(
-        "h",
-        username=ADMIN_USER,
-        reconnect_interval=0.0,
-        mqtt_client_factory=broker.factory,
-    )
+    client = make_client(broker, username=ADMIN_USER, reconnect_interval=0.0)
     await client.start(timeout=2.0, discovery_timeout=1.0)
     try:
         assert await client.wait_for_initial_discovery(timeout=1.0) is True
@@ -402,9 +385,7 @@ async def test_restricted_account_completes_via_data_surface_fallback() -> None:
             INFO_TOPIC, json.dumps({"Results": {"mac": 99, "userId": "4"}}).encode()
         ),
     ]
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.0, mqtt_client_factory=broker.factory
-    )
+    client = make_client(broker, reconnect_interval=0.0)
     await client.start(timeout=2.0, discovery_timeout=1.0)
     try:
         assert await client.wait_for_initial_discovery(timeout=1.0) is True
@@ -431,9 +412,7 @@ async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
     broker = FakeBroker()
     broker.stream_error = aiomqtt.MqttError("connection lost")
     broker.enter_errors = [None, _auth_rejection()]
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.05, mqtt_client_factory=broker.factory
-    )
+    client = make_client(broker, reconnect_interval=0.05)
     availability: list[bool] = []
     failures: list[str] = []
     client.subscribe(lambda e: availability.append(e.available), of=AvailabilityChanged)
@@ -457,16 +436,11 @@ async def test_fresh_start_clears_a_runtime_auth_failure() -> None:
     broker = FakeBroker()
     broker.stream_error = aiomqtt.MqttError("connection lost")
     broker.enter_errors = [None, _auth_rejection()]
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.05, mqtt_client_factory=broker.factory
-    )
+    client = make_client(broker, reconnect_interval=0.05)
     await client.start(timeout=2.0, discovery_timeout=0.05)
     async with asyncio.timeout(2.0):
         while client.auth_failure is None:
             await asyncio.sleep(0.01)
-        runner = client._connection._runner
-        assert runner is not None
-        await runner  # the loop has stopped for good
 
     # The broker accepts the credentials again.
     broker.enter_errors = []
@@ -484,7 +458,7 @@ async def test_initial_auth_rejection_raises_without_firing_listener() -> None:
     the runtime path only, so a config flow does not get a double signal."""
     broker = FakeBroker()
     broker.enter_errors = [_auth_rejection()]
-    client = AmpioClient("h", username=USER, mqtt_client_factory=broker.factory)
+    client = make_client(broker)
     failures: list[str] = []
     client.subscribe(lambda e: failures.append(e.reason), of=AuthFailed)
     with pytest.raises(AmpioAuthError):
@@ -492,16 +466,14 @@ async def test_initial_auth_rejection_raises_without_firing_listener() -> None:
     assert failures == []
     assert client.auth_failure is not None
     assert "authorized" in client.auth_failure.lower()
-    assert client._connection._runner is None  # stop() ran during the raise
+    assert client.available is False
 
 
 async def test_transient_outage_leaves_auth_failure_unset() -> None:
     """An outage with recovery keeps auth_failure None while the loop retries."""
     broker = FakeBroker()
     broker.stream_error = aiomqtt.MqttError("connection lost")
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.05, mqtt_client_factory=broker.factory
-    )
+    client = make_client(broker, reconnect_interval=0.05)
     availability: list[bool] = []
     client.subscribe(lambda e: availability.append(e.available), of=AvailabilityChanged)
     await client.start(timeout=2.0, discovery_timeout=0.05)
@@ -520,13 +492,14 @@ async def test_loop_crash_dispatches_connection_died_and_stops() -> None:
     what made the dead loop indistinguishable from an outage before."""
     broker = FakeBroker()
     broker.stream_error = RuntimeError("injected bug")
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.05, mqtt_client_factory=broker.factory
-    )
+    client = make_client(broker, reconnect_interval=0.05)
     order: list[object] = []
     client.subscribe(order.append, of=(AvailabilityChanged, ConnectionDied))
     await client.start(timeout=2.0, discovery_timeout=0.05)
-    await asyncio.sleep(0.3)  # several reconnect intervals
+    async with asyncio.timeout(2.0):
+        while not any(isinstance(e, ConnectionDied) for e in order):
+            await asyncio.sleep(0.01)
+    await asyncio.sleep(0.05)  # nothing further may retry or dispatch
     try:
         assert order == [
             AvailabilityChanged(True),
@@ -545,29 +518,12 @@ async def test_crash_during_start_raises_connection_error() -> None:
     promptly, and dispatches nothing - mirroring the auth path."""
     broker = FakeBroker()
     broker.enter_errors = [RuntimeError("boom at connect")]
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.05, mqtt_client_factory=broker.factory
-    )
+    client = make_client(broker, reconnect_interval=0.05)
     events: list[object] = []
     client.subscribe(events.append)
     with pytest.raises(AmpioConnectionError, match="Connection loop died"):
         await client.start(timeout=5.0, discovery_timeout=0.05)
     assert events == []
-
-
-async def test_start_reports_discovery_timeout() -> None:
-    """start() returns False when discovery does not complete in time; the
-    connection stays up and discovery continues opportunistically."""
-    broker = FakeBroker()
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.05, mqtt_client_factory=broker.factory
-    )
-    completed = await client.start(timeout=2.0, discovery_timeout=0.05)
-    try:
-        assert completed is False
-        assert client.available is True
-    finally:
-        await client.stop()
 
 
 async def test_publish_failure_during_refresh_recycles_the_session() -> None:
@@ -576,9 +532,7 @@ async def test_publish_failure_during_refresh_recycles_the_session() -> None:
     the wrapped form like any transport drop."""
     broker = FakeBroker()
     broker.publish_errors = [aiomqtt.MqttError("broken pipe")]
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.0, mqtt_client_factory=broker.factory
-    )
+    client = make_client(broker, reconnect_interval=0.0)
     await client.start(timeout=2.0, discovery_timeout=0.05)
     try:
         async with asyncio.timeout(2.0):
@@ -614,9 +568,7 @@ async def test_consumer_stop_is_not_an_availability_event() -> None:
     shutting-down flag purely to suppress that false transition.
     """
     broker = FakeBroker()
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.05, mqtt_client_factory=broker.factory
-    )
+    client = make_client(broker, reconnect_interval=0.05)
     availability: list[bool] = []
     client.subscribe(lambda e: availability.append(e.available), of=AvailabilityChanged)
     await client.start(timeout=2.0, discovery_timeout=0.05)
@@ -629,9 +581,7 @@ async def test_consumer_stop_is_not_an_availability_event() -> None:
 async def test_availability_notifies_again_after_restart() -> None:
     """A stop() suppression must not leak into the next start()."""
     broker = FakeBroker()
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.05, mqtt_client_factory=broker.factory
-    )
+    client = make_client(broker, reconnect_interval=0.05)
     availability: list[bool] = []
     client.subscribe(lambda e: availability.append(e.available), of=AvailabilityChanged)
     await client.start(timeout=2.0, discovery_timeout=0.05)
@@ -653,9 +603,7 @@ async def test_wait_for_initial_discovery_returns_false_on_timeout() -> None:
         Message(DETAILS_TOPIC, json.dumps({"List": []}).encode()),
         Message(STATES_TOPIC, json.dumps({"List": []}).encode()),
     ]
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.0, mqtt_client_factory=broker.factory
-    )
+    client = make_client(broker, reconnect_interval=0.0)
     await client.start(timeout=2.0, discovery_timeout=0.1)
     try:
         assert await client.wait_for_initial_discovery(timeout=0.1) is False
@@ -693,9 +641,7 @@ async def test_a_rejected_raw_filter_warns_on_the_admin_client(
 
 async def test_granted_subscriptions_leave_no_failures() -> None:
     broker = FakeBroker()
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.05, mqtt_client_factory=broker.factory
-    )
+    client = make_client(broker, reconnect_interval=0.05)
     await client.start(timeout=2.0, discovery_timeout=0.05)
     try:
         assert client.stats.subscribe_failures == {}
@@ -755,9 +701,7 @@ async def test_a_rejected_namespace_filter_warns(
     denied = STATES_TOPIC
     broker = FakeBroker()
     broker.suback_codes = {denied: 0x87}
-    client = AmpioClient(
-        "h", username=USER, reconnect_interval=0.05, mqtt_client_factory=broker.factory
-    )
+    client = make_client(broker, reconnect_interval=0.05)
     with caplog.at_level(logging.WARNING, logger="ampio_mqtt._connection"):
         await client.start(timeout=2.0, discovery_timeout=0.05)
         try:

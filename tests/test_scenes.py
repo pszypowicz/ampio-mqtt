@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 
 import pytest
-from conftest import API_TOPIC, USER, FakeBroker, feed
+from conftest import API_TOPIC, USER, FakeBroker, deliver_later
 
 from ampio_mqtt import AmpioClient, AmpioConnectionError
 from ampio_mqtt._protocol import parse_scenes
@@ -105,11 +104,11 @@ async def test_fetch_scenes_survives_a_malformed_infos_row(
     client, _broker = connected
     bad = json.dumps({"List": [{"id": 1, "sceneName": "Evening", "Infos": 5}]})
 
-    async def _deliver() -> None:
-        await asyncio.sleep(0)
-        feed(client, f"ampio/fromDB/{USER}/data/scenes", bad)
-
-    scenes, _ = await asyncio.gather(client.fetch_scenes(timeout=2), _deliver())
+    delivery = deliver_later(client, (f"ampio/fromDB/{USER}/data/scenes", bad))
+    try:
+        scenes = await client.fetch_scenes(timeout=2)
+    finally:
+        await delivery
     [scene] = scenes
     assert (scene.id, scene.name, scene.object_ids) == (1, "Evening", frozenset())
 
@@ -141,11 +140,10 @@ async def test_fetch_scenes_requests_and_parses_the_reply(
 ) -> None:
     client, broker = connected
 
-    async def _deliver() -> None:
-        # Give fetch_scenes a turn to publish before the reply arrives.
-        await asyncio.sleep(0)
-        feed(client, f"ampio/fromDB/{USER}/data/scenes", _PAYLOAD)
-
-    scenes, _ = await asyncio.gather(client.fetch_scenes(timeout=2), _deliver())
+    delivery = deliver_later(client, (f"ampio/fromDB/{USER}/data/scenes", _PAYLOAD))
+    try:
+        scenes = await client.fetch_scenes(timeout=2)
+    finally:
+        await delivery
     assert [s.name for s in scenes] == ["Schody noc", "Wyjście", "Bez kolumny"]
     assert broker.published == [(f"ampio/control/{USER}/data", b"scenes")]

@@ -126,16 +126,37 @@ class FakeBroker:
     async def __anext__(self) -> Message:
         if self.stream_error is not None and self._queue.empty():
             raise self.stream_error
-        try:
-            return await asyncio.wait_for(self._queue.get(), timeout=5.0)
-        except TimeoutError as err:
-            raise StopAsyncIteration from err
+        # The real aiomqtt stream never ends normally - it raises MqttError
+        # on a drop - so the fake blocks forever on an empty queue too;
+        # cancellation is the only exit. An idle escape hatch here would
+        # let a hung test silently reconnect instead of failing visibly.
+        return await self._queue.get()
 
 
 def feed(client: AmpioClient, topic: str, payload: bytes | str) -> None:
     """Inject one message into the client's dispatch synchronously."""
     raw = payload if isinstance(payload, str) else payload.decode("utf-8", "replace")
     client._handle_message(topic, raw)
+
+
+def make_client(broker: FakeBroker, **kwargs: object) -> AmpioClient:
+    """A client wired to `broker`; username defaults to the restricted USER."""
+    kwargs.setdefault("username", USER)
+    return AmpioClient("h", mqtt_client_factory=broker.factory, **kwargs)  # type: ignore[arg-type]
+
+
+def deliver_later(
+    client: AmpioClient, *messages: tuple[str, str]
+) -> asyncio.Task[None]:
+    """Feed messages after one event-loop turn, so an in-flight fetch has
+    published its requests first. Await the returned task before asserting."""
+
+    async def _deliver() -> None:
+        await asyncio.sleep(0)
+        for topic, payload in messages:
+            feed(client, topic, payload)
+
+    return asyncio.create_task(_deliver())
 
 
 @pytest.fixture

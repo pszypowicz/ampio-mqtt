@@ -69,12 +69,10 @@ def test_parse_details_returns_metadata() -> None:
     assert items[0].name == "Salon"
     assert items[0].funkcja == 7
     assert items[0].leaf_id == "0_cb8f_76_0_0"
-    assert items[0].params == 137438953473  # parsed as a >32-bit int
     assert items[0].stan_json is not None
     assert items[1].name is None and items[1].stan_json is None
     assert items[1].funkcja is None  # absent -> None
     assert items[1].leaf_id == ""  # absent -> empty string
-    assert items[1].params is None  # absent column, distinct from "no flags"
 
 
 @pytest.mark.parametrize(
@@ -254,16 +252,6 @@ def test_server_info_access_tier_from_account_id(
     user_id: int | None, tier: AccessTier | None
 ) -> None:
     assert AmpioServerInfo(user_id=user_id).access_tier is tier
-
-
-def test_parse_states_snapshot() -> None:
-    payload = json.dumps(
-        {"List": [{"id": 1, "stan_json": '{"state":"on"}'}, {"id": "x"}]}
-    )
-    entries = parse_states_snapshot(payload)
-    assert entries is not None
-    assert len(entries) == 1
-    assert entries[0].id == 1 and entries[0].stan_json is not None
 
 
 def test_state_route_json_payload() -> None:

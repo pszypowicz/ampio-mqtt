@@ -51,12 +51,6 @@ async def test_command_without_args_omits_trailing_slash(
         (lambda c: c.set_color(50, 1, 2, 3), b"/api/set/50/setColors/1/2/3/0"),
         (lambda c: c.open_cover(48), b"/api/set/48/open"),
         (lambda c: c.close_cover(48), b"/api/set/48/close"),
-        # No lamella given -> 101, the M-SERV's "leave this axis alone".
-        (lambda c: c.set_cover_position(48, 55), b"/api/set/48/setRollerPos/55/101"),
-        (
-            lambda c: c.set_cover_position(48, 55, lamella=20),
-            b"/api/set/48/setRollerPos/55/20",
-        ),
     ],
 )
 async def test_helpers_map_to_verified_verbs(

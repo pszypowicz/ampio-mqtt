@@ -5,7 +5,6 @@ covered in test_store.py; the pure model properties in test_models.py."""
 from __future__ import annotations
 
 import asyncio
-import json
 
 import aiomqtt
 import pytest
@@ -228,7 +227,7 @@ async def test_start_times_out_without_auth_error() -> None:
         mqtt_client_factory=broker.factory,
     )
     with pytest.raises(AmpioConnectionError):
-        await client.start(timeout=0.5, discovery_timeout=0.1)
+        await client.start(timeout=0.1, discovery_timeout=0.05)
 
 
 def test_last_payloads_retained_for_each_handler() -> None:
@@ -252,25 +251,20 @@ def test_last_payloads_retained_for_each_handler() -> None:
     data_devices_payload = details({"id": 5, "typ_komponentu": "temp"})
     params_payload = devices({"id": 5, "params": 17})
     scenes_payload = devices({"id": 3, "sceneName": "Evening"})
+    groups_payload = devices({"id": 1, "opis_menu": "Salon"})
+    group_devices_payload = devices({"id_grupy": 1, "id_obiektu": 5})
     feed(client, f"ampio/fromDB/{USER}/data/states", states_payload)
     feed(client, f"ampio/fromDB/{USER}/data/devices", data_devices_payload)
     feed(client, f"ampio/fromDB/{USER}/data/params_devices", params_payload)
     feed(client, f"ampio/fromDB/{USER}/data/scenes", scenes_payload)
+    feed(client, f"ampio/fromDB/{USER}/data/groups", groups_payload)
+    feed(client, f"ampio/fromDB/{USER}/data/group_devices", group_devices_payload)
     assert client.last_payloads["states"] == states_payload
     assert client.last_payloads["data_devices"] == data_devices_payload
     assert client.last_payloads["params_devices"] == params_payload
     assert client.last_payloads["scenes"] == scenes_payload
-
-
-def test_groups_payloads_are_retained() -> None:
-    """`data/groups` and `data/group_devices` populate the last_payloads map."""
-    client = _client()
-    groups = json.dumps({"List": [{"id": 1, "opis_menu": "Salon"}]}).encode()
-    group_devices = json.dumps({"List": [{"id_grupy": 1, "id_obiektu": 5}]}).encode()
-    feed(client, f"ampio/fromDB/{USER}/data/groups", groups)
-    feed(client, f"ampio/fromDB/{USER}/data/group_devices", group_devices)
-    assert client.last_payloads["groups"] == groups.decode()
-    assert client.last_payloads["group_devices"] == group_devices.decode()
+    assert client.last_payloads["groups"] == groups_payload
+    assert client.last_payloads["group_devices"] == group_devices_payload
 
 
 def test_access_tier_is_the_authenticated_username() -> None:
