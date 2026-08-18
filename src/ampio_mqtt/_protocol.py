@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .device_types import module_capabilities, module_model
-from .endpoints import BASELINE_SERVER_VERSION
+from .endpoints import BASELINE_SERVER_VERSION, ENDPOINTS, Endpoint, response_topic
 from .events import BusEvent
 from .models import AmpioModule, AmpioScene, AmpioServerInfo
 
@@ -345,20 +345,13 @@ def parse_states_snapshot(payload: str) -> list[SnapshotEntry] | None:
     return out
 
 
-def parse_state_message(topic: str, payload: str) -> StateUpdate | None:
-    """Parse a live `ampio/fromDB/<user>/ob/<id>/state` push.
+def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
+    """Parse a live per-object state payload into a `StateUpdate`.
 
-    Returns None when the topic does not match the expected shape; otherwise a
-    `StateUpdate`. The payload may be plain text or a JSON object with a
-    `state` field; in either case `value` is set, and `on_ms` is populated
-    when the payload carried a server timestamp.
+    The payload may be plain text or a JSON object with a `state` field; in
+    either case `value` is set, and `on_ms` is populated when the payload
+    carried a server timestamp.
     """
-    parts = topic.split("/")
-    if len(parts) < 6 or parts[3] != "ob":
-        return None
-    oid = to_int(parts[4])
-    if oid is None:
-        return None
     value: str = payload
     on_ms: int | float | None = None
     tilt: int | None = None
@@ -382,60 +375,6 @@ def parse_state_message(topic: str, payload: str) -> StateUpdate | None:
 def _parse_lammel(data: dict[str, Any]) -> int | None:
     """Read the `lammel` slat angle percent from a state payload."""
     return to_int(data.get("lammel"))
-
-
-def parse_raw_channel_topic(topic: str) -> tuple[int, str, int] | None:
-    """Parse a raw `ampio/from/<MAC>/state/<prefix>/<channel>` topic.
-
-    Returns `(mac, prefix, channel)` where `mac` is the hex MAC segment parsed
-    as an int (so leading-zero / upper-vs-lower differences never matter) and
-    `channel` is the decimal channel index. Returns None on any shape mismatch.
-    The MAC is the module's effective CAN bus address (the Designer override),
-    matching `AmpioModule.mac`.
-    """
-    parts = topic.split("/")
-    if len(parts) != 6 or parts[0] != "ampio" or parts[1] != "from":
-        return None
-    if parts[3] != "state":
-        return None
-    try:
-        mac = int(parts[2], 16)
-    except ValueError:
-        return None
-    channel = to_int(parts[5])
-    if channel is None:
-        return None
-    return mac, parts[4], channel
-
-
-def parse_event(topic: str, payload: str) -> BusEvent | None:
-    """Parse an `ampio/from/<MAC>/event` push into a `BusEvent`."""
-    parts = topic.split("/")
-    if len(parts) != 4 or parts[0] != "ampio" or parts[1] != "from":
-        return None
-    if parts[3] != "event":
-        return None
-    try:
-        mac = int(parts[2], 16)
-    except ValueError:
-        return None
-    number = to_int(payload.strip())
-    if number is None:
-        return None
-    return BusEvent(number=number, mac=mac)
-
-
-def parse_diagnostics_mac(topic: str) -> int | None:
-    """Parse the MAC out of an `ampio/from/<MAC>/b/4F` diagnostics topic."""
-    parts = topic.split("/")
-    if len(parts) != 5 or parts[0] != "ampio" or parts[1] != "from":
-        return None
-    if parts[3] != "b" or parts[4].upper() != "4F":
-        return None
-    try:
-        return int(parts[2], 16)
-    except ValueError:
-        return None
 
 
 def parse_diagnostics(payload: str) -> ModuleDiagnostics | None:
@@ -486,3 +425,100 @@ def parse_stan_json(stan_json: str) -> StanJsonSeed | None:
         on_ms=on_ms,
         tilt=_parse_lammel(data),
     )
+
+
+# --- topic routing ---------------------------------------------------------
+
+
+@dataclass(slots=True, frozen=True)
+class EndpointReply:
+    """A reply on a request/response endpoint, payload unparsed.
+
+    Which parser applies is per-endpoint business - the store's handler
+    table decides; the router only identifies the endpoint.
+    """
+
+    endpoint: Endpoint
+    payload: str
+
+
+@dataclass(slots=True, frozen=True)
+class RawChannelEdge:
+    """A decoded CAN channel edge from the raw `ampio/from/<MAC>` tree."""
+
+    # Effective bus address (the hex topic segment parsed as an int, so
+    # leading-zero / case differences never matter); matches `AmpioModule.mac`.
+    mac: int
+    prefix: str  # channel-type prefix ("f" flags, "i" digital inputs, ...)
+    channel: int
+    value: str
+
+
+@dataclass(slots=True, frozen=True)
+class DiagnosticsReport:
+    """A module's parsed `b/4F` health broadcast with its sender mac."""
+
+    mac: int
+    diagnostics: ModuleDiagnostics
+
+
+# Everything one MQTT message can classify into. `BusEvent` is the public
+# event class itself - for bus events the wire message IS the event.
+Inbound = EndpointReply | StateUpdate | RawChannelEdge | DiagnosticsReport | BusEvent
+
+
+class Router:
+    """Classifies one MQTT message into a typed inbound message, or None.
+
+    The single home of topic-shape knowledge: every guard lives here, once,
+    and anything unroutable - an unknown shape, a non-hex mac, a non-integer
+    object id, channel, or event number, an unparseable diagnostics frame -
+    returns None. The store then applies typed messages and never inspects a
+    topic. Endpoint reply and per-object state topics are namespaced by the
+    connecting account (hence ``user``); the raw ``ampio/from`` tree is
+    global.
+    """
+
+    __slots__ = ("_by_response",)
+
+    def __init__(self, user: str) -> None:
+        self._by_response: dict[str, Endpoint] = {
+            response_topic(ep, user): ep for ep in ENDPOINTS
+        }
+
+    def route(self, topic: str, payload: str) -> Inbound | None:
+        endpoint = self._by_response.get(topic)
+        if endpoint is not None:
+            return EndpointReply(endpoint=endpoint, payload=payload)
+        parts = topic.split("/")
+        if (
+            len(parts) == 6
+            and parts[0] == "ampio"
+            and parts[1] == "fromDB"
+            and parts[3] == "ob"
+            and parts[5] == "state"
+        ):
+            oid = to_int(parts[4])
+            return None if oid is None else _parse_state_payload(oid, payload)
+        if len(parts) < 4 or parts[0] != "ampio" or parts[1] != "from":
+            return None
+        try:
+            mac = int(parts[2], 16)
+        except ValueError:
+            return None
+        if len(parts) == 6 and parts[3] == "state":
+            channel = to_int(parts[5])
+            if channel is None:
+                return None
+            return RawChannelEdge(
+                mac=mac, prefix=parts[4], channel=channel, value=payload.strip()
+            )
+        if len(parts) == 5 and parts[3] == "b" and parts[4].upper() == "4F":
+            diagnostics = parse_diagnostics(payload)
+            if diagnostics is None:
+                return None
+            return DiagnosticsReport(mac=mac, diagnostics=diagnostics)
+        if len(parts) == 4 and parts[3] == "event":
+            number = to_int(payload.strip())
+            return None if number is None else BusEvent(number=number, mac=mac)
+        return None

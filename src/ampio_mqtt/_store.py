@@ -18,12 +18,11 @@ from . import _protocol
 from .classification import classify, input_channel_prefix
 from .endpoints import (
     BASELINE_SERVER_VERSION,
-    ENDPOINTS,
     AccessTier,
     Endpoint,
-    response_topic,
 )
 from .events import (
+    BusEvent,
     ModuleRemoved,
     ModuleUpdated,
     ObjectRemoved,
@@ -65,9 +64,9 @@ class AmpioStore:
 
     def __init__(self, user: str) -> None:
         self.state = AmpioState()
-        self._by_response: dict[str, Endpoint] = {
-            response_topic(ep, user): ep for ep in ENDPOINTS
-        }
+        # The single home of topic-shape knowledge; the store only ever sees
+        # typed inbound messages.
+        self._router = _protocol.Router(user)
         # Raw-channel bridge: (module mac, prefix, channel) -> object id.
         self._input_index: dict[tuple[int, str, int], int] = {}
         # Effective bus mac -> module, for routing a module's own broadcasts.
@@ -106,30 +105,30 @@ class AmpioStore:
     def apply(self, topic: str, payload: str) -> Applied:
         """Apply one message and report what it changed."""
         self._applied = Applied()
-        endpoint = self._by_response.get(topic)
-        if endpoint is not None:
-            self._applied.endpoint = endpoint
-            handler = self._handlers.get(endpoint.name)
-            if handler is not None:
-                self._applied.parsed = handler(payload)
-            else:
-                # Pure request/response endpoints mutate nothing here, but
-                # their parseability still gates the reply signal - a corrupt
-                # reply must not complete a fetch. Every one of them answers
-                # with a {"List": [...]} document, so that shape check stands
-                # in for a handler; an endpoint with a different reply shape
-                # needs its own _handlers entry.
-                self._applied.parsed = _protocol._rows(payload) is not None
-                if not self._applied.parsed:
-                    _LOGGER.warning("Could not parse Ampio %s reply", endpoint.name)
-        elif topic.endswith("/state") and "/ob/" in topic:
-            self._handle_state(topic, payload)
-        elif topic.startswith("ampio/from/") and "/state/" in topic:
-            self._handle_raw_channel(topic, payload)
-        elif topic.startswith("ampio/from/") and "/b/" in topic:
-            self._handle_diagnostics(topic, payload)
-        elif topic.startswith("ampio/from/") and topic.endswith("/event"):
-            self._handle_event(topic, payload)
+        match self._router.route(topic, payload):
+            case _protocol.EndpointReply(endpoint=endpoint, payload=body):
+                self._applied.endpoint = endpoint
+                handler = self._handlers.get(endpoint.name)
+                if handler is not None:
+                    self._applied.parsed = handler(body)
+                else:
+                    # Pure request/response endpoints mutate nothing here, but
+                    # their parseability still gates the reply signal - a
+                    # corrupt reply must not complete a fetch. Every one of
+                    # them answers with a {"List": [...]} document, so that
+                    # shape check stands in for a handler; an endpoint with a
+                    # different reply shape needs its own _handlers entry.
+                    self._applied.parsed = _protocol._rows(body) is not None
+                    if not self._applied.parsed:
+                        _LOGGER.warning("Could not parse Ampio %s reply", endpoint.name)
+            case _protocol.StateUpdate() as update:
+                self._apply_state(update)
+            case _protocol.RawChannelEdge() as edge:
+                self._apply_raw_channel(edge)
+            case _protocol.DiagnosticsReport(mac=mac, diagnostics=diagnostics):
+                self._apply_diagnostics(mac, diagnostics)
+            case BusEvent() as event:
+                self._applied.events.append(event)
         return self._applied
 
     # --- catalogues -------------------------------------------------------
@@ -306,10 +305,7 @@ class AmpioStore:
 
     # --- live state -------------------------------------------------------
 
-    def _handle_state(self, topic: str, payload: str) -> None:
-        update = _protocol.parse_state_message(topic, payload)
-        if update is None:
-            return
+    def _apply_state(self, update: _protocol.StateUpdate) -> None:
         if update.id in self._raw_seen_ids:
             # The faster raw-channel path is authoritative for this input, so
             # the echo's value must neither re-notify nor clobber a newer
@@ -346,40 +342,28 @@ class AmpioStore:
         self._touch_module(obj.device_id)
         self._record(obj)
 
-    def _handle_raw_channel(self, topic: str, payload: str) -> None:
-        key = _protocol.parse_raw_channel_topic(topic)
-        if key is None:
-            return
-        oid = self._input_index.get(key)
+    def _apply_raw_channel(self, edge: _protocol.RawChannelEdge) -> None:
+        oid = self._input_index.get((edge.mac, edge.prefix, edge.channel))
         if oid is None:
             return  # channel has no exposed Designer object - ignore
         obj = self.state.objects[oid]
         self._raw_seen_ids.add(oid)
-        obj.value = payload.strip()
+        obj.value = edge.value
         obj.updated_at = time.time()
         self._clock_by_id[oid] = _LOCAL
         self._touch_module(obj.device_id)
         self._record(obj)
 
-    def _handle_diagnostics(self, topic: str, payload: str) -> None:
-        mac = _protocol.parse_diagnostics_mac(topic)
-        if mac is None:
-            return
+    def _apply_diagnostics(
+        self, mac: int, diagnostics: _protocol.ModuleDiagnostics
+    ) -> None:
         module = self._module_by_mac.get(mac)
         if module is None:
             return  # a module the catalogue does not list
-        diagnostics = _protocol.parse_diagnostics(payload)
-        if diagnostics is None:
-            return
         module.supply_voltage = diagnostics.supply_voltage
         module.temperature = diagnostics.temperature
         module.last_seen = time.time()
         self._applied.events.append(ModuleUpdated(module))
-
-    def _handle_event(self, topic: str, payload: str) -> None:
-        event = _protocol.parse_event(topic, payload)
-        if event is not None:
-            self._applied.events.append(event)
 
     # --- helpers ----------------------------------------------------------
 

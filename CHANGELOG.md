@@ -30,6 +30,17 @@ upgrade path.
   updates of the reply that caused them); a raising listener is still
   logged and isolated. `AmpioEvent` is absorbed into `BusEvent` - the
   event class is the model.
+- Topic classification has one home: a protocol-layer `Router` turns each
+  inbound message into a typed message (`EndpointReply`, `StateUpdate`,
+  `RawChannelEdge`, `DiagnosticsReport`, `BusEvent`) exactly once, and the
+  store pattern-matches on the result instead of substring-filtering topics
+  and re-validating them in every parser. The dispatcher's loose pre-filters
+  and the parsers' duplicate shape guards - several of which a coverage run
+  proved unreachable behind the pre-filter - are gone, `parse_state_message`
+  / `parse_raw_channel_topic` / `parse_diagnostics_mac` / `parse_event`
+  dissolve into the router, and the store finally matches its own "pure
+  state" docstring. Behavior verified byte-identical against the scripted
+  broker and live against the M-SERV on all four push surfaces.
 - Endpoint reply correlation is consolidated into one per-endpoint channel
   (discovery latch, verbatim last payload, fetch waiters together), so
   adding an endpoint is one row in the endpoint table and no new client
