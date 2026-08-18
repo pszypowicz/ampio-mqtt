@@ -111,8 +111,8 @@ are observable and grant-equivalent to admin. The bridge sends the
 packed form as a signed 32-bit int (negative values), which the M-SERV
 accepts; state echoes report the unsigned form. A consumer wanting "on"
 for an `rgbw` object should follow the same pattern: remember the last
-non-zero state value (it is the packed color) and replay it with
-`setColors`.
+non-zero state value (it is the packed color, decoded for consumers as
+`AmpioObject.rgbw`) and replay it with `setColors`.
 
 Scenes are driven by their own payloads on the same topic, addressing the
 scene rather than an object:

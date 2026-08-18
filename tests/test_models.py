@@ -145,3 +145,60 @@ def test_module_mac_parses_strictly(leaf_id: str, expected: int | None) -> None:
 def test_server_key_is_the_decimal_mac(mac: int | None, expected: str | None) -> None:
     """The canonical registry-scoping string; its format is a promise."""
     assert AmpioServerInfo(mac=mac).key == expected
+
+
+def _colored(value: str | None) -> AmpioObject:
+    return AmpioObject(
+        id=1, typ_komponentu="rgbw", kind=classify("rgbw", None), value=value
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        # Live-verified packing: ob/63's packed word against its own raw
+        # channel echo 254,28,0,132.
+        ("2214599934", (254, 28, 0, 132)),
+        # The same word in signed 32-bit form, as the Matter bridge emits.
+        ("-2080367362", (254, 28, 0, 132)),
+        ("657930", (10, 10, 10, 0)),
+        ("0", (0, 0, 0, 0)),
+        ("4294967295", (255, 255, 255, 255)),
+        ("4294967296", None),  # past 32 bits
+        ("junk", None),
+        (None, None),
+    ],
+)
+def test_rgbw_decodes_the_packed_state(
+    value: str | None, expected: tuple[int, int, int, int] | None
+) -> None:
+    assert _colored(value).rgbw == expected
+
+
+def test_rgbw_reads_none_for_non_color_kinds() -> None:
+    """A dimmer's 0-255 level must not masquerade as a color."""
+    dimmer = AmpioObject(
+        id=1, typ_komponentu="led", kind=classify("led", None), value="255"
+    )
+    assert dimmer.rgbw is None
+
+
+def _cover(value: str | None, typ: str = "roleta_procenty") -> AmpioObject:
+    return AmpioObject(id=1, typ_komponentu=typ, kind=classify(typ, None), value=value)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("0", 0), ("55", 55), ("100", 100), ("101", None), ("junk", None), (None, None)],
+)
+def test_position_reads_the_travel_percent(
+    value: str | None, expected: int | None
+) -> None:
+    assert _cover(value).position == expected
+
+
+def test_position_reads_none_off_the_position_axis() -> None:
+    """A plain up/down cover has no position axis; neither has a light."""
+    assert _cover("55", typ="roleta").position is None
+    assert _colored("55").position is None
+    assert _cover("55", typ="roleta_lamelki").position == 55

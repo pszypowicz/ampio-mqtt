@@ -153,6 +153,55 @@ class AmpioObject:
         return parsed if math.isfinite(parsed) else None
 
     @property
+    def rgbw(self) -> tuple[int, int, int, int] | None:
+        """The four color channels, decoded from the packed state value.
+
+        Only a color output (`OutputKind.color`) reads non-None - a
+        dimmer's 0-255 level must not masquerade as a color. The packed
+        form is ``R | G<<8 | B<<16 | W<<24``, live-verified against the
+        module's own raw channel echo. A negative value is the same word
+        in signed 32-bit form - the M-SERV's own Matter bridge emits that
+        shape - and decodes identically. None when the value is missing,
+        not an integer, or outside 32 bits.
+        """
+        if not (isinstance(self.kind, OutputKind) and self.kind.color):
+            return None
+        if self.value is None:
+            return None
+        try:
+            packed = int(self.value)
+        except ValueError:
+            return None
+        if packed < 0:
+            packed += 1 << 32
+        if not 0 <= packed <= 0xFFFFFFFF:
+            return None
+        return (
+            packed & 0xFF,
+            (packed >> 8) & 0xFF,
+            (packed >> 16) & 0xFF,
+            (packed >> 24) & 0xFF,
+        )
+
+    @property
+    def position(self) -> int | None:
+        """Cover travel percent (0 closed, 100 open) from the state value.
+
+        Anything but a position-capable cover (`OutputKind.position`)
+        reads None, as does a value outside 0-100. The slat axis is
+        :pyattr:`tilt_position`, exactly as `setRollerPos` splits them.
+        """
+        if not (isinstance(self.kind, OutputKind) and self.kind.position):
+            return None
+        if self.value is None:
+            return None
+        try:
+            pos = int(self.value)
+        except ValueError:
+            return None
+        return pos if 0 <= pos <= 100 else None
+
+    @property
     def is_system(self) -> bool:
         """Whether this is a system object (always present regardless of grouping).
 

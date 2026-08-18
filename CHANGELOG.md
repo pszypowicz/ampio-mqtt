@@ -32,6 +32,15 @@ it away.
   guarantees `server_info` is populated with a non-None `mac` and
   `key`. No baseline server answers without an identity; one that does
   leaves discovery incomplete with a warning naming why. (#78)
+- **`AmpioObject.rgbw` and `AmpioObject.position`** - typed state
+  accessors, so consumers never parse `value` or do bit math. `rgbw`
+  decodes the packed color word (`R | G<<8 | B<<16 | W<<24`,
+  live-verified against the module's raw channel echo; the signed
+  32-bit form the Matter bridge emits decodes identically) and
+  `position` reads the cover travel percent, the counterpart of
+  `tilt_position`. Both are gated on the object's kind - a dimmer's
+  level never masquerades as a color, a relay's state never as a
+  position. (#82)
 - **`AmpioObject.module_mac`** - the owning module's replacement-stable
   bus mac, parsed from the `leafId` second segment. Identical on both
   discovery surfaces, so a restricted account - which never receives
