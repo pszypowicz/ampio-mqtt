@@ -15,7 +15,6 @@ from .classification import (
     ThermostatKind,
 )
 from .client import AmpioClient
-from .discovery import DiscoveryResult, discover
 from .errors import (
     AmpioAuthError,
     AmpioConnectionError,
@@ -78,3 +77,14 @@ __all__ = [
 ]
 
 __version__ = "0.22.0"
+
+
+def __getattr__(name: str) -> object:
+    """Load the discovery surface lazily: it needs the optional zeroconf
+    dependency (the ``ampio-mqtt[discovery]`` extra), and importing the
+    package must not."""
+    if name in ("discover", "DiscoveryResult"):
+        from . import discovery
+
+        return getattr(discovery, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -92,7 +92,8 @@ than silently returning an empty result.
 ## Finding the M-SERV on the LAN
 
 `discover()` resolves `ampio.local` with an explicit multicast DNS
-A-record query driven by `python-zeroconf` (a hard runtime dependency),
+A-record query driven by `python-zeroconf` (the `ampio-mqtt[discovery]`
+extra),
 then TCP-probes the resolved address on the broker port. The M-SERV
 publishes only its hostname over Avahi, with no service type and no TXT
 records, which is why the lookup targets the well-known name. Because

@@ -20,13 +20,15 @@ dependencies = [
   # exceptions. `<3`: aiomqtt 3 drops paho (and with it the MqttError
   # hierarchy) and speaks MQTT 5 only.
   "aiomqtt>=2.5,<3",
-  # Home Assistant always provides `zeroconf`, and `discover()` accepts an
-  # externally-managed instance so the HA integration can pass its shared one.
-  # Standalone callers get a per-call instance for free, with no extra to opt in.
-  # Floor: the `AddressResolverIPv4` class discovery.py imports exists since
-  # 0.142.0 (python-zeroconf#1499); anything older fails at import.
-  "zeroconf>=0.142",
 ]
+
+[project.optional-dependencies]
+# LAN discovery (`ampio_mqtt.discover`) only. Home Assistant provides
+# `zeroconf` itself and `discover()` accepts its shared instance, so the
+# primary consumer needs no extra; standalone callers opt in.
+# Floor: the `AddressResolverIPv4` class discovery.py imports exists since
+# 0.142.0 (python-zeroconf#1499); anything older fails at import.
+discovery = ["zeroconf>=0.142"]
 
 [project.urls]
 Homepage = "https://github.com/pszypowicz/ampio-mqtt"
@@ -42,6 +44,8 @@ dev = [
   "pytest-cov>=4",
   "mypy>=1.10",
   "ruff==0.16.3",
+  # The discovery extra, so the test suite covers the discovery module.
+  "zeroconf>=0.142",
 ]
 
 [tool.hatch.version]

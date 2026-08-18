@@ -6,11 +6,12 @@ well-known hostname ``ampio.local``. So discovery is a multicast DNS A-record
 query for that hostname, followed by a TCP probe to confirm the broker port
 is open.
 
-The mDNS query is driven from Python via the ``zeroconf`` package, which is a
-hard runtime dependency. Callers that already own an ``AsyncZeroconf``
-instance (Home Assistant integrations almost always do) can pass it in via
-``zeroconf=...`` to share the multicast socket; standalone callers can omit
-the argument and ``discover()`` will spin up its own per-call.
+The mDNS query is driven from Python via the ``zeroconf`` package, the
+``ampio-mqtt[discovery]`` extra. Callers that already own an
+``AsyncZeroconf`` instance (Home Assistant integrations almost always do)
+can pass it in via ``zeroconf=...`` to share the multicast socket;
+standalone callers can omit the argument and ``discover()`` will spin up
+its own per-call.
 """
 
 from __future__ import annotations
@@ -20,8 +21,14 @@ import contextlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from zeroconf import AddressResolverIPv4, IPVersion
-from zeroconf.asyncio import AsyncZeroconf
+try:
+    from zeroconf import AddressResolverIPv4, IPVersion
+    from zeroconf.asyncio import AsyncZeroconf
+except ImportError as _err:
+    raise ImportError(
+        "LAN discovery needs the optional zeroconf dependency: install the "
+        "ampio-mqtt[discovery] extra (Home Assistant provides zeroconf itself)"
+    ) from _err
 
 
 @dataclass(frozen=True)
