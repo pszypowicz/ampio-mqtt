@@ -14,7 +14,6 @@ from .classification import (
     ThermostatKind,
     is_system_type,
 )
-from .device_types import Capability
 from .endpoints import AccessTier
 
 # Bit flags inside the `params` integer (`obiekty.params`); the semantics
@@ -293,7 +292,6 @@ class AmpioModule:
     name: str | None = None  # nazwa_urzadzenia (user-given module name)
     type: int | None = None  # typ_urzadzenia
     model: str | None = None  # resolved model name for `type`
-    capabilities: frozenset[Capability] = field(default_factory=frozenset)
     sw_version: int | None = None  # wersja_softu
     hw_version: int | None = None  # wersja_pcb
     # Local epoch seconds when this process last received live evidence of

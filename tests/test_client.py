@@ -82,14 +82,11 @@ def test_mserv_id_prefers_info_mac_cross_check() -> None:
     assert client.mserv_id == 1
 
 
-# Type 10 is the M-SERV-s; type 0 is VIRTUAL. Both map to Capability.HUB.
+# Type 10 is the M-SERV-s; type 0 is VIRTUAL. Both are hub types.
 @pytest.mark.parametrize("hub_type", [10, 0])
 def test_mserv_id_falls_back_to_unique_hub_module(hub_type: int) -> None:
-    """Without info, the unique hub-capability module identifies the M-SERV.
-
-    The rule reads Capability.HUB off the module catalogue, not the raw type
-    code, so a VIRTUAL hub resolves exactly like an M-SERV one.
-    """
+    """Without info, the unique hub-typed module identifies the M-SERV,
+    with a VIRTUAL hub resolving exactly like an M-SERV one."""
     client = _client()
     feed(
         client,

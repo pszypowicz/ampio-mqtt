@@ -17,7 +17,7 @@ from typing import Any, TypeVar, cast, overload
 from . import _connection, _protocol
 from ._store import AmpioStore
 from .classification import OutputKind
-from .device_types import Capability
+from .device_types import is_hub
 from .endpoints import (
     ADMIN_USERNAME,
     ENDPOINT_BY_NAME,
@@ -279,9 +279,7 @@ class AmpioClient:
                 if info.mac in (mod.mac_global, mod.mac):
                     return mid
         candidates = [
-            mid
-            for mid, mod in self._store.modules.items()
-            if Capability.HUB in mod.capabilities
+            mid for mid, mod in self._store.modules.items() if is_hub(mod.type)
         ]
         if len(candidates) == 1:
             return candidates[0]

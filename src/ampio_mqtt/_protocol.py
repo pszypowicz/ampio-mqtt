@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from .device_types import module_capabilities, module_model
+from .device_types import module_model
 from .endpoints import BASELINE_SERVER_VERSION, ENDPOINTS, Endpoint, response_topic
 from .events import BusEvent
 from .models import AmpioModule, AmpioScene, AmpioServerInfo
@@ -197,7 +197,6 @@ def parse_devices(payload: str) -> list[AmpioModule] | None:
                 name=item.get("nazwa_urzadzenia") or None,
                 type=typ,
                 model=module_model(typ),
-                capabilities=module_capabilities(typ),
                 sw_version=to_int(item.get("wersja_softu")),
                 hw_version=to_int(item.get("wersja_pcb")),
             )
