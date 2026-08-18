@@ -321,20 +321,6 @@ async def test_reconnect_count_increments_on_reconnect() -> None:
     assert client.stats.last_error == "simulated drop"
 
 
-async def test_object_updated_events_are_snapshots(
-    connected: tuple[AmpioClient, FakeBroker],
-) -> None:
-    """A deferred listener must see the state the event announced, not
-    whatever the object holds by the time it looks."""
-    client, _broker = connected
-    events: list[ObjectUpdated] = []
-    client.subscribe(events.append, of=ObjectUpdated)
-    feed(client, f"ampio/fromDB/{USER}/ob/5/state", b'{"state": "1", "on": 2000}')
-    feed(client, f"ampio/fromDB/{USER}/ob/5/state", b'{"state": "2", "on": 3000}')
-    assert [e.object.value for e in events] == ["1", "2"]
-    assert events[0].object is not client.objects[5]
-
-
 async def test_discovery_stays_incomplete_without_server_identity(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:

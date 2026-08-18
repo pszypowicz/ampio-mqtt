@@ -44,12 +44,10 @@ class FakeBroker:
     Pass ``broker.factory`` as ``mqtt_client_factory``; the same instance
     serves every reconnect. Scripted connect outcomes (`enter_errors`) and
     publish outcomes (`publish_errors`) are consumed left to right;
-    `scripted_messages` replay into the stream on every connect, and
-    `deliver` queues into the live session.
+    `scripted_messages` replay into the stream on every connect.
     """
 
     def __init__(self) -> None:
-        self.enter_error: BaseException | None = None
         self.enter_errors: list[BaseException | None] = []
         self.enter_delay: float = 0.0
         # Raised from the message stream once queued messages are consumed,
@@ -75,7 +73,7 @@ class FakeBroker:
     async def __aenter__(self) -> Self:
         if self.enter_delay:
             await asyncio.sleep(self.enter_delay)
-        error = self.enter_errors.pop(0) if self.enter_errors else self.enter_error
+        error = self.enter_errors.pop(0) if self.enter_errors else None
         if error is not None:
             raise error
         self._queue = asyncio.Queue()
@@ -103,10 +101,6 @@ class FakeBroker:
             raise error
         self.published.append((topic, payload))
         self.published_qos.append(qos)
-
-    def deliver(self, topic: str, payload: bytes) -> None:
-        """Queue a message for the running session's stream."""
-        self._queue.put_nowait(Message(topic, payload))
 
     @property
     def messages(self) -> Self:

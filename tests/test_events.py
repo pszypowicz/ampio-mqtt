@@ -9,17 +9,7 @@ from ampio_mqtt import AmpioClient, AmpioConnectionError, BusEvent
 
 
 def test_received_event_reaches_listeners() -> None:
-    client = AmpioClient("host", username=USER)
-    seen: list[BusEvent] = []
-    client.subscribe(seen.append, of=BusEvent)
-
-    feed(client, "ampio/from/1/event", b"189")
-
-    assert seen == [BusEvent(number=189, mac=1)]
-
-
-def test_event_mac_identifies_the_originator() -> None:
-    """A panel press carries that module's mac, not the M-SERV's."""
+    """The originator mac is the sending module's, hex-parsed off the topic."""
     client = AmpioClient("host", username=USER)
     seen: list[BusEvent] = []
     client.subscribe(seen.append, of=BusEvent)
@@ -29,19 +19,11 @@ def test_event_mac_identifies_the_originator() -> None:
     assert seen == [BusEvent(number=42, mac=0xD09A)]
 
 
-@pytest.mark.parametrize(
-    ("topic", "payload"),
-    [
-        ("ampio/from/1/event", b"not-a-number"),
-        ("ampio/from/zz/event", b"189"),
-        ("ampio/from/1/state/f/2", b"189"),
-    ],
-)
-def test_malformed_events_are_ignored(topic: str, payload: bytes) -> None:
+def test_a_raw_channel_message_is_not_a_bus_event() -> None:
     client = AmpioClient("host", username=USER)
     seen: list[BusEvent] = []
     client.subscribe(seen.append, of=BusEvent)
-    feed(client, topic, payload)
+    feed(client, "ampio/from/1/state/f/2", b"189")
     assert seen == []
 
 

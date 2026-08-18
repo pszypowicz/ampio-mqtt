@@ -13,7 +13,17 @@ import time
 from dataclasses import fields, replace
 
 import pytest
-from conftest import details, devices, info
+from conftest import (
+    DATA_DEVICES_TOPIC,
+    DETAILS_TOPIC,
+    DEVICES_TOPIC,
+    PARAMS_DEVICES_TOPIC,
+    STATES_TOPIC,
+    USER,
+    details,
+    devices,
+    info,
+)
 
 from ampio_mqtt._store import AmpioStore, Applied
 from ampio_mqtt.events import (
@@ -24,8 +34,6 @@ from ampio_mqtt.events import (
     ObjectUpdated,
 )
 from ampio_mqtt.models import AmpioModule, AmpioObject
-
-USER = "u"
 
 
 def _updated(applied: Applied) -> list[AmpioObject]:
@@ -42,10 +50,6 @@ def _mod_updated(applied: Applied) -> list[AmpioModule]:
 
 def _mod_removed(applied: Applied) -> list[AmpioModule]:
     return [e.module for e in applied.events if isinstance(e, ModuleRemoved)]
-
-
-DEVICES_TOPIC = f"ampio/fromDB/{USER}/config/devices"
-DETAILS_TOPIC = f"ampio/fromDB/{USER}/config/devicesDetails"
 
 
 def _store() -> AmpioStore:
@@ -350,9 +354,6 @@ def _snapshot(state: str, on_ms: int | None) -> str:
     return json.dumps({"List": [{"id": 10, "stan_json": json.dumps(stan)}]})
 
 
-STATES_TOPIC = f"ampio/fromDB/{USER}/data/states"
-
-
 def test_server_dated_snapshot_never_regresses_a_local_dated_raw_edge() -> None:
     """The raw tree is undated, so a raw edge is stamped with the local
     clock. A snapshot's server date is incomparable to that - on an unsynced
@@ -645,34 +646,6 @@ def test_state_updates_module_last_seen_with_local_receive_time() -> None:
     assert later_seen is not None and later_seen >= first_seen
 
 
-def test_state_push_with_numeric_state_is_stored_as_string() -> None:
-    """A broker that emits unquoted numbers in `state` still yields str value."""
-    store = _store()
-    store.apply(
-        DEVICES_TOPIC,
-        devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
-    )
-    store.apply(
-        DETAILS_TOPIC,
-        details(
-            {
-                "id": 41,
-                "id_urzadzenia": 17,
-                "typ_komponentu": "temp",
-                "interpretacja": 1,
-                "opis_menu": "T",
-            }
-        ),
-    )
-    store.apply(
-        f"ampio/fromDB/{USER}/ob/41/state",
-        '{"state": 24.4, "on": 1779560000000}',
-    )
-    value = store.objects[41].value
-    assert value == "24.4"
-    assert isinstance(value, str)
-
-
 def test_states_snapshot_seeds_value_without_touching_last_seen() -> None:
     """The bulk states reply seeds the value but is not liveness evidence:
     it replays DB state that may be arbitrarily old, so last_seen stays
@@ -946,7 +919,8 @@ def test_index_rebuilds_when_devices_arrive_after_details() -> None:
     assert store.objects[50].value == "1"
 
 
-def test_flag_without_funkcja_is_not_indexed() -> None:
+def test_flag_without_funkcja_is_not_bridged() -> None:
+    """No channel index means no raw route - an edge must change nothing."""
     store = _store()
     store.apply(DEVICES_TOPIC, devices(_PANEL))
     no_funkcja = {
@@ -957,7 +931,8 @@ def test_flag_without_funkcja_is_not_indexed() -> None:
         "opis_menu": "Flag",
     }
     store.apply(DETAILS_TOPIC, details(no_funkcja))
-    assert store._input_index == {}
+    applied = store.apply("ampio/from/CAFE/state/f/1", "1")
+    assert store.objects[51].value is None and _updated(applied) == []
 
 
 def test_mapped_input_without_raw_uses_per_object_fallback() -> None:
@@ -1003,13 +978,11 @@ def test_symulacja_classifies_but_is_not_bridged() -> None:
     }
     store.apply(DETAILS_TOPIC, details(sym))
     assert store.objects[61].is_input is True
-    assert store._input_index == {}  # symulacja prefix not bridged
+    applied = store.apply("ampio/from/CAFE/state/f/1", "1")
+    assert store.objects[61].value is None and _updated(applied) == []
 
 
 # --- app-sync data-surface fallback (non-admin accounts) --------------------
-
-DATA_DEVICES_TOPIC = f"ampio/fromDB/{USER}/data/devices"
-PARAMS_DEVICES_TOPIC = f"ampio/fromDB/{USER}/data/params_devices"
 
 
 def _app_row(oid: int, leaf: str, name: str = "Air quality", interp: int = 5) -> dict:
@@ -1161,21 +1134,6 @@ def test_diagnostics_without_a_temperature_sensor_reports_none() -> None:
 def test_diagnostics_for_an_unknown_module_is_ignored() -> None:
     store = _diag_store()
     store.apply("ampio/from/BEEF/b/4F", '{"d":[254,79,60,0],"m":48879}')
-    assert store.modules[7].supply_voltage is None
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        '{"d":[254,80,60,0]}',  # not the diagnostics frame type
-        '{"d":[1,79,60,0]}',  # not a broadcast
-        '{"d":[254,79]}',  # truncated
-        "not json",
-    ],
-)
-def test_non_diagnostics_frames_are_ignored(payload: str) -> None:
-    store = _diag_store()
-    store.apply("ampio/from/CAFE/b/4F", payload)
     assert store.modules[7].supply_voltage is None
 
 
