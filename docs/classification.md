@@ -15,10 +15,10 @@ Authoritative source:
 
 ## `typ_komponentu` truth table
 
-The Sensor / Input / System columns are one row each in the
-`TYPE_PROFILES` table in `classification.py` (a type's `sensor`/`analog`/`numeric`,
-`input`, and `system` fields) - keep that table in sync when a new type
-is added.
+Each row here is one `TYPE_PROFILES` entry in `classification.py`: its
+`kind` (a fixed kind instance, or the analog/numeric selector for the
+`interpretacja`-keyed families) plus the `system` flag - keep that table
+in sync when a new type is added.
 
 | `typ_komponentu`                              | Sensor? | Input? | System? | Note                                                                                                                                       |
 | --------------------------------------------- | ------- | ------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
