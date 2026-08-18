@@ -44,6 +44,15 @@ of the account's app permissions). Everything on the
 | (empty)          | `ampio/control/<user>/states` | `ampio/fromDB/<user>/data/states`           | `{List: [{id, stan_json}]}` - bulk snapshot of the account's object states.                                                                                                                                                                                    |
 | (empty)          | `ampio/control/<user>/info`   | `ampio/fromDB/<user>/data/info`             | `{Results: {mac, userId, serverVersion, serverRevision, mqttVersion, local_ip, device_id, ...}}` - server self-report; retained in the account namespace. `userId` is the asking account's id (`-1` for the reserved `admin` login) and drives tier detection. |
 
+Each account namespace also carries a retained
+`ampio/fromDB/<user>/md5/<keyword>` topic per app-sync table (`devices`,
+`params_devices`, `groups`, `group_devices`, `scenes`, `resources`,
+`icons`, `logging`): the MD5 of the exact reply payload the account
+would receive, per-account for the grant-filtered tables. The Designer
+SPA uses these to skip redundant refetches. The library does not: the
+hashes cover neither the `config` catalogues nor `states`, so the
+requests worth saving have no hash - the analysis is recorded in #24.
+
 ## Commands (write)
 
 One topic per account carries every write, as plain text:
