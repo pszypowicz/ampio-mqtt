@@ -352,4 +352,4 @@ async def test_username_is_required(username: str | None) -> None:
     with pytest.raises(ValueError):
         AmpioClient("host", username=username)
     with pytest.raises(ValueError):
-        await AmpioClient.test_connection("host", 1883, username, None)
+        await AmpioClient.test_connection("host", username, None)

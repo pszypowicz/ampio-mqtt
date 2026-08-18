@@ -94,7 +94,7 @@ async def send(client: AmpioClient, a: argparse.Namespace) -> None:
 
 
 async def run(a: argparse.Namespace) -> int:
-    client = AmpioClient(a.host, a.port, a.username, a.password)
+    client = AmpioClient(a.host, a.username, a.password, port=a.port)
 
     def on_object(obj: AmpioObject) -> None:
         if obj.id == a.object_id:

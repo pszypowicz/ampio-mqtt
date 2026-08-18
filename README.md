@@ -25,12 +25,11 @@ from ampio_mqtt import AmpioClient, ObjectUpdated, discover
 
 
 async def main() -> None:
-    candidates = await discover()  # mDNS lookup of ampio.local
-    if not candidates:
+    found = await discover()  # mDNS lookup of ampio.local
+    if found is None:
         raise SystemExit("No Ampio M-SERV found on the LAN")
-    host = candidates[0].address or candidates[0].host
 
-    client = AmpioClient(host, username="user", password="secret")
+    client = AmpioClient(found.address, "user", "secret")
     client.subscribe(
         lambda e: print(e.object.id, e.object.kind, e.object.value),
         of=ObjectUpdated,

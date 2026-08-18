@@ -99,17 +99,17 @@ class AmpioClient:
     def __init__(
         self,
         host: str,
-        port: int = 1883,
-        username: str | None = None,
+        username: str,
         password: str | None = None,
         *,
+        port: int = 1883,
         reconnect_interval: float = 5.0,
         mqtt_client_factory: _connection.MqttClientFactory | None = None,
     ) -> None:
-        """Initialize the client. `username` is required: it names the
-        Ampio account and namespaces every MQTT topic, so without one the
-        client would subscribe to a namespace no M-SERV serves and fail
-        only minutes later as "discovery never completes".
+        """Initialize the client. `username` names the Ampio account and
+        namespaces every MQTT topic; an empty one is rejected here because
+        the client would otherwise subscribe to a namespace no M-SERV
+        serves and fail only minutes later as "discovery never completes".
 
         ``mqtt_client_factory`` is the transport seam: a zero-argument
         callable returning the MQTT session object for one connect attempt.
@@ -381,10 +381,10 @@ class AmpioClient:
     @staticmethod
     async def test_connection(
         host: str,
-        port: int,
-        username: str | None,
+        username: str,
         password: str | None,
         *,
+        port: int = 1883,
         info_timeout: float = 5.0,
         mqtt_client_factory: _connection.MqttClientFactory | None = None,
     ) -> AmpioServerInfo:
@@ -409,16 +409,15 @@ class AmpioClient:
             raise ValueError(
                 "username is required - the Ampio topics are namespaced by account"
             )
-        user = username
         info = ENDPOINT_BY_NAME["info"]
         payload = await _connection.probe(
             host,
             port,
             username,
             password,
-            request_topic=request_topic(info, user),
+            request_topic=request_topic(info, username),
             request_payload=info.req_payload,
-            reply_topic=response_topic(info, user),
+            reply_topic=response_topic(info, username),
             timeout=info_timeout,
             client_factory=mqtt_client_factory,
         )

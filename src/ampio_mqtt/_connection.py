@@ -71,7 +71,7 @@ class Connection:
         self,
         host: str,
         port: int,
-        username: str | None,
+        username: str,
         password: str | None,
         *,
         reconnect_interval: float,
@@ -347,7 +347,7 @@ class Connection:
 async def probe(
     host: str,
     port: int,
-    username: str | None,
+    username: str,
     password: str | None,
     *,
     request_topic: str,

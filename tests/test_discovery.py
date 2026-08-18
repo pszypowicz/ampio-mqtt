@@ -2,8 +2,8 @@
 
 Two orthogonal layers are exercised:
 
-- `discover()` and `_probe_host` orchestration, by stubbing `_resolve_mdns`
-  and `_tcp_probe` directly. These confirm the four arm-paths (timeout-raise,
+- `discover()` orchestration, by stubbing `_resolve_mdns` and
+  `_tcp_probe` directly. These confirm the four arm-paths (timeout-raise,
   mDNS-fails-early, TCP-fails, full success) and that an externally-provided
   `AsyncZeroconf` reaches the resolver call without being closed.
 - `_resolve_mdns` and `_tcp_probe` internals, by stubbing the zeroconf and
@@ -25,7 +25,7 @@ from zeroconf.asyncio import (
 from ampio_mqtt import DiscoveryResult, discover
 from ampio_mqtt import discovery as discovery_mod
 
-# --- discover() / _probe_host orchestration --------------------------------
+# --- discover() orchestration ----------------------------------------------
 
 
 async def test_invalid_timeout_raises() -> None:
@@ -33,16 +33,16 @@ async def test_invalid_timeout_raises() -> None:
         await discover(timeout=0)
 
 
-async def test_mdns_fails_returns_empty() -> None:
+async def test_mdns_fails_returns_none() -> None:
     async def _resolve(host: str, timeout: float, zc: AsyncZeroconf | None) -> None:
         return None
 
     with patch.object(discovery_mod, "_resolve_mdns", _resolve):
-        results = await discover(timeout=0.5)
-    assert results == []
+        result = await discover(timeout=0.5)
+    assert result is None
 
 
-async def test_mdns_ok_but_tcp_probe_fails_returns_empty() -> None:
+async def test_mdns_ok_but_tcp_probe_fails_returns_none() -> None:
     async def _resolve(host: str, timeout: float, zc: AsyncZeroconf | None) -> str:
         return "192.0.2.10"
 
@@ -53,11 +53,11 @@ async def test_mdns_ok_but_tcp_probe_fails_returns_empty() -> None:
         patch.object(discovery_mod, "_resolve_mdns", _resolve),
         patch.object(discovery_mod, "_tcp_probe", _probe),
     ):
-        results = await discover(timeout=0.5)
-    assert results == []
+        result = await discover(timeout=0.5)
+    assert result is None
 
 
-async def test_mdns_and_tcp_ok_returns_single_result() -> None:
+async def test_mdns_and_tcp_ok_returns_the_candidate() -> None:
     async def _resolve(host: str, timeout: float, zc: AsyncZeroconf | None) -> str:
         return "192.0.2.10"
 
@@ -68,10 +68,10 @@ async def test_mdns_and_tcp_ok_returns_single_result() -> None:
         patch.object(discovery_mod, "_resolve_mdns", _resolve),
         patch.object(discovery_mod, "_tcp_probe", _probe),
     ):
-        results = await discover(timeout=0.5)
-    assert results == [
-        DiscoveryResult(host="ampio.local", port=1883, address="192.0.2.10")
-    ]
+        result = await discover(timeout=0.5)
+    assert result == DiscoveryResult(
+        host="ampio.local", port=1883, address="192.0.2.10"
+    )
 
 
 async def test_external_zeroconf_is_passed_through_to_resolver() -> None:
@@ -259,8 +259,8 @@ async def test_non_default_hostname_and_port_flow_through() -> None:
         patch.object(discovery_mod, "_resolve_mdns", _resolve),
         patch.object(discovery_mod, "_tcp_probe", _probe),
     ):
-        results = await discover(hostname="mserv.local", port=2883, timeout=0.5)
+        result = await discover(hostname="mserv.local", port=2883, timeout=0.5)
     assert seen == {"host": "mserv.local", "port": 2883}
-    assert results == [
-        DiscoveryResult(host="mserv.local", port=2883, address="192.0.2.10")
-    ]
+    assert result == DiscoveryResult(
+        host="mserv.local", port=2883, address="192.0.2.10"
+    )

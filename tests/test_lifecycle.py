@@ -72,7 +72,7 @@ async def test_connection_returns_server_info_on_happy_path() -> None:
         ),
     ]
     info = await AmpioClient.test_connection(
-        "h", 1883, USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
+        "h", USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
     )
     assert info.mac == 42
     assert info.access_tier is AccessTier.ADMIN
@@ -99,7 +99,7 @@ async def test_connection_reports_a_restricted_account_before_setup() -> None:
         )
     ]
     info = await AmpioClient.test_connection(
-        "h", 1883, USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
+        "h", USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
     )
     assert info.user_id == 4
     assert info.access_tier is AccessTier.RESTRICTED
@@ -115,7 +115,7 @@ async def test_connection_raises_timeout_when_info_never_arrives() -> None:
     broker = FakeBroker()
     with pytest.raises(AmpioTimeoutError):
         await AmpioClient.test_connection(
-            "h", 1883, USER, "p", info_timeout=0.1, mqtt_client_factory=broker.factory
+            "h", USER, "p", info_timeout=0.1, mqtt_client_factory=broker.factory
         )
     assert issubclass(AmpioTimeoutError, AmpioConnectionError)
 
@@ -127,7 +127,7 @@ async def test_connection_returns_info_without_identity_as_is() -> None:
         Message(INFO_TOPIC, json.dumps({"Results": {}}).encode())
     ]
     info = await AmpioClient.test_connection(
-        "h", 1883, USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
+        "h", USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
     )
     assert info.mac is None
     assert info.server_version is None
@@ -140,7 +140,7 @@ async def test_connection_maps_unparseable_info_reply_to_timeout() -> None:
     broker.scripted_messages = [Message(INFO_TOPIC, b"not json at all")]
     with pytest.raises(AmpioTimeoutError):
         await AmpioClient.test_connection(
-            "h", 1883, USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
+            "h", USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
         )
 
 
@@ -149,7 +149,7 @@ async def test_connection_raises_auth_error_on_bad_credentials() -> None:
     broker.enter_errors = [_auth_rejection()]
     with pytest.raises(AmpioAuthError):
         await AmpioClient.test_connection(
-            "h", 1883, USER, "bad", info_timeout=0.1, mqtt_client_factory=broker.factory
+            "h", USER, "bad", info_timeout=0.1, mqtt_client_factory=broker.factory
         )
 
 
@@ -158,7 +158,7 @@ async def test_connection_raises_connection_error_on_transport_failure() -> None
     broker.enter_errors = [aiomqtt.MqttError("Connection refused")]
     with pytest.raises(AmpioConnectionError):
         await AmpioClient.test_connection(
-            "h", 1883, USER, "p", info_timeout=0.1, mqtt_client_factory=broker.factory
+            "h", USER, "p", info_timeout=0.1, mqtt_client_factory=broker.factory
         )
 
 

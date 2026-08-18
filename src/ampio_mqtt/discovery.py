@@ -34,7 +34,7 @@ class DiscoveryResult:
 
     host: str
     port: int
-    address: str | None
+    address: str
 
 
 async def discover(
@@ -43,12 +43,13 @@ async def discover(
     port: int = 1883,
     timeout: float = 2.0,
     zeroconf: AsyncZeroconf | None = None,
-) -> list[DiscoveryResult]:
-    """Return reachable M-SERV candidates by mDNS-resolving ``hostname``.
+) -> DiscoveryResult | None:
+    """Return the reachable M-SERV candidate found by mDNS-resolving
+    ``hostname``, or None.
 
-    Returns a single-element list when the hostname answers via mDNS *and* a
-    TCP connection to the resolved address succeeds, and an empty list
-    otherwise. Never raises on "not found".
+    A candidate is returned when the hostname answers via mDNS *and* a TCP
+    connection to the resolved address succeeds. Never raises on "not
+    found".
 
     ``zeroconf`` lets HA pass its shared ``AsyncZeroconf`` so the discovery
     doesn't open a competing multicast socket. When omitted, a short-lived
@@ -56,21 +57,12 @@ async def discover(
     """
     if timeout <= 0:
         raise ValueError("timeout must be positive")
-
-    result = await _probe_host(hostname, port, timeout, zeroconf)
-    return [result] if result is not None else []
-
-
-async def _probe_host(
-    host: str, port: int, timeout: float, zc: AsyncZeroconf | None
-) -> DiscoveryResult | None:
-    """Resolve `host` via mDNS, then TCP-probe the resolved address on `port`."""
-    address = await _resolve_mdns(host, timeout * 0.7, zc)
+    address = await _resolve_mdns(hostname, timeout * 0.7, zeroconf)
     if address is None:
         return None
     if not await _tcp_probe(address, port, timeout * 0.3):
         return None
-    return DiscoveryResult(host=host, port=port, address=address)
+    return DiscoveryResult(host=hostname, port=port, address=address)
 
 
 async def _resolve_mdns(
