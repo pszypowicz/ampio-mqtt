@@ -25,9 +25,7 @@ from typing import Any
 def _load_upstream_devtypes() -> list[dict[str, Any]]:
     """Read the vendored ``_devtypes.json`` shipped with the package."""
     payload = files(__package__).joinpath("_devtypes.json").read_text(encoding="utf-8")
-    data = json.loads(payload)
-    if not isinstance(data, list):
-        raise TypeError("_devtypes.json: top-level must be a list")
+    data: list[dict[str, Any]] = json.loads(payload)
     return data
 
 

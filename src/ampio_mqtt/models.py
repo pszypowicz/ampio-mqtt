@@ -40,7 +40,7 @@ _HIDDEN_FLAG = 1 << 4
 # M-SERV's own Matter bridge parses (docs/identity.md). Only the mac
 # segment is extracted; the F segments' meaning stays opaque. Strict on
 # purpose - a half-parsed mac that is wrong is worse than None.
-_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_[^_]+_[^_]+_[^_]+\Z")
+_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_[^_]+_[^_]+_[^_]+")
 
 # The M-SERV's Designer override mac: its objects' leafId embeds this value
 # (not the factory mac_global), and its own module row reports it as

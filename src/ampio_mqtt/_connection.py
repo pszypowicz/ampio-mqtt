@@ -213,14 +213,8 @@ class Connection:
         if runner is None:
             return
         runner.cancel()
-        try:
+        with suppress(asyncio.CancelledError):
             await runner
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            # Unreachable while _run's own catch-all holds; kept because
-            # stop() promises never to raise into a consumer's teardown.
-            _LOGGER.exception("Ampio connection loop failed")
 
     async def publish(self, topic: str, payload: bytes) -> None:
         """Publish at QoS 1, returning once the broker acknowledges it.
@@ -267,13 +261,8 @@ class Connection:
                 self._on_fatal(self._fatal_message)
 
     def _default_client(self) -> aiomqtt.Client:
-        return aiomqtt.Client(
-            hostname=self._host,
-            port=self._port,
-            username=self._username,
-            password=self._password,
-            identifier=self._client_id,
-            timeout=10,
+        return _mqtt_client(
+            self._host, self._port, self._username, self._password, self._client_id
         )
 
     async def _loop(self) -> None:
@@ -392,13 +381,8 @@ async def probe(
     Returns None when the connection is fine but nothing answers in time.
     """
     factory = client_factory or (
-        lambda: aiomqtt.Client(
-            hostname=host,
-            port=port,
-            username=username,
-            password=password,
-            identifier=f"ampio_mqtt_test_{uuid.uuid4().hex}",
-            timeout=10,
+        lambda: _mqtt_client(
+            host, port, username, password, f"ampio_mqtt_test_{uuid.uuid4().hex}"
         )
     )
     try:
@@ -417,6 +401,20 @@ async def probe(
             raise AmpioAuthError(str(err)) from err
         raise AmpioConnectionError(str(err)) from err
     return None
+
+
+def _mqtt_client(
+    host: str, port: int, username: str, password: str | None, identifier: str
+) -> aiomqtt.Client:
+    """One session object, however the library connects (loop or probe)."""
+    return aiomqtt.Client(
+        hostname=host,
+        port=port,
+        username=username,
+        password=password,
+        identifier=identifier,
+        timeout=10,
+    )
 
 
 def _is_auth_error(err: BaseException) -> bool:

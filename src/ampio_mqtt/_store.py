@@ -138,43 +138,27 @@ class AmpioStore:
         touched = False
         for meta in items:
             touched |= self._merge_metadata(meta, applied)
-        evicted = self._evict_missing_objects(
-            surface, {meta.id for meta in items}, applied
-        )
+        evicted = self._evict_missing_objects({meta.id for meta in items}, applied)
         if touched or evicted:
             self._rebuild_indexes()
         return True
 
-    def _evict_missing_objects(
-        self, surface: str, present: set[int], applied: Applied
-    ) -> bool:
+    def _evict_missing_objects(self, present: set[int], applied: Applied) -> bool:
         """Drop objects the authoritative catalogue no longer lists.
 
         Each tier's catalogue is complete for its account - the ``config``
         catalogue by being admin-only, the app-sync one because the grant
         bounds everything a restricted store could ever hold - so a reply's
-        arrival is the authority to evict what it stopped listing. An
-        empty reply against a populated store is refused outright: no
-        observed server produces one, and honoring it would tell a consumer
-        to drop every entity it has.
+        arrival is the authority to evict what it stopped listing, an empty
+        reply included (a full grant revocation empties the app-sync view).
         """
         # The same completeness proves a buffered push's id will never gain
         # a catalogue row; without the prune, ghost-row pushes accumulate.
-        # An empty reply proves nothing here either - see the guard below.
-        if present:
-            for oid in list(self._pending_state):
-                if oid not in present:
-                    del self._pending_state[oid]
+        for oid in list(self._pending_state):
+            if oid not in present:
+                del self._pending_state[oid]
         missing = [oid for oid in self.objects if oid not in present]
         if not missing:
-            return False
-        if not present:
-            _LOGGER.warning(
-                "Ampio %s catalogue reply is empty while %d objects are known; "
-                "refusing to evict them",
-                surface,
-                len(missing),
-            )
             return False
         for oid in missing:
             obj = self.objects.pop(oid)
@@ -273,21 +257,13 @@ class AmpioStore:
                 changed = True
                 applied.events.append(ModuleUpdated(module))
         # The module list is admin-only and complete, so its arrival is the
-        # authority to evict what it stopped listing - with the same
-        # empty-reply guard the object catalogues apply.
+        # authority to evict what it stopped listing.
         present = {module.id for module in modules}
         missing = [mid for mid in self.modules if mid not in present]
         evicted = False
-        if missing and not present:
-            _LOGGER.warning(
-                "Ampio devices reply is empty while %d modules are known; "
-                "refusing to evict them",
-                len(missing),
-            )
-        else:
-            for mid in missing:
-                evicted = True
-                applied.events.append(ModuleRemoved(self.modules.pop(mid)))
+        for mid in missing:
+            evicted = True
+            applied.events.append(ModuleRemoved(self.modules.pop(mid)))
         if changed or evicted:
             self._rebuild_indexes()
         return True

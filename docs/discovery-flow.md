@@ -70,8 +70,8 @@ deletion-tool differences live on the event docstrings and in
 [`identity.md`](identity.md). Since catalogues are request/response, a
 server-side deletion is noticed at the next reply (the refresh a
 reconnect issues, or an explicit `refresh()`), so a consumer that wants
-prompt removals refreshes on its own schedule. An empty reply never
-mass-evicts a populated store.
+prompt removals refreshes on its own schedule. An empty reply is a
+complete reply listing nothing and evicts like any other.
 
 ## What runs on demand, not automatically
 

@@ -503,18 +503,18 @@ def test_the_app_sync_catalogue_evicts_what_the_grant_revoked() -> None:
     assert set(store.objects) == {10}
 
 
-def test_an_empty_catalogue_reply_never_mass_evicts(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_an_empty_catalogue_reply_evicts_everything() -> None:
+    """An empty reply is a complete reply listing nothing - a full grant
+    revocation on the app-sync surface, a wiped configuration on config -
+    and evicts like any other, one removal event per object and module."""
     store = _store()
     _apply(store, DEVICES_TOPIC, _devices(0xCAFE))
     _apply(store, DETAILS_TOPIC, _flaga_details((10, 1)))
-    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
-        details_applied = _apply(store, DETAILS_TOPIC, details())
-        devices_applied = _apply(store, DEVICES_TOPIC, devices())
-    assert _removed(details_applied) == [] and _mod_removed(devices_applied) == []
-    assert set(store.objects) == {10} and set(store.modules) == {1}
-    assert sum("refusing to evict" in r.getMessage() for r in caplog.records) == 2
+    details_applied = _apply(store, DETAILS_TOPIC, details())
+    devices_applied = _apply(store, DEVICES_TOPIC, devices())
+    assert [o.id for o in _removed(details_applied)] == [10]
+    assert [m.id for m in _mod_removed(devices_applied)] == [1]
+    assert store.objects == {} and store.modules == {}
 
 
 def test_live_messages_touch_last_seen_snapshots_do_not() -> None:

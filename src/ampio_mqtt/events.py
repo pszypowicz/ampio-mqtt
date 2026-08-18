@@ -44,8 +44,7 @@ class ObjectRemoved:
     save rebuilds the configuration (restarting the M-SERV along the
     way), and objects it deleted vanish from the ``config`` catalogue -
     the admin-tier eviction. Either way this is the signal to drop
-    whatever entity was built on the object. An empty catalogue reply
-    never mass-removes - see the store's eviction guard.
+    whatever entity was built on the object.
     """
 
     object: AmpioObject
