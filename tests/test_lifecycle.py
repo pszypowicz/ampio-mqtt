@@ -131,7 +131,7 @@ async def test_connection_returns_info_without_identity_as_is() -> None:
     )
     assert info.mac is None
     assert info.server_version is None
-    assert info.access_tier is AccessTier.UNKNOWN
+    assert info.access_tier is None
 
 
 async def test_connection_maps_unparseable_info_reply_to_timeout() -> None:

@@ -263,11 +263,11 @@ def test_server_below_baseline(version: str | None, below: bool) -> None:
         (-1, AccessTier.ADMIN),
         (4, AccessTier.RESTRICTED),
         (0, AccessTier.RESTRICTED),
-        (None, AccessTier.UNKNOWN),
+        (None, None),
     ],
 )
 def test_server_info_access_tier_from_account_id(
-    user_id: int | None, tier: AccessTier
+    user_id: int | None, tier: AccessTier | None
 ) -> None:
     assert AmpioServerInfo(user_id=user_id).access_tier is tier
 

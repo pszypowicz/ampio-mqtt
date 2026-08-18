@@ -356,8 +356,8 @@ class AmpioServerInfo:
         return str(self.mac) if self.mac is not None else None
 
     @property
-    def access_tier(self) -> AccessTier:
-        """Account tier per the account id in the info reply.
+    def access_tier(self) -> AccessTier | None:
+        """Account tier per the account id in the info reply, or None.
 
         The wire's own confirmation for a config flow reading a
         :meth:`AmpioClient.test_connection` result; a running client's
@@ -367,12 +367,11 @@ class AmpioServerInfo:
         as the pseudo-user id ``-1``; app-created users carry their positive
         users-table row id and are always the standard tier - the app offers
         no administrator toggle for them, and their per-object permissions
-        never open the admin-only surfaces. ``UNKNOWN`` when the reply
-        carried no ``userId``, which no baseline server produces (see the
-        supported-versions policy in the README).
+        never open the admin-only surfaces. None when the reply carried no
+        ``userId``, which no baseline server produces.
         """
         if self.user_id is None:
-            return AccessTier.UNKNOWN
+            return None
         return AccessTier.ADMIN if self.user_id == -1 else AccessTier.RESTRICTED
 
 

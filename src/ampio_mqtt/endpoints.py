@@ -53,13 +53,9 @@ class AccessTier(Enum):
     The M-SERV gates the ``config`` surface (and the raw ``ampio/from/#``
     channel tree) on the account being the reserved ``admin`` login; the
     per-user app permissions do not affect it. A non-admin account, however
-    permissioned, is served only the app-sync ``data`` surface. ``UNKNOWN``
-    appears only on :pyattr:`AmpioServerInfo.access_tier` - the wire's own
-    confirmation via the info reply's account id - for a reply carrying no
-    identity, which no baseline server produces.
+    permissioned, is served only the app-sync ``data`` surface.
     """
 
-    UNKNOWN = "unknown"
     ADMIN = "admin"  # the reserved `admin` login: full catalogue + modules
     RESTRICTED = "restricted"  # an app-created user: app-sync view only
 
