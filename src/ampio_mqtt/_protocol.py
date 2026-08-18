@@ -8,6 +8,7 @@ Keeping the parsing isolated makes it trivially unit-testable.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -84,6 +85,17 @@ def server_below_baseline(version: str | None) -> bool:
     except ValueError:
         return True
     return parts < BASELINE_SERVER_VERSION
+
+
+def warn_if_below_baseline(version: str | None) -> None:
+    """Log the one below-baseline warning both discovery paths share."""
+    if server_below_baseline(version):
+        logging.getLogger(__name__).warning(
+            "Ampio server reports version %s, below the tested baseline %s; "
+            "behavior on this server is untested - upgrade the M-SERV",
+            version or "(none)",
+            ".".join(map(str, BASELINE_SERVER_VERSION)),
+        )
 
 
 def _rows(payload: str) -> list[Any] | None:
@@ -284,23 +296,6 @@ def parse_rooms(groups_payload: str, group_devices_payload: str) -> dict[int, st
         if name:
             room_map[oid] = name
     return room_map
-
-
-def parse_locations(payload: str) -> dict[int, str]:
-    """``{location_id: name}`` from a `config/locations` reply.
-
-    The name table behind the Designer's "Lokalizacja" dropdown; rows with
-    a missing id or an empty name are skipped.
-    """
-    out: dict[int, str] = {}
-    for row in _rows(payload) or []:
-        if not isinstance(row, dict):
-            continue
-        lid = row.get("id")
-        name = row.get("opis_menu")
-        if isinstance(lid, int) and isinstance(name, str) and name:
-            out[lid] = name
-    return out
 
 
 def parse_server_info(payload: str) -> AmpioServerInfo:

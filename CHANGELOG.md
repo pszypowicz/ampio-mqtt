@@ -30,8 +30,34 @@ upgrade path.
   gone from the client, and a shared `tests/conftest.py` replaces eight
   per-file fake classes and seven copies of the shared constants.
 
+### Removed
+
+- `fetch_locations()`, its parser, its endpoint row (one less subscription
+  per connect), and its tests. The method returned only the id-to-name
+  table behind Designer's "Lokalizacja" dropdown while the per-output
+  pointer that would make it resolvable is not reachable over MQTT; it
+  returns with the #25 RPC route once that pointer is.
+- The `sensors` property (asymmetric - no inputs/outputs twins ever
+  existed - and consumers filter on `kind`) and the generic `request()`
+  escape hatch (undocumented, `KeyError` on unknown names, and covered
+  better by `refresh()`, the `fetch_*` methods, and the probe tool).
+- Dead branches: the unreachable `or []` in `fetch_scenes` is now an
+  assert naming the parsed-gate invariant, and the payload decoder's
+  `str`/`None` handling is gone - aiomqtt 2.5 (the pyproject floor)
+  guarantees `bytes`.
+
 ### Changed
 
+- `refresh()` skips the admin-only `config` requests once the info reply
+  has identified a RESTRICTED account - the M-SERV never answers them for
+  that tier and the login's admin bit cannot change mid-session. An
+  UNKNOWN tier still requests everything, which is what makes first
+  discovery work.
+- The package version is single-sourced: hatchling reads it from
+  `__version__`, so a release bumps one line.
+- The duplicated below-baseline warning (validation path and store info
+  handler) collapsed into one `_protocol` helper; both call sites keep
+  their behavior and their tests.
 - The test suite was deduplicated and strengthened (net -213 lines, 439 to
   443 tests): sixteen tests proving behaviors twice across layers were
   deleted against verified twins or moved to the store level, the pure

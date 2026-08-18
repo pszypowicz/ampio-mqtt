@@ -16,7 +16,6 @@ from . import _connection, _protocol
 from ._store import AmpioStore
 from .device_types import Capability
 from .endpoints import (
-    BASELINE_SERVER_VERSION,
     DISCOVERY_ADMIN,
     DISCOVERY_COMMON,
     DISCOVERY_FALLBACK,
@@ -244,11 +243,6 @@ class AmpioClient:
         return None
 
     @property
-    def sensors(self) -> dict[int, AmpioObject]:
-        """Objects classified as sensors."""
-        return {i: o for i, o in self._store.objects.items() if o.is_sensor}
-
-    @property
     def available(self) -> bool:
         """Whether the broker connection is up."""
         return self._connection.available
@@ -288,8 +282,8 @@ class AmpioClient:
         Retained for the HA integration's diagnostics blob so a report can
         include the actual JSON the M-SERV emitted. Keys are endpoint names
         (``details``, ``devices``, ``states``, ``info``, ``data_devices``,
-        ``params_devices``, ``groups``, ``group_devices``, ``locations``,
-        ``scenes``); an endpoint absent until its first reply lands. A
+        ``params_devices``, ``groups``, ``group_devices``, ``scenes``); an
+        endpoint absent until its first reply lands. A
         payload that failed to parse is retained too - the bad bytes are
         exactly what a diagnostics report needs.
         """
@@ -391,13 +385,7 @@ class AmpioClient:
                 f"No server-info reply from the Ampio broker within {info_timeout}s"
             )
         parsed = _protocol.parse_server_info(payload)
-        if _protocol.server_below_baseline(parsed.server_version):
-            _LOGGER.warning(
-                "Ampio server reports version %s, below the tested baseline %s; "
-                "behavior on this server is untested - upgrade the M-SERV",
-                parsed.server_version or "(none)",
-                ".".join(map(str, BASELINE_SERVER_VERSION)),
-            )
+        _protocol.warn_if_below_baseline(parsed.server_version)
         return parsed
 
     async def start(
@@ -470,27 +458,24 @@ class AmpioClient:
         """
         await self._connection.close()
 
-    async def request(self, name: str) -> None:
-        """Publish the request keyword for endpoint ``name``.
-
-        The reply lands asynchronously on that endpoint's response topic and is
-        applied by the dispatcher. ``name`` is one of the keys in the endpoint
-        table (``details``, ``devices``, ``states``, ``info``, ...). Use
-        :meth:`fetch_rooms` / :meth:`fetch_locations` for the on-demand
-        endpoints whose reply you need to read back synchronously.
-        """
-        await self._publish(ENDPOINT_BY_NAME[name])
-
     async def refresh(self) -> None:
-        """Re-request the full initial-discovery set (both object catalogues,
-        modules, params, states, info).
+        """Re-request the initial-discovery set for the account's tier.
 
         ``start()`` issues this once on every (re)connect; call it to force a
-        fresh discovery cycle without reconnecting.
+        fresh discovery cycle without reconnecting. Once the info reply has
+        identified a RESTRICTED account the admin-only ``config`` requests
+        are skipped - the M-SERV never answers them for that tier, and the
+        login's admin bit cannot change mid-session. An UNKNOWN tier (before
+        the first info reply) requests everything, which is what makes first
+        discovery work on either tier.
         """
+        restricted = self.access_tier is AccessTier.RESTRICTED
         for ep in ENDPOINTS:
-            if ep.initial:
-                await self._publish(ep)
+            if not ep.initial:
+                continue
+            if restricted and ep.name in DISCOVERY_ADMIN:
+                continue
+            await self._publish(ep)
 
     async def fetch_rooms(self, timeout: float = 5.0) -> dict[int, str]:
         """Return ``{ampio_object_id: room_name}`` for objects assigned to a room.
@@ -522,7 +507,11 @@ class AmpioClient:
         payloads = await self._fetch(
             ("scenes",), timeout, "Timed out fetching scenes from Ampio broker"
         )
-        return _protocol.parse_scenes(payloads["scenes"]) or []
+        scenes = _protocol.parse_scenes(payloads["scenes"])
+        # A payload that resolved the fetch passed the store's parsed gate,
+        # so it is a {"List": [...]} document and parses by construction.
+        assert scenes is not None
+        return scenes
 
     async def send_event(self, event_number: int) -> None:
         """Raise a bus event, running whatever Ampio logic is bound to it.
@@ -559,36 +548,6 @@ class AmpioClient:
         await self._connection.publish(
             command_topic(self._username), scene_payload(scene_id, verb).encode()
         )
-
-    async def fetch_locations(self, timeout: float = 5.0) -> dict[int, str]:
-        """Return ``{location_id: name}`` for the Designer "Location" markers.
-
-        The location is the user-editable per-output marker visible in the
-        Designer's "Lokalizacja" column (e.g. ``Salon``, ``Kuchnia``, ...).
-        It is **per-output**, not per-module: each module's outputs can be
-        assigned to different locations, and the per-output assignment lives
-        in the device's CAN-resident description table (not exposed via
-        MQTT - see docs/untapped-surfaces.md for the RPC route that would
-        resolve it).
-
-        This method returns only the *name table* - the integer ID -> human
-        label mapping the Designer uses to populate its dropdown. A consumer
-        that does have a way to learn the per-output integer can resolve it
-        through this dict. Without that, the table is still useful in
-        diagnostics ("which location ids does this M-SERV define?").
-
-        Publishes ``locations`` to ``ampio/control/<user>/config`` and awaits
-        the response on ``ampio/fromDB/<user>/config/locations``. Requires
-        ``start()`` to have completed. Raises ``AmpioConnectionError`` if the
-        broker is not connected and ``AmpioTimeoutError`` if the response does
-        not arrive within ``timeout``.
-        """
-        payloads = await self._fetch(
-            ("locations",),
-            timeout,
-            "Timed out fetching locations table from Ampio broker",
-        )
-        return _protocol.parse_locations(payloads["locations"])
 
     # --- commands ---------------------------------------------------------
 

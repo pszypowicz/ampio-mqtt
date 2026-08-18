@@ -275,7 +275,8 @@ class Connection:
                     await self._on_connected()
                     async for message in client.messages:
                         self._on_message(
-                            str(message.topic), _decode_payload(message.payload)
+                            str(message.topic),
+                            message.payload.decode("utf-8", "replace"),
                         )
             except (aiomqtt.MqttError, AmpioConnectionError) as err:
                 # AmpioConnectionError is publish()'s wrapped form: a failure
@@ -365,7 +366,7 @@ async def probe(
                 async with asyncio.timeout(timeout):
                     async for message in client.messages:
                         if str(message.topic) == reply_topic:
-                            return _decode_payload(message.payload)
+                            return message.payload.decode("utf-8", "replace")
     except aiomqtt.MqttError as err:
         if _is_auth_error(err):
             raise AmpioAuthError(str(err)) from err
@@ -406,12 +407,3 @@ def _code_value(code: object) -> int:
     """
     value = getattr(code, "value", code)
     return value if isinstance(value, int) else 0x80
-
-
-def _decode_payload(payload: object) -> str:
-    """Coerce an aiomqtt payload (`str | bytes | bytearray | None`) to text."""
-    if isinstance(payload, (bytes, bytearray)):
-        return bytes(payload).decode("utf-8", "replace")
-    if isinstance(payload, str):
-        return payload
-    return ""

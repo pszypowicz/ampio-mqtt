@@ -42,7 +42,7 @@ Tracked as: [#23](https://github.com/pszypowicz/ampio-mqtt/issues/23)
 
 The M-SERV publishes content hashes on a `*/md5/*` tree so the
 Designer SPA can short-circuit redundant catalogue refetches. Caching
-the hashes in `AmpioClient` lets `fetch_rooms()`, `fetch_locations()`,
+the hashes in `AmpioClient` lets `fetch_rooms()`,
 and future `fetch_*` helpers no-op on reconnect when nothing has
 changed. Optimization, not a correctness fix - the current behaviour
 of re-fetching every time is correct, just chatty.
@@ -78,7 +78,9 @@ Tracked as: [#60](https://github.com/pszypowicz/ampio-mqtt/issues/60)
 
 A parallel JSON-RPC-2.0-over-MQTT control channel exists alongside the
 DB-object surface. The per-output **location pointer** - the integer
-that points into the table returned by `fetch_locations()` - lives on
+that points into the `config/locations` name table (the id -> label
+mapping behind Designer's dropdown; `fetch_locations` returns with #25
+once this pointer is resolvable) - lives on
 the module's CAN-resident description, not on any DB topic, and is
 reachable only through this RPC. Resolving it would let the HA
 integration set per-entity `suggested_area` from the Designer location
@@ -114,7 +116,7 @@ python tools/probe_config.py --keywords logs,resources
 ```
 
 Once the response shape is in hand, the implementation pattern is
-almost always the same as `fetch_rooms()` / `fetch_locations()`:
+almost always the same as `fetch_rooms()`:
 
 1. Add a row to the `ENDPOINTS` table in `const.py`. Subscription,
    response routing, the discovery latch and `refresh()` all derive

@@ -86,7 +86,7 @@ never mass-evicts a populated store.
 
 ## What runs on demand, not automatically
 
-Three helpers are not part of the auto sequence because the consumer
+Two helpers are not part of the auto sequence because the consumer
 decides when - and whether - to call them:
 
 - **`fetch_rooms()`** - the `groups` + `group_devices` join. The HA
@@ -95,12 +95,8 @@ decides when - and whether - to call them:
 - **`fetch_scenes()`** - the scene catalogue, driven with
   `run_scene()` / `turn_scene_off()` / `undo_scene()`. Same rationale:
   a consumer that surfaces no scenes never pays for the fetch.
-- **`fetch_locations()`** - the Designer "Location" name table. Same
-  rationale; today it is consumed only for the diagnostics blob since
-  the per-output pointer half is not on MQTT
-  (see [`untapped-surfaces.md`](untapped-surfaces.md)).
 
-All three helpers accept an explicit `timeout` (default 5.0 s) and raise
+Both helpers accept an explicit `timeout` (default 5.0 s) and raise
 `AmpioTimeoutError` on timeout, so a flaky broker fails loud rather
 than silently returning an empty result.
 
@@ -108,7 +104,7 @@ than silently returning an empty result.
 
 `client.stats` (a `ConnectionStats` dataclass) is what the HA
 integration's diagnostics blob reads for connection health
-(the blob also carries `last_payloads` and the location table).
+(the blob also carries `last_payloads`).
 The fields are:
 
 - `reconnect_count` - monotonic; useful for a "works intermittently"

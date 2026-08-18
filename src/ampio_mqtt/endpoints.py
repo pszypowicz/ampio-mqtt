@@ -45,7 +45,7 @@ class Endpoint:
     resp_surface: str  # fromDB sub-topic: "config" | "data"
     resp_leaf: str  # final response-topic segment
     # Part of the initial-discovery set awaited by start() /
-    # wait_for_initial_discovery(). The rooms/locations endpoints are on-demand.
+    # wait_for_initial_discovery(). The rooms/scenes endpoints are on-demand.
     initial: bool = False
 
 
@@ -69,7 +69,6 @@ ENDPOINTS: tuple[Endpoint, ...] = (
     ),
     Endpoint("groups", "data", "groups", "data", "groups"),
     Endpoint("group_devices", "data", "group_devices", "data", "group_devices"),
-    Endpoint("locations", "config", "locations", "config", "locations"),
     Endpoint("scenes", "data", "scenes", "data", "scenes"),
 )
 

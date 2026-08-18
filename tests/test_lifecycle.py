@@ -194,20 +194,45 @@ async def test_connection_ignores_unrelated_topics() -> None:
     assert info.mac == 7
 
 
-# --- request_* and _publish_config when disconnected ----------------------
-
-
-@pytest.mark.parametrize("name", ["details", "devices", "states", "info"])
-async def test_request_raises_when_disconnected(name: str) -> None:
-    client = AmpioClient("h", username=USER)
-    with pytest.raises(AmpioConnectionError):
-        await client.request(name)
+# --- discovery requests when disconnected ---------------------------------
 
 
 async def test_refresh_raises_when_disconnected() -> None:
     client = AmpioClient("h", username=USER)
     with pytest.raises(AmpioConnectionError):
         await client.refresh()
+
+
+async def test_refresh_skips_admin_requests_on_a_restricted_tier() -> None:
+    """Once the info reply identifies a RESTRICTED account, refresh() stops
+    publishing the config requests the M-SERV never answers for that tier;
+    the login's admin bit cannot change mid-session."""
+    broker = FakeBroker()
+    broker.scripted_messages = [
+        Message(
+            INFO_TOPIC, json.dumps({"Results": {"mac": 99, "userId": "4"}}).encode()
+        ),
+    ]
+    client = AmpioClient(
+        "h", username=USER, reconnect_interval=0.0, mqtt_client_factory=broker.factory
+    )
+    await client.start(timeout=2.0, discovery_timeout=0.05)
+    try:
+        # The first refresh ran on an UNKNOWN tier and asked for everything.
+        assert len(broker.published) == 6
+        broker.published.clear()
+        await client.refresh()
+        assert sorted(p for _t, p in broker.published) == [
+            b"",  # info
+            b"",  # states
+            b"devices",  # data catalogue
+            b"params_devices",
+        ]
+        assert all(
+            t.endswith(("/data", "/states", "/info")) for t, _p in broker.published
+        )
+    finally:
+        await client.stop()
 
 
 # --- stop() and start() lifecycle -----------------------------------------

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ampio-mqtt"
-version = "0.18.0"
+dynamic = ["version"]
 description = "Async client for the Ampio Smart Home MQTT protocol"
 readme = "README.md"
 license = { text = "MIT" }
@@ -39,6 +39,9 @@ test = [
   "pytest-cov>=4",
   "mypy>=1.10",
 ]
+
+[tool.hatch.version]
+path = "src/ampio_mqtt/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ampio_mqtt"]

@@ -70,12 +70,13 @@ async def run(args: argparse.Namespace) -> int:
     types: dict = {}
     for o in objs.values():
         types[o.typ_komponentu] = types.get(o.typ_komponentu, 0) + 1
+    sensors = [o for o in objs.values() if o.is_sensor]
     print(f"\n=== Access tier: {client.access_tier.value} ===")
-    print(f"=== Objects: {len(objs)} (sensors: {len(client.sensors)}), modules: {len(client.modules)} ===")
+    print(f"=== Objects: {len(objs)} (sensors: {len(sensors)}), modules: {len(client.modules)} ===")
     print("  by typ_komponentu:", types)
 
     print("\n=== Sensors (auto-discovered) ===")
-    for o in sorted(client.sensors.values(), key=lambda o: o.id):
+    for o in sorted(sensors, key=lambda o: o.id):
         unit = (o.kind.unit or "") if o.kind else ""
         dc = (o.kind.device_class or "-") if o.kind else "-"
         print(f"  ob/{o.id:<5} {dc:<18} {str(o.name):<26} = {o.value} {unit}")

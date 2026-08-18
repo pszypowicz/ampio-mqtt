@@ -36,7 +36,6 @@ reject an account whose tier will not support what the consumer needs
 | **Raw channel tree** (`ampio/from/#`)         | yes           | **no**                                |
 | **Module diagnostics** (voltage, temperature) | yes           | **no**                                |
 | **CAN write tree** (`ampio/to/#`)             | yes           | **no**                                |
-| Designer location table (`fetch_locations`)   | yes           | no                                    |
 
 The raw-tree denial is enforced in the SUBACK, live-verified: a
 standard account's subscriptions to the four `ampio/from/...` filters
