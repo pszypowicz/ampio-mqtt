@@ -15,7 +15,7 @@ The M-SERV speaks two parallel topic trees on the same MQTT broker:
   [`raw-channel-bridge.md`](raw-channel-bridge.md).
 
 All topic helpers live in
-[`src/ampio_mqtt/endpoints.py`](../src/ampio_mqtt/endpoints.py). Treat
+[`src/ampio_mqtt/_protocol.py`](../src/ampio_mqtt/_protocol.py). Treat
 the constants there as the authoritative source; the table below is a
 quick reference.
 

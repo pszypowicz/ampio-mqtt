@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
+from enum import Enum
 
 from .classification import (
     InputKind,
@@ -14,7 +15,20 @@ from .classification import (
     ThermostatKind,
     is_system_type,
 )
-from .endpoints import AccessTier
+
+
+class AccessTier(Enum):
+    """Account tier, decided by the authenticated login name.
+
+    The M-SERV gates the ``config`` surface (and the raw ``ampio/from/#``
+    channel tree) on the account being the reserved ``admin`` login; the
+    per-user app permissions do not affect it. A non-admin account, however
+    permissioned, is served only the app-sync ``data`` surface.
+    """
+
+    ADMIN = "admin"  # the reserved `admin` login: full catalogue + modules
+    RESTRICTED = "restricted"  # an app-created user: app-sync view only
+
 
 # Bit flags inside the `params` integer (`obiekty.params`); the semantics
 # match the M-SERV's own Matter bridge (docs/identity.md). Bit 4 is the

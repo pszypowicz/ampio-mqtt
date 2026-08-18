@@ -273,40 +273,45 @@ async def test_start_times_out_without_auth_error() -> None:
 
 
 def test_last_payloads_retained_for_each_handler() -> None:
-    """Each discovery handler stashes the verbatim payload for diagnostics."""
-    client = _client()
+    """Each discovery handler stashes the verbatim payload for diagnostics,
+    keyed by endpoint name and scoped to the endpoints the tier is served."""
+    admin = AmpioClient("host", username="admin")
     devices_payload = devices({"id": 1, "mac": 1, "typ_urzadzenia": 10})
     details_payload = details(
         {"id": 5, "id_urzadzenia": 1, "typ_komponentu": "temp", "interpretacja": 1}
     )
+    feed(admin, "ampio/fromDB/admin/config/devices", devices_payload)
+    feed(admin, "ampio/fromDB/admin/config/devicesDetails", details_payload)
+    assert admin.last_payloads["devices"] == devices_payload
+    assert admin.last_payloads["details"] == details_payload
+
+    client = _client()
     info_payload = info(mac=12345, serverVersion="2025")
-
-    feed(client, f"ampio/fromDB/{USER}/config/devices", devices_payload)
-    feed(client, f"ampio/fromDB/{USER}/config/devicesDetails", details_payload)
-    feed(client, f"ampio/fromDB/{USER}/data/info", info_payload)
-
-    assert client.last_payloads["devices"] == devices_payload
-    assert client.last_payloads["details"] == details_payload
-    assert client.last_payloads["info"] == info_payload
-
     states_payload = devices({"id": 5, "stan_json": '{"state":"1"}'})
     data_devices_payload = details({"id": 5, "typ_komponentu": "temp"})
     params_payload = devices({"id": 5, "params": 17})
     scenes_payload = devices({"id": 3, "sceneName": "Evening"})
     groups_payload = devices({"id": 1, "opis_menu": "Salon"})
     group_devices_payload = devices({"id_grupy": 1, "id_obiektu": 5})
+    feed(client, f"ampio/fromDB/{USER}/data/info", info_payload)
     feed(client, f"ampio/fromDB/{USER}/data/states", states_payload)
     feed(client, f"ampio/fromDB/{USER}/data/devices", data_devices_payload)
     feed(client, f"ampio/fromDB/{USER}/data/params_devices", params_payload)
     feed(client, f"ampio/fromDB/{USER}/data/scenes", scenes_payload)
     feed(client, f"ampio/fromDB/{USER}/data/groups", groups_payload)
     feed(client, f"ampio/fromDB/{USER}/data/group_devices", group_devices_payload)
+    assert client.last_payloads["info"] == info_payload
     assert client.last_payloads["states"] == states_payload
     assert client.last_payloads["data_devices"] == data_devices_payload
     assert client.last_payloads["params_devices"] == params_payload
     assert client.last_payloads["scenes"] == scenes_payload
     assert client.last_payloads["groups"] == groups_payload
     assert client.last_payloads["group_devices"] == group_devices_payload
+
+    # An admin-surface reply on a restricted client still updates the
+    # store but latches no channel - the tier is not served that surface.
+    feed(client, f"ampio/fromDB/{USER}/config/devices", devices_payload)
+    assert "devices" not in client.last_payloads
 
 
 def test_access_tier_is_the_authenticated_username() -> None:

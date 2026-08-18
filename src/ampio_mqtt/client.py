@@ -15,10 +15,7 @@ from types import MappingProxyType
 from typing import Any, TypeVar, cast, overload
 
 from . import _connection, _protocol
-from ._store import AmpioStore
-from .classification import OutputKind
-from .device_types import is_hub
-from .endpoints import (
+from ._protocol import (
     ADMIN_USERNAME,
     ENDPOINT_BY_NAME,
     ENDPOINTS,
@@ -26,7 +23,6 @@ from .endpoints import (
     RAW_DIAGNOSTICS_WILDCARD,
     RAW_EVENT_WILDCARD,
     RAW_INPUT_WILDCARDS,
-    AccessTier,
     Endpoint,
     command_payload,
     command_topic,
@@ -36,6 +32,9 @@ from .endpoints import (
     response_topic,
     scene_payload,
 )
+from ._store import AmpioStore
+from .classification import OutputKind
+from .device_types import is_hub
 from .errors import AmpioTimeoutError
 from .events import (
     AuthFailed,
@@ -44,6 +43,7 @@ from .events import (
     ConnectionDied,
 )
 from .models import (
+    AccessTier,
     AmpioModule,
     AmpioObject,
     AmpioScene,
@@ -153,9 +153,13 @@ class AmpioClient:
             tuple[Callable[[Any], None], tuple[type[ClientEvent], ...] | None]
         ] = []
 
-        # One reply channel per endpoint-table row - see _ReplyChannel.
+        # One reply channel per endpoint-table row the tier is served -
+        # see _ReplyChannel. A reply on an unserved surface still updates
+        # the store; it just latches and resolves nothing here.
         self._channels: dict[str, _ReplyChannel] = {
-            ep.name: _ReplyChannel() for ep in ENDPOINTS
+            ep.name: _ReplyChannel()
+            for ep in ENDPOINTS
+            if ep.tier in (None, self._tier)
         }
 
         # Topics whose messages have failed processing, so a recurring
@@ -197,7 +201,9 @@ class AmpioClient:
         try:
             applied = self._store.apply(topic, payload)
             if applied.endpoint is not None:
-                self._channels[applied.endpoint.name].deliver(payload, applied.parsed)
+                channel = self._channels.get(applied.endpoint.name)
+                if channel is not None:
+                    channel.deliver(payload, applied.parsed)
         except Exception:
             if topic in self._poisoned_topics:
                 _LOGGER.debug("Dropped another failing Ampio message on %s", topic)
@@ -319,12 +325,11 @@ class AmpioClient:
         """Verbatim last response payload per endpoint, keyed by endpoint name.
 
         Retained for the HA integration's diagnostics blob so a report can
-        include the actual JSON the M-SERV emitted. Keys are endpoint names
-        (``details``, ``devices``, ``states``, ``info``, ``data_devices``,
-        ``params_devices``, ``groups``, ``group_devices``, ``scenes``); an
-        endpoint absent until its first reply lands. A
-        payload that failed to parse is retained too - the bad bytes are
-        exactly what a diagnostics report needs.
+        include the actual JSON the M-SERV emitted. Keyed by endpoint name,
+        covering the endpoints the account tier is served; an endpoint is
+        absent until its first reply lands. A payload that failed to parse
+        is retained too - the bad bytes are exactly what a diagnostics
+        report needs.
         """
         return {
             name: channel.last_payload

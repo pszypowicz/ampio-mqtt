@@ -16,7 +16,6 @@ from .classification import (
 )
 from .client import AmpioClient
 from .discovery import DiscoveryResult, discover
-from .endpoints import AccessTier
 from .errors import (
     AmpioAuthError,
     AmpioConnectionError,
@@ -35,6 +34,7 @@ from .events import (
     ObjectUpdated,
 )
 from .models import (
+    AccessTier,
     AmpioModule,
     AmpioObject,
     AmpioScene,

@@ -15,7 +15,6 @@ from functools import partial
 
 from . import _protocol
 from .classification import classify, input_channel_prefix
-from .endpoints import ADMIN_USERNAME, Endpoint
 from .events import (
     BusEvent,
     ModuleRemoved,
@@ -39,7 +38,7 @@ class Applied:
 
     # The endpoint whose reply this was, if any, and whether its payload could
     # be read - together they tell the caller when discovery has advanced.
-    endpoint: Endpoint | None = None
+    endpoint: _protocol.Endpoint | None = None
     parsed: bool = True
     # Everything the message changed, in processing order, ready to dispatch.
     # Update events carry a snapshot taken as the change was applied, so a
@@ -52,7 +51,7 @@ class AmpioStore:
     """Applies M-SERV messages to the object, module and server state."""
 
     def __init__(self, user: str) -> None:
-        self._is_admin = user == ADMIN_USERNAME
+        self._is_admin = user == _protocol.ADMIN_USERNAME
         self.objects: dict[int, AmpioObject] = {}
         self.modules: dict[int, AmpioModule] = {}
         self.server_info: AmpioServerInfo | None = None
@@ -98,13 +97,10 @@ class AmpioStore:
                 if handler is not None:
                     applied.parsed = handler(body, applied)
                 else:
-                    # Pure request/response endpoints mutate nothing here, but
-                    # their parseability still gates the reply signal - a
-                    # corrupt reply must not complete a fetch. Every one of
-                    # them answers with a {"List": [...]} document, so that
-                    # shape check stands in for a handler; an endpoint with a
-                    # different reply shape needs its own _handlers entry.
-                    applied.parsed = _protocol.list_rows(body) is not None
+                    # Pure request/response endpoints mutate nothing here;
+                    # their gate is the endpoint's own reply parser, so a
+                    # reply that resolves a fetch parses by construction.
+                    applied.parsed = endpoint.parses(body) is not None
                     if not applied.parsed:
                         _LOGGER.warning("Could not parse Ampio %s reply", endpoint.name)
             case _protocol.StateUpdate() as update:

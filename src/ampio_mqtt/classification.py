@@ -85,7 +85,7 @@ class OutputKind:
     # Position axis of `setRollerPos`.
     position: bool = False
     # Lamella axis of `setRollerPos`, and a `lammel` field in the object's
-    # state payload; `KEEP_POSITION` in endpoints.py is the
+    # state payload; `KEEP_POSITION` in _protocol.py is the
     # leave-this-axis-alone sentinel both axes share.
     tilt: bool = False
     # The `turnOn` / `turnOff` / `switch` verb family. False only for `rgbw`:
