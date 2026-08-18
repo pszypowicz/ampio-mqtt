@@ -36,9 +36,8 @@ _LOGGER = logging.getLogger(__name__)
 class Applied:
     """What one inbound message did to the store."""
 
-    # The endpoint whose reply this was, if any, and whether its payload could
-    # be read - together they tell the caller when discovery has advanced.
-    endpoint: _protocol.Endpoint | None = None
+    # Whether the payload could be read - an endpoint reply that could not
+    # must not advance discovery or resolve a fetch.
     parsed: bool = True
     # Everything the message changed, in processing order, ready to dispatch.
     # Update events carry a snapshot taken as the change was applied, so a
@@ -48,16 +47,17 @@ class Applied:
 
 
 class AmpioStore:
-    """Applies M-SERV messages to the object, module and server state."""
+    """Applies typed M-SERV messages to the object, module and server state.
 
-    def __init__(self, user: str) -> None:
-        self._is_admin = user == _protocol.ADMIN_USERNAME
+    Tier-agnostic by design: which surfaces can deliver is decided upstream
+    (the client subscribes and routes only the account tier's endpoints),
+    so every message that reaches ``apply`` is one the account is served.
+    """
+
+    def __init__(self) -> None:
         self.objects: dict[int, AmpioObject] = {}
         self.modules: dict[int, AmpioModule] = {}
         self.server_info: AmpioServerInfo | None = None
-        # The single home of topic-shape knowledge; the store only ever sees
-        # typed inbound messages.
-        self._router = _protocol.Router(user)
         # Raw-channel bridge: (module mac, prefix, channel) -> object id.
         self._input_index: dict[tuple[int, str, int], int] = {}
         # Effective bus mac -> module id, for routing a module's own
@@ -94,12 +94,11 @@ class AmpioStore:
 
     # --- routing ----------------------------------------------------------
 
-    def apply(self, topic: str, payload: str) -> Applied:
-        """Apply one message and report what it changed."""
+    def apply(self, msg: _protocol.Inbound) -> Applied:
+        """Apply one typed message and report what it changed."""
         applied = Applied()
-        match self._router.route(topic, payload):
+        match msg:
             case _protocol.EndpointReply(endpoint=endpoint, payload=body):
-                applied.endpoint = endpoint
                 handler = self._handlers.get(endpoint.name)
                 if handler is not None:
                     applied.parsed = handler(body, applied)
@@ -148,18 +147,14 @@ class AmpioStore:
     ) -> bool:
         """Drop objects the authoritative catalogue no longer lists.
 
-        A reply proves absence only when it is complete for the account. The
-        ``config`` catalogue always is - the M-SERV serves it to
-        administrators only, so its arrival is itself the proof. The
-        app-sync catalogue is complete only for a RESTRICTED account (its
-        grant bounds everything the store could ever hold); on the admin
-        tier it is a second, differently-scoped view and must not evict. An
+        Each tier's catalogue is complete for its account - the ``config``
+        catalogue by being admin-only, the app-sync one because the grant
+        bounds everything a restricted store could ever hold - so a reply's
+        arrival is the authority to evict what it stopped listing. An
         empty reply against a populated store is refused outright: no
         observed server produces one, and honoring it would tell a consumer
         to drop every entity it has.
         """
-        if surface == "data/devices" and self._is_admin:
-            return False
         # The same completeness proves a buffered push's id will never gain
         # a catalogue row; without the prune, ghost-row pushes accumulate.
         # An empty reply proves nothing here either - see the guard below.

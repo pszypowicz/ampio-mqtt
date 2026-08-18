@@ -683,17 +683,19 @@ class Router:
     and anything unroutable - an unknown shape, a non-hex mac, a non-integer
     object id, channel, or event number, an unparseable diagnostics frame -
     returns None. The store then applies typed messages and never inspects a
-    topic. Endpoint reply and per-object state topics are namespaced by the
-    connecting account (hence ``user``); the raw ``ampio/from`` tree is
-    global.
+    topic. ``endpoints`` is the subset the connection subscribes to (the
+    account tier's served surfaces), so a reply topic outside it is
+    unroutable like any other unknown shape. Endpoint reply and per-object
+    state topics are namespaced by the connecting account (hence ``user``);
+    the raw ``ampio/from`` tree is global.
     """
 
     __slots__ = ("_by_response", "_user")
 
-    def __init__(self, user: str) -> None:
+    def __init__(self, user: str, endpoints: tuple[Endpoint, ...]) -> None:
         self._user = user
         self._by_response: dict[str, Endpoint] = {
-            response_topic(ep, user): ep for ep in ENDPOINTS
+            response_topic(ep, user): ep for ep in endpoints
         }
 
     def route(self, topic: str, payload: str) -> Inbound | None:

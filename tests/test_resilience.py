@@ -92,10 +92,10 @@ def test_a_malformed_reply_does_not_stop_later_messages() -> None:
     [b'{"d":[254,79,null,0]}', b'{"d":[254,79,"x",0]}', b'{"d":"nope"}', b"null"],
 )
 def test_malformed_diagnostics_frames_are_ignored(payload: bytes) -> None:
-    client = _client()
+    client = AmpioClient("host", username="admin")
     feed(
         client,
-        f"ampio/fromDB/{USER}/config/devices",
+        "ampio/fromDB/admin/config/devices",
         b'{"List":[{"id":7,"mac":51966}]}',
     )
     feed(client, "ampio/from/CAFE/b/4F", payload)  # must not raise
@@ -159,10 +159,10 @@ async def test_poison_message_does_not_kill_the_connection(
     _establish(client, 5)
     original = client._store.apply
 
-    def fragile(topic: str, payload: str) -> object:
-        if payload == "POISON":
+    def fragile(msg: object) -> object:
+        if getattr(msg, "value", None) == "POISON":
             raise RuntimeError("simulated processing defect")
-        return original(topic, payload)
+        return original(msg)  # type: ignore[arg-type]
 
     client._store.apply = fragile  # type: ignore[method-assign]
     topic = f"ampio/fromDB/{USER}/ob/5/state"

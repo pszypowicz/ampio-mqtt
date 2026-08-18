@@ -121,14 +121,19 @@ class AmpioClient:
                 "username is required - the Ampio topics are namespaced by account"
             )
         self._username = username
-        # The tier is the authenticated login name - see AccessTier.
+        # The tier is the authenticated login name - see AccessTier. It
+        # shapes everything downstream: the endpoints served, and from them
+        # the subscriptions, the router, the reply channels, and the
+        # initial-discovery set.
         self._tier = (
             AccessTier.ADMIN if username == ADMIN_USERNAME else AccessTier.RESTRICTED
         )
+        self._served = tuple(ep for ep in ENDPOINTS if ep.tier in (None, self._tier))
         self._initial_endpoints = tuple(
-            ep.name for ep in ENDPOINTS if ep.initial and ep.tier in (None, self._tier)
+            ep.name for ep in self._served if ep.initial
         )
-        self._store = AmpioStore(self._username)
+        self._router = _protocol.Router(username, self._served)
+        self._store = AmpioStore()
         self.stats = ConnectionStats()
         self._connection = _connection.Connection(
             host,
@@ -152,12 +157,10 @@ class AmpioClient:
         ] = []
 
         # One reply channel per endpoint-table row the tier is served -
-        # see _ReplyChannel. A reply on an unserved surface still updates
-        # the store; it just latches and resolves nothing here.
+        # see _ReplyChannel. The router covers the same set, so every
+        # routed reply has a channel.
         self._channels: dict[str, _ReplyChannel] = {
-            ep.name: _ReplyChannel()
-            for ep in ENDPOINTS
-            if ep.tier in (None, self._tier)
+            ep.name: _ReplyChannel() for ep in self._served
         }
 
         # Topics whose messages have failed processing, so a recurring
@@ -167,11 +170,7 @@ class AmpioClient:
     def _subscriptions(self) -> list[str]:
         """Every topic the client needs on each (re)connect."""
         topics = [
-            *(
-                response_topic(ep, self._username)
-                for ep in ENDPOINTS
-                if ep.tier in (None, self._tier)
-            ),
+            *(response_topic(ep, self._username) for ep in self._served),
             ob_state_wildcard(self._username),
         ]
         if self._tier is AccessTier.ADMIN:
@@ -197,11 +196,12 @@ class AmpioClient:
         """
         self.stats.last_message_at = time.time()
         try:
-            applied = self._store.apply(topic, payload)
-            if applied.endpoint is not None:
-                channel = self._channels.get(applied.endpoint.name)
-                if channel is not None:
-                    channel.deliver(payload, applied.parsed)
+            msg = self._router.route(topic, payload)
+            if msg is None:
+                return
+            applied = self._store.apply(msg)
+            if isinstance(msg, _protocol.EndpointReply):
+                self._channels[msg.endpoint.name].deliver(payload, applied.parsed)
         except Exception:
             if topic in self._poisoned_topics:
                 _LOGGER.debug("Dropped another failing Ampio message on %s", topic)

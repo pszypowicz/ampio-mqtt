@@ -8,6 +8,7 @@ import pytest
 
 from ampio_mqtt import AccessTier, AmpioModule, AmpioServerInfo, BusEvent
 from ampio_mqtt._protocol import (
+    ENDPOINTS,
     DiagnosticsReport,
     EndpointReply,
     RawChannelEdge,
@@ -25,7 +26,8 @@ from ampio_mqtt._protocol import (
 )
 
 # One router per suite: topic classification is stateless per account.
-_route = Router("u").route
+# The full endpoint table: these tests cover topic shapes, not tier scoping.
+_route = Router("u", ENDPOINTS).route
 
 
 @pytest.mark.parametrize(
