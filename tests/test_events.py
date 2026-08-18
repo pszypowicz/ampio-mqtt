@@ -3,26 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from conftest import API_TOPIC, USER, FakeBroker, feed
 
 from ampio_mqtt import AmpioClient, AmpioConnectionError, BusEvent
-
-USER = "u"
-TOPIC = f"ampio/control/{USER}/api"
-
-
-class _RecordingClient:
-    def __init__(self) -> None:
-        self.published: list[tuple[str, bytes]] = []
-
-    async def publish(self, topic: str, payload: bytes = b"", qos: int = 0) -> None:
-        self.published.append((topic, payload))
-
-
-def _connected() -> tuple[AmpioClient, _RecordingClient]:
-    client = AmpioClient("host", username=USER)
-    recorder = _RecordingClient()
-    client._connection._client = recorder  # type: ignore[assignment]
-    return client, recorder
 
 
 def test_received_event_reaches_listeners() -> None:
@@ -30,7 +13,7 @@ def test_received_event_reaches_listeners() -> None:
     seen: list[BusEvent] = []
     client.subscribe(seen.append, of=BusEvent)
 
-    client._feed_message("ampio/from/1/event", b"189")
+    feed(client, "ampio/from/1/event", b"189")
 
     assert seen == [BusEvent(number=189, mac=1)]
 
@@ -41,7 +24,7 @@ def test_event_mac_identifies_the_originator() -> None:
     seen: list[BusEvent] = []
     client.subscribe(seen.append, of=BusEvent)
 
-    client._feed_message("ampio/from/D09A/event", b"42")
+    feed(client, "ampio/from/D09A/event", b"42")
 
     assert seen == [BusEvent(number=42, mac=0xD09A)]
 
@@ -58,7 +41,7 @@ def test_malformed_events_are_ignored(topic: str, payload: bytes) -> None:
     client = AmpioClient("host", username=USER)
     seen: list[BusEvent] = []
     client.subscribe(seen.append, of=BusEvent)
-    client._feed_message(topic, payload)
+    feed(client, topic, payload)
     assert seen == []
 
 
@@ -67,22 +50,26 @@ def test_event_listener_can_be_removed() -> None:
     seen: list[BusEvent] = []
     unsubscribe = client.subscribe(seen.append, of=BusEvent)
     unsubscribe()
-    client._feed_message("ampio/from/1/event", b"189")
+    feed(client, "ampio/from/1/event", b"189")
     assert seen == []
 
 
-async def test_send_event_builds_the_payload() -> None:
-    client, recorder = _connected()
+async def test_send_event_builds_the_payload(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
     await client.send_event(189)
-    assert recorder.published == [(TOPIC, b"/api/setEvent/189")]
+    assert broker.published == [(API_TOPIC, b"/api/setEvent/189")]
 
 
 @pytest.mark.parametrize("number", [0, -1, 65536])
-async def test_event_number_range_is_checked(number: int) -> None:
-    client, recorder = _connected()
+async def test_event_number_range_is_checked(
+    connected: tuple[AmpioClient, FakeBroker], number: int
+) -> None:
+    client, broker = connected
     with pytest.raises(ValueError):
         await client.send_event(number)
-    assert recorder.published == []
+    assert broker.published == []
 
 
 async def test_send_event_requires_a_connection() -> None:

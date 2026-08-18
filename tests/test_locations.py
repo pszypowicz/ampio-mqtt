@@ -15,18 +15,9 @@ import json
 
 import aiomqtt
 import pytest
+from conftest import FakeBroker, feed
 
 from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioTimeoutError
-
-
-class _FakeMqttClient:
-    """Minimal aiomqtt.Client stand-in: records publishes, no real broker."""
-
-    def __init__(self) -> None:
-        self.published: list[tuple[str, bytes]] = []
-
-    async def publish(self, topic: str, payload: bytes, qos: int = 0) -> None:
-        self.published.append((topic, payload))
 
 
 async def test_fetch_locations_raises_when_not_connected() -> None:
@@ -35,10 +26,10 @@ async def test_fetch_locations_raises_when_not_connected() -> None:
         await client.fetch_locations()
 
 
-async def test_fetch_locations_publishes_keyword_and_parses_response() -> None:
-    client = AmpioClient("host", username="u", password="p")
-    fake_broker = _FakeMqttClient()
-    client._connection._client = fake_broker  # type: ignore[assignment]
+async def test_fetch_locations_publishes_keyword_and_parses_response(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
 
     payload = json.dumps(
         {
@@ -52,7 +43,7 @@ async def test_fetch_locations_publishes_keyword_and_parses_response() -> None:
 
     async def _deliver() -> None:
         await asyncio.sleep(0)
-        client._feed_message("ampio/fromDB/u/config/locations", payload)
+        feed(client, "ampio/fromDB/u/config/locations", payload)
 
     delivery = asyncio.create_task(_deliver())
     try:
@@ -61,20 +52,22 @@ async def test_fetch_locations_publishes_keyword_and_parses_response() -> None:
         await delivery
 
     assert result == {1: "Salon", 2: "Kuchnia", 21: "marker_full_capture_777"}
-    assert fake_broker.published == [("ampio/control/u/config", b"locations")]
+    assert broker.published == [("ampio/control/u/config", b"locations")]
     assert client.last_payloads["locations"] == payload
 
 
-async def test_fetch_locations_times_out_when_response_missing() -> None:
-    client = AmpioClient("host", username="u", password="p")
-    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
+async def test_fetch_locations_times_out_when_response_missing(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, _ = connected
     with pytest.raises(AmpioConnectionError):
         await client.fetch_locations(timeout=0.05)
 
 
-async def test_fetch_locations_skips_malformed_entries() -> None:
-    client = AmpioClient("host", username="u", password="p")
-    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
+async def test_fetch_locations_skips_malformed_entries(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, _ = connected
 
     payload = json.dumps(
         {
@@ -92,7 +85,7 @@ async def test_fetch_locations_skips_malformed_entries() -> None:
 
     async def _deliver() -> None:
         await asyncio.sleep(0)
-        client._feed_message("ampio/fromDB/u/config/locations", payload)
+        feed(client, "ampio/fromDB/u/config/locations", payload)
 
     delivery = asyncio.create_task(_deliver())
     try:
@@ -102,15 +95,16 @@ async def test_fetch_locations_skips_malformed_entries() -> None:
     assert result == {1: "OK", 5: "Used"}
 
 
-async def test_fetch_locations_treats_malformed_response_as_no_response() -> None:
+async def test_fetch_locations_treats_malformed_response_as_no_response(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
     """A corrupt reply must end in the retryable timeout, not a fake-valid
     empty table."""
-    client = AmpioClient("host", username="u", password="p")
-    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
+    client, _ = connected
 
     async def _deliver() -> None:
         await asyncio.sleep(0)
-        client._feed_message("ampio/fromDB/u/config/locations", "not-json")
+        feed(client, "ampio/fromDB/u/config/locations", "not-json")
 
     delivery = asyncio.create_task(_deliver())
     try:
@@ -120,13 +114,14 @@ async def test_fetch_locations_treats_malformed_response_as_no_response() -> Non
         await delivery
 
 
-async def test_fetch_locations_clears_state_between_calls() -> None:
-    client = AmpioClient("host", username="u", password="p")
-    client._connection._client = _FakeMqttClient()  # type: ignore[assignment]
+async def test_fetch_locations_clears_state_between_calls(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, _ = connected
 
     async def _deliver(payload: str) -> None:
         await asyncio.sleep(0)
-        client._feed_message("ampio/fromDB/u/config/locations", payload)
+        feed(client, "ampio/fromDB/u/config/locations", payload)
 
     first = asyncio.create_task(
         _deliver(json.dumps({"List": [{"id": 1, "opis_menu": "A"}]}))
@@ -143,13 +138,11 @@ async def test_fetch_locations_clears_state_between_calls() -> None:
     assert r2 == {2: "B"}
 
 
-async def test_fetch_locations_wraps_publish_failure() -> None:
-    class _RaisingClient:
-        async def publish(self, topic: str, payload: bytes, qos: int = 0) -> None:
-            raise aiomqtt.MqttError("publish failed")
-
-    client = AmpioClient("host", username="u", password="p")
-    client._connection._client = _RaisingClient()  # type: ignore[assignment]
+async def test_fetch_locations_wraps_publish_failure(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
+    broker.publish_errors = [aiomqtt.MqttError("publish failed")]
     with pytest.raises(AmpioConnectionError) as excinfo:
         await client.fetch_locations(timeout=1.0)
     assert isinstance(excinfo.value.__cause__, aiomqtt.MqttError)

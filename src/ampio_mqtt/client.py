@@ -13,7 +13,6 @@ from collections.abc import Callable
 from typing import Any, TypeVar, overload
 
 from . import _connection, _protocol
-from ._connection import _decode_payload
 from ._store import AmpioStore
 from .device_types import Capability
 from .endpoints import (
@@ -105,8 +104,15 @@ class AmpioClient:
         password: str | None = None,
         *,
         reconnect_interval: float = 5.0,
+        mqtt_client_factory: _connection.MqttClientFactory | None = None,
     ) -> None:
-        """Initialize the client. `username` also namespaces the MQTT topics."""
+        """Initialize the client. `username` also namespaces the MQTT topics.
+
+        ``mqtt_client_factory`` is the transport seam: a zero-argument
+        callable returning the MQTT session object for one connect attempt.
+        Leave it None for the real broker connection; a test injects a fake
+        broker instance here instead of patching aiomqtt.
+        """
         self._username = username or ""
         self._store = AmpioStore(self._username)
         self.stats = ConnectionStats()
@@ -123,6 +129,7 @@ class AmpioClient:
             on_connected=self.refresh,
             on_auth_failure=self._handle_auth_failure,
             on_fatal=self._handle_fatal,
+            client_factory=mqtt_client_factory,
         )
 
         # One registry for every subscriber: (listener, event-type filter).
@@ -347,6 +354,7 @@ class AmpioClient:
         password: str | None,
         *,
         info_timeout: float = 5.0,
+        mqtt_client_factory: _connection.MqttClientFactory | None = None,
     ) -> AmpioServerInfo:
         """Connect, request the server info, and return it.
 
@@ -376,6 +384,7 @@ class AmpioClient:
             request_payload=info.req_payload,
             reply_topic=response_topic(info, user),
             timeout=info_timeout,
+            client_factory=mqtt_client_factory,
         )
         if payload is None:
             raise AmpioTimeoutError(
@@ -733,14 +742,6 @@ class AmpioClient:
                 if future in waiters:
                     waiters.remove(future)
         return {name: future.result() for name, future in futures.items()}
-
-    def _feed_message(self, topic: str, payload: str | bytes) -> None:
-        """Inject a message directly into the routing logic.
-
-        Private entry point used by the library's own tests; the real broker
-        drives the same path through the connection.
-        """
-        self._handle_message(topic, _decode_payload(payload))
 
 
 def _check_range(name: str, value: int, low: int, high: int) -> None:

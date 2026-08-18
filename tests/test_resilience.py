@@ -12,18 +12,13 @@ import asyncio
 import json
 
 import pytest
+from conftest import USER, details, feed
 
 from ampio_mqtt import AmpioClient, BusEvent, ModuleUpdated, ObjectUpdated
-
-USER = "u"
 
 
 def _client() -> AmpioClient:
     return AmpioClient("host", username=USER)
-
-
-def _details(*items: dict) -> bytes:
-    return json.dumps({"Status": 0, "List": list(items)}).encode()
 
 
 # --- listeners are consumer code and may raise ------------------------------
@@ -35,7 +30,7 @@ def test_a_raising_listener_does_not_stop_the_others() -> None:
     client.subscribe(lambda e: (_ for _ in ()).throw(ValueError("boom")))
     client.subscribe(lambda e: seen.append(e.object.id), of=ObjectUpdated)
 
-    client._feed_message(f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1"}')
+    feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1"}')
 
     assert seen == [41]
 
@@ -44,8 +39,8 @@ def test_a_raising_listener_does_not_stop_later_messages() -> None:
     client = _client()
     client.subscribe(lambda e: (_ for _ in ()).throw(ValueError("boom")))
 
-    client._feed_message(f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1"}')
-    client._feed_message(f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"2"}')
+    feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1"}')
+    feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"2"}')
 
     assert client.objects[41].value == "2"
 
@@ -59,13 +54,14 @@ def test_a_raising_listener_does_not_stop_later_messages() -> None:
 )
 def test_every_listener_kind_is_isolated(of: type, topic: str, payload: bytes) -> None:
     client = _client()
-    client._feed_message(
+    feed(
+        client,
         f"ampio/fromDB/{USER}/config/devices",
         json.dumps({"List": [{"id": 7, "mac": 0xCAFE, "typ_urzadzenia": 11}]}).encode(),
     )
     client.subscribe(lambda _: (_ for _ in ()).throw(ValueError("boom")), of=of)
 
-    client._feed_message(topic, payload)  # must not raise
+    feed(client, topic, payload)  # must not raise
 
 
 # --- replies of the wrong shape --------------------------------------------
@@ -87,13 +83,13 @@ def test_malformed_replies_never_escape_the_dispatcher(
     surface: str, payload: bytes
 ) -> None:
     client = _client()
-    client._feed_message(f"ampio/fromDB/{USER}/{surface}", payload)  # must not raise
+    feed(client, f"ampio/fromDB/{USER}/{surface}", payload)  # must not raise
 
 
 def test_a_malformed_reply_does_not_stop_later_messages() -> None:
     client = _client()
-    client._feed_message(f"ampio/fromDB/{USER}/config/devicesDetails", b"null")
-    client._feed_message(f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"77"}')
+    feed(client, f"ampio/fromDB/{USER}/config/devicesDetails", b"null")
+    feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"77"}')
     assert client.objects[41].value == "77"
 
 
@@ -103,10 +99,12 @@ def test_a_malformed_reply_does_not_stop_later_messages() -> None:
 )
 def test_malformed_diagnostics_frames_are_ignored(payload: bytes) -> None:
     client = _client()
-    client._feed_message(
-        f"ampio/fromDB/{USER}/config/devices", b'{"List":[{"id":7,"mac":51966}]}'
+    feed(
+        client,
+        f"ampio/fromDB/{USER}/config/devices",
+        b'{"List":[{"id":7,"mac":51966}]}',
     )
-    client._feed_message("ampio/from/CAFE/b/4F", payload)  # must not raise
+    feed(client, "ampio/from/CAFE/b/4F", payload)  # must not raise
     assert client.modules[7].supply_voltage is None
 
 
@@ -149,15 +147,15 @@ def _snapshot(oid: int, value: str, on_ms: int) -> bytes:
 
 def test_a_newer_snapshot_corrects_a_value_that_changed_during_an_outage() -> None:
     client = _client()
-    client._feed_message(
-        f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"255","on":1786700100000}'
+    feed(
+        client,
+        f"ampio/fromDB/{USER}/ob/41/state",
+        b'{"state":"255","on":1786700100000}',
     )
     assert client.objects[41].value == "255"
 
     # Reconnect: the object was switched off while the connection was down.
-    client._feed_message(
-        f"ampio/fromDB/{USER}/data/states", _snapshot(41, "0", 1786700900000)
-    )
+    feed(client, f"ampio/fromDB/{USER}/data/states", _snapshot(41, "0", 1786700900000))
 
     assert client.objects[41].value == "0"
 
@@ -165,19 +163,24 @@ def test_a_newer_snapshot_corrects_a_value_that_changed_during_an_outage() -> No
 def test_an_older_snapshot_loses_to_the_live_push_that_beat_it() -> None:
     """On a fresh connection the snapshot can arrive after a newer push."""
     client = _client()
-    client._feed_message(
-        f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"fresh","on":1786700900000}'
+    feed(
+        client,
+        f"ampio/fromDB/{USER}/ob/41/state",
+        b'{"state":"fresh","on":1786700900000}',
     )
-    client._feed_message(
-        f"ampio/fromDB/{USER}/data/states", _snapshot(41, "stale", 1786700100000)
+    feed(
+        client,
+        f"ampio/fromDB/{USER}/data/states",
+        _snapshot(41, "stale", 1786700100000),
     )
     assert client.objects[41].value == "fresh"
 
 
 def test_an_undated_snapshot_only_fills_a_gap() -> None:
     client = _client()
-    client._feed_message(f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"live"}')
-    client._feed_message(
+    feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"live"}')
+    feed(
+        client,
         f"ampio/fromDB/{USER}/data/states",
         json.dumps({"List": [{"id": 41, "stan_json": '{"state":"undated"}'}]}).encode(),
     )
@@ -186,15 +189,18 @@ def test_an_undated_snapshot_only_fills_a_gap() -> None:
 
 def test_snapshot_also_corrects_tilt() -> None:
     client = _client()
-    client._feed_message(
+    feed(
+        client,
         f"ampio/fromDB/{USER}/config/devicesDetails",
-        _details({"id": 66, "typ_komponentu": "roleta_lamelki", "interpretacja": 1}),
+        details({"id": 66, "typ_komponentu": "roleta_lamelki", "interpretacja": 1}),
     )
-    client._feed_message(
+    feed(
+        client,
         f"ampio/fromDB/{USER}/ob/66/state",
         b'{"state":"95","lammel":"10","on":1786700100000}',
     )
-    client._feed_message(
+    feed(
+        client,
         f"ampio/fromDB/{USER}/data/states",
         json.dumps(
             {
@@ -219,19 +225,22 @@ def test_snapshot_also_corrects_tilt() -> None:
 def test_a_reply_without_params_keeps_what_params_devices_supplied() -> None:
     """The hidden flag must survive a catalogue that carries no params column."""
     client = _client()
-    client._feed_message(
+    feed(
+        client,
         f"ampio/fromDB/{USER}/data/params_devices",
         json.dumps({"List": [{"id": 7, "params": 17}]}).encode(),
     )
-    client._feed_message(
+    feed(
+        client,
         f"ampio/fromDB/{USER}/data/devices",
-        _details({"id": 7, "typ_komponentu": "lin_wej", "leafId": "0_x_1"}),
+        details({"id": 7, "typ_komponentu": "lin_wej", "leafId": "0_x_1"}),
     )
     assert client.objects[7].hidden is True
 
-    client._feed_message(
+    feed(
+        client,
         f"ampio/fromDB/{USER}/config/devicesDetails",
-        _details({"id": 7, "typ_komponentu": "lin_wej", "leafId": "0_x_1"}),
+        details({"id": 7, "typ_komponentu": "lin_wej", "leafId": "0_x_1"}),
     )
 
     obj = client.objects[7]
@@ -242,22 +251,22 @@ def test_a_reply_without_params_keeps_what_params_devices_supplied() -> None:
 def test_params_present_in_a_reply_still_win() -> None:
     """Un-hiding an object in Designer must reach the consumer."""
     client = _client()
-    client._feed_message(
+    feed(
+        client,
         f"ampio/fromDB/{USER}/data/params_devices",
         json.dumps({"List": [{"id": 7, "params": 17}]}).encode(),
     )
-    client._feed_message(
+    feed(
+        client,
         f"ampio/fromDB/{USER}/config/devicesDetails",
-        _details(
-            {"id": 7, "typ_komponentu": "lin_wej", "leafId": "0_x_1", "params": 1}
-        ),
+        details({"id": 7, "typ_komponentu": "lin_wej", "leafId": "0_x_1", "params": 1}),
     )
     assert client.objects[7].hidden is False
 
 
 def test_updated_at_tracks_the_report_a_value_came_from() -> None:
     client = _client()
-    client._feed_message(
-        f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1","on":1786700100000}'
+    feed(
+        client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1","on":1786700100000}'
     )
     assert client.objects[41].updated_at == 1786700100.0

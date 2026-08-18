@@ -54,6 +54,10 @@ AvailabilityHandler = Callable[[bool], None]
 ConnectedHandler = Callable[[], Awaitable[None]]
 AuthFailureHandler = Callable[[str], None]
 FatalHandler = Callable[[str], None]
+# The transport seam: a zero-argument callable returning the session object
+# for one connect attempt. The default builds the real aiomqtt.Client; tests
+# inject a fake instance and skip both patching and class-level state.
+MqttClientFactory = Callable[[], aiomqtt.Client]
 
 
 class Connection:
@@ -74,6 +78,7 @@ class Connection:
         on_connected: ConnectedHandler,
         on_auth_failure: AuthFailureHandler,
         on_fatal: FatalHandler,
+        client_factory: MqttClientFactory | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -91,6 +96,7 @@ class Connection:
         # Reusing one client id across reconnects keeps the broker from seeing
         # parallel "ghost" sessions while the previous one expires.
         self._client_id = f"ampio_mqtt_{uuid.uuid4().hex}"
+        self._client_factory = client_factory or self._default_client
         self._client: aiomqtt.Client | None = None
         self._runner: asyncio.Task[None] | None = None
         self._connected = asyncio.Event()
@@ -223,18 +229,21 @@ class Connection:
             if self._connected.is_set():
                 self._on_fatal(self._fatal_message)
 
+    def _default_client(self) -> aiomqtt.Client:
+        return aiomqtt.Client(
+            hostname=self._host,
+            port=self._port,
+            username=self._username,
+            password=self._password,
+            identifier=self._client_id,
+            timeout=10,
+        )
+
     async def _loop(self) -> None:
         attempt = 0
         while not self._stop:
             try:
-                async with aiomqtt.Client(
-                    hostname=self._host,
-                    port=self._port,
-                    username=self._username,
-                    password=self._password,
-                    identifier=self._client_id,
-                    timeout=10,
-                ) as client:
+                async with self._client_factory() as client:
                     self._client = client
                     # One SUBSCRIBE packet for the whole set - and the SUBACK
                     # verdicts are read: a broker may reject individual
@@ -328,6 +337,7 @@ async def probe(
     request_payload: str,
     reply_topic: str,
     timeout: float,
+    client_factory: MqttClientFactory | None = None,
 ) -> str | None:
     """Connect once, ask for one reply, and return its payload.
 
@@ -335,15 +345,18 @@ async def probe(
     what does the server say it is" without starting the reconnect loop.
     Returns None when the connection is fine but nothing answers in time.
     """
-    try:
-        async with aiomqtt.Client(
+    factory = client_factory or (
+        lambda: aiomqtt.Client(
             hostname=host,
             port=port,
             username=username,
             password=password,
             identifier=f"ampio_mqtt_test_{uuid.uuid4().hex}",
             timeout=10,
-        ) as client:
+        )
+    )
+    try:
+        async with factory() as client:
             await client.subscribe(reply_topic, qos=_SUBSCRIBE_QOS)
             await client.publish(
                 request_topic, request_payload.encode(), qos=_PUBLISH_QOS

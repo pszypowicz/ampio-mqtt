@@ -6,12 +6,10 @@ import asyncio
 import json
 
 import pytest
+from conftest import API_TOPIC, USER, FakeBroker, feed
 
 from ampio_mqtt import AmpioClient, AmpioConnectionError
 from ampio_mqtt._protocol import parse_scenes
-
-USER = "u"
-TOPIC = f"ampio/control/{USER}/api"
 
 _PAYLOAD = json.dumps(
     {
@@ -77,21 +75,6 @@ def test_unparseable_or_empty_payloads(payload: str, expected: list | None) -> N
     assert parse_scenes(payload) == expected
 
 
-class _RecordingClient:
-    def __init__(self) -> None:
-        self.published: list[tuple[str, bytes]] = []
-
-    async def publish(self, topic: str, payload: bytes = b"", qos: int = 0) -> None:
-        self.published.append((topic, payload))
-
-
-def _connected() -> tuple[AmpioClient, _RecordingClient]:
-    client = AmpioClient("host", username=USER)
-    recorder = _RecordingClient()
-    client._connection._client = recorder  # type: ignore[assignment]
-    return client, recorder
-
-
 @pytest.mark.parametrize(
     ("call", "expected"),
     [
@@ -100,10 +83,12 @@ def _connected() -> tuple[AmpioClient, _RecordingClient]:
         (lambda c: c.undo_scene(1), b"/api/undo/scene/1"),
     ],
 )
-async def test_scene_commands(call, expected: bytes) -> None:
-    client, recorder = _connected()
+async def test_scene_commands(
+    connected: tuple[AmpioClient, FakeBroker], call, expected: bytes
+) -> None:
+    client, broker = connected
     await call(client)
-    assert recorder.published == [(TOPIC, expected)]
+    assert broker.published == [(API_TOPIC, expected)]
 
 
 async def test_scene_commands_require_a_connection() -> None:
@@ -112,20 +97,24 @@ async def test_scene_commands_require_a_connection() -> None:
         await client.run_scene(1)
 
 
-async def test_fetch_scenes_requests_and_parses_the_reply() -> None:
-    client, recorder = _connected()
+async def test_fetch_scenes_requests_and_parses_the_reply(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
 
     async def _deliver() -> None:
         # Give fetch_scenes a turn to publish before the reply arrives.
         await asyncio.sleep(0)
-        client._feed_message(f"ampio/fromDB/{USER}/data/scenes", _PAYLOAD)
+        feed(client, f"ampio/fromDB/{USER}/data/scenes", _PAYLOAD)
 
     scenes, _ = await asyncio.gather(client.fetch_scenes(timeout=2), _deliver())
     assert [s.name for s in scenes] == ["Schody noc", "Wyjście", "Bez kolumny"]
-    assert recorder.published == [(f"ampio/control/{USER}/data", b"scenes")]
+    assert broker.published == [(f"ampio/control/{USER}/data", b"scenes")]
 
 
-async def test_fetch_scenes_times_out_when_no_reply_arrives() -> None:
-    client, _ = _connected()
+async def test_fetch_scenes_times_out_when_no_reply_arrives(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, _ = connected
     with pytest.raises(AmpioConnectionError):
         await client.fetch_scenes(timeout=0.05)

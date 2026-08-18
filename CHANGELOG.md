@@ -16,6 +16,20 @@ upgrade path.
 
 ## Unreleased
 
+### Added
+
+- A transport seam: `AmpioClient` and `test_connection` accept a
+  keyword-only `mqtt_client_factory` (a zero-argument callable returning
+  the MQTT session object for one connect attempt), defaulting to the real
+  aiomqtt client exactly as before. The suite now injects an
+  instance-based fake broker through it instead of patching aiomqtt and
+  poking `client._connection._client` - the old pattern manufactured a
+  session state production code cannot produce (never opened, unavailable,
+  yet publishing successfully) and forced the broker fake into class-level
+  state with an autouse reset. The private `_feed_message` test hook is
+  gone from the client, and a shared `tests/conftest.py` replaces eight
+  per-file fake classes and seven copies of the shared constants.
+
 ### Changed
 
 - One typed event stream replaces the seven `add_*_listener` registrations.
