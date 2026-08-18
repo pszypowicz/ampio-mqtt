@@ -1231,3 +1231,12 @@ def test_a_cleared_name_clears_in_the_store() -> None:
     applied = store.apply(DETAILS_TOPIC, _catalogue(id=9, opis_menu=""))
     assert store.objects[9].name is None
     assert [o.id for o in _updated(applied)] == [9]
+
+
+def test_a_zero_server_timestamp_is_still_a_server_timestamp() -> None:
+    """`on` is epoch milliseconds; 0 is a value, not absence - it must land
+    in the server clock domain, not be restamped with the local clock."""
+    store = _store()
+    store.apply(f"ampio/fromDB/{USER}/ob/9/state", '{"state": "1", "on": 0}')
+    obj = store.objects[9]
+    assert (obj.updated_at, obj.updated_at_clock) == (0.0, "server")

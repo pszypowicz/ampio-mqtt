@@ -91,6 +91,13 @@ it away.
   5 s deadline - so a broker slow to acknowledge could stretch a
   `timeout=5.0` rooms fetch to ~15 s. The publishes now sit inside the
   window, making the documented contract true.
+- **`username` is required.** `AmpioClient` and `test_connection` raise
+  `ValueError` without one instead of silently subscribing to the
+  degenerate `ampio/fromDB//...` namespace no M-SERV serves, where the
+  failure surfaced minutes later as discovery that never completes.
+  Also: a server timestamp of `0` now lands in the server clock domain
+  instead of being restamped with the local clock (`on` is epoch
+  milliseconds; zero is a value, not absence).
 - **A name cleared server-side now clears in the store.** The metadata
   merge kept an object's old name when a catalogue row arrived without
   one, so a Designer rename-to-empty stuck forever. Live evidence

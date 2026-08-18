@@ -92,6 +92,11 @@ ignore = ["ASYNC109"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
+# Strict in config, not only as a CI flag, so a local `mypy src/ampio_mqtt`
+# checks exactly what CI checks.
+[tool.mypy]
+strict = true
+
 # python-zeroconf does not list every public symbol in `__all__`, so
 # `from zeroconf import AddressResolverIPv4` fails mypy's strict re-export
 # check without this override.

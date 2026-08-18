@@ -321,7 +321,7 @@ class AmpioStore:
             # The raw path is authoritative for this input, so the echo
             # neither re-notifies nor overwrites; it only anchors the object
             # to the server clock - see `AmpioObject.raw_proven`.
-            if update.on_ms:
+            if update.on_ms is not None:
                 reported_at = float(update.on_ms) / 1000.0
                 if (
                     obj.updated_at_clock == "local"
@@ -339,7 +339,7 @@ class AmpioStore:
             obj = AmpioObject(id=update.id, kind=classify(None, None))
         stamp: float
         clock: Literal["server", "local"]
-        if update.on_ms:
+        if update.on_ms is not None:
             stamp, clock = float(update.on_ms) / 1000.0, "server"
         else:
             stamp, clock = time.time(), "local"

@@ -354,3 +354,14 @@ async def test_discovery_stays_incomplete_without_server_identity(
     feed(client, DEVICES_TOPIC, devices())
     assert await client.wait_for_initial_discovery(timeout=1.0) is True
     assert client.server_info.key == "555"
+
+
+@pytest.mark.parametrize("username", [None, ""])
+async def test_username_is_required(username: str | None) -> None:
+    """Every topic is namespaced by account; without one the client would
+    subscribe to `ampio/fromDB//...` - a namespace no M-SERV serves - and
+    fail minutes later as discovery that never completes."""
+    with pytest.raises(ValueError):
+        AmpioClient("host", username=username)
+    with pytest.raises(ValueError):
+        await AmpioClient.test_connection("host", 1883, username, None)

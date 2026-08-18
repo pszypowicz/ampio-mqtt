@@ -363,13 +363,8 @@ def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
         raw_on = data.get("on")
         if isinstance(raw_on, (int, float)):
             on_ms = raw_on
-        tilt = _parse_lammel(data)
+        tilt = to_int(data.get("lammel"))
     return StateUpdate(id=oid, value=value, on_ms=on_ms, tilt=tilt)
-
-
-def _parse_lammel(data: dict[str, Any]) -> int | None:
-    """Read the `lammel` slat angle percent from a state payload."""
-    return to_int(data.get("lammel"))
 
 
 def parse_diagnostics(payload: str) -> ModuleDiagnostics | None:
@@ -418,7 +413,7 @@ def parse_stan_json(stan_json: str) -> StanJsonSeed | None:
     return StanJsonSeed(
         value=str(raw_state) if raw_state is not None else None,
         on_ms=on_ms,
-        tilt=_parse_lammel(data),
+        tilt=to_int(data.get("lammel")),
     )
 
 

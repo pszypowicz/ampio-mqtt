@@ -56,4 +56,5 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: python -m pip install --group dev -e .
-      - run: mypy --strict src/ampio_mqtt
+      # Strict comes from [tool.mypy] in pyproject.toml.
+      - run: mypy src/ampio_mqtt

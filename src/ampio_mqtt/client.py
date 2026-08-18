@@ -108,14 +108,21 @@ class AmpioClient:
         reconnect_interval: float = 5.0,
         mqtt_client_factory: _connection.MqttClientFactory | None = None,
     ) -> None:
-        """Initialize the client. `username` also namespaces the MQTT topics.
+        """Initialize the client. `username` is required: it names the
+        Ampio account and namespaces every MQTT topic, so without one the
+        client would subscribe to a namespace no M-SERV serves and fail
+        only minutes later as "discovery never completes".
 
         ``mqtt_client_factory`` is the transport seam: a zero-argument
         callable returning the MQTT session object for one connect attempt.
         Leave it None for the real broker connection; a test injects a fake
         broker instance here instead of patching aiomqtt.
         """
-        self._username = username or ""
+        if not username:
+            raise ValueError(
+                "username is required - the Ampio topics are namespaced by account"
+            )
+        self._username = username
         self._store = AmpioStore(self._username)
         self.stats = ConnectionStats()
         self._connection = _connection.Connection(
@@ -403,7 +410,11 @@ class AmpioClient:
         ``mserv_id`` can reject it here with an accurate message instead of
         failing at setup.
         """
-        user = username or ""
+        if not username:
+            raise ValueError(
+                "username is required - the Ampio topics are namespaced by account"
+            )
+        user = username
         info = ENDPOINT_BY_NAME["info"]
         payload = await _connection.probe(
             host,
