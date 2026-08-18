@@ -110,11 +110,3 @@ async def test_fetch_scenes_requests_and_parses_the_reply(
     scenes, _ = await asyncio.gather(client.fetch_scenes(timeout=2), _deliver())
     assert [s.name for s in scenes] == ["Schody noc", "Wyjście", "Bez kolumny"]
     assert broker.published == [(f"ampio/control/{USER}/data", b"scenes")]
-
-
-async def test_fetch_scenes_times_out_when_no_reply_arrives(
-    connected: tuple[AmpioClient, FakeBroker],
-) -> None:
-    client, _ = connected
-    with pytest.raises(AmpioConnectionError):
-        await client.fetch_scenes(timeout=0.05)

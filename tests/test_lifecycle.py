@@ -44,6 +44,7 @@ from ampio_mqtt import (
     ConnectionDied,
 )
 from ampio_mqtt._connection import _is_auth_error
+from ampio_mqtt.endpoints import ENDPOINTS, request_topic
 from ampio_mqtt.errors import AmpioAuthError
 
 
@@ -124,6 +125,42 @@ async def test_connection_returns_info_without_identity_as_is() -> None:
     assert info.mac is None
     assert info.server_version is None
     assert info.access_tier is AccessTier.UNKNOWN
+
+
+async def test_connection_warns_about_a_below_baseline_server(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    broker = FakeBroker()
+    broker.scripted_messages = [
+        Message(
+            INFO_TOPIC,
+            json.dumps({"Results": {"mac": 42, "serverVersion": "1"}}).encode(),
+        )
+    ]
+    with caplog.at_level(logging.WARNING, logger="ampio_mqtt.client"):
+        await AmpioClient.test_connection(
+            "h", 1883, USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
+        )
+    assert any("below the tested baseline" in r.getMessage() for r in caplog.records)
+
+
+async def test_connection_does_not_warn_at_the_baseline_version(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    broker = FakeBroker()
+    broker.scripted_messages = [
+        Message(
+            INFO_TOPIC,
+            json.dumps({"Results": {"mac": 42, "serverVersion": "1865"}}).encode(),
+        )
+    ]
+    with caplog.at_level(logging.WARNING, logger="ampio_mqtt.client"):
+        await AmpioClient.test_connection(
+            "h", 1883, USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
+        )
+    assert not any(
+        "below the tested baseline" in r.getMessage() for r in caplog.records
+    )
 
 
 async def test_connection_raises_auth_error_on_bad_credentials() -> None:
@@ -219,6 +256,13 @@ async def test_start_drives_full_discovery_through_mocked_broker() -> None:
         # discovery request publish goes out at QoS 1 (#68).
         assert set(broker.subscribed_qos) == {1}
         assert set(broker.published_qos) == {1}
+        # start() publishes exactly the initial-endpoint request set, once.
+        assert set(broker.published) == {
+            (request_topic(ep, USER), ep.req_payload.encode())
+            for ep in ENDPOINTS
+            if ep.initial
+        }
+        assert len(broker.published) == 6
     finally:
         await client.stop()
 
@@ -322,6 +366,28 @@ async def test_restricted_account_completes_via_data_surface_fallback() -> None:
         await client.stop()
 
 
+async def test_unknown_tier_completes_discovery_via_the_data_pair() -> None:
+    """An info reply that carries no account id leaves the tier UNKNOWN, and
+    discovery still completes through the app-sync data pair - the documented
+    fallback, since that pair answers for every account."""
+    broker = FakeBroker()
+    broker.scripted_messages = [
+        Message(STATES_TOPIC, json.dumps({"List": []}).encode()),
+        Message(INFO_TOPIC, json.dumps({"Results": {"mac": 99}}).encode()),
+        Message(DATA_DEVICES_TOPIC, json.dumps({"List": []}).encode()),
+        Message(PARAMS_DEVICES_TOPIC, json.dumps({"List": []}).encode()),
+    ]
+    client = AmpioClient(
+        "h", username=USER, reconnect_interval=0.0, mqtt_client_factory=broker.factory
+    )
+    completed = await client.start(timeout=2.0, discovery_timeout=1.0)
+    try:
+        assert completed is True
+        assert client.access_tier is AccessTier.UNKNOWN
+    finally:
+        await client.stop()
+
+
 async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
     """A credential rejection on reconnect reaches the auth-failure listener.
 
@@ -352,6 +418,36 @@ async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
     assert availability == [True, False]
 
 
+async def test_fresh_start_clears_a_runtime_auth_failure() -> None:
+    """auth_failure is terminal for one run, not for the client: a new
+    start() - presumably with accepted credentials - clears it and the
+    connection comes back up."""
+    broker = FakeBroker()
+    broker.stream_error = aiomqtt.MqttError("connection lost")
+    broker.enter_errors = [None, _auth_rejection()]
+    client = AmpioClient(
+        "h", username=USER, reconnect_interval=0.05, mqtt_client_factory=broker.factory
+    )
+    await client.start(timeout=2.0, discovery_timeout=0.05)
+    async with asyncio.timeout(2.0):
+        while client.auth_failure is None:
+            await asyncio.sleep(0.01)
+        runner = client._connection._runner
+        assert runner is not None
+        await runner  # the loop has stopped for good
+
+    # The broker accepts the credentials again.
+    broker.enter_errors = []
+    broker.enter_error = None
+    broker.stream_error = None
+    await client.start(timeout=2.0, discovery_timeout=0.05)
+    try:
+        assert client.auth_failure is None
+        assert client.available is True
+    finally:
+        await client.stop()
+
+
 async def test_initial_auth_rejection_raises_without_firing_listener() -> None:
     """A rejection during start() raises AmpioAuthError; the listener is for
     the runtime path only, so a config flow does not get a double signal."""
@@ -364,6 +460,7 @@ async def test_initial_auth_rejection_raises_without_firing_listener() -> None:
         await client.start(timeout=2.0, discovery_timeout=0.05)
     assert failures == []
     assert client.auth_failure == "[code:135] Not authorized"
+    assert client._connection._runner is None  # stop() ran during the raise
 
 
 async def test_transient_outage_leaves_auth_failure_unset() -> None:
@@ -516,7 +613,8 @@ async def test_availability_notifies_again_after_restart() -> None:
 
 async def test_wait_for_initial_discovery_returns_false_on_timeout() -> None:
     """A partial discovery set leaves the wait returning False without raising."""
-    # No info message scripted -> _info_received never fires.
+    # No info message scripted -> the info endpoint's reply channel never
+    # latches, so the discovery wait cannot complete.
     broker = FakeBroker()
     broker.scripted_messages = [
         Message(DEVICES_TOPIC, json.dumps({"List": []}).encode()),

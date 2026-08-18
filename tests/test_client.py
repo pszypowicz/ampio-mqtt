@@ -1,6 +1,6 @@
 """Tests for the AmpioClient surface: listener wiring, lifecycle entry
-points, diagnostics retention, stats, and the model properties consumers
-read. The store's message semantics are covered in test_store.py."""
+points, diagnostics retention, and stats. The store's message semantics are
+covered in test_store.py; the pure model properties in test_models.py."""
 
 from __future__ import annotations
 
@@ -10,15 +10,11 @@ import json
 import aiomqtt
 import pytest
 from conftest import USER, FakeBroker, details, devices, feed, info
-from paho.mqtt.packettypes import PacketTypes
-from paho.mqtt.reasoncodes import ReasonCode
 
 from ampio_mqtt import (
     AccessTier,
-    AmpioAuthError,
     AmpioClient,
     AmpioConnectionError,
-    AmpioObject,
     AvailabilityChanged,
     ModuleRemoved,
     ObjectRemoved,
@@ -73,8 +69,14 @@ def test_mserv_id_prefers_info_mac_cross_check() -> None:
     assert client.mserv_id == 1
 
 
-def test_mserv_id_falls_back_to_typ10_without_info() -> None:
-    """Without info, a unique typ_urzadzenia=10 module identifies the M-SERV."""
+# Type 10 is the M-SERV-s; type 0 is VIRTUAL. Both map to Capability.HUB.
+@pytest.mark.parametrize("hub_type", [10, 0])
+def test_mserv_id_falls_back_to_unique_hub_module(hub_type: int) -> None:
+    """Without info, the unique hub-capability module identifies the M-SERV.
+
+    The rule reads Capability.HUB off the module catalogue, not the raw type
+    code, so a VIRTUAL hub resolves exactly like an M-SERV one.
+    """
     client = _client()
     feed(
         client,
@@ -84,8 +86,8 @@ def test_mserv_id_falls_back_to_typ10_without_info() -> None:
                 "id": 5,
                 "mac": 1,
                 "mac_global": 12345,
-                "typ_urzadzenia": 10,
-                "nazwa_urzadzenia": "MSERV",
+                "typ_urzadzenia": hub_type,
+                "nazwa_urzadzenia": "HUB",
             },
             {
                 "id": 6,
@@ -202,34 +204,6 @@ def test_subscribe_filters_and_preserves_order() -> None:
     ]
 
 
-def test_availability_listener() -> None:
-    client = _client()
-    events: list[bool] = []
-    client.subscribe(lambda e: events.append(e.available), of=AvailabilityChanged)
-    client._connection._set_available(True)
-    client._connection._set_available(True)
-    client._connection._set_available(False)
-    assert events == [True, False]
-
-
-async def test_start_raises_auth_error_on_credential_rejection() -> None:
-    """A broker auth rejection during _run surfaces AmpioAuthError from start()."""
-    broker = FakeBroker()
-    broker.enter_error = aiomqtt.MqttCodeError(
-        ReasonCode(PacketTypes.CONNACK, "Not authorized")
-    )
-    client = AmpioClient(
-        "host",
-        username=USER,
-        password="bad",
-        reconnect_interval=0.0,
-        mqtt_client_factory=broker.factory,
-    )
-    with pytest.raises(AmpioAuthError):
-        await client.start(timeout=2.0, discovery_timeout=0.1)
-    assert client._connection._runner is None  # stop() ran during the raise
-
-
 async def test_start_times_out_without_auth_error() -> None:
     """A connection that simply never comes up still raises AmpioConnectionError."""
     broker = FakeBroker()
@@ -245,34 +219,6 @@ async def test_start_times_out_without_auth_error() -> None:
         await client.start(timeout=0.5, discovery_timeout=0.1)
 
 
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [(None, False), ("", False), ("0", False), ("1", True), ("255", True)],
-)
-def test_is_on_interpretation(value, expected) -> None:
-    assert AmpioObject(id=1, value=value).is_on is expected
-
-
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        ("23.5", 23.5),
-        ("255", 255.0),
-        ("0", 0.0),
-        ("-4.2", -4.2),
-        (None, None),
-        ("", None),
-        ("open", None),
-        ("nan", None),
-        ("inf", None),
-        ("-inf", None),
-        ("1e999", None),
-    ],
-)
-def test_numeric_value_interpretation(value, expected) -> None:
-    assert AmpioObject(id=1, value=value).numeric_value == expected
-
-
 def test_last_payloads_retained_for_each_handler() -> None:
     """Each discovery handler stashes the verbatim payload for diagnostics."""
     client = _client()
@@ -286,9 +232,9 @@ def test_last_payloads_retained_for_each_handler() -> None:
     feed(client, f"ampio/fromDB/{USER}/config/devicesDetails", details_payload)
     feed(client, f"ampio/fromDB/{USER}/data/info", info_payload)
 
-    assert client.last_payloads["devices"] == devices_payload.decode()
-    assert client.last_payloads["details"] == details_payload.decode()
-    assert client.last_payloads["info"] == info_payload.decode()
+    assert client.last_payloads["devices"] == devices_payload
+    assert client.last_payloads["details"] == details_payload
+    assert client.last_payloads["info"] == info_payload
 
 
 def test_groups_payloads_are_retained() -> None:
@@ -302,29 +248,19 @@ def test_groups_payloads_are_retained() -> None:
     assert client.last_payloads["group_devices"] == group_devices.decode()
 
 
-def test_access_tier_reads_the_account_id_off_the_info_reply() -> None:
+def test_access_tier_is_unknown_before_any_info_reply() -> None:
+    """The userId-to-tier mapping itself is covered in test_protocol."""
+    assert _client().access_tier is AccessTier.UNKNOWN
+
+
+def test_colliding_macs_surface_through_the_client() -> None:
     client = _client()
-    assert client.access_tier is AccessTier.UNKNOWN
     feed(
         client,
-        f"ampio/fromDB/{USER}/data/info",
-        b'{"Results": {"mac": 1, "userId": "4"}}',
+        f"ampio/fromDB/{USER}/config/devices",
+        devices({"id": 1, "mac": 5}, {"id": 2, "mac": 5}),
     )
-    assert client.access_tier is AccessTier.RESTRICTED
-    feed(
-        client,
-        f"ampio/fromDB/{USER}/data/info",
-        b'{"Results": {"mac": 1, "userId": "-1"}}',
-    )
-    assert client.access_tier is AccessTier.ADMIN
-
-
-@pytest.mark.parametrize(
-    ("leaf_id", "expected"),
-    [("0_cb9b_74_0_1", "leaf_0_cb9b_74_0_1"), ("", None)],
-)
-def test_stable_key_from_leaf_id(leaf_id: str, expected: str | None) -> None:
-    assert AmpioObject(id=1, leaf_id=leaf_id).stable_key == expected
+    assert client.colliding_macs == frozenset({5})
 
 
 def test_dispatch_updates_last_message_at() -> None:
@@ -370,70 +306,3 @@ async def test_reconnect_count_increments_on_reconnect() -> None:
     assert client.stats.reconnect_count == 1
     assert client.stats.started_at is not None
     assert client.stats.last_error == "simulated drop"
-
-
-@pytest.mark.parametrize(
-    ("typ", "leaf_id", "is_system", "visible"),
-    [
-        # Real object with a non-empty leafId (the real-install shape).
-        ("temp", "0_cb8f_76_0_0", False, True),
-        # Ghost: empty leafId, not a system type.
-        ("temp", "", False, False),
-        # Named-output ghost on the M-SERV - the canonical Matter-leak case.
-        ("przekaznik", "", False, False),
-        # System objects are visible regardless of leafId.
-        ("symulacja", "", True, True),
-        ("detekcja", "", True, True),
-        # `flaga` is an input but NOT a system object, so it needs its leafId.
-        ("flaga", "", False, False),
-        ("flaga", "0_d09a_3_0_1", False, True),
-        # Unclassified / missing typ_komponentu - treat as non-system.
-        (None, "", False, False),
-        (None, "0_x_x_x_x", False, True),
-    ],
-)
-def test_visibility_predicate(
-    typ: str | None,
-    leaf_id: str,
-    is_system: bool,
-    visible: bool,
-) -> None:
-    obj = AmpioObject(id=1, typ_komponentu=typ, leaf_id=leaf_id)
-    assert obj.is_system is is_system
-    assert obj.visible is visible
-
-
-@pytest.mark.parametrize(
-    ("params", "hidden"),
-    [
-        (0, False),  # absent -> no flags
-        (1, False),  # bit 0 only (every real object carries it)
-        (16, True),  # bit 4 -> hidden stub
-        (17, True),  # bit 0 + bit 4 (the live phantom shape)
-        (1 << 37, False),  # a Matter opt-in is not a visibility signal
-        ((1 << 37) | 16, True),  # opted in AND hidden -> hidden still wins
-    ],
-)
-def test_params_flags(params: int, hidden: bool) -> None:
-    obj = AmpioObject(id=1, params=params)
-    assert obj.hidden is hidden
-
-
-def test_hidden_overrides_leaf_id_visibility() -> None:
-    """Bit 4 (hidden) drops an object even when its leaf_id would show it.
-
-    This is the duplicated-Designer-channel case: a phantom and its labelled
-    twin share a leaf_id, so the leaf_id heuristic keeps both and the consumer's
-    unique-id collides. The phantom carries bit 4, so it is filtered out.
-    """
-    phantom = AmpioObject(
-        id=1, typ_komponentu="lin_wej", leaf_id="0_cb97_74_0_1", params=17
-    )
-    labelled = AmpioObject(
-        id=2, typ_komponentu="lin_wej", leaf_id="0_cb97_74_0_1", params=(1 << 37) | 1
-    )
-    assert phantom.visible is False
-    assert labelled.visible is True
-    # A system object the M-SERV explicitly hid (bit 4) is dropped too, even
-    # though is_system would otherwise force it visible.
-    assert AmpioObject(id=3, typ_komponentu="symulacja", params=16).visible is False

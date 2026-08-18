@@ -79,6 +79,7 @@ def test_parse_rooms_skips_malformed_entries() -> None:
             {"id_grupy": 3, "id_obiektu": 102},
             {"id_grupy": 4, "id_obiektu": None},
             {"id_grupy": None, "id_obiektu": 103},
+            "not an object",
             {"id_grupy": 4, "id_obiektu": 104},
         ]
     )
@@ -154,7 +155,7 @@ async def test_fetch_rooms_times_out_when_response_missing(
 
     delivery = asyncio.create_task(_deliver_partial())
     try:
-        with pytest.raises(AmpioConnectionError):
+        with pytest.raises(AmpioTimeoutError):
             await client.fetch_rooms(timeout=0.1)
     finally:
         await delivery
@@ -204,6 +205,26 @@ async def test_concurrent_fetch_does_not_steal_the_first_callers_reply(
     # answers it.
     feed(client, "ampio/fromDB/u/data/groups", groups)
     feed(client, "ampio/fromDB/u/data/group_devices", group_devices)
+    assert await task_b == {31: "Salon"}
+
+
+async def test_concurrent_callers_of_the_same_endpoints_share_one_reply(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """Every concurrent caller of the same endpoint receives the same reply:
+    with both callers' waiters registered before anything lands, one reply
+    pair resolves both."""
+    client, _ = connected
+    groups = json.dumps({"List": [{"id": 8, "opis_menu": "Salon"}]})
+    group_devices = json.dumps({"List": [{"id_grupy": 8, "id_obiektu": 31}]})
+
+    task_a = asyncio.create_task(client.fetch_rooms(timeout=1.0))
+    await asyncio.sleep(0)  # A publishes its requests and registers waiters
+    task_b = asyncio.create_task(client.fetch_rooms(timeout=1.0))
+    await asyncio.sleep(0)  # B's waiters are registered too
+    feed(client, "ampio/fromDB/u/data/groups", groups)
+    feed(client, "ampio/fromDB/u/data/group_devices", group_devices)
+    assert await task_a == {31: "Salon"}
     assert await task_b == {31: "Salon"}
 
 

@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
-from conftest import API_TOPIC, USER, FakeBroker, feed
+from conftest import API_TOPIC, USER, FakeBroker
 
 from ampio_mqtt import AmpioClient, AmpioConnectionError
 
@@ -116,26 +114,11 @@ async def test_command_requires_a_connection() -> None:
 # --- cover tilt ------------------------------------------------------------
 
 
-def _cover(client: AmpioClient, oid: int, typ: str, tilt: str | None = None) -> None:
-    """Register a cover object of `typ` with an optional known lamella angle."""
-    feed(
-        client,
-        f"ampio/fromDB/{USER}/config/devicesDetails",
-        json.dumps(
-            {"List": [{"id": oid, "typ_komponentu": typ, "interpretacja": 1}]}
-        ).encode(),
-    )
-    if tilt is not None:
-        client.objects[oid].tilt_position = tilt
-
-
 async def test_position_only_move_leaves_the_slats_alone(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     """Both cover types take the sentinel on the axis that must not move."""
     client, broker = connected
-    _cover(client, 48, "roleta_procenty")
-    _cover(client, 66, "roleta_lamelki", tilt="100")
     await client.set_cover_position(48, 55)
     await client.set_cover_position(66, 95)
     assert broker.published == [
@@ -148,7 +131,6 @@ async def test_tilt_only_move_leaves_the_position_alone(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
-    _cover(client, 66, "roleta_lamelki", tilt="100")
     await client.set_cover_tilt(66, 50)
     assert broker.published == [(API_TOPIC, b"/api/set/66/setRollerPos/101/50")]
 
@@ -157,7 +139,6 @@ async def test_both_axes_move_in_one_command(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
-    _cover(client, 66, "roleta_lamelki", tilt="100")
     await client.set_cover_position(66, 95, lamella=20)
     assert broker.published == [(API_TOPIC, b"/api/set/66/setRollerPos/95/20")]
 

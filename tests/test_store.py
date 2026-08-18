@@ -13,6 +13,7 @@ import time
 from dataclasses import fields
 
 import pytest
+from conftest import details, devices, info
 
 from ampio_mqtt._store import AmpioStore, Applied
 from ampio_mqtt.events import (
@@ -114,22 +115,6 @@ def _flaga_row(oid: int, funkcja: int, dev: int = 7) -> dict:
     }
 
 
-def _details_rows(*items) -> str:
-    return json.dumps({"Status": 0, "List": list(items)})
-
-
-def _devices_rows(*items) -> str:
-    return json.dumps({"List": list(items)})
-
-
-def _states_rows(*items) -> str:
-    return json.dumps({"List": list(items)})
-
-
-def _info(**fields_) -> str:
-    return json.dumps({"Results": fields_})
-
-
 def test_a_catalogue_reply_reports_its_endpoint_and_the_rows_it_changed() -> None:
     applied = _store().apply(f"ampio/fromDB/{USER}/config/devicesDetails", _catalogue())
     assert applied.endpoint is not None and applied.endpoint.name == "details"
@@ -160,12 +145,6 @@ def test_an_unreadable_reply_reports_its_endpoint_but_not_parsed() -> None:
     assert _updated(applied) == []
 
 
-def test_a_reply_with_no_state_handler_still_counts_as_parsed() -> None:
-    applied = _store().apply(f"ampio/fromDB/{USER}/data/groups", '{"List": []}')
-    assert applied.endpoint is not None and applied.endpoint.name == "groups"
-    assert applied.parsed is True
-
-
 @pytest.mark.parametrize(
     ("topic", "payload", "event_type"),
     [
@@ -182,19 +161,11 @@ def test_live_messages_carry_no_endpoint(
 
 
 def test_an_unrelated_topic_changes_nothing() -> None:
-    applied = _store().apply("totally/unrelated", "anything")
-    assert (applied.endpoint, applied.events) == (None, [])
-
-
-def test_diagnostics_report_the_module_they_touched() -> None:
+    """A topic matching no routed message kind is silently ignored."""
     store = _store()
-    store.apply(
-        f"ampio/fromDB/{USER}/config/devices",
-        json.dumps({"List": [{"id": 7, "mac": 0xCAFE, "typ_urzadzenia": 11}]}),
-    )
-    applied = store.apply("ampio/from/CAFE/b/4F", '{"d":[254,79,63,142]}')
-    assert [m.id for m in _mod_updated(applied)] == [7]
-    assert store.modules[7].supply_voltage == 12.6
+    applied = store.apply("totally/unrelated", "anything")
+    assert (applied.endpoint, applied.events) == (None, [])
+    assert store.objects == {} and store.modules == {}
 
 
 def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
@@ -430,6 +401,31 @@ def test_a_dated_snapshot_beats_an_undated_seed() -> None:
     assert store.objects[10].value == "7"
 
 
+def test_an_undated_snapshot_only_fills_a_gap() -> None:
+    """An undated report never replaces a value, however the value is dated."""
+    store = _store()
+    store.apply(f"ampio/fromDB/{USER}/ob/10/state", '{"state":"live"}')
+    applied = store.apply(STATES_TOPIC, _snapshot("undated", None))
+    assert _updated(applied) == []
+    assert store.objects[10].value == "live"
+
+
+def test_a_newer_snapshot_corrects_a_value_that_changed_during_an_outage() -> None:
+    """The snapshot is the only resync after a reconnect (the per-object
+    topics are not retained), so a dated-newer report must overwrite the
+    value a pre-outage live push left behind."""
+    store = _store()
+    store.apply(
+        f"ampio/fromDB/{USER}/ob/10/state", '{"state":"255","on":1786700100000}'
+    )
+    assert store.objects[10].value == "255"
+
+    # Reconnect: the object was switched off while the connection was down.
+    applied = store.apply(STATES_TOPIC, _snapshot("0", 1786700900000))
+    assert [o.id for o in _updated(applied)] == [10]
+    assert store.objects[10].value == "0"
+
+
 def test_echo_of_an_earlier_edge_does_not_disturb_a_fast_toggle() -> None:
     """Edge 1, edge 2, then the echo of edge 1: the value must stay edge 2's
     and nothing may notify - the echo contributes only its timestamp."""
@@ -511,9 +507,9 @@ def test_an_empty_catalogue_reply_never_mass_evicts(
     store.apply(DEVICES_TOPIC, _devices(0xCAFE))
     store.apply(DETAILS_TOPIC, _flaga_details((10, 1)))
     with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
-        details = store.apply(DETAILS_TOPIC, json.dumps({"Status": 0, "List": []}))
-        devices = store.apply(DEVICES_TOPIC, json.dumps({"List": []}))
-    assert _removed(details) == [] and _mod_removed(devices) == []
+        details_applied = store.apply(DETAILS_TOPIC, details())
+        devices_applied = store.apply(DEVICES_TOPIC, devices())
+    assert _removed(details_applied) == [] and _mod_removed(devices_applied) == []
     assert set(store.objects) == {10} and set(store.modules) == {1}
     assert sum("refusing to evict" in r.getMessage() for r in caplog.records) == 2
 
@@ -540,7 +536,7 @@ def test_details_populate_and_classify() -> None:
     store = _store()
     store.apply(
         DETAILS_TOPIC,
-        _details_rows(
+        details(
             {
                 "id": 41,
                 "id_urzadzenia": 3,
@@ -581,7 +577,7 @@ def test_devices_populate_modules_with_model_and_versions() -> None:
     store = _store()
     store.apply(
         DEVICES_TOPIC,
-        _devices_rows(
+        devices(
             {
                 "id": 17,
                 "mac": 52111,
@@ -617,13 +613,11 @@ def test_state_updates_module_last_seen_with_local_receive_time() -> None:
     store = _store()
     store.apply(
         DEVICES_TOPIC,
-        _devices_rows(
-            {"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}
-        ),
+        devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
     )
     store.apply(
         DETAILS_TOPIC,
-        _details_rows(
+        details(
             {
                 "id": 41,
                 "id_urzadzenia": 17,
@@ -657,13 +651,11 @@ def test_state_push_with_numeric_state_is_stored_as_string() -> None:
     store = _store()
     store.apply(
         DEVICES_TOPIC,
-        _devices_rows(
-            {"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}
-        ),
+        devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
     )
     store.apply(
         DETAILS_TOPIC,
-        _details_rows(
+        details(
             {
                 "id": 41,
                 "id_urzadzenia": 17,
@@ -689,13 +681,11 @@ def test_states_snapshot_seeds_value_without_touching_last_seen() -> None:
     store = _store()
     store.apply(
         DEVICES_TOPIC,
-        _devices_rows(
-            {"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}
-        ),
+        devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
     )
     store.apply(
         DETAILS_TOPIC,
-        _details_rows(
+        details(
             {
                 "id": 41,
                 "id_urzadzenia": 17,
@@ -710,7 +700,7 @@ def test_states_snapshot_seeds_value_without_touching_last_seen() -> None:
 
     store.apply(
         STATES_TOPIC,
-        _states_rows(
+        devices(
             {
                 "id": 41,
                 "stan_json": '{"state": "22.5", "on": 1779560000000}',
@@ -728,7 +718,7 @@ def test_states_snapshot_does_not_overwrite_live_value() -> None:
     store = _store()
     store.apply(
         DETAILS_TOPIC,
-        _details_rows(
+        details(
             {"id": 41, "typ_komponentu": "temp", "interpretacja": 1, "opis_menu": "T"}
         ),
     )
@@ -740,9 +730,7 @@ def test_states_snapshot_does_not_overwrite_live_value() -> None:
 
     store.apply(
         STATES_TOPIC,
-        _states_rows(
-            {"id": 41, "stan_json": '{"state": "stale", "on": 1779560000000}'}
-        ),
+        devices({"id": 41, "stan_json": '{"state": "stale", "on": 1779560000000}'}),
     )
     assert store.objects[41].value == "fresh"
 
@@ -752,7 +740,7 @@ def test_states_snapshot_creates_placeholder_for_unknown_object() -> None:
     store = _store()
     store.apply(
         STATES_TOPIC,
-        _states_rows({"id": 999, "stan_json": '{"state": "1", "on": 1779560000000}'}),
+        devices({"id": 999, "stan_json": '{"state": "1", "on": 1779560000000}'}),
     )
     assert store.objects[999].value == "1"
     # The kind is the generic fallback because no metadata existed.
@@ -766,13 +754,11 @@ def test_details_stan_json_seed_does_not_touch_last_seen() -> None:
     store = _store()
     store.apply(
         DEVICES_TOPIC,
-        _devices_rows(
-            {"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}
-        ),
+        devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
     )
     store.apply(
         DETAILS_TOPIC,
-        _details_rows(
+        details(
             {
                 "id": 41,
                 "id_urzadzenia": 17,
@@ -792,7 +778,7 @@ def test_info_parses_only_safe_fields() -> None:
     store = _store()
     store.apply(
         f"ampio/fromDB/{USER}/data/info",
-        _info(
+        info(
             serverVersion="1865",
             serverRevision="409",
             mqttVersion="5.133.11",
@@ -808,15 +794,15 @@ def test_info_parses_only_safe_fields() -> None:
             perm="0",
         ),
     )
-    info = store.server_info
-    assert info is not None
-    assert info.mac == 47846
-    assert info.server_version == "1865"
-    assert info.server_revision == "409"
-    assert info.mqtt_version == "5.133.11"
-    assert info.local_ip == "10.0.0.1"
-    assert info.device_id == "0011223344556677"
-    stored = {f.name for f in fields(info)}
+    parsed = store.server_info
+    assert parsed is not None
+    assert parsed.mac == 47846
+    assert parsed.server_version == "1865"
+    assert parsed.server_revision == "409"
+    assert parsed.mqtt_version == "5.133.11"
+    assert parsed.local_ip == "10.0.0.1"
+    assert parsed.device_id == "0011223344556677"
+    stored = {f.name for f in fields(parsed)}
     for forbidden in ("lat", "lon", "city", "cloudInfo", "publicKey", "perm"):
         assert forbidden not in stored
 
@@ -825,17 +811,13 @@ def test_devices_redelivery_preserves_last_seen() -> None:
     store = _store()
     store.apply(
         DEVICES_TOPIC,
-        _devices_rows(
-            {"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}
-        ),
+        devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
     )
     store.modules[17].last_seen = 1700000000.0
     # Re-deliver the devices list (e.g. on reconnect) - last_seen must persist.
     store.apply(
         DEVICES_TOPIC,
-        _devices_rows(
-            {"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m2"}
-        ),
+        devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m2"}),
     )
     assert store.modules[17].name == "m2"
     assert store.modules[17].last_seen == 1700000000.0
@@ -871,14 +853,6 @@ def test_handlers_log_and_skip_unparseable_payloads(
     assert "Could not parse" in caplog.text
 
 
-def test_dispatch_ignores_unmatched_topics() -> None:
-    """A topic that matches none of the four patterns is silently ignored."""
-    store = _store()
-    store.apply("totally/unrelated/topic", "anything")
-    assert store.objects == {}
-    assert store.modules == {}
-
-
 def test_state_with_unparseable_payload_is_dropped() -> None:
     """An `/ob/<non-int>/state` topic is rejected without raising."""
     store = _store()
@@ -891,7 +865,7 @@ def test_stan_json_with_no_state_field_does_not_overwrite_value() -> None:
     store = _store()
     store.apply(
         DETAILS_TOPIC,
-        _details_rows(
+        details(
             {
                 "id": 41,
                 "typ_komponentu": "temp",
@@ -919,8 +893,8 @@ def test_numeric_value_none_for_bare_nan_state_push() -> None:
 def _panel_store() -> AmpioStore:
     """Store that knows panel module 7 (mac CAFE) and a flaga at funkcja 32."""
     store = _store()
-    store.apply(DEVICES_TOPIC, _devices_rows(_PANEL))
-    store.apply(DETAILS_TOPIC, _details_rows(_flaga_row(50, 32)))
+    store.apply(DEVICES_TOPIC, devices(_PANEL))
+    store.apply(DETAILS_TOPIC, details(_flaga_row(50, 32)))
     return store
 
 
@@ -963,19 +937,19 @@ def test_raw_channel_malformed_topic_is_ignored() -> None:
 def test_index_rebuilds_when_devices_arrive_after_details() -> None:
     store = _store()
     # Details first: module mac unknown, so the flag is not yet routable.
-    store.apply(DETAILS_TOPIC, _details_rows(_flaga_row(50, 32)))
+    store.apply(DETAILS_TOPIC, details(_flaga_row(50, 32)))
     store.apply("ampio/from/CAFE/state/f/32", "1")
     assert store.objects[50].value is None  # not routed - no module mac yet
 
     # Devices arrive -> index rebuilds -> now routable.
-    store.apply(DEVICES_TOPIC, _devices_rows(_PANEL))
+    store.apply(DEVICES_TOPIC, devices(_PANEL))
     store.apply("ampio/from/CAFE/state/f/32", "1")
     assert store.objects[50].value == "1"
 
 
 def test_flag_without_funkcja_is_not_indexed() -> None:
     store = _store()
-    store.apply(DEVICES_TOPIC, _devices_rows(_PANEL))
+    store.apply(DEVICES_TOPIC, devices(_PANEL))
     no_funkcja = {
         "id": 51,
         "id_urzadzenia": 7,
@@ -983,23 +957,8 @@ def test_flag_without_funkcja_is_not_indexed() -> None:
         "interpretacja": 1,
         "opis_menu": "Flag",
     }
-    store.apply(DETAILS_TOPIC, _details_rows(no_funkcja))
+    store.apply(DETAILS_TOPIC, details(no_funkcja))
     assert store._input_index == {}
-
-
-def test_per_object_echo_dropped_after_raw_seen() -> None:
-    """Once raw is seen, the slower per-object echo is suppressed."""
-    store = _panel_store()
-
-    raw = store.apply("ampio/from/CAFE/state/f/32", "1")
-    assert _updated(raw) == [store.objects[50]]
-
-    # The lagging per-object republish (note the different "255" encoding).
-    echo = store.apply(
-        f"ampio/fromDB/{USER}/ob/50/state", '{"state": "255", "on": 1700}'
-    )
-    assert _updated(echo) == []  # no double notify
-    assert store.objects[50].value == "1"  # fast raw value preserved
 
 
 def test_mapped_input_without_raw_uses_per_object_fallback() -> None:
@@ -1016,7 +975,7 @@ def test_mapped_input_without_raw_uses_per_object_fallback() -> None:
 
 def test_detekcja_routes_via_digital_input_prefix() -> None:
     store = _store()
-    store.apply(DEVICES_TOPIC, _devices_rows(_PANEL))
+    store.apply(DEVICES_TOPIC, devices(_PANEL))
     det = {
         "id": 60,
         "id_urzadzenia": 7,
@@ -1025,7 +984,7 @@ def test_detekcja_routes_via_digital_input_prefix() -> None:
         "funkcja": 4,
         "opis_menu": "Motion",
     }
-    store.apply(DETAILS_TOPIC, _details_rows(det))
+    store.apply(DETAILS_TOPIC, details(det))
     store.apply("ampio/from/CAFE/state/i/4", "1")
     obj = store.objects[60]
     assert obj.kind is not None and obj.kind.device_class == "motion"
@@ -1034,7 +993,7 @@ def test_detekcja_routes_via_digital_input_prefix() -> None:
 
 def test_symulacja_classifies_but_is_not_bridged() -> None:
     store = _store()
-    store.apply(DEVICES_TOPIC, _devices_rows(_PANEL))
+    store.apply(DEVICES_TOPIC, devices(_PANEL))
     sym = {
         "id": 61,
         "id_urzadzenia": 7,
@@ -1043,7 +1002,7 @@ def test_symulacja_classifies_but_is_not_bridged() -> None:
         "funkcja": 1,
         "opis_menu": "Sim",
     }
-    store.apply(DETAILS_TOPIC, _details_rows(sym))
+    store.apply(DETAILS_TOPIC, details(sym))
     assert store.objects[61].is_input is True
     assert store._input_index == {}  # symulacja prefix not bridged
 
@@ -1069,9 +1028,7 @@ def _app_row(oid: int, leaf: str, name: str = "Air quality", interp: int = 5) ->
 
 def test_data_devices_populate_and_classify() -> None:
     store = _store()
-    store.apply(
-        DATA_DEVICES_TOPIC, _devices_rows(_app_row(24, "0_cb9b_74_0_1", interp=7))
-    )
+    store.apply(DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1", interp=7)))
     obj = store.objects[24]
     assert obj.name == "Air quality"
     assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
@@ -1084,14 +1041,14 @@ def test_params_table_before_catalogue_supplies_hidden_flag() -> None:
     store = _store()
     store.apply(
         PARAMS_DEVICES_TOPIC,
-        _devices_rows({"id": 24, "params": 17}, {"id": 25, "params": 1}),
+        devices({"id": 24, "params": 17}, {"id": 25, "params": 1}),
     )
     # The table is not grant-filtered; unknown ids create no placeholders.
     assert store.objects == {}
 
     store.apply(
         DATA_DEVICES_TOPIC,
-        _devices_rows(_app_row(24, "0_cb9b_74_0_1"), _app_row(25, "0_cb9b_74_0_2")),
+        devices(_app_row(24, "0_cb9b_74_0_1"), _app_row(25, "0_cb9b_74_0_2")),
     )
     assert store.objects[24].hidden is True and store.objects[24].visible is False
     assert store.objects[25].hidden is False and store.objects[25].visible is True
@@ -1099,11 +1056,11 @@ def test_params_table_before_catalogue_supplies_hidden_flag() -> None:
 
 def test_params_table_after_catalogue_updates_objects_and_notifies() -> None:
     store = _store()
-    store.apply(DATA_DEVICES_TOPIC, _devices_rows(_app_row(24, "0_cb9b_74_0_1")))
+    store.apply(DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1")))
 
     applied = store.apply(
         PARAMS_DEVICES_TOPIC,
-        _devices_rows({"id": 24, "params": 17}, {"id": 999, "params": 1}),
+        devices({"id": 24, "params": 17}, {"id": 999, "params": 1}),
     )
     assert store.objects[24].hidden is True
     assert _updated(applied) == [store.objects[24]]
@@ -1116,9 +1073,9 @@ def test_data_devices_does_not_degrade_details() -> None:
     row = _app_row(24, "0_cb9b_74_0_1", name="Named")
     store.apply(
         DETAILS_TOPIC,
-        _details_rows({**row, "params": (1 << 37) | 1}),
+        details({**row, "params": (1 << 37) | 1}),
     )
-    store.apply(DATA_DEVICES_TOPIC, _devices_rows(row))
+    store.apply(DATA_DEVICES_TOPIC, devices(row))
     obj = store.objects[24]
     assert obj.params == (1 << 37) | 1
     assert obj.name == "Named"
@@ -1131,9 +1088,7 @@ def test_lammel_is_parsed_into_tilt_position() -> None:
     store = _store()
     store.apply(
         DETAILS_TOPIC,
-        _details_rows(
-            {"id": 66, "typ_komponentu": "roleta_lamelki", "interpretacja": 1}
-        ),
+        details({"id": 66, "typ_komponentu": "roleta_lamelki", "interpretacja": 1}),
     )
     store.apply(
         f"ampio/fromDB/{USER}/ob/66/state",
@@ -1150,9 +1105,7 @@ def test_plain_cover_reports_no_tilt() -> None:
     store = _store()
     store.apply(
         DETAILS_TOPIC,
-        _details_rows(
-            {"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}
-        ),
+        details({"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}),
     )
     store.apply(f"ampio/fromDB/{USER}/ob/48/state", '{ "state": "55","block": "0" }')
     obj = store.objects[48]
@@ -1165,7 +1118,7 @@ def test_states_snapshot_seeds_tilt_position() -> None:
     store = _store()
     store.apply(
         STATES_TOPIC,
-        _states_rows(
+        devices(
             {
                 "id": 66,
                 "stan_json": '{"state": "100", "lammel": "100", "on": 1779560000000}',
@@ -1181,7 +1134,7 @@ def test_states_snapshot_seeds_tilt_position() -> None:
 def _diag_store() -> AmpioStore:
     """Store that knows module 7 at mac 0xCAFE."""
     store = _store()
-    store.apply(DEVICES_TOPIC, _devices_rows(_PANEL))
+    store.apply(DEVICES_TOPIC, devices(_PANEL))
     return store
 
 

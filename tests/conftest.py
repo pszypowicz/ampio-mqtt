@@ -141,16 +141,17 @@ async def connected() -> AsyncIterator[tuple[AmpioClient, FakeBroker]]:
     await client.stop()
 
 
-def details(*items: dict) -> bytes:
+def details(*items: dict) -> str:
     """A `devicesDetails` / `data/devices` catalogue payload."""
-    return json.dumps({"Status": 0, "List": list(items)}).encode()
+    return json.dumps({"Status": 0, "List": list(items)})
 
 
-def devices(*items: dict) -> bytes:
-    """A `devices` module-list payload."""
-    return json.dumps({"List": list(items)}).encode()
+def devices(*items: dict) -> str:
+    """A bare ``{"List": [...]}`` payload: the `devices` module list, the
+    `data` tables, and the `data/states` snapshot all share this envelope."""
+    return json.dumps({"List": list(items)})
 
 
-def info(**fields: object) -> bytes:
+def info(**fields: object) -> str:
     """A server-info payload."""
-    return json.dumps({"Results": fields}).encode()
+    return json.dumps({"Results": fields})

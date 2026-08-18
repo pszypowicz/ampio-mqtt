@@ -32,6 +32,19 @@ upgrade path.
 
 ### Changed
 
+- The test suite was deduplicated and strengthened (net -213 lines, 439 to
+  443 tests): sixteen tests proving behaviors twice across layers were
+  deleted against verified twins or moved to the store level, the pure
+  model tests moved to their own module, and nine behaviors previously
+  untested gained coverage - the below-baseline warning on the
+  validation path, `auth_failure` clearing on a fresh `start()`, the
+  UNKNOWN-tier discovery fallback, concurrent same-endpoint fetches
+  sharing one reply, backoff growth/cap/jitter bounds, the exact
+  initial-request set at QoS 1, the last uncovered parser branches
+  (`_protocol` now at 100%), and the client-level `colliding_macs` read.
+  Three tests asserting a weaker exception type than the source raises
+  were tightened, and the M-SERV-resolution test was renamed to match
+  the capability-based rule it actually exercises.
 - One typed event stream replaces the seven `add_*_listener` registrations.
   `subscribe(listener, of=...)` delivers frozen event dataclasses -
   `ObjectUpdated`, `ObjectRemoved`, `ModuleUpdated`, `ModuleRemoved`,

@@ -15,6 +15,8 @@ from ampio_mqtt._protocol import (
     StateUpdate,
     parse_details,
     parse_devices,
+    parse_params_devices,
+    parse_scenes,
     parse_server_info,
     parse_stan_json,
     parse_states_snapshot,
@@ -107,6 +109,20 @@ def test_parse_devices_skips_non_int_id() -> None:
 
 def test_parse_states_snapshot_bad_json() -> None:
     assert parse_states_snapshot("not json") is None
+
+
+def test_parse_params_devices_skips_non_int_id() -> None:
+    payload = json.dumps({"List": [{"id": "x", "params": 1}, {"id": 7, "params": 17}]})
+    assert parse_params_devices(payload) == {7: 17}
+
+
+def test_parse_scenes_skips_row_without_id() -> None:
+    payload = json.dumps(
+        {"List": [{"id": None, "sceneName": "Bad"}, {"id": 1, "sceneName": "Good"}]}
+    )
+    scenes = parse_scenes(payload)
+    assert scenes is not None
+    assert [(s.id, s.name) for s in scenes] == [(1, "Good")]
 
 
 def test_state_route_non_dict_payload() -> None:
