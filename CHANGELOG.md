@@ -32,6 +32,17 @@ upgrade path.
   edge satisfies the wait for bridged inputs, whose per-object echo the
   store drops.
 
+### Changed
+
+- **The tuple `of=` overload of `subscribe()` is generic** (#92).
+  `subscribe(handler, of=(A, B))` types the listener as
+  `Callable[[A | B], None]`, so a precisely typed handler registers once
+  instead of once per event class - and the dispatch loop scans one
+  registration where it scanned several. Two- and three-class tuples get
+  the precise union under both strict mypy and Pyright (whose generic
+  solvers each need their own overload spelling); longer tuples keep the
+  `ClientEvent`-wide listener type.
+
 ## 0.23.0
 
 A second review round executed task by task like 0.22, with every

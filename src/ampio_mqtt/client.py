@@ -56,6 +56,9 @@ _LOGGER = logging.getLogger(__name__)
 
 EventListener = Callable[[ClientEvent], None]
 _EventT = TypeVar("_EventT", bound=ClientEvent)
+_EventT1 = TypeVar("_EventT1", bound=ClientEvent)
+_EventT2 = TypeVar("_EventT2", bound=ClientEvent)
+_EventT3 = TypeVar("_EventT3", bound=ClientEvent)
 
 
 class _ReplyChannel:
@@ -357,9 +360,32 @@ class AmpioClient:
         self, listener: Callable[[_EventT], None], *, of: type[_EventT]
     ) -> Callable[[], None]: ...
 
+    # One tuple contract, three spellings: the checkers solve generics
+    # over a heterogeneous tuple differently. Pyright infers the member
+    # union for the variadic form; mypy joins the members up to the
+    # TypeVar bound and needs the per-member arity forms instead (#92).
+    # Beyond three classes, type the listener as
+    # ``Callable[[ClientEvent], None]`` and the variadic form matches in
+    # both.
     @overload
     def subscribe(
-        self, listener: EventListener, *, of: tuple[type[ClientEvent], ...]
+        self, listener: Callable[[_EventT], None], *, of: tuple[type[_EventT], ...]
+    ) -> Callable[[], None]: ...
+
+    @overload
+    def subscribe(
+        self,
+        listener: Callable[[_EventT1 | _EventT2], None],
+        *,
+        of: tuple[type[_EventT1], type[_EventT2]],
+    ) -> Callable[[], None]: ...
+
+    @overload
+    def subscribe(
+        self,
+        listener: Callable[[_EventT1 | _EventT2 | _EventT3], None],
+        *,
+        of: tuple[type[_EventT1], type[_EventT2], type[_EventT3]],
     ) -> Callable[[], None]: ...
 
     def subscribe(
@@ -373,9 +399,10 @@ class AmpioClient:
         Everything the client learns flows through this one stream in the
         order it was produced - :mod:`ampio_mqtt.events` documents each
         event class, its ordering guarantees, and which account tiers
-        produce it. ``of`` narrows the subscription to one event class
-        (which also types the callback parameter precisely) or a tuple of
-        classes::
+        produce it. ``of`` narrows the subscription to one event class or
+        a tuple of classes, typing the callback parameter as precisely
+        that class or union - one registration covers the union, no
+        per-class re-registration::
 
             client.subscribe(on_any_event)
             client.subscribe(on_object, of=ObjectUpdated)
