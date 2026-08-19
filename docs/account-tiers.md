@@ -35,7 +35,7 @@ reject an account whose tier will not support what the consumer needs
 | `logging` config table (`data` surface)       | yes           | yes (the table is not grant-filtered) |
 | md5 change-detection tree                     | yes           | yes                                   |
 | Commands                                      | all objects   | granted objects                       |
-| **Module list** (`modules`, `mserv`)       | yes           | **no**                                |
+| **Module list** (`modules`, `mserv`)          | yes           | **no**                                |
 | **Raw channel tree** (`ampio/from/#`)         | yes           | **no**                                |
 | **Module diagnostics** (voltage, temperature) | yes           | **no**                                |
 | **CAN write tree** (`ampio/to/#`)             | yes           | **no**                                |
@@ -58,7 +58,12 @@ both tiers, so a consumer can anchor its hub device on
 
 Grants bound reads and object writes alike. A command for an object
 outside a standard account's grant is dropped with no effect and no
-reply, and no state for it reaches that account's namespace.
+reply, and no state for it reaches that account's namespace. The drop
+is silent on the wire, but observable in the library: the `confirm=`
+option on the command methods awaits the state echo and times out when
+none arrives, which is how a consumer tells a landed command from one
+the M-SERV discarded (see the confirmation note in
+[`protocol.md`](protocol.md)).
 
 **Bus events are the exception.** Raising one is bounded by neither
 the object grants nor the per-event rights the app displays, and the

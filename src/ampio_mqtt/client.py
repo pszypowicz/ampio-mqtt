@@ -41,6 +41,7 @@ from .events import (
     AvailabilityChanged,
     ClientEvent,
     ConnectionDied,
+    ObjectUpdated,
 )
 from .models import (
     AccessTier,
@@ -55,6 +56,9 @@ _LOGGER = logging.getLogger(__name__)
 
 EventListener = Callable[[ClientEvent], None]
 _EventT = TypeVar("_EventT", bound=ClientEvent)
+_EventT1 = TypeVar("_EventT1", bound=ClientEvent)
+_EventT2 = TypeVar("_EventT2", bound=ClientEvent)
+_EventT3 = TypeVar("_EventT3", bound=ClientEvent)
 
 
 class _ReplyChannel:
@@ -302,6 +306,29 @@ class AmpioClient:
             return candidates[0]
         return None
 
+    def module_for(self, obj: AmpioObject) -> AmpioModule | None:
+        """The catalogue row of the module that owns ``obj``, mac-validated.
+
+        Joins ``obj.device_id`` to the module list and returns the row
+        only when its effective bus mac agrees with the object's
+        leaf-derived :pyattr:`AmpioObject.module_mac`: the DB ids are
+        volatile across a module replacement while the leaf mac is the
+        stable identity (docs/identity.md), so the bare join can pair an
+        object with a row that is no longer its module. The join keys the
+        lookup rather than the mac because override macs may collide
+        across rows; the mac then gates what the join found. None when
+        either side of the validation is missing or they disagree - and
+        always on the restricted tier, which never receives the module
+        catalogue. Grouping that works on both tiers reads ``module_mac``
+        directly.
+        """
+        if obj.device_id is None:
+            return None
+        module = self._store.modules.get(obj.device_id)
+        if module is None or module.mac is None or module.mac != obj.module_mac:
+            return None
+        return module
+
     @property
     def available(self) -> bool:
         """Whether the broker connection is up."""
@@ -356,9 +383,32 @@ class AmpioClient:
         self, listener: Callable[[_EventT], None], *, of: type[_EventT]
     ) -> Callable[[], None]: ...
 
+    # One tuple contract, three spellings: the checkers solve generics
+    # over a heterogeneous tuple differently. Pyright infers the member
+    # union for the variadic form; mypy joins the members up to the
+    # TypeVar bound and needs the per-member arity forms instead (#92).
+    # Beyond three classes, type the listener as
+    # ``Callable[[ClientEvent], None]`` and the variadic form matches in
+    # both.
     @overload
     def subscribe(
-        self, listener: EventListener, *, of: tuple[type[ClientEvent], ...]
+        self, listener: Callable[[_EventT], None], *, of: tuple[type[_EventT], ...]
+    ) -> Callable[[], None]: ...
+
+    @overload
+    def subscribe(
+        self,
+        listener: Callable[[_EventT1 | _EventT2], None],
+        *,
+        of: tuple[type[_EventT1], type[_EventT2]],
+    ) -> Callable[[], None]: ...
+
+    @overload
+    def subscribe(
+        self,
+        listener: Callable[[_EventT1 | _EventT2 | _EventT3], None],
+        *,
+        of: tuple[type[_EventT1], type[_EventT2], type[_EventT3]],
     ) -> Callable[[], None]: ...
 
     def subscribe(
@@ -372,9 +422,10 @@ class AmpioClient:
         Everything the client learns flows through this one stream in the
         order it was produced - :mod:`ampio_mqtt.events` documents each
         event class, its ordering guarantees, and which account tiers
-        produce it. ``of`` narrows the subscription to one event class
-        (which also types the callback parameter precisely) or a tuple of
-        classes::
+        produce it. ``of`` narrows the subscription to one event class or
+        a tuple of classes, typing the callback parameter as precisely
+        that class or union - one registration covers the union, no
+        per-class re-registration::
 
             client.subscribe(on_any_event)
             client.subscribe(on_object, of=ObjectUpdated)
@@ -595,7 +646,9 @@ class AmpioClient:
 
     # --- commands ---------------------------------------------------------
 
-    async def command(self, object_id: int, verb: str, *args: object) -> None:
+    async def command(
+        self, object_id: int, verb: str, *args: object, confirm: float | None = None
+    ) -> AmpioObject | None:
         """Send ``verb`` (with any args) to an object on the command surface.
 
         Publishes ``/api/set/<object_id>/<verb>[/<arg>...]`` at QoS 1 and
@@ -606,48 +659,94 @@ class AmpioClient:
         verb table, the grant-scoping rules, and what the M-SERV silently
         ignores.
 
+        ``confirm`` opts into awaiting that state: the call returns the
+        snapshot of the next :class:`~ampio_mqtt.events.ObjectUpdated` for
+        the object within ``confirm`` seconds, raising ``AmpioTimeoutError``
+        on expiry. The `/api` surface has no reply topic, so the echo is an
+        observation and nothing stronger: an update for the object arrived
+        after the publish - a concurrent change from another source
+        satisfies it just as well. A timeout, conversely, is how every
+        silent drop finally surfaces: a verb the M-SERV ignores, an object
+        outside the account's grant, or a command whose effect left the
+        state unchanged and pushed nothing. Most verbs echo on the
+        per-object path in under ~200 ms and `arm`/`disarm` take ~1 s
+        (docs/protocol.md), so ``confirm=2.0`` covers the measured surface.
+        The waiter is armed before the publish, so an echo cannot slip past
+        the wait however fast it lands. Scene commands and
+        :meth:`send_event` fan out beyond a single object and offer no
+        per-object echo to await.
+
         Raises ``AmpioConnectionError`` when the broker is unreachable and
         ``AmpioTimeoutError`` when it fails to acknowledge in time; never an
         aiomqtt exception type.
         """
-        await self._connection.publish(
-            command_topic(self._username),
-            command_payload(object_id, verb, args).encode(),
-        )
+        payload = command_payload(object_id, verb, args).encode()
+        if confirm is None:
+            await self._connection.publish(command_topic(self._username), payload)
+            return None
+        future: asyncio.Future[AmpioObject] = asyncio.get_running_loop().create_future()
 
-    async def turn_on(self, object_id: int) -> None:
+        def _echo(event: ObjectUpdated) -> None:
+            if event.object.id == object_id and not future.done():
+                future.set_result(event.object)
+
+        unsubscribe = self.subscribe(_echo, of=ObjectUpdated)
+        try:
+            # The publish sits inside the window so `confirm` bounds the
+            # whole call, exactly as `_fetch` bounds its own publishes.
+            async with asyncio.timeout(confirm):
+                await self._connection.publish(command_topic(self._username), payload)
+                return await future
+        except TimeoutError as err:
+            raise AmpioTimeoutError(
+                f"No state echo for object {object_id} within {confirm}s - "
+                f"the M-SERV ignored {verb!r}, the object is outside this "
+                "account's grant, or the command changed nothing"
+            ) from err
+        finally:
+            unsubscribe()
+
+    async def turn_on(
+        self, object_id: int, *, confirm: float | None = None
+    ) -> AmpioObject | None:
         """Turn an object fully on.
 
         Raises ``ValueError`` for an output whose kind says the switch verbs
         do not apply (``rgbw``): turning a color light on means choosing a
         color - the consumer's call, via :meth:`set_color` (the rgbw
-        replay pattern in docs/protocol.md).
+        replay pattern in docs/protocol.md). ``confirm`` awaits the state
+        echo exactly as :meth:`command` documents.
         """
         self._check_switchable(object_id, "turnOn")
-        await self.command(object_id, "turnOn")
+        return await self.command(object_id, "turnOn", confirm=confirm)
 
-    async def turn_off(self, object_id: int) -> None:
+    async def turn_off(
+        self, object_id: int, *, confirm: float | None = None
+    ) -> AmpioObject | None:
         """Turn an object off.
 
         A color output that does not answer the switch verbs (``rgbw``) is
         turned off with ``setColors 0/0/0/0`` instead - off is unambiguous,
         so the library routes it. An object whose kind is not yet known gets
-        the plain verb.
+        the plain verb. ``confirm`` awaits the state echo exactly as
+        :meth:`command` documents.
         """
         kind = self._output_kind(object_id)
         if kind is not None and not kind.switchable and kind.color:
-            await self.set_color(object_id, 0, 0, 0, 0)
-            return
-        await self.command(object_id, "turnOff")
+            return await self.set_color(object_id, 0, 0, 0, 0, confirm=confirm)
+        return await self.command(object_id, "turnOff", confirm=confirm)
 
-    async def toggle(self, object_id: int) -> None:
+    async def toggle(
+        self, object_id: int, *, confirm: float | None = None
+    ) -> AmpioObject | None:
         """Invert an object's current on/off state.
 
         Raises ``ValueError`` for an output whose kind says the switch verbs
-        do not apply (``rgbw``), exactly as :meth:`turn_on` does.
+        do not apply (``rgbw``), exactly as :meth:`turn_on` does. ``confirm``
+        awaits the state echo exactly as :meth:`command` documents.
         """
         self._check_switchable(object_id, "switch")
-        await self.command(object_id, "switch")
+        return await self.command(object_id, "switch", confirm=confirm)
 
     def _output_kind(self, object_id: int) -> OutputKind | None:
         """The object's kind when it is a known output, else None."""
@@ -667,28 +766,40 @@ class AmpioClient:
             )
 
     async def set_value(
-        self, object_id: int, value: int, *, pulse_ms: int | None = None
-    ) -> None:
+        self,
+        object_id: int,
+        value: int,
+        *,
+        pulse_ms: int | None = None,
+        confirm: float | None = None,
+    ) -> AmpioObject | None:
         """Set an object's 0-255 level (relay, flag, dimmer).
 
         With ``pulse_ms`` the M-SERV reverts the object to its previous state
         after that many milliseconds - a timed pulse, not a fade. The wire unit
         is 10 ms, so the value is rounded down to the nearest 10 ms; a gate
-        pulse of 500 ms is ``pulse_ms=500``.
+        pulse of 500 ms is ``pulse_ms=500``. ``confirm`` awaits the state
+        echo exactly as :meth:`command` documents - for a pulse that is the
+        set edge, not the later revert.
         """
         _check_range("value", value, 0, 255)
         if pulse_ms is None:
-            await self.command(object_id, "setValue", value)
-            return
+            return await self.command(object_id, "setValue", value, confirm=confirm)
         _check_range("pulse_ms", pulse_ms, 0, 655350)
-        await self.command(object_id, "setValue", value, pulse_ms // 10)
+        return await self.command(
+            object_id, "setValue", value, pulse_ms // 10, confirm=confirm
+        )
 
-    async def set_temperature(self, object_id: int, temperature: float) -> None:
+    async def set_temperature(
+        self, object_id: int, temperature: float, *, confirm: float | None = None
+    ) -> AmpioObject | None:
         """Set a thermostat's (``reg``) target temperature in °C.
 
         The library surfaces only the regulator's running flag until the
         climate readback lands (#73). Bools and non-finite floats are
         rejected: both would serialize as text the M-SERV silently drops.
+        ``confirm`` awaits the state echo exactly as :meth:`command`
+        documents.
         """
         if (
             isinstance(temperature, bool)
@@ -698,12 +809,25 @@ class AmpioClient:
             raise ValueError(
                 f"temperature must be a finite number, got {temperature!r}"
             )
-        await self.command(object_id, "setTemperature", temperature)
+        return await self.command(
+            object_id, "setTemperature", temperature, confirm=confirm
+        )
 
     async def set_color(
-        self, object_id: int, red: int, green: int, blue: int, white: int = 0
-    ) -> None:
-        """Set an RGBW object's four channels, each 0-255."""
+        self,
+        object_id: int,
+        red: int,
+        green: int,
+        blue: int,
+        white: int = 0,
+        *,
+        confirm: float | None = None,
+    ) -> AmpioObject | None:
+        """Set an RGBW object's four channels, each 0-255.
+
+        ``confirm`` awaits the state echo exactly as :meth:`command`
+        documents.
+        """
         for name, channel in (
             ("red", red),
             ("green", green),
@@ -711,47 +835,80 @@ class AmpioClient:
             ("white", white),
         ):
             _check_range(name, channel, 0, 255)
-        await self.command(object_id, "setColors", red, green, blue, white)
+        return await self.command(
+            object_id, "setColors", red, green, blue, white, confirm=confirm
+        )
 
-    async def open_cover(self, object_id: int) -> None:
-        """Drive a cover to fully open (position 100)."""
-        await self.command(object_id, "open")
+    async def open_cover(
+        self, object_id: int, *, confirm: float | None = None
+    ) -> AmpioObject | None:
+        """Drive a cover to fully open (position 100).
 
-    async def close_cover(self, object_id: int) -> None:
-        """Drive a cover to fully closed (position 0)."""
-        await self.command(object_id, "close")
+        ``confirm`` awaits the state echo exactly as :meth:`command`
+        documents.
+        """
+        return await self.command(object_id, "open", confirm=confirm)
 
-    async def stop_cover(self, object_id: int) -> None:
+    async def close_cover(
+        self, object_id: int, *, confirm: float | None = None
+    ) -> AmpioObject | None:
+        """Drive a cover to fully closed (position 0).
+
+        ``confirm`` awaits the state echo exactly as :meth:`command`
+        documents.
+        """
+        return await self.command(object_id, "close", confirm=confirm)
+
+    async def stop_cover(
+        self, object_id: int, *, confirm: float | None = None
+    ) -> AmpioObject | None:
         """Halt a cover wherever it is, on either axis - a stationary cover
         is a silent no-op. The `stop` row of docs/protocol.md details the
-        mid-travel and mid-rotation behavior."""
-        await self.command(object_id, "stop")
+        mid-travel and mid-rotation behavior. ``confirm`` awaits the state
+        echo exactly as :meth:`command` documents."""
+        return await self.command(object_id, "stop", confirm=confirm)
 
     async def set_cover_position(
-        self, object_id: int, position: int, *, lamella: int | None = None
-    ) -> None:
+        self,
+        object_id: int,
+        position: int,
+        *,
+        lamella: int | None = None,
+        confirm: float | None = None,
+    ) -> AmpioObject | None:
         """Drive a cover to ``position`` percent (0 closed, 100 open).
 
         ``lamella`` sets the slat angle of a blind that has one, in the same
         command; omitting it sends no angle, which lets travel drag the
         slats along mechanically - pass it to land on a chosen angle (the
         slat-drag note in docs/protocol.md). Position updates stream in as
-        the cover travels.
+        the cover travels; ``confirm`` awaits the first of them exactly as
+        :meth:`command` documents, so its snapshot reads the travel's start,
+        not its end.
         """
         _check_range("position", position, 0, 100)
         if lamella is not None:
             _check_range("lamella", lamella, 0, 100)
-        await self.command(
+        return await self.command(
             object_id,
             "setRollerPos",
             position,
             KEEP_POSITION if lamella is None else lamella,
+            confirm=confirm,
         )
 
-    async def set_cover_tilt(self, object_id: int, lamella: int) -> None:
-        """Set a blind's slat angle percent, leaving its position alone."""
+    async def set_cover_tilt(
+        self, object_id: int, lamella: int, *, confirm: float | None = None
+    ) -> AmpioObject | None:
+        """Set a blind's slat angle percent, leaving its position alone.
+
+        ``confirm`` awaits the state echo exactly as :meth:`command`
+        documents.
+        """
         _check_range("lamella", lamella, 0, 100)
-        await self.command(object_id, "setRollerPos", KEEP_POSITION, lamella)
+        return await self.command(
+            object_id, "setRollerPos", KEEP_POSITION, lamella, confirm=confirm
+        )
 
     async def _publish(self, ep: Endpoint) -> None:
         """Publish an endpoint's request keyword to its control topic."""

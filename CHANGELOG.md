@@ -14,6 +14,61 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.24.0
+
+A consumer-driven batch raised by the Home Assistant integration work
+and landed one issue at a time, each verified at runtime against a
+broker before merge. Commands gain an opt-in confirmation that awaits
+the state echo, objects resolve to their mac-validated module row
+through one library-owned rule, the derived model fields can no longer
+disagree with their inputs, and the tuple `subscribe` overload types
+precisely under both strict mypy and Pyright.
+
+### Added
+
+- **Opt-in command confirmation awaiting the state echo** (#67). The
+  `/api` surface has no reply topic, so the only observable confirmation
+  is the object's next state push. `command()` and every typed object
+  command (`turn_on`, `set_value`, `set_color`, the cover and thermostat
+  methods) take `confirm=<seconds>`: the waiter arms before the publish,
+  the call returns the echoing `ObjectUpdated` snapshot, and expiry
+  raises the retryable `AmpioTimeoutError`. A timeout is how every
+  silent drop surfaces - an ignored verb, an out-of-grant object on the
+  standard tier, or a command whose effect changed nothing - so a
+  consumer can report real success and failure instead of assuming
+  state. The default stays fire-and-forget. On the admin tier the raw
+  edge satisfies the wait for bridged inputs, whose per-object echo the
+  store drops.
+- **`module_for(obj)`: the mac-validated object-to-module resolver**
+  (#93). Joins `device_id` to the module list and returns the row only
+  when its effective bus mac agrees with the object's leaf-derived
+  `module_mac`, so the volatile DB join can never pair an object with a
+  replaced module's stale row - the identity rule every consumer
+  previously re-encoded by hand. The join keys the lookup rather than
+  the mac because override macs may collide across rows. None on the
+  restricted tier, which never receives the module catalogue.
+
+### Changed
+
+- **The tuple `of=` overload of `subscribe()` is generic** (#92).
+  `subscribe(handler, of=(A, B))` types the listener as
+  `Callable[[A | B], None]`, so a precisely typed handler registers once
+  instead of once per event class - and the dispatch loop scans one
+  registration where it scanned several. Two- and three-class tuples get
+  the precise union under both strict mypy and Pyright (whose generic
+  solvers each need their own overload spelling); longer tuples keep the
+  `ClientEvent`-wide listener type.
+- **`AmpioObject.kind` and `AmpioModule.model` are derived fields**
+  (#94). Both are computed from their inputs (`typ_komponentu` +
+  `interpretacja`, `type`) on every construction, `dataclasses.replace`
+  included, and can no longer be passed - so a consumer-seeded fixture
+  cannot hold a `kind` that disagrees with its metadata, a state the
+  real store never produces, and the derivation rules live in the model
+  alone. Breaking for code that passed either field: drop the argument,
+  the value is now always right. `kind` is also non-optional now - an
+  object with unknown or absent metadata reads as the generic value-only
+  sensor, which is what the store already published for such rows.
+
 ## 0.23.0
 
 A second review round executed task by task like 0.22, with every

@@ -83,6 +83,20 @@ positive control from the same account confirming its command path
 works. The account's namespace likewise carries state only for granted
 objects, including ones it just commanded.
 
+**The state echo is the only confirmation** (#67). The library's
+`confirm=` option on `command()` and the typed wrappers arms a waiter
+before the publish and resolves on the next `ObjectUpdated` for the
+object - the per-object echo on both tiers, or the earlier raw edge on
+the admin tier, whose arrival suppresses the per-object copy. The echo
+is an observation and nothing stronger: a concurrent change from
+another source satisfies it, and a timeout is how every silent drop
+surfaces - an ignored verb, an out-of-grant object, or a command whose
+effect left the state unchanged and pushed nothing. Latency bounds the
+timeout choice: most verbs echo in under ~200 ms on the per-object path
+and `arm`/`disarm` take ~1 s, so `confirm=2.0` covers the measured
+surface. Scene commands and `setEvent` fan out beyond a single object
+and offer no per-object echo.
+
 The `ampio/to/<mac>/...` CAN tree is the other write path (documented in
 Ampio's own MQTT API note, with per-channel `cmd` topics and a `raw` hex
 channel covering CCT, DALI, blind angles, and display text). It is

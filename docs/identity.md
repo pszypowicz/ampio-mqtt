@@ -82,12 +82,17 @@ keeps its entity-to-device mapping and only gains metadata. The parse
 is strict: any shape other than `0_<macHex>_<F2>_<F3>_<F4>` reads as
 None, exactly like the empty `leafId` of system objects and ghost rows.
 
-Two helpers close the loop for a consumer building devices on
+Three helpers close the loop for a consumer building devices on
 `module_mac`: `AmpioObject.is_server_owned` marks the objects that
 belong to the M-SERV itself (their `leafId` embeds its override mac),
-so they anchor to the hub device identically on both tiers, and
+so they anchor to the hub device identically on both tiers;
 `AmpioClient.mserv` returns the M-SERV's own module row - name, model,
-versions - on the admin tier that has the catalogue.
+versions - on the admin tier that has the catalogue; and
+`AmpioClient.module_for(obj)` resolves any object to its catalogue row
+by joining `device_id` and gating on mac agreement, so the volatile DB
+join can never pair an object with a replaced module's stale row. The
+join keys the lookup rather than the mac because override macs may
+collide across rows; the mac then gates what the join found.
 
 ## Visibility (`AmpioObject.visible`)
 

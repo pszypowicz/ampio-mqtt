@@ -13,8 +13,10 @@ from .classification import (
     OutputKind,
     SensorKind,
     ThermostatKind,
+    classify,
     is_system_type,
 )
+from .device_types import module_model
 
 
 class AccessTier(Enum):
@@ -78,8 +80,13 @@ class AmpioObject:
     # `params` bitfield (Designer config flags; see `hidden`/`visible`).
     # Defaults to 0 so a payload without the column reads "nothing hidden".
     params: int = 0
-    # What this object is, once metadata has arrived. Exactly one kind applies.
-    kind: ObjectKind | None = None
+    # What this object is. Derived - never passed: computed from
+    # `typ_komponentu` and `interpretacja` on every construction,
+    # `dataclasses.replace` included, so no instance can hold a kind that
+    # disagrees with its inputs (#94). Exactly one kind applies; a typ the
+    # tables do not know (or no metadata at all) reads as the generic
+    # value-only sensor, exactly as `classify` documents.
+    kind: ObjectKind = field(init=False)
     value: str | None = None
     # Epoch seconds of the report `value` came from: the M-SERV's own `on`
     # timestamp when the report carried one, the local receive time for the
@@ -95,6 +102,13 @@ class AmpioObject:
     # Slat angle percent, from the `lammel` state field. Only tilt-capable
     # covers report it.
     tilt_position: int | None = None
+
+    def __post_init__(self) -> None:
+        # The frozen dance: derived fields are set once, here, and nowhere
+        # else.
+        object.__setattr__(
+            self, "kind", classify(self.typ_komponentu, self.interpretacja)
+        )
 
     @property
     def is_sensor(self) -> bool:
@@ -293,7 +307,9 @@ class AmpioModule:
     mac_global: int | None = None  # devices.mac_global (factory id)
     name: str | None = None  # nazwa_urzadzenia (user-given module name)
     type: int | None = None  # typ_urzadzenia
-    model: str | None = None  # resolved model name for `type`
+    # Resolved model name for `type`. Derived - never passed: computed on
+    # every construction (#94), None when `type` is unknown or missing.
+    model: str | None = field(init=False)
     sw_version: int | None = None  # wersja_softu
     hw_version: int | None = None  # wersja_pcb
     # Local epoch seconds when this process last received live evidence of
@@ -307,6 +323,9 @@ class AmpioModule:
     # `temperature` stays None on modules without the sensor.
     supply_voltage: float | None = None  # volts on the CAN bus
     temperature: float | None = None  # °C
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "model", module_model(self.type))
 
 
 @dataclass(slots=True, frozen=True)

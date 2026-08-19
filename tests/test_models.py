@@ -6,8 +6,9 @@ from dataclasses import replace
 
 import pytest
 
-from ampio_mqtt import AmpioObject, AmpioServerInfo
+from ampio_mqtt import AmpioModule, AmpioObject, AmpioServerInfo
 from ampio_mqtt.classification import classify
+from ampio_mqtt.device_types import module_model
 
 
 @pytest.mark.parametrize(
@@ -113,8 +114,38 @@ def test_hidden_overrides_leaf_id_visibility() -> None:
     assert AmpioObject(id=3, typ_komponentu="symulacja", params=16).visible is False
 
 
+# --- derived fields: kind and model own their inputs (#94) ------------------
+
+
+def test_kind_derives_from_the_metadata_inputs() -> None:
+    """A seeded instance carries the same kind the store would compute -
+    the derivation lives in the model, not at every construction site."""
+    assert AmpioObject(id=1, typ_komponentu="led").kind == classify("led", None)
+    assert AmpioObject(id=1).kind == classify(None, None)  # the generic sensor
+
+
+def test_kind_rederives_on_replace() -> None:
+    obj = AmpioObject(id=1, typ_komponentu="led")
+    assert replace(obj, typ_komponentu="rgbw").kind == classify("rgbw", None)
+
+
+def test_kind_cannot_be_passed() -> None:
+    """No instance can hold a kind that disagrees with its inputs."""
+    with pytest.raises(TypeError):
+        AmpioObject(id=1, kind=classify("led", None))  # type: ignore[call-arg]
+
+
+def test_module_model_derives_from_type() -> None:
+    module = AmpioModule(id=1, type=4)
+    assert module.model == module_model(4)
+    assert module.model is not None
+    assert replace(module, type=None).model is None
+    with pytest.raises(TypeError):
+        AmpioModule(id=1, model="M-REL")  # type: ignore[call-arg]
+
+
 def test_is_thermostat_and_the_running_flag() -> None:
-    obj = AmpioObject(id=138, typ_komponentu="reg", kind=classify("reg", None))
+    obj = AmpioObject(id=138, typ_komponentu="reg")
     assert obj.is_thermostat
     assert not (obj.is_sensor or obj.is_input or obj.is_output)
     assert replace(obj, value="1").is_on  # the surfaced value is the running flag
@@ -163,9 +194,7 @@ def test_server_key_is_the_decimal_mac(mac: int, expected: str) -> None:
 
 
 def _colored(value: str | None) -> AmpioObject:
-    return AmpioObject(
-        id=1, typ_komponentu="rgbw", kind=classify("rgbw", None), value=value
-    )
+    return AmpioObject(id=1, typ_komponentu="rgbw", value=value)
 
 
 @pytest.mark.parametrize(
@@ -190,14 +219,12 @@ def test_rgbw_decodes_the_packed_state(
 
 def test_rgbw_reads_none_for_non_color_kinds() -> None:
     """A dimmer's 0-255 level must not masquerade as a color."""
-    dimmer = AmpioObject(
-        id=1, typ_komponentu="led", kind=classify("led", None), value="255"
-    )
+    dimmer = AmpioObject(id=1, typ_komponentu="led", value="255")
     assert dimmer.rgbw is None
 
 
 def _cover(value: str | None, typ: str = "roleta_procenty") -> AmpioObject:
-    return AmpioObject(id=1, typ_komponentu=typ, kind=classify(typ, None), value=value)
+    return AmpioObject(id=1, typ_komponentu=typ, value=value)
 
 
 @pytest.mark.parametrize(

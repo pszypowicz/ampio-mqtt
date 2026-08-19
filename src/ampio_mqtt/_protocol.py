@@ -27,7 +27,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from .device_types import module_model
 from .events import BusEvent
 from .models import AccessTier, AmpioModule, AmpioScene, AmpioServerInfo
 
@@ -202,15 +201,13 @@ def parse_devices(payload: str) -> list[AmpioModule] | None:
         mid = to_int(item.get("id"))
         if mid is None:
             continue
-        typ = to_int(item.get("typ_urzadzenia"))
         out.append(
             AmpioModule(
                 id=mid,
                 mac=to_int(item.get("mac")),
                 mac_global=to_int(item.get("mac_global")),
                 name=item.get("nazwa_urzadzenia") or None,
-                type=typ,
-                model=module_model(typ),
+                type=to_int(item.get("typ_urzadzenia")),
                 sw_version=to_int(item.get("wersja_softu")),
                 hw_version=to_int(item.get("wersja_pcb")),
             )
