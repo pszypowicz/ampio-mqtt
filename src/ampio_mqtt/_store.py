@@ -15,7 +15,7 @@ from functools import partial
 from typing import Any
 
 from . import _protocol
-from .classification import classify, input_channel_prefix
+from .classification import input_channel_prefix
 from .events import (
     BusEvent,
     ModuleRemoved,
@@ -184,7 +184,6 @@ class AmpioStore:
         # A row without the column leaves the params_devices value standing.
         if updates["params"] is None:
             updates["params"] = self._params_by_id.get(meta.id, obj.params)
-        updates["kind"] = classify(meta.typ_komponentu, meta.interpretacja)
         changed = any(getattr(obj, name) != value for name, value in updates.items())
         updated = replace(obj, **updates)
         # A row without the column (the app-sync shape) falls back to the

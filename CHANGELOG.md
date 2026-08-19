@@ -50,6 +50,16 @@ upgrade path.
   the precise union under both strict mypy and Pyright (whose generic
   solvers each need their own overload spelling); longer tuples keep the
   `ClientEvent`-wide listener type.
+- **`AmpioObject.kind` and `AmpioModule.model` are derived fields**
+  (#94). Both are computed from their inputs (`typ_komponentu` +
+  `interpretacja`, `type`) on every construction, `dataclasses.replace`
+  included, and can no longer be passed - so a consumer-seeded fixture
+  cannot hold a `kind` that disagrees with its metadata, a state the
+  real store never produces, and the derivation rules live in the model
+  alone. Breaking for code that passed either field: drop the argument,
+  the value is now always right. `kind` is also non-optional now - an
+  object with unknown or absent metadata reads as the generic value-only
+  sensor, which is what the store already published for such rows.
 
 ## 0.23.0
 
