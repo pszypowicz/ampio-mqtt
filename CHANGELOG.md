@@ -14,7 +14,15 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
-## Unreleased
+## 0.24.0
+
+A consumer-driven batch raised by the Home Assistant integration work
+and landed one issue at a time, each verified at runtime against a
+broker before merge. Commands gain an opt-in confirmation that awaits
+the state echo, objects resolve to their mac-validated module row
+through one library-owned rule, the derived model fields can no longer
+disagree with their inputs, and the tuple `subscribe` overload types
+precisely under both strict mypy and Pyright.
 
 ### Added
 
