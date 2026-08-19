@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
-import pytest
-from conftest import API_TOPIC, DATA_DEVICES_TOPIC, USER, FakeBroker, details, feed
+import asyncio
 
-from ampio_mqtt import AmpioClient, AmpioConnectionError
+import aiomqtt
+import pytest
+from conftest import (
+    ADMIN_DETAILS_TOPIC,
+    ADMIN_DEVICES_TOPIC,
+    ADMIN_USER,
+    API_TOPIC,
+    DATA_DEVICES_TOPIC,
+    USER,
+    FakeBroker,
+    deliver_later,
+    details,
+    devices,
+    feed,
+)
+
+from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioTimeoutError
 
 
 async def test_command_builds_payload_on_the_account_topic(
@@ -285,3 +300,206 @@ async def test_set_temperature_rejects_non_numbers(
     with pytest.raises(ValueError):
         await client.set_temperature(138, bad)
     assert broker.published == []
+
+
+# --- confirm: the opt-in state-echo wait (#67) ------------------------------
+
+
+def _ob_state(oid: int, user: str = USER) -> str:
+    """The per-object state topic the echo lands on."""
+    return f"ampio/fromDB/{user}/ob/{oid}/state"
+
+
+async def test_confirm_resolves_with_the_echo_snapshot(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
+    _learn(client, 64, "przekaznik")
+    task = asyncio.create_task(client.set_value(64, 255, confirm=1.0))
+    delivery = deliver_later(client, (_ob_state(64), "255"))
+    obj = await task
+    await delivery
+    assert broker.published == [(API_TOPIC, b"/api/set/64/setValue/255")]
+    assert obj is not None
+    assert (obj.id, obj.value) == (64, "255")
+
+
+async def test_confirm_ignores_updates_for_other_objects(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, _ = connected
+    feed(
+        client,
+        DATA_DEVICES_TOPIC,
+        details(
+            {"id": 64, "typ_komponentu": "przekaznik"},
+            {"id": 65, "typ_komponentu": "przekaznik"},
+        ),
+    )
+    task = asyncio.create_task(client.turn_on(64, confirm=1.0))
+    delivery = deliver_later(client, (_ob_state(65), "255"), (_ob_state(64), "255"))
+    obj = await task
+    await delivery
+    assert obj is not None
+    assert obj.id == 64
+
+
+async def test_confirm_expiry_raises_the_retryable_timeout(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """No echo is how every silent drop surfaces - an ignored verb, an
+    out-of-grant object, a no-op command - and the shape is the retryable
+    one, exactly like a fetch that got no reply."""
+    client, broker = connected
+    _learn(client, 64, "przekaznik")
+    with pytest.raises(AmpioTimeoutError):
+        await client.turn_on(64, confirm=0.01)
+    assert broker.published == [(API_TOPIC, b"/api/set/64/turnOn")]
+    # The waiter disarms with the call: no stale listener remains to catch
+    # a later update.
+    assert client._listeners == []
+
+
+async def test_confirm_defaults_off(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """Without confirm the call is fire-and-forget: returns None as soon as
+    the broker acknowledges, arming nothing."""
+    client, _ = connected
+    assert await client.command(64, "turnOn") is None
+    assert client._listeners == []
+
+
+@pytest.mark.parametrize(
+    ("typ", "oid", "call", "expected"),
+    [
+        (
+            "przekaznik",
+            64,
+            lambda c: c.turn_on(64, confirm=1.0),
+            b"/api/set/64/turnOn",
+        ),
+        # The rgbw off-routing and confirm compose: the echo confirms the
+        # setColors command the library substituted.
+        (
+            "rgbw",
+            50,
+            lambda c: c.turn_off(50, confirm=1.0),
+            b"/api/set/50/setColors/0/0/0/0",
+        ),
+        (
+            "roleta",
+            48,
+            lambda c: c.set_cover_position(48, 55, confirm=1.0),
+            b"/api/set/48/setRollerPos/55/101",
+        ),
+    ],
+)
+async def test_wrappers_thread_confirm_through(
+    connected: tuple[AmpioClient, FakeBroker], typ: str, oid: int, call, expected: bytes
+) -> None:
+    client, broker = connected
+    _learn(client, oid, typ)
+    task = asyncio.create_task(call(client))
+    delivery = deliver_later(client, (_ob_state(oid), "1"))
+    obj = await task
+    await delivery
+    assert broker.published == [(API_TOPIC, expected)]
+    assert obj is not None
+    assert obj.id == oid
+
+
+async def test_confirm_survives_the_catalogue_race(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """A command sent before any catalogue establishes the object still
+    confirms: its echo waits in the pending buffer and surfaces with the
+    catalogue row, so a consumer commanding right after connect is not
+    condemned to a spurious timeout."""
+    client, _ = connected
+    task = asyncio.create_task(client.set_value(70, 255, confirm=1.0))
+    await asyncio.sleep(0)  # the waiter arms before the publish
+    feed(client, _ob_state(70), "255")
+    assert not task.done()
+    feed(client, DATA_DEVICES_TOPIC, details({"id": 70, "typ_komponentu": "flaga"}))
+    obj = await task
+    assert obj is not None
+    assert (obj.id, obj.value) == (70, "255")
+
+
+async def test_concurrent_confirms_resolve_on_one_echo(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, _ = connected
+    _learn(client, 64, "przekaznik")
+    first = asyncio.create_task(client.turn_on(64, confirm=1.0))
+    second = asyncio.create_task(client.turn_on(64, confirm=1.0))
+    delivery = deliver_later(client, (_ob_state(64), "255"))
+    one, other = await asyncio.gather(first, second)
+    await delivery
+    assert one == other
+    assert one is not None
+    assert one.value == "255"
+
+
+async def test_confirm_propagates_a_publish_failure(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """A transport failure keeps its own type - the confirm window must not
+    relabel it as the retryable echo timeout."""
+    client, broker = connected
+    _learn(client, 64, "przekaznik")
+    broker.publish_errors = [aiomqtt.MqttError("boom")]
+    with pytest.raises(AmpioConnectionError) as excinfo:
+        await client.turn_on(64, confirm=1.0)
+    assert not isinstance(excinfo.value, AmpioTimeoutError)
+    assert client._listeners == []
+
+
+async def test_confirm_on_the_admin_tier_resolves_on_the_raw_edge() -> None:
+    """The store drops a raw-proven object's per-object echo whole, so the
+    raw edge must satisfy the wait - any-source ObjectUpdated is the
+    primitive, or admin-tier confirms on bridged inputs would always
+    time out."""
+    broker = FakeBroker()
+    client = AmpioClient(
+        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
+    )
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    try:
+        feed(
+            client,
+            ADMIN_DEVICES_TOPIC,
+            devices(
+                {
+                    "id": 7,
+                    "mac": 0xCAFE,
+                    "typ_urzadzenia": 11,
+                    "nazwa_urzadzenia": "panel",
+                }
+            ),
+        )
+        feed(
+            client,
+            ADMIN_DETAILS_TOPIC,
+            details(
+                {
+                    "id": 10,
+                    "id_urzadzenia": 7,
+                    "typ_komponentu": "flaga",
+                    "interpretacja": 1,
+                    "funkcja": 3,
+                    "opis_menu": "Flag",
+                }
+            ),
+        )
+        # One raw edge proves the raw path owns the object from here on.
+        feed(client, "ampio/from/CAFE/state/f/3", "0")
+        task = asyncio.create_task(client.set_value(10, 255, confirm=1.0))
+        await asyncio.sleep(0)
+        feed(client, "ampio/from/CAFE/state/f/3", "255")
+        obj = await task
+        assert obj is not None
+        assert (obj.id, obj.value) == (10, "255")
+    finally:
+        await client.stop()

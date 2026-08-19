@@ -14,6 +14,24 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## Unreleased
+
+### Added
+
+- **Opt-in command confirmation awaiting the state echo** (#67). The
+  `/api` surface has no reply topic, so the only observable confirmation
+  is the object's next state push. `command()` and every typed object
+  command (`turn_on`, `set_value`, `set_color`, the cover and thermostat
+  methods) take `confirm=<seconds>`: the waiter arms before the publish,
+  the call returns the echoing `ObjectUpdated` snapshot, and expiry
+  raises the retryable `AmpioTimeoutError`. A timeout is how every
+  silent drop surfaces - an ignored verb, an out-of-grant object on the
+  standard tier, or a command whose effect changed nothing - so a
+  consumer can report real success and failure instead of assuming
+  state. The default stays fire-and-forget. On the admin tier the raw
+  edge satisfies the wait for bridged inputs, whose per-object echo the
+  store drops.
+
 ## 0.23.0
 
 A second review round executed task by task like 0.22, with every
