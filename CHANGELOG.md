@@ -31,6 +31,14 @@ upgrade path.
   state. The default stays fire-and-forget. On the admin tier the raw
   edge satisfies the wait for bridged inputs, whose per-object echo the
   store drops.
+- **`module_for(obj)`: the mac-validated object-to-module resolver**
+  (#93). Joins `device_id` to the module list and returns the row only
+  when its effective bus mac agrees with the object's leaf-derived
+  `module_mac`, so the volatile DB join can never pair an object with a
+  replaced module's stale row - the identity rule every consumer
+  previously re-encoded by hand. The join keys the lookup rather than
+  the mac because override macs may collide across rows. None on the
+  restricted tier, which never receives the module catalogue.
 
 ### Changed
 

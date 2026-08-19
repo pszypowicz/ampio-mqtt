@@ -119,6 +119,105 @@ def test_mserv_falls_back_to_unique_hub_module(hub_type: int) -> None:
     assert mserv is not None and mserv.id == 5
 
 
+# --- module_for: the mac-validated object-to-module join (#93) --------------
+
+
+ADMIN_DEVICES = f"ampio/fromDB/{ADMIN_USER}/config/devices"
+ADMIN_DETAILS = f"ampio/fromDB/{ADMIN_USER}/config/devicesDetails"
+
+
+def _module_row(mid: int, mac: int | None, name: str = "MREL") -> dict:
+    row: dict = {
+        "id": mid,
+        "mac_global": 1000 + mid,
+        "typ_urzadzenia": 4,
+        "nazwa_urzadzenia": name,
+    }
+    if mac is not None:
+        row["mac"] = mac
+    return row
+
+
+def _object_row(oid: int, dev: int | None, mac_hex: str | None) -> dict:
+    row: dict = {"id": oid, "typ_komponentu": "flaga", "opis_menu": "Flag"}
+    if dev is not None:
+        row["id_urzadzenia"] = dev
+    if mac_hex is not None:
+        row["leafId"] = f"0_{mac_hex}_1_0_0"
+    return row
+
+
+def test_module_for_returns_the_mac_agreeing_row() -> None:
+    client = _admin_client()
+    feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
+    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, "cafe")))
+    module = client.module_for(client.objects[10])
+    assert module is not None
+    assert module.id == 7
+
+
+def test_module_for_rejects_a_mac_disagreement() -> None:
+    """device_id pointing at a row whose mac is not the object's leaf mac
+    is the stale-join shape a module replacement produces; None beats the
+    wrong module."""
+    client = _admin_client()
+    feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
+    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, "beef")))
+    assert client.module_for(client.objects[10]) is None
+
+
+@pytest.mark.parametrize(
+    ("module_mac", "leaf_hex"),
+    [(0xCAFE, None), (None, "cafe"), (None, None)],
+)
+def test_module_for_requires_a_proven_agreement(
+    module_mac: int | None, leaf_hex: str | None
+) -> None:
+    """A missing mac on either side is an unvalidated join, not a match -
+    two Nones agreeing proves nothing."""
+    client = _admin_client()
+    feed(client, ADMIN_DEVICES, devices(_module_row(7, module_mac)))
+    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, leaf_hex)))
+    assert client.module_for(client.objects[10]) is None
+
+
+def test_module_for_without_a_join_key() -> None:
+    client = _admin_client()
+    feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
+    feed(
+        client,
+        ADMIN_DETAILS,
+        details(_object_row(10, None, "cafe"), _object_row(11, 99, "cafe")),
+    )
+    # No device_id, and a device_id no row answers.
+    assert client.module_for(client.objects[10]) is None
+    assert client.module_for(client.objects[11]) is None
+
+
+def test_module_for_resolves_colliding_macs_by_the_join() -> None:
+    """Override macs may collide across rows; the join picks the row, the
+    mac only gates it."""
+    client = _admin_client()
+    feed(
+        client,
+        ADMIN_DEVICES,
+        devices(_module_row(7, 0xCAFE, "FIRST"), _module_row(8, 0xCAFE, "SECOND")),
+    )
+    feed(client, ADMIN_DETAILS, details(_object_row(10, 8, "cafe")))
+    module = client.module_for(client.objects[10])
+    assert module is not None
+    assert (module.id, module.name) == (8, "SECOND")
+
+
+def test_module_for_is_none_on_the_restricted_tier() -> None:
+    """The restricted tier never receives the module catalogue, so the
+    resolver is honest about having no row to validate."""
+    client = _client()
+    feed(client, DATA_DEVICES_TOPIC, details(_object_row(10, 7, "cafe")))
+    assert client.objects[10].module_mac == 0xCAFE
+    assert client.module_for(client.objects[10]) is None
+
+
 def test_mserv_matches_the_override_mac_arm() -> None:
     """The cross-check accepts the Designer override mac as well as the
     factory id: after a hardware swap mac_global changes but the

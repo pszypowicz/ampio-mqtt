@@ -306,6 +306,29 @@ class AmpioClient:
             return candidates[0]
         return None
 
+    def module_for(self, obj: AmpioObject) -> AmpioModule | None:
+        """The catalogue row of the module that owns ``obj``, mac-validated.
+
+        Joins ``obj.device_id`` to the module list and returns the row
+        only when its effective bus mac agrees with the object's
+        leaf-derived :pyattr:`AmpioObject.module_mac`: the DB ids are
+        volatile across a module replacement while the leaf mac is the
+        stable identity (docs/identity.md), so the bare join can pair an
+        object with a row that is no longer its module. The join keys the
+        lookup rather than the mac because override macs may collide
+        across rows; the mac then gates what the join found. None when
+        either side of the validation is missing or they disagree - and
+        always on the restricted tier, which never receives the module
+        catalogue. Grouping that works on both tiers reads ``module_mac``
+        directly.
+        """
+        if obj.device_id is None:
+            return None
+        module = self._store.modules.get(obj.device_id)
+        if module is None or module.mac is None or module.mac != obj.module_mac:
+            return None
+        return module
+
     @property
     def available(self) -> bool:
         """Whether the broker connection is up."""
