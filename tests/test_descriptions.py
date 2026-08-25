@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 
+import pytest
+from conftest import (
+    ADMIN_DETAILS_TOPIC,
+    ADMIN_DEVICES_TOPIC,
+    ADMIN_USER,
+    FakeBroker,
+    details,
+    devices,
+    feed,
+)
+
+from ampio_mqtt import AmpioClient, ObjectUpdated
 from ampio_mqtt._protocol import (
     ENDPOINTS,
     DeviceDescriptions,
@@ -151,3 +164,131 @@ def test_resolve_designer_skips_colliding_macs() -> None:
     }
     by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
     assert resolve_designer(objects, by_mac, {14: "P"}, frozenset({0xCB89})) == {}
+
+
+LOCATIONS_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/locations"
+
+
+async def _admin_client_with_catalogue() -> tuple[AmpioClient, FakeBroker]:
+    broker = FakeBroker()
+    client = AmpioClient(
+        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
+    )
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    feed(
+        client,
+        ADMIN_DETAILS_TOPIC,
+        details({"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}),
+    )
+    feed(client, ADMIN_DEVICES_TOPIC, devices({"id": 16, "mac": 0xCB89}))
+    broker.published.clear()
+    return client, broker
+
+
+async def _deliver_causally(
+    client: AmpioClient,
+    broker: FakeBroker,
+    locations_payload: str,
+    info_replies: list[tuple[str, str]],
+) -> None:
+    """Feed each reply only after its request was published, as the broker would."""
+    async with asyncio.timeout(1.0):
+        while (
+            f"ampio/control/{ADMIN_USER}/config",
+            b"locations",
+        ) not in broker.published:
+            await asyncio.sleep(0)
+        feed(client, LOCATIONS_TOPIC, locations_payload)
+        while ("device_api/to/cb89/get_data", b"") not in broker.published:
+            await asyncio.sleep(0)
+        for topic, payload in info_replies:
+            feed(client, topic, payload)
+
+
+async def test_admin_subscribes_the_device_api_wildcard() -> None:
+    broker = FakeBroker()
+    client = AmpioClient(
+        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
+    )
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    try:
+        assert "device_api/from/+/info" in broker.subscribed
+    finally:
+        await client.stop()
+    restricted_broker = FakeBroker()
+    restricted = AmpioClient(
+        "host", username="u", mqtt_client_factory=restricted_broker.factory
+    )
+    await restricted.start(timeout=2.0, discovery_timeout=0.01)
+    try:
+        assert "device_api/from/+/info" not in restricted_broker.subscribed
+    finally:
+        await restricted.stop()
+
+
+async def test_resolve_locations_sweeps_joins_and_merges() -> None:
+    client, broker = await _admin_client_with_catalogue()
+    try:
+        events: list[ObjectUpdated] = []
+        client.subscribe(events.append, of=ObjectUpdated, object_id=64)
+        info_payload = json.dumps(
+            {"descriptions": base64.b64encode(frame(12, 0, 14, 256, "L")).decode()}
+        )
+        delivery = asyncio.create_task(
+            _deliver_causally(
+                client,
+                broker,
+                json.dumps({"List": [{"id": 14, "opis_menu": "Potter"}]}),
+                [("device_api/from/CB89/info", info_payload)],
+            )
+        )
+        try:
+            result = await client.resolve_locations(timeout=1.0)
+        finally:
+            await delivery
+        assert result == {64: "Potter"}
+        assert client.objects[64].location == "Potter"
+        assert client.objects[64].matter_device_type == 256
+        assert ("device_api/to/cb89/get_data", b"") in broker.published
+        assert [e.object.location for e in events] == ["Potter"]
+    finally:
+        await client.stop()
+
+
+async def test_resolve_locations_tolerates_silent_modules() -> None:
+    client, broker = await _admin_client_with_catalogue()
+    try:
+        feed(
+            client,
+            ADMIN_DEVICES_TOPIC,
+            devices({"id": 16, "mac": 0xCB89}, {"id": 17, "mac": 0xBEEF}),
+        )
+        info_payload = json.dumps(
+            {"descriptions": base64.b64encode(frame(12, 0, 14, 256, "L")).decode()}
+        )
+        delivery = asyncio.create_task(
+            _deliver_causally(
+                client,
+                broker,
+                json.dumps({"List": [{"id": 14, "opis_menu": "Potter"}]}),
+                [("device_api/from/CB89/info", info_payload)],
+            )
+        )
+        try:
+            result = await client.resolve_locations(timeout=0.2)
+        finally:
+            await delivery
+        assert result == {64: "Potter"}
+    finally:
+        await client.stop()
+
+
+async def test_resolve_locations_raises_on_restricted_tier() -> None:
+    broker = FakeBroker()
+    client = AmpioClient("host", username="u", mqtt_client_factory=broker.factory)
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    try:
+        with pytest.raises(RuntimeError, match="admin"):
+            await client.resolve_locations(timeout=0.1)
+    finally:
+        await client.stop()
