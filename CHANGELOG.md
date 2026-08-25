@@ -14,6 +14,75 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.29.0
+
+The review release. A clean-slate review of the whole codebase produced
+nine verified findings and an API-surface map; this release closes the
+findings, folds three diagnostics fragments into one method, and cuts
+the API surface nothing uses, ahead of the freeze discussion in #86.
+
+### Added
+
+- **`diagnostics_snapshot()`** (#84) - one credential-free dict for bug
+  reports and a consumer diagnostics platform: account tier,
+  availability, auth-failure reason, server info, connection counters,
+  SUBACK rejections, override-mac collisions, and each endpoint's
+  verbatim last reply.
+- **Override-mac collision detection.** The raw routing tables are keyed
+  by mac, so two modules sharing an override mac cannot have their raw
+  edges and diagnostics attributed reliably. The store now warns once per
+  change of the colliding set and surfaces it as `mac_collisions`.
+
+### Fixed
+
+- **The freshness rule no longer compares clocks across domains.** An
+  undated live push stamps the local clock while snapshot seeds carry the
+  M-SERV's `on` clock; comparing the two let RTC skew replace a fresh
+  live value with a stale snapshot seed, or let a buffered push lose to
+  an older `stan_json` seed. The snapshot request is now the ordering
+  boundary: a live value received after the latest request outranks every
+  seed, one received before it loses to the seed that request produced,
+  and only server stamps are compared numerically. `refresh()` resets the
+  boundary, which keeps the reconnect resync working.
+- **`subscribe(of=())` raises `ValueError`** instead of registering a
+  listener no event can ever match.
+- **`rgbw` rejects values below `INT32_MIN`.** The signed wraparound ran
+  before the range check, so values with no 32-bit encoding decoded to a
+  color.
+- **Plain-text per-object state payloads are stripped**, matching the raw
+  channel form, so a trailing newline cannot flip `is_on`.
+- **`reconnect_interval` must be positive.** Zero hot-spun the reconnect
+  loop against a down broker.
+- **`fetch_scenes()` returns a fresh list per caller.** Concurrent
+  callers shared one mutable list.
+- **Clearing `raw_proven` dispatches `ObjectUpdated`** with the final
+  state; the flip back to per-object updates was silent.
+- **A fetch over a store-gated endpoint fails loudly.** Its reply channel
+  used to resolve waiters with a bare `True`; `_fetch` now rejects the
+  name, and store-gated replies only latch discovery.
+
+### Removed
+
+- **`client.stats`, `client.last_payloads`, `client.auth_failure`, and
+  the `ConnectionStats` export** - all folded into
+  `diagnostics_snapshot()`. The auth reason still arrives through the
+  `AuthFailed` event.
+- **`AmpioObject.is_sensor` / `is_input` / `is_output` /
+  `is_thermostat`** - both consumers narrow with
+  `isinstance(obj.kind, XKind)`; the properties were a second spelling of
+  the same fact.
+- **The three-class `subscribe` overload.** Beyond two classes, type the
+  listener as `Callable[[ClientEvent], None]`; the two-class arity forms
+  stay because mypy still joins tuple members up to the TypeVar bound.
+
+### Changed
+
+- **Docstrings and comments trimmed to contracts and wire facts** across
+  the source; the correctness arguments and history narration are gone.
+- **The router accepts only the wire's `b/4F` frame-type spelling.** MQTT
+  topic filters are case-sensitive, so the `b/4F` subscription can never
+  deliver a lowercase variant.
+
 ## 0.28.0
 
 The mode write, typed. Exercising `setHeatingMode` live overturned the
