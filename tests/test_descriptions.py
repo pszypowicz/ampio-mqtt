@@ -1,0 +1,87 @@
+"""Tests for the device_api descriptions wire layer."""
+
+from __future__ import annotations
+
+import base64
+import json
+
+from ampio_mqtt._protocol import (
+    ENDPOINTS,
+    DeviceDescriptions,
+    OutputDescription,
+    Router,
+    device_api_request_topic,
+    parse_descriptions_blob,
+    parse_device_info,
+)
+
+
+def frame(desc_type: int, out_no: int, out_loc: int, out_type: int, desc: str) -> bytes:
+    body = desc.encode()
+    length = 10 + len(body)
+    return (
+        b"".join(
+            v.to_bytes(2, "little")
+            for v in (length, desc_type, out_no, out_loc, out_type)
+        )
+        + body
+    )
+
+
+def test_blob_decodes_frames_in_order() -> None:
+    blob = frame(12, 0, 14, 256, "Lampa") + frame(26, 1, 19, 514, "Roleta")
+    assert parse_descriptions_blob(blob) == (
+        OutputDescription(
+            desc_type=12, out_no=0, out_loc=14, out_type=256, desc="Lampa"
+        ),
+        OutputDescription(
+            desc_type=26, out_no=1, out_loc=19, out_type=514, desc="Roleta"
+        ),
+    )
+
+
+def test_blob_stops_on_short_or_overrunning_length() -> None:
+    assert parse_descriptions_blob(frame(12, 0, 0, 0, "ok") + b"\x02\x00") == (
+        OutputDescription(desc_type=12, out_no=0, out_loc=0, out_type=0, desc="ok"),
+    )
+    truncated = frame(12, 0, 0, 0, "long description")[:-4]
+    assert parse_descriptions_blob(truncated) == ()
+
+
+def test_device_info_extracts_descriptions() -> None:
+    payload = json.dumps(
+        {
+            "macProd": 52105,
+            "descriptions": base64.b64encode(frame(12, 0, 14, 256, "L")).decode(),
+        }
+    )
+    entries = parse_device_info(payload)
+    assert entries is not None and entries[0].out_loc == 14
+
+
+def test_device_info_without_descriptions_reads_empty() -> None:
+    assert parse_device_info(json.dumps({"macProd": 1})) == ()
+    assert parse_device_info(json.dumps({"descriptions": ""})) == ()
+
+
+def test_device_info_rejects_garbage() -> None:
+    assert parse_device_info("not-json") is None
+    assert parse_device_info(json.dumps({"descriptions": "!!!not-base64"})) is None
+    assert parse_device_info(json.dumps({"descriptions": 5})) is None
+
+
+def test_router_routes_info_reply_case_insensitively() -> None:
+    router = Router("admin", ENDPOINTS)
+    payload = json.dumps(
+        {"descriptions": base64.b64encode(frame(12, 2, 3, 0, "x")).decode()}
+    )
+    msg = router.route("device_api/from/CB89/info", payload)
+    assert isinstance(msg, DeviceDescriptions)
+    assert msg.mac == 0xCB89
+    assert msg.entries[0].out_no == 2
+    assert router.route("device_api/from/zz/info", payload) is None
+    assert router.route("device_api/from/CB89/info", "not-json") is None
+
+
+def test_request_topic_uses_lowercase_hex() -> None:
+    assert device_api_request_topic(0xCB89) == "device_api/to/cb89/get_data"

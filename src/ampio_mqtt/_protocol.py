@@ -21,6 +21,8 @@ the endpoint table below.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import math
@@ -349,6 +351,69 @@ def parse_locations(payload: str) -> dict[int, str] | None:
         if lid is not None and isinstance(name, str) and name:
             out[lid] = name
     return out
+
+
+@dataclass(slots=True, frozen=True)
+class OutputDescription:
+    """One per-output entry of a module's CAN-resident description record."""
+
+    desc_type: int  # description class (OUTPUTS=12, ROLLER=26, ...)
+    out_no: int  # output index within the class
+    out_loc: int  # pointer into the locations name table; 0 = unassigned
+    out_type: int  # Matter device type; 0 = untagged
+    desc: str
+
+
+def parse_descriptions_blob(blob: bytes) -> tuple[OutputDescription, ...]:
+    """Decode the flat description frames.
+
+    ``[len:2][descType:2][outNo:2][outLoc:2][outType:2][utf8 desc]``,
+    little-endian, repeated; ``len`` counts the whole frame. A length
+    below the 10-byte header or past the end stops the walk - the
+    remainder is unreadable either way.
+    """
+    out: list[OutputDescription] = []
+    offset = 0
+    while offset + 10 <= len(blob):
+        length = int.from_bytes(blob[offset : offset + 2], "little")
+        if length < 10 or offset + length > len(blob):
+            break
+        out.append(
+            OutputDescription(
+                desc_type=int.from_bytes(blob[offset + 2 : offset + 4], "little"),
+                out_no=int.from_bytes(blob[offset + 4 : offset + 6], "little"),
+                out_loc=int.from_bytes(blob[offset + 6 : offset + 8], "little"),
+                out_type=int.from_bytes(blob[offset + 8 : offset + 10], "little"),
+                desc=blob[offset + 10 : offset + length].decode("utf-8", "replace"),
+            )
+        )
+        offset += length
+    return tuple(out)
+
+
+def parse_device_info(payload: str) -> tuple[OutputDescription, ...] | None:
+    """The description entries of a ``device_api/from/<mac>/info`` reply.
+
+    A record without a ``descriptions`` field reads as empty - a module
+    with no descriptions written. None when the payload is not a JSON
+    object or the base64 is unreadable.
+    """
+    try:
+        data = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("descriptions")
+    if raw in (None, ""):
+        return ()
+    if not isinstance(raw, str):
+        return None
+    try:
+        blob = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    return parse_descriptions_blob(blob)
 
 
 def _to_str(value: Any) -> str | None:
@@ -715,6 +780,30 @@ RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
 RAW_EVENT_WILDCARD = "ampio/from/+/event"
 
 
+# The admin-only device_api tree: get_data asks the M-SERV for a module's
+# full CAN-resident record; the info reply carries the description
+# entries. Request macs are lowercase hex, reply macs uppercase - the
+# router parses the segment numerically.
+DEVICE_API_INFO_WILDCARD = "device_api/from/+/info"
+
+
+def device_api_request_topic(mac: int) -> str:
+    """The get_data request topic for one module's CAN-resident record."""
+    return f"device_api/to/{mac:x}/get_data"
+
+
+# typ_komponentu -> description class (descType), live-proven pairs only
+# (docs/identity.md): an unlisted kind resolves no location. Extend only
+# with a live-proven pair.
+DESC_TYPE_BY_KIND: dict[str, int] = {
+    "przekaznik": 12,  # OUTPUTS
+    "roleta_procenty": 26,  # ROLLER
+    "roleta_lamelki": 26,  # ROLLER
+    "led": 16,  # OUT_OC_U8
+    "rgbw": 34,  # RGBW output class; no symbolic name in the recovered enum
+}
+
+
 # --- topic routing ---------------------------------------------------------
 
 
@@ -750,9 +839,24 @@ class DiagnosticsReport:
     diagnostics: ModuleDiagnostics
 
 
+@dataclass(slots=True, frozen=True)
+class DeviceDescriptions:
+    """A module's parsed description record from a device_api info reply."""
+
+    mac: int
+    entries: tuple[OutputDescription, ...]
+
+
 # Everything one MQTT message can classify into. `BusEvent` is the public
 # event class itself - for bus events the wire message IS the event.
-Inbound = EndpointReply | StateUpdate | RawChannelEdge | DiagnosticsReport | BusEvent
+Inbound = (
+    EndpointReply
+    | StateUpdate
+    | RawChannelEdge
+    | DiagnosticsReport
+    | DeviceDescriptions
+    | BusEvent
+)
 
 
 class Router:
@@ -791,6 +895,22 @@ class Router:
         ):
             oid = to_int(parts[4])
             return None if oid is None else _parse_state_payload(oid, payload)
+        if (
+            len(parts) == 4
+            and parts[0] == "device_api"
+            and parts[1] == "from"
+            and parts[3] == "info"
+        ):
+            try:
+                mac = int(parts[2], 16)
+            except ValueError:
+                return None
+            entries = parse_device_info(payload)
+            return (
+                None
+                if entries is None
+                else DeviceDescriptions(mac=mac, entries=entries)
+            )
         if len(parts) < 4 or parts[0] != "ampio" or parts[1] != "from":
             return None
         try:
