@@ -1604,3 +1604,43 @@ def test_catalogue_merge_reapplies_the_designer_table() -> None:
     _seed_catalogue(store, row)  # the object returns
     assert store.objects[64].location == "Potter"
     assert store.objects[64].matter_device_type == 256
+
+
+def test_apply_designer_metadata_for_an_unknown_id_waits_for_the_catalogue() -> None:
+    """A resolution racing ahead of the catalogue (or arriving for an object
+    just evicted) creates no placeholder - the held table applies it once the
+    id's own catalogue row lands, mirroring the params_devices convention
+    (`test_params_table_before_catalogue_supplies_hidden_flag`)."""
+    store = AmpioStore()
+    applied = store.apply_designer_metadata(
+        {999: DesignerResolution(location="X", matter_device_type=256)}
+    )
+    assert applied.events == []
+    assert store.objects == {}
+
+    _seed_catalogue(
+        store, {"id": 999, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
+    )
+    assert store.objects[999].location == "X"
+    assert store.objects[999].matter_device_type == 256
+
+
+def test_designer_location_none_clears_a_stale_name() -> None:
+    store = AmpioStore()
+    row = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
+    _seed_catalogue(store, row)
+    store.apply_designer_metadata(
+        {64: DesignerResolution(location="Potter", matter_device_type=None)}
+    )
+    assert store.objects[64].location == "Potter"
+
+    applied = store.apply_designer_metadata(
+        {64: DesignerResolution(location=None, matter_device_type=None)}
+    )
+    assert store.objects[64].location is None
+    assert [e.object.id for e in applied.events] == [64]
+
+    # The clear survives a catalogue re-merge.
+    again = _seed_catalogue(store, row)
+    assert store.objects[64].location is None
+    assert again.events == []
