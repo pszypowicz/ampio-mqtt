@@ -43,7 +43,7 @@ dev = [
   "pytest-asyncio>=0.23",
   "pytest-cov>=4",
   "mypy>=1.10",
-  "ruff==0.16.3",
+  "ruff==0.16.4",
   # The discovery extra, so the test suite covers the discovery module.
   "zeroconf>=0.142",
 ]
