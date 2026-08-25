@@ -68,9 +68,9 @@ The whole tree is administrator-only (the broker rejects the filters
 for any other account in the SUBACK with reason code 128), and only
 the `admin` login subscribes to it - a standard client never asks, so
 its connect carries no rejections at all. A rejection the admin client
-does receive lands in `ConnectionStats.subscribe_failures` and warns:
-with a tier-shaped subscribe set it can only mean a broken broker or
-ACL.
+does receive lands in the diagnostics snapshot's `subscribe_failures`
+and warns: with a tier-shaped subscribe set it can only mean a broken
+broker or ACL.
 
 ## Module diagnostics (`b/4F`)
 

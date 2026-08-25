@@ -510,7 +510,7 @@ def test_event_route_malformed(topic: str, payload: str) -> None:
 
 
 def test_diagnostics_route_ok() -> None:
-    report = _route("ampio/from/cafe/b/4f", json.dumps({"d": [254, 79, 63, 142]}))
+    report = _route("ampio/from/cafe/b/4F", json.dumps({"d": [254, 79, 63, 142]}))
     assert isinstance(report, DiagnosticsReport)
     assert report.mac == 0xCAFE
     assert report.diagnostics.supply_voltage == 12.6

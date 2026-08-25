@@ -102,8 +102,8 @@ confirm identity with `test_connection()` once credentials are known.
 
 ## Liveness counters
 
-`client.stats` (a `ConnectionStats` dataclass, whose docstrings carry
-the field contracts) is what the HA integration's diagnostics blob reads
-for connection health; the blob also carries `last_payloads`. The
-counters are intentionally cheap to read and cheap to update - on the
-dispatch hot path, only `last_message_at` is touched.
+`client.diagnostics_snapshot()` returns the one credential-free dict a
+diagnostics platform emits as-is: the connection counters, the SUBACK
+rejections, the mac collisions, and each endpoint's verbatim last
+reply. The counters are cheap to update - on the dispatch hot path,
+only `last_message_at` is touched.

@@ -74,17 +74,14 @@ class AmpioStore:
         # because the app-sync catalogue carries no params column and the two
         # replies arrive in no fixed order.
         self._params_by_id: dict[int, int] = {}
-        # `{object_id: stan_json}` from the last `data/states` snapshot, kept
-        # for the same reason: the app-sync catalogue carries no stan_json
-        # column either, and only the catalogues decide which objects exist -
-        # a snapshot row for an id no catalogue established creates nothing.
+        # `{object_id: stan_json}` from the last `data/states` snapshot,
+        # kept for the same reason; a snapshot row for an id no catalogue
+        # established creates nothing.
         self._stan_by_id: dict[int, str] = {}
         # Latest live push per id no catalogue has established, with its
-        # local receive time as the undated fallback stamp. Only the
-        # catalogues decide which objects exist, so a push that races ahead
-        # of them (startup, an object just added in the app) waits here and
-        # surfaces with the catalogue row - creating from it would dispatch
-        # updates for an object the next catalogue reply then evicts.
+        # local receive time. Only the catalogues decide which objects
+        # exist, so a push that races ahead of them waits here and
+        # surfaces with the catalogue row.
         self._pending_state: dict[int, tuple[_protocol.StateUpdate, float]] = {}
         # Ids whose current value carries a local-clock stamp (an undated
         # push or a raw edge). Local stamps are not comparable to the
@@ -222,11 +219,9 @@ class AmpioStore:
         if stan_json is not None:
             updated, seeded = self._apply_stan_json(updated, stan_json)
             changed |= seeded
-        # A live push that raced ahead of this row waits in the pending
-        # buffer; replay it under the same dated-supersedes rule the
-        # snapshot uses, so the fresher of push and stan_json seed wins.
-        # An undated push has no stamp comparable to the seed's server
-        # clock and was received in this session, so it wins outright.
+        # Replay a buffered push under the snapshot's dated-supersedes
+        # rule; an undated push has no stamp comparable to the seed's
+        # server clock and arrived live in this session, so it wins.
         pending = self._pending_state.pop(meta.id, None)
         if pending is not None:
             update, received_at = pending
@@ -353,11 +348,9 @@ class AmpioStore:
         for entry in entries:
             obj = self.objects.get(entry.id)
             if obj is None or entry.stan_json is None:
-                # An id no catalogue established stays out of the store: the
-                # snapshot replays DB rows, ghost rows included, and creating
-                # from it would later evict an object no consumer was ever
-                # told existed. The value waits in _stan_by_id for the
-                # catalogue row that may establish it.
+                # An id no catalogue established stays out of the store;
+                # its value waits in _stan_by_id for the catalogue row
+                # that may establish it.
                 continue
             obj, changed = self._apply_stan_json(obj, entry.stan_json)
             self.objects[entry.id] = obj
@@ -374,10 +367,9 @@ class AmpioStore:
             return
         if obj.raw_proven:
             # The raw path owns this object: the per-object echo repeats
-            # what the raw edge already delivered ~150 ms earlier, and
-            # resync comes from the broker's retained raw table on every
-            # subscribe, so the echo is dropped whole. It still counts as
-            # live evidence of the module.
+            # what the raw edge delivered ~150 ms earlier, so it is
+            # dropped whole. It still counts as live evidence of the
+            # module.
             self._touch_module(obj.device_id)
             return
         stamp = (

@@ -54,10 +54,8 @@ class ThermostatState:
 
     The push carries every field as a string; the library parses the
     temperatures and the cooling flag and passes the mode letter through
-    verbatim. The spec's `A,S,M,H` vocabulary is live-proven in full: a
-    round-trip on a real regulator drove every letter through
-    `setHeatingMode` and read each back here. The letter is still
-    surfaced raw so a future unlisted value loses nothing.
+    verbatim, so a future unlisted letter loses nothing. The `A,S,M,H`
+    vocabulary is in docs/protocol.md.
     """
 
     measured_temperature: float | None
@@ -107,9 +105,7 @@ class AmpioObject:
     # What this object is. Derived - never passed: computed from
     # `typ_komponentu` and `interpretacja` on every construction,
     # `dataclasses.replace` included, so no instance can hold a kind that
-    # disagrees with its inputs (#94). Exactly one kind applies; a typ the
-    # tables do not know (or no metadata at all) reads as the generic
-    # value-only sensor, exactly as `classify` documents.
+    # disagrees with its inputs (#94).
     kind: ObjectKind = field(init=False)
     value: str | None = None
     # Epoch seconds of the report `value` came from: the M-SERV's own `on`
@@ -132,8 +128,7 @@ class AmpioObject:
     thermostat: ThermostatState | None = None
 
     def __post_init__(self) -> None:
-        # The frozen dance: derived fields are set once, here, and nowhere
-        # else.
+        # Derived fields are set once, here, and nowhere else.
         object.__setattr__(
             self, "kind", classify(self.typ_komponentu, self.interpretacja)
         )
@@ -232,11 +227,9 @@ class AmpioObject:
     def hidden(self) -> bool:
         """Whether the M-SERV flags this object as hidden / a stub (``params`` bit 4).
 
-        This is the authoritative "do not surface" marker - the same one the
-        M-SERV's own Matter bridge honours. It catches the phantom rows that
-        duplicate a real Designer channel (sharing its ``leaf_id`` but carrying
-        no value), which the ``leaf_id`` heuristic alone lets through. See
-        docs/identity.md.
+        The authoritative "do not surface" marker, honored by the
+        M-SERV's own Matter bridge; it catches the phantom rows that
+        duplicate a real Designer channel. See docs/identity.md.
         """
         return bool(self.params & _HIDDEN_FLAG)
 
@@ -395,15 +388,13 @@ class AmpioServerInfo:
 
 @dataclass(slots=True)
 class ConnectionStats:
-    """Lightweight liveness counters surfaced for downstream diagnostics.
+    """Internal liveness counters behind ``diagnostics_snapshot()``.
 
     Updated by the connection layer (`last_message_at` by the client).
     `started_at` and `reconnect_count` cover the current ``start()`` run -
-    a deliberate stop/start restarts them, so a diagnostics blob never
-    reads a consumer-initiated restart as a flapping connection.
-    `last_error` and `last_message_at` roll across runs. Intended for HA's
-    per-config-entry diagnostics blob so a maintainer can correlate a
-    "flapping" report with the actual reconnect count seen by the client.
+    a deliberate stop/start restarts them, so a snapshot never reads a
+    consumer-initiated restart as a flapping connection. `last_error` and
+    `last_message_at` roll across runs.
     """
 
     reconnect_count: int = 0  # reconnects within the current run
