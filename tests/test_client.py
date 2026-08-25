@@ -526,7 +526,7 @@ async def test_start_times_out_without_auth_error() -> None:
         "host",
         username=USER,
         password="p",
-        reconnect_interval=0.0,
+        reconnect_interval=0.001,
         mqtt_client_factory=broker.factory,
     )
     with pytest.raises(AmpioConnectionError):
@@ -605,7 +605,7 @@ async def test_reconnect_count_increments_on_reconnect() -> None:
         "host",
         username=USER,
         password="p",
-        reconnect_interval=0.0,
+        reconnect_interval=0.001,
         mqtt_client_factory=broker.factory,
     )
 
@@ -678,3 +678,25 @@ async def test_refresh_resets_the_snapshot_boundary() -> None:
         assert client.objects[10].value == "0"
     finally:
         await client.stop()
+
+
+def test_subscribe_rejects_an_empty_of_tuple() -> None:
+    """An empty tuple would register a listener no event can ever match;
+    the mistake surfaces at registration, like the object_id misuse."""
+    client = _client()
+    with pytest.raises(ValueError):
+        client.subscribe(lambda event: None, of=())
+
+
+def test_reconnect_interval_must_be_positive() -> None:
+    """Zero would hot-spin the reconnect loop against a down broker."""
+    with pytest.raises(ValueError):
+        AmpioClient("host", username=USER, reconnect_interval=0)
+
+
+async def test_fetch_rejects_a_store_gated_endpoint() -> None:
+    """A store-gated reply produces no fetchable value, so a fetch over
+    one is a programming error surfaced loudly, not a silent hang."""
+    client = _client()
+    with pytest.raises(RuntimeError):
+        await client._fetch(("states",), 0.1, "unreachable")

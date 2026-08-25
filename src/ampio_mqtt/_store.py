@@ -159,7 +159,7 @@ class AmpioStore:
             touched |= self._merge_metadata(meta, applied)
         evicted = self._evict_missing_objects({meta.id for meta in items}, applied)
         if touched or evicted:
-            self._rebuild_indexes()
+            self._rebuild_indexes(applied)
         return True
 
     def _evict_missing_objects(self, present: set[int], applied: Applied) -> bool:
@@ -295,7 +295,7 @@ class AmpioStore:
             evicted = True
             applied.events.append(ModuleRemoved(self.modules.pop(mid)))
         if changed or evicted:
-            self._rebuild_indexes()
+            self._rebuild_indexes(applied)
         return True
 
     def _handle_params_devices(self, payload: str, applied: Applied) -> bool:
@@ -512,7 +512,7 @@ class AmpioStore:
         if module is not None:
             self.modules[module_id] = replace(module, last_seen=time.time())
 
-    def _rebuild_indexes(self) -> None:
+    def _rebuild_indexes(self, applied: Applied) -> None:
         """Rebuild the routing tables for the raw tree.
 
         Both are keyed on the module's effective bus address (`mac`, the
@@ -538,11 +538,14 @@ class AmpioStore:
             if module.mac is not None
         }
         # An object the index no longer covers must go back to its per-object
-        # updates, or a mac change in Designer would freeze it for good.
+        # updates, or a mac change in Designer would freeze it for good. The
+        # flip is public state, so it dispatches like any other change.
         covered = set(index.values())
         for oid, obj in self.objects.items():
             if obj.raw_proven and oid not in covered:
-                self.objects[oid] = replace(obj, raw_proven=False)
+                obj = replace(obj, raw_proven=False)
+                self.objects[oid] = obj
+                self._record(obj, applied)
 
     def _record(self, obj: AmpioObject, applied: Applied) -> None:
         applied.events.append(ObjectUpdated(obj))

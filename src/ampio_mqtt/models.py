@@ -216,10 +216,10 @@ class AmpioObject:
             packed = int(self.value)
         except ValueError:
             return None
+        if not -(1 << 31) <= packed <= 0xFFFFFFFF:
+            return None
         if packed < 0:
             packed += 1 << 32
-        if not 0 <= packed <= 0xFFFFFFFF:
-            return None
         return (
             packed & 0xFF,
             (packed >> 8) & 0xFF,

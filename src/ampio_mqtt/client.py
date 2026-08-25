@@ -114,6 +114,15 @@ class _ReplyChannel:
             if not future.done():
                 future.set_result(parsed)
 
+    def record(self, payload: str, parsed_ok: bool) -> None:
+        """Record a store-gated reply: latch discovery when it parsed and
+        keep the verbatim payload either way. These endpoints produce no
+        fetchable value, so no waiter is resolved - ``_fetch`` rejects
+        their names outright."""
+        self.last_payload = payload
+        if parsed_ok:
+            self.received.set()
+
 
 class AmpioClient:
     """Maintains a connection to the Ampio broker and tracks object state."""
@@ -142,6 +151,8 @@ class AmpioClient:
             raise ValueError(
                 "username is required - the Ampio topics are namespaced by account"
             )
+        if reconnect_interval <= 0:
+            raise ValueError("reconnect_interval must be positive seconds")
         self._username = username
         # The tier is the authenticated login name - see AccessTier. It
         # shapes everything downstream: the endpoints served, and from them
@@ -235,9 +246,7 @@ class AmpioClient:
                 return
             applied = self._store.apply(msg)
             if isinstance(msg, _protocol.EndpointReply):
-                self._channels[msg.endpoint.name].deliver(
-                    payload, applied.parsed or None
-                )
+                self._channels[msg.endpoint.name].record(payload, applied.parsed)
         except Exception:
             if topic in self._poisoned_topics:
                 _LOGGER.debug("Dropped another failing Ampio message on %s", topic)
@@ -523,6 +532,8 @@ class AmpioClient:
         keeps its other registration.
         """
         only = (of,) if isinstance(of, type) else of
+        if only is not None and not only:
+            raise ValueError("of= must name at least one event class")
         if object_id is not None and (
             only is None
             or any(not issubclass(cls, ObjectUpdated | ObjectRemoved) for cls in only)
@@ -724,9 +735,10 @@ class AmpioClient:
         replies = await self._fetch(
             ("scenes",), timeout, "Timed out fetching scenes from Ampio broker"
         )
-        # The channel resolved with the scenes endpoint's own parser output;
-        # the cast recovers the type the table's Callable field erases.
-        return cast("list[AmpioScene]", replies["scenes"])
+        # The cast recovers the type the endpoint table's Callable field
+        # erases; the copy keeps concurrent callers of one reply from
+        # seeing each other's list mutations.
+        return list(cast("list[AmpioScene]", replies["scenes"]))
 
     async def send_event(self, event_number: int) -> None:
         """Raise a bus event, running whatever Ampio logic is bound to it.
@@ -1067,6 +1079,12 @@ class AmpioClient:
         corrupt reply ends in the same retryable ``AmpioTimeoutError`` as no
         reply at all.
         """
+        for name in names:
+            if ENDPOINT_BY_NAME[name].parses is None:
+                raise RuntimeError(
+                    f"endpoint {name!r} is store-gated and produces no "
+                    "fetchable value; give it a parses gate to fetch it"
+                )
         loop = asyncio.get_running_loop()
         futures: dict[str, asyncio.Future[Any]] = {
             name: loop.create_future() for name in names

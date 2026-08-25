@@ -207,6 +207,9 @@ def _colored(value: str | None) -> AmpioObject:
         ("0", (0, 0, 0, 0)),
         ("4294967295", (255, 255, 255, 255)),
         ("4294967296", None),  # past 32 bits
+        ("-2147483648", (0, 0, 0, 128)),  # INT32_MIN, the deepest signed form
+        ("-2147483649", None),  # below the signed window: no 32-bit encoding
+        ("-4294967296", None),
         ("junk", None),
         (None, None),
     ],

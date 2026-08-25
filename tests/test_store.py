@@ -1487,6 +1487,17 @@ def test_raw_proven_tracks_the_bridge_coverage() -> None:
     assert store.objects[50].raw_proven is False
 
 
+def test_clearing_raw_proven_dispatches_the_final_state() -> None:
+    """The flip back to per-object updates is public state; the reply's
+    events must end with a snapshot carrying raw_proven False."""
+    store = _panel_store()
+    _apply(store, "ampio/from/CAFE/state/f/32", "1")
+    retyped = dict(_flaga_row(50, 32), typ_komponentu="roleta_procenty")
+    applied = _apply(store, DETAILS_TOPIC, details(retyped))
+    assert store.objects[50].raw_proven is False
+    assert any(o.id == 50 and o.raw_proven is False for o in _updated(applied))
+
+
 def test_a_formerly_raw_proven_value_survives_a_skewed_snapshot() -> None:
     """Clearing raw_proven hands the object back to the per-object path,
     not to a skewed DB seed: the raw value stamped local time, so a dated

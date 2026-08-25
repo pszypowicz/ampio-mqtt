@@ -427,9 +427,10 @@ def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
 
     The payload may be plain text or a JSON object with a `state` field; in
     either case `value` is set, and `on_ms` is populated when the payload
-    carried a server timestamp.
+    carried a server timestamp. Plain text is stripped, exactly as the raw
+    channel form is.
     """
-    value: str = payload
+    value: str = payload.strip()
     on_ms: int | float | None = None
     tilt: int | None = None
     thermostat: ThermostatState | None = None
