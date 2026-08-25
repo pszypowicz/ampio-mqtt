@@ -23,12 +23,19 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from .events import BusEvent
-from .models import AccessTier, AmpioModule, AmpioScene, AmpioServerInfo
+from .models import (
+    AccessTier,
+    AmpioModule,
+    AmpioScene,
+    AmpioServerInfo,
+    ThermostatState,
+)
 
 
 @dataclass(slots=True)
@@ -70,6 +77,8 @@ class StateUpdate:
     value: str
     on_ms: int | float | None
     tilt: int | None  # `lammel` percent, present only for tilt-capable covers
+    # Climate readback, present only in the rich `reg` push shape.
+    thermostat: ThermostatState | None = None
 
 
 @dataclass(slots=True)
@@ -87,6 +96,8 @@ class StanJsonSeed:
     value: str | None
     on_ms: int | float | None
     tilt: int | None
+    # Climate readback, present only in the rich `reg` snapshot shape.
+    thermostat: ThermostatState | None = None
 
 
 def server_below_baseline(version: str | None) -> bool:
@@ -379,6 +390,38 @@ def parse_states_snapshot(payload: str) -> list[SnapshotEntry] | None:
     return out
 
 
+def _finite_float(raw: object) -> float | None:
+    """A finite float from a wire value (string on the wire), else None."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        return None
+    try:
+        parsed = float(raw)
+    except ValueError:
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _parse_thermostat(data: dict[str, Any]) -> ThermostatState | None:
+    """The climate readback from a state dict, None unless reg-shaped.
+
+    The rich `reg` shape is recognized by its own keys - `measureTemp`,
+    `setTemperature`, `mode`, `cooling` - so every other object's push
+    (including the cover shape with `block`) reads None.
+    """
+    if not any(
+        key in data for key in ("measureTemp", "setTemperature", "mode", "cooling")
+    ):
+        return None
+    raw_mode = data.get("mode")
+    raw_cooling = data.get("cooling")
+    return ThermostatState(
+        measured_temperature=_finite_float(data.get("measureTemp")),
+        target_temperature=_finite_float(data.get("setTemperature")),
+        mode=str(raw_mode) if raw_mode is not None else None,
+        cooling=None if raw_cooling is None else str(raw_cooling) not in ("", "0"),
+    )
+
+
 def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
     """Parse a live per-object state payload into a `StateUpdate`.
 
@@ -389,6 +432,7 @@ def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
     value: str = payload
     on_ms: int | float | None = None
     tilt: int | None = None
+    thermostat: ThermostatState | None = None
     try:
         data = json.loads(payload)
     except (ValueError, TypeError):
@@ -403,7 +447,10 @@ def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
         if isinstance(raw_on, (int, float)):
             on_ms = raw_on
         tilt = to_int(data.get("lammel"))
-    return StateUpdate(id=oid, value=value, on_ms=on_ms, tilt=tilt)
+        thermostat = _parse_thermostat(data)
+    return StateUpdate(
+        id=oid, value=value, on_ms=on_ms, tilt=tilt, thermostat=thermostat
+    )
 
 
 def parse_diagnostics(payload: str) -> ModuleDiagnostics | None:
@@ -453,6 +500,7 @@ def parse_stan_json(stan_json: str) -> StanJsonSeed | None:
         value=str(raw_state) if raw_state is not None else None,
         on_ms=on_ms,
         tilt=to_int(data.get("lammel")),
+        thermostat=_parse_thermostat(data),
     )
 
 

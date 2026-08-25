@@ -14,6 +14,30 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.27.0
+
+The climate readback. A regulator pushes its full picture - measured and
+target temperature, mode, cooling - and the library kept only the running
+flag, leaving a climate consumer to parse the push itself. The readback
+is now a typed value object on the object model.
+
+### Added
+
+- **`AmpioObject.thermostat`: the reg climate readback** (#73).
+  A frozen `ThermostatState` with `measured_temperature`,
+  `target_temperature`, `mode`, and `cooling`, parsed from the rich
+  state shape only `reg` objects push (every field a string on the
+  wire). Populated from both the live push and the `stan_json` seed;
+  a later report without the shape keeps the last readback, exactly as
+  `tilt_position` does, and a dated snapshot that moves only the
+  readback still dispatches `ObjectUpdated` - a climate consumer must
+  see the temperature tick. The mode letter passes through verbatim:
+  of the spec's `A,S,M,H`, `S` and `M` are live-proven by an observed
+  transition, `A` was observed in a live snapshot, and `H` remains
+  spec-only. Live-verified on a real regulator: discovery seeds the
+  readback on the restricted tier, and a confirmed `set_temperature`
+  echo carries the new target through it.
+
 ## 0.26.1
 
 A one-paragraph release: the delivery-context guarantee consumers were

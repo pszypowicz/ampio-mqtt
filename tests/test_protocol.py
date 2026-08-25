@@ -6,7 +6,13 @@ import json
 
 import pytest
 
-from ampio_mqtt import AccessTier, AmpioModule, AmpioServerInfo, BusEvent
+from ampio_mqtt import (
+    AccessTier,
+    AmpioModule,
+    AmpioServerInfo,
+    BusEvent,
+    ThermostatState,
+)
 from ampio_mqtt._protocol import (
     ENDPOINTS,
     DiagnosticsReport,
@@ -366,6 +372,77 @@ def test_parse_stan_json_null_state_yields_none() -> None:
 @pytest.mark.parametrize("payload", ["", "not json", json.dumps([1, 2])])
 def test_parse_stan_json_invalid(payload: str) -> None:
     assert parse_stan_json(payload) is None
+
+
+# A reg state as a live M-SERV serializes it: every field a string, the
+# spacing verbatim from the capture.
+REG_PAYLOAD = (
+    '{ "state": "0", "cooling": "0", "mode": "S",'
+    '"measureTemp": "25.90","setTemperature": "21.00", "on": 1787682427583}'
+)
+
+
+def test_state_route_reg_payload_carries_thermostat() -> None:
+    update = _route("ampio/fromDB/u/ob/138/state", REG_PAYLOAD)
+    assert isinstance(update, StateUpdate)
+    assert update.value == "0" and update.on_ms == 1787682427583
+    assert update.thermostat == ThermostatState(
+        measured_temperature=25.9,
+        target_temperature=21.0,
+        mode="S",
+        cooling=False,
+    )
+
+
+def test_state_route_plain_shape_has_no_thermostat() -> None:
+    update = _route(
+        "ampio/fromDB/u/ob/41/state", json.dumps({"state": "1", "desc": "x", "on": 1})
+    )
+    assert isinstance(update, StateUpdate)
+    assert update.thermostat is None
+
+
+def test_parse_stan_json_reg_shape_carries_thermostat() -> None:
+    seed = parse_stan_json(REG_PAYLOAD)
+    assert seed is not None
+    assert seed.thermostat == ThermostatState(
+        measured_temperature=25.9,
+        target_temperature=21.0,
+        mode="S",
+        cooling=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("fields", "expected"),
+    [
+        pytest.param(
+            {"mode": "A"},
+            ThermostatState(
+                measured_temperature=None,
+                target_temperature=None,
+                mode="A",
+                cooling=None,
+            ),
+            id="mode-only",
+        ),
+        pytest.param(
+            {"cooling": "1", "measureTemp": "junk", "setTemperature": "inf"},
+            ThermostatState(
+                measured_temperature=None,
+                target_temperature=None,
+                mode=None,
+                cooling=True,
+            ),
+            id="cooling-true-unparseable-temps",
+        ),
+    ],
+)
+def test_reg_shape_partial_fields(fields: dict, expected: ThermostatState) -> None:
+    """Any reg key makes the shape; absent or unparseable fields read None."""
+    update = _route("ampio/fromDB/u/ob/138/state", json.dumps({"state": "0", **fields}))
+    assert isinstance(update, StateUpdate)
+    assert update.thermostat == expected
 
 
 @pytest.mark.parametrize(

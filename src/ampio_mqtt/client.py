@@ -900,8 +900,8 @@ class AmpioClient:
     ) -> AmpioObject | None:
         """Set a thermostat's (``reg``) target temperature in °C.
 
-        The library surfaces only the regulator's running flag until the
-        climate readback lands (#73). Bools and non-finite floats are
+        The regulator echoes the new target in its state push, readable
+        as :attr:`AmpioObject.thermostat`. Bools and non-finite floats are
         rejected: both would serialize as text the M-SERV silently drops.
         ``confirm`` awaits the state echo exactly as :meth:`command`
         documents.

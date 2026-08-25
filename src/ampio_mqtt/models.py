@@ -52,6 +52,26 @@ _MSERV_MAC = 1
 
 
 @dataclass(slots=True, frozen=True)
+class ThermostatState:
+    """A regulator's climate readback, from the rich `reg` state push.
+
+    The push carries every field as a string; the library parses the
+    temperatures and the cooling flag and passes the mode letter through
+    verbatim. Of the spec's claimed `A,S,M,H` vocabulary, `S` (schedule)
+    and `M` (manual) are live-proven by an observed transition, `A` has
+    been observed in a live snapshot, and `H` (holiday) is spec-only -
+    the letter is surfaced raw so an unlisted value loses nothing.
+    """
+
+    measured_temperature: float | None
+    target_temperature: float | None
+    # Mode letter, verbatim from the wire.
+    mode: str | None
+    # The push's cooling flag; `"0"` reads False, anything else True.
+    cooling: bool | None
+
+
+@dataclass(slots=True, frozen=True)
 class AmpioObject:
     """A logical Ampio object (DB object) and its latest state.
 
@@ -109,6 +129,10 @@ class AmpioObject:
     # Slat angle percent, from the `lammel` state field. Only tilt-capable
     # covers report it.
     tilt_position: int | None = None
+    # Climate readback, from the rich state shape only `reg` objects push.
+    # None until a reg-shaped report arrives; a later report that lacks the
+    # shape keeps the last readback, like `tilt_position` does.
+    thermostat: ThermostatState | None = None
 
     def __post_init__(self) -> None:
         # The frozen dance: derived fields are set once, here, and nowhere
@@ -136,9 +160,9 @@ class AmpioObject:
     def is_thermostat(self) -> bool:
         """Whether this is a temperature controller (climate platform).
 
-        Its `value` is the running flag (`is_on` applies); the setpoint is
-        driven with :meth:`AmpioClient.set_temperature`, and the rich
-        readback is tracked in #73.
+        Its `value` is the running flag (`is_on` applies), the climate
+        readback lives on :attr:`thermostat`, and the setpoint is driven
+        with :meth:`AmpioClient.set_temperature`.
         """
         return isinstance(self.kind, ThermostatKind)
 

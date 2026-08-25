@@ -209,8 +209,15 @@ class AmpioStore:
                 else received_at
             )
             if self._supersedes(updated, stamp):
-                changed |= updated.value != update.value or (
-                    update.tilt is not None and updated.tilt_position != update.tilt
+                changed |= (
+                    updated.value != update.value
+                    or (
+                        update.tilt is not None and updated.tilt_position != update.tilt
+                    )
+                    or (
+                        update.thermostat is not None
+                        and updated.thermostat != update.thermostat
+                    )
                 )
                 updated = replace(
                     updated,
@@ -219,6 +226,11 @@ class AmpioStore:
                         update.tilt
                         if update.tilt is not None
                         else updated.tilt_position
+                    ),
+                    thermostat=(
+                        update.thermostat
+                        if update.thermostat is not None
+                        else updated.thermostat
                     ),
                     updated_at=stamp,
                 )
@@ -345,6 +357,9 @@ class AmpioStore:
             obj,
             value=update.value,
             tilt_position=update.tilt if update.tilt is not None else obj.tilt_position,
+            thermostat=(
+                update.thermostat if update.thermostat is not None else obj.thermostat
+            ),
             updated_at=stamp,
         )
         self.objects[update.id] = obj
@@ -407,13 +422,18 @@ class AmpioStore:
         reported_at = None if seed.on_ms is None else float(seed.on_ms) / 1000.0
         if seed.value is None or not self._supersedes(obj, reported_at):
             return obj, False
-        changed = obj.value != seed.value or (
-            seed.tilt is not None and obj.tilt_position != seed.tilt
+        changed = (
+            obj.value != seed.value
+            or (seed.tilt is not None and obj.tilt_position != seed.tilt)
+            or (seed.thermostat is not None and obj.thermostat != seed.thermostat)
         )
         obj = replace(
             obj,
             value=seed.value,
             tilt_position=seed.tilt if seed.tilt is not None else obj.tilt_position,
+            thermostat=seed.thermostat
+            if seed.thermostat is not None
+            else obj.thermostat,
             updated_at=reported_at,
         )
         return obj, changed
