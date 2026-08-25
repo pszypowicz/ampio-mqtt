@@ -48,6 +48,24 @@ def test_blob_stops_on_short_or_overrunning_length() -> None:
     assert parse_descriptions_blob(truncated) == ()
 
 
+def test_blob_stops_when_length_field_is_below_header_size() -> None:
+    # 10 bytes available (clears the outer while guard) but the length field
+    # itself reads 2, below the 10-byte header - length < 10 is the clause
+    # that must decide here, not a truncated remainder.
+    blob = (2).to_bytes(2, "little") + bytes(8)
+    assert parse_descriptions_blob(blob) == ()
+
+
+def test_blob_decodes_zero_body_frame_at_length_boundary() -> None:
+    blob = frame(12, 0, 14, 256, "") + frame(26, 1, 19, 514, "Roleta")
+    assert parse_descriptions_blob(blob) == (
+        OutputDescription(desc_type=12, out_no=0, out_loc=14, out_type=256, desc=""),
+        OutputDescription(
+            desc_type=26, out_no=1, out_loc=19, out_type=514, desc="Roleta"
+        ),
+    )
+
+
 def test_device_info_extracts_descriptions() -> None:
     payload = json.dumps(
         {
@@ -68,6 +86,10 @@ def test_device_info_rejects_garbage() -> None:
     assert parse_device_info("not-json") is None
     assert parse_device_info(json.dumps({"descriptions": "!!!not-base64"})) is None
     assert parse_device_info(json.dumps({"descriptions": 5})) is None
+
+
+def test_device_info_rejects_non_object_json() -> None:
+    assert parse_device_info(json.dumps([1, 2])) is None
 
 
 def test_router_routes_info_reply_case_insensitively() -> None:
