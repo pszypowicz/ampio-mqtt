@@ -1511,3 +1511,28 @@ def test_a_formerly_raw_proven_value_survives_a_skewed_snapshot() -> None:
     stan = json.dumps({"state": "0", "on": far_future})
     _apply(store, STATES_TOPIC, json.dumps({"List": [{"id": 50, "stan_json": stan}]}))
     assert store.objects[50].value == "1"
+
+
+def test_colliding_override_macs_warn_once_and_surface(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Raw routing is keyed by mac, so a shared override mac is loud: one
+    warning when the collision appears, silence while it persists, and a
+    cleared set once Designer resolves it."""
+    store = _store()
+    row_a = {"id": 1, "mac": 0xCAFE, "typ_urzadzenia": 4, "nazwa_urzadzenia": "A"}
+    row_b = {"id": 2, "mac": 0xCAFE, "typ_urzadzenia": 4, "nazwa_urzadzenia": "B"}
+    with caplog.at_level("WARNING", logger="ampio_mqtt._store"):
+        _apply(store, DEVICES_TOPIC, devices(row_a, row_b))
+    assert store.colliding_macs == {0xCAFE}
+    assert "share the override mac" in caplog.text
+
+    caplog.clear()
+    renamed = dict(row_b, nazwa_urzadzenia="B2")
+    with caplog.at_level("WARNING", logger="ampio_mqtt._store"):
+        _apply(store, DEVICES_TOPIC, devices(row_a, renamed))
+    assert "share the override mac" not in caplog.text
+
+    resolved = dict(row_b, mac=0xBEEF)
+    _apply(store, DEVICES_TOPIC, devices(row_a, resolved))
+    assert store.colliding_macs == frozenset()

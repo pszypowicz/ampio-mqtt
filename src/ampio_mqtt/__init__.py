@@ -38,7 +38,6 @@ from .models import (
     AmpioObject,
     AmpioScene,
     AmpioServerInfo,
-    ConnectionStats,
     ThermostatState,
 )
 
@@ -64,7 +63,6 @@ __all__ = [
     "BusEvent",
     "ClientEvent",
     "ConnectionDied",
-    "ConnectionStats",
     "DiscoveryResult",
     "InputKind",
     "ModuleRemoved",

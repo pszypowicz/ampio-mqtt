@@ -266,15 +266,18 @@ async def test_stats_cover_the_current_run_only() -> None:
     broker = FakeBroker()
     client = make_client(broker)
     await client.start(timeout=2.0, discovery_timeout=0.01)
-    first_started_at = client.stats.started_at
+    first_started_at = client.diagnostics_snapshot()["connection"]["started_at"]
     assert first_started_at is not None
-    assert client.stats.reconnect_count == 0
+    assert client.diagnostics_snapshot()["connection"]["reconnect_count"] == 0
     await client.stop()
     await client.start(timeout=2.0, discovery_timeout=0.01)
     try:
-        assert client.stats.reconnect_count == 0
-        assert client.stats.started_at is not None
-        assert client.stats.started_at >= first_started_at
+        assert client.diagnostics_snapshot()["connection"]["reconnect_count"] == 0
+        assert client.diagnostics_snapshot()["connection"]["started_at"] is not None
+        assert (
+            client.diagnostics_snapshot()["connection"]["started_at"]
+            >= first_started_at
+        )
     finally:
         await client.stop()
 
@@ -483,12 +486,12 @@ async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
     await client.start(timeout=2.0, discovery_timeout=0.05)
     try:
         async with asyncio.timeout(2.0):
-            while client.auth_failure is None:
+            while client.diagnostics_snapshot()["auth_failure"] is None:
                 await asyncio.sleep(0.01)
     finally:
         await client.stop()
     assert len(failures) == 1 and "authorized" in failures[0].lower()
-    assert client.auth_failure == failures[0]
+    assert client.diagnostics_snapshot()["auth_failure"] == failures[0]
     assert availability == [True, False]
 
 
@@ -502,7 +505,7 @@ async def test_fresh_start_clears_a_runtime_auth_failure() -> None:
     client = make_client(broker, reconnect_interval=0.0015)
     await client.start(timeout=2.0, discovery_timeout=0.05)
     async with asyncio.timeout(2.0):
-        while client.auth_failure is None:
+        while client.diagnostics_snapshot()["auth_failure"] is None:
             await asyncio.sleep(0.01)
 
     # The broker accepts the credentials again.
@@ -510,7 +513,7 @@ async def test_fresh_start_clears_a_runtime_auth_failure() -> None:
     broker.stream_error = None
     await client.start(timeout=2.0, discovery_timeout=0.05)
     try:
-        assert client.auth_failure is None
+        assert client.diagnostics_snapshot()["auth_failure"] is None
         assert client.available is True
     finally:
         await client.stop()
@@ -527,8 +530,8 @@ async def test_initial_auth_rejection_raises_without_firing_listener() -> None:
     with pytest.raises(AmpioAuthError):
         await client.start(timeout=2.0, discovery_timeout=0.05)
     assert failures == []
-    assert client.auth_failure is not None
-    assert "authorized" in client.auth_failure.lower()
+    assert client.diagnostics_snapshot()["auth_failure"] is not None
+    assert "authorized" in client.diagnostics_snapshot()["auth_failure"].lower()
     assert client.available is False
 
 
@@ -544,7 +547,7 @@ async def test_transient_outage_leaves_auth_failure_unset() -> None:
         async with asyncio.timeout(2.0):
             while availability.count(True) < 2:
                 await asyncio.sleep(0.01)
-        assert client.auth_failure is None
+        assert client.diagnostics_snapshot()["auth_failure"] is None
     finally:
         await client.stop()
 
@@ -570,8 +573,10 @@ async def test_loop_crash_dispatches_connection_died_and_stops() -> None:
             ConnectionDied("Connection loop died: injected bug"),
         ]
         assert client.available is False
-        assert client.stats.reconnect_count == 0
-        assert client.stats.last_error == "injected bug"
+        assert client.diagnostics_snapshot()["connection"]["reconnect_count"] == 0
+        assert (
+            client.diagnostics_snapshot()["connection"]["last_error"] == "injected bug"
+        )
     finally:
         await client.stop()
 
@@ -599,10 +604,15 @@ async def test_publish_failure_during_refresh_recycles_the_session() -> None:
     await client.start(timeout=2.0, discovery_timeout=0.05)
     try:
         async with asyncio.timeout(2.0):
-            while not (client.available and client.stats.reconnect_count >= 1):
+            while not (
+                client.available
+                and client.diagnostics_snapshot()["connection"]["reconnect_count"] >= 1
+            ):
                 await asyncio.sleep(0.01)
-        assert client.stats.last_error == "broken pipe"
-        assert client.auth_failure is None
+        assert (
+            client.diagnostics_snapshot()["connection"]["last_error"] == "broken pipe"
+        )
+        assert client.diagnostics_snapshot()["auth_failure"] is None
     finally:
         await client.stop()
 
@@ -712,7 +722,9 @@ async def test_a_rejected_raw_filter_warns_on_the_admin_client(
         await client.start(timeout=2.0, discovery_timeout=0.05)
         try:
             assert client.available is True
-            assert client.stats.subscribe_failures == {denied: 0x87}
+            assert client.diagnostics_snapshot()["connection"][
+                "subscribe_failures"
+            ] == {denied: 0x87}
         finally:
             await client.stop()
     assert any(denied in r.getMessage() for r in caplog.records)
@@ -723,7 +735,7 @@ async def test_granted_subscriptions_leave_no_failures() -> None:
     client = make_client(broker, reconnect_interval=0.0015)
     await client.start(timeout=2.0, discovery_timeout=0.05)
     try:
-        assert client.stats.subscribe_failures == {}
+        assert client.diagnostics_snapshot()["connection"]["subscribe_failures"] == {}
     finally:
         await client.stop()
 
@@ -778,7 +790,9 @@ async def test_a_rejected_namespace_filter_warns(
     with caplog.at_level(logging.WARNING, logger="ampio_mqtt._connection"):
         await client.start(timeout=2.0, discovery_timeout=0.05)
         try:
-            assert client.stats.subscribe_failures == {denied: 0x87}
+            assert client.diagnostics_snapshot()["connection"][
+                "subscribe_failures"
+            ] == {denied: 0x87}
         finally:
             await client.stop()
     assert any(denied in r.getMessage() for r in caplog.records)

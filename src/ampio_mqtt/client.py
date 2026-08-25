@@ -11,6 +11,7 @@ import logging
 import math
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import asdict
 from types import MappingProxyType
 from typing import Any, Final, TypeVar, cast, overload
 
@@ -165,7 +166,7 @@ class AmpioClient:
         self._initial_endpoints = tuple(ep.name for ep in self._served if ep.initial)
         self._router = _protocol.Router(username, self._served)
         self._store = AmpioStore()
-        self.stats = ConnectionStats()
+        self._stats = ConnectionStats()
         self._connection = _connection.Connection(
             host,
             port,
@@ -173,7 +174,7 @@ class AmpioClient:
             password,
             reconnect_interval=reconnect_interval,
             topics=self._subscriptions(),
-            stats=self.stats,
+            stats=self._stats,
             on_message=self._handle_message,
             on_availability=self._handle_availability,
             on_connected=self.refresh,
@@ -227,7 +228,7 @@ class AmpioClient:
         anti-drowning convention); bugs in the connection loop itself
         remain terminal.
         """
-        self.stats.last_message_at = time.time()
+        self._stats.last_message_at = time.time()
         try:
             msg = self._router.route(topic, payload)
             if msg is None:
@@ -379,18 +380,6 @@ class AmpioClient:
         return self._connection.available
 
     @property
-    def auth_failure(self) -> str | None:
-        """Why the connection stopped, if the broker rejected the credentials.
-
-        ``None`` while the credentials are accepted, including through outages
-        the client is still trying to reconnect across. Once set, the
-        connection loop has stopped for good. A fresh ``start()`` clears it
-        but retries the constructor credentials; recovering from a genuinely
-        changed password means building a new client.
-        """
-        return self._connection.auth_failure
-
-    @property
     def access_tier(self) -> AccessTier:
         """The account tier: the reserved ``admin`` login, or restricted.
 
@@ -402,21 +391,50 @@ class AmpioClient:
         """
         return self._tier
 
-    @property
-    def last_payloads(self) -> dict[str, str]:
-        """Verbatim last response payload per endpoint, keyed by endpoint name.
+    def diagnostics_snapshot(self) -> dict[str, Any]:
+        """One credential-free report of the client's health.
 
-        Retained for the HA integration's diagnostics blob so a report can
-        include the actual JSON the M-SERV emitted. Keyed by endpoint name,
-        covering the endpoints the account tier is served; an endpoint is
-        absent until its first reply lands. A payload that failed to parse
-        is retained too - the bad bytes are exactly what a diagnostics
-        report needs.
+        The dict a bug report or a consumer diagnostics platform can emit
+        as-is: it carries no host, username, or password. Keys:
+
+        - ``access_tier``: the account tier's value string.
+        - ``available``: whether the broker connection is up.
+        - ``auth_failure``: the broker's rejection reason once the
+          connection loop has stopped for auth, else None.
+        - ``server_info``: the safe self-report subset as a dict
+          (:class:`AmpioServerInfo` excludes the private fields by
+          construction), or None before discovery.
+        - ``connection``: the run's liveness counters. ``started_at`` and
+          ``reconnect_count`` cover the current ``start()`` run, so a
+          deliberate restart never reads as a flapping connection;
+          ``last_error`` and ``last_message_at`` roll across runs.
+          ``subscribe_failures`` maps each topic the broker rejected in
+          the latest SUBACK to its reason code.
+        - ``mac_collisions``: override macs shared by two or more module
+          rows, on which raw traffic cannot be attributed reliably.
+        - ``last_payloads``: each endpoint's verbatim last reply, absent
+          until one lands. A payload that failed to parse is retained
+          too - the bad bytes are what the report needs.
         """
+        server_info = self._store.server_info
         return {
-            name: channel.last_payload
-            for name, channel in self._channels.items()
-            if channel.last_payload is not None
+            "access_tier": self._tier.value,
+            "available": self.available,
+            "auth_failure": self._connection.auth_failure,
+            "server_info": None if server_info is None else asdict(server_info),
+            "connection": {
+                "started_at": self._stats.started_at,
+                "reconnect_count": self._stats.reconnect_count,
+                "last_message_at": self._stats.last_message_at,
+                "last_error": self._stats.last_error,
+                "subscribe_failures": dict(self._stats.subscribe_failures),
+            },
+            "mac_collisions": sorted(self._store.colliding_macs),
+            "last_payloads": {
+                name: channel.last_payload
+                for name, channel in self._channels.items()
+                if channel.last_payload is not None
+            },
         }
 
     @overload

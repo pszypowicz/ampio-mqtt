@@ -59,6 +59,11 @@ class AmpioStore:
         self.objects: dict[int, AmpioObject] = {}
         self.modules: dict[int, AmpioModule] = {}
         self.server_info: AmpioServerInfo | None = None
+        # Override macs shared by two or more catalogue rows. The raw
+        # routing tables are keyed by mac, so edges and diagnostics on a
+        # colliding mac cannot be attributed reliably; the collision is
+        # warned once per change and surfaced for diagnostics.
+        self.colliding_macs: frozenset[int] = frozenset()
         # Raw-channel bridge: (module mac, prefix, channel) -> object id.
         self._input_index: dict[tuple[int, str, int], int] = {}
         # Effective bus mac -> module id, for routing a module's own
@@ -532,11 +537,24 @@ class AmpioStore:
                 continue
             index[(module.mac, prefix, obj.funkcja)] = obj.id
         self._input_index = index
-        self._module_id_by_mac = {
-            module.mac: module.id
-            for module in self.modules.values()
-            if module.mac is not None
-        }
+        by_mac: dict[int, int] = {}
+        colliding: set[int] = set()
+        for module in self.modules.values():
+            if module.mac is None:
+                continue
+            if module.mac in by_mac:
+                colliding.add(module.mac)
+            by_mac[module.mac] = module.id
+        self._module_id_by_mac = by_mac
+        if frozenset(colliding) != self.colliding_macs:
+            self.colliding_macs = frozenset(colliding)
+            if colliding:
+                _LOGGER.warning(
+                    "Ampio modules share the override mac(s) %s; raw edges "
+                    "and diagnostics on a shared mac cannot be attributed "
+                    "reliably - give each module a unique mac in Designer",
+                    sorted(colliding),
+                )
         # An object the index no longer covers must go back to its per-object
         # updates, or a mac change in Designer would freeze it for good. The
         # flip is public state, so it dispatches like any other change.

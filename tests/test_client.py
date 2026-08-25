@@ -543,8 +543,8 @@ def test_last_payloads_retained_for_each_handler() -> None:
     )
     feed(admin, "ampio/fromDB/admin/config/devices", devices_payload)
     feed(admin, "ampio/fromDB/admin/config/devicesDetails", details_payload)
-    assert admin.last_payloads["devices"] == devices_payload
-    assert admin.last_payloads["details"] == details_payload
+    assert admin.diagnostics_snapshot()["last_payloads"]["devices"] == devices_payload
+    assert admin.diagnostics_snapshot()["last_payloads"]["details"] == details_payload
 
     client = _client()
     info_payload = info(mac=12345, serverVersion="2025")
@@ -561,18 +561,27 @@ def test_last_payloads_retained_for_each_handler() -> None:
     feed(client, f"ampio/fromDB/{USER}/data/scenes", scenes_payload)
     feed(client, f"ampio/fromDB/{USER}/data/groups", groups_payload)
     feed(client, f"ampio/fromDB/{USER}/data/group_devices", group_devices_payload)
-    assert client.last_payloads["info"] == info_payload
-    assert client.last_payloads["states"] == states_payload
-    assert client.last_payloads["data_devices"] == data_devices_payload
-    assert client.last_payloads["params_devices"] == params_payload
-    assert client.last_payloads["scenes"] == scenes_payload
-    assert client.last_payloads["groups"] == groups_payload
-    assert client.last_payloads["group_devices"] == group_devices_payload
+    assert client.diagnostics_snapshot()["last_payloads"]["info"] == info_payload
+    assert client.diagnostics_snapshot()["last_payloads"]["states"] == states_payload
+    assert (
+        client.diagnostics_snapshot()["last_payloads"]["data_devices"]
+        == data_devices_payload
+    )
+    assert (
+        client.diagnostics_snapshot()["last_payloads"]["params_devices"]
+        == params_payload
+    )
+    assert client.diagnostics_snapshot()["last_payloads"]["scenes"] == scenes_payload
+    assert client.diagnostics_snapshot()["last_payloads"]["groups"] == groups_payload
+    assert (
+        client.diagnostics_snapshot()["last_payloads"]["group_devices"]
+        == group_devices_payload
+    )
 
     # An admin-surface topic on a restricted client is unroutable: the
     # tier is not served that surface, so nothing is retained for it.
     feed(client, f"ampio/fromDB/{USER}/config/devices", devices_payload)
-    assert "devices" not in client.last_payloads
+    assert "devices" not in client.diagnostics_snapshot()["last_payloads"]
     assert client.modules == {}
 
 
@@ -586,12 +595,12 @@ def test_access_tier_is_the_authenticated_username() -> None:
 def test_dispatch_updates_last_message_at() -> None:
     """Every dispatched MQTT message advances the connection stats clock."""
     client = _client()
-    assert client.stats.last_message_at is None
+    assert client.diagnostics_snapshot()["connection"]["last_message_at"] is None
     feed(client, f"ampio/fromDB/{USER}/data/info", info(mac=1))
-    assert client.stats.last_message_at is not None
-    first = client.stats.last_message_at
+    assert client.diagnostics_snapshot()["connection"]["last_message_at"] is not None
+    first = client.diagnostics_snapshot()["connection"]["last_message_at"]
     feed(client, f"ampio/fromDB/{USER}/data/info", info(mac=1))
-    assert client.stats.last_message_at >= first
+    assert client.diagnostics_snapshot()["connection"]["last_message_at"] >= first
 
 
 async def test_reconnect_count_increments_on_reconnect() -> None:
@@ -618,14 +627,14 @@ async def test_reconnect_count_increments_on_reconnect() -> None:
     try:
         # Wait for the second connection to land (reconnect_count incremented).
         async with asyncio.timeout(2.0):
-            while client.stats.reconnect_count < 1:
+            while client.diagnostics_snapshot()["connection"]["reconnect_count"] < 1:
                 await asyncio.sleep(0.01)
     finally:
         await client.stop()
 
-    assert client.stats.reconnect_count == 1
-    assert client.stats.started_at is not None
-    assert client.stats.last_error == "simulated drop"
+    assert client.diagnostics_snapshot()["connection"]["reconnect_count"] == 1
+    assert client.diagnostics_snapshot()["connection"]["started_at"] is not None
+    assert client.diagnostics_snapshot()["connection"]["last_error"] == "simulated drop"
 
 
 async def test_discovery_stays_incomplete_without_server_identity(
@@ -700,3 +709,32 @@ async def test_fetch_rejects_a_store_gated_endpoint() -> None:
     client = _client()
     with pytest.raises(RuntimeError):
         await client._fetch(("states",), 0.1, "unreachable")
+
+
+def test_diagnostics_snapshot_is_credential_free_and_complete() -> None:
+    """The one dict a consumer diagnostics platform emits as-is: every
+    documented key present, no trace of host or password."""
+    client = AmpioClient("secret-host.local", username=ADMIN_USER, password="s3cr3t-pw")
+    feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
+    feed(
+        client,
+        f"ampio/fromDB/{ADMIN_USER}/data/info",
+        info(mac="555", userId=-1, serverVersion="1865"),
+    )
+    snap = client.diagnostics_snapshot()
+    assert snap["access_tier"] == "admin"
+    assert snap["available"] is False
+    assert snap["auth_failure"] is None
+    assert snap["server_info"]["mac"] == 555
+    assert snap["mac_collisions"] == []
+    assert set(snap["connection"]) == {
+        "started_at",
+        "reconnect_count",
+        "last_message_at",
+        "last_error",
+        "subscribe_failures",
+    }
+    assert "devices" in snap["last_payloads"]
+    flat = json.dumps(snap)
+    assert "secret-host" not in flat
+    assert "s3cr3t-pw" not in flat
