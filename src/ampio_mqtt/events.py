@@ -90,12 +90,11 @@ class AvailabilityChanged:
 
     Fires for every transition the consumer did not cause itself: the
     connection coming up, an outage, and the drop preceding the terminal
-    :class:`AuthFailed` / :class:`ConnectionDied` events (which are
-    dispatched after it, so entities read unavailable by then). A
-    consumer-initiated ``stop()`` is deliberately not reported - it is not
-    news to the consumer, and reporting it made every orderly shutdown
-    look like a lost connection. ``AmpioClient.available`` still reads
-    False after a stop.
+    :class:`AuthFailed` / :class:`ConnectionDied` events (dispatched
+    after it, so entities read unavailable by then). A consumer-initiated
+    ``stop()`` is not reported - a deliberate shutdown is not an
+    availability event - though ``AmpioClient.available`` still reads
+    False after it.
     """
 
     available: bool
@@ -105,13 +104,11 @@ class AvailabilityChanged:
 class AuthFailed:
     """Terminal: the broker rejected the credentials after ``start()``.
 
-    Carries the broker's reason string. The shape a credential change on
-    the broker produces: by dispatch time ``AvailabilityChanged(False)``
-    has fired and the connection loop has stopped for good, so this is the
-    signal to drive a reauthentication flow. A rejection during
-    ``start()`` itself raises ``AmpioAuthError`` there instead and
-    dispatches nothing. The reason is also queryable as
-    :pyattr:`AmpioClient.auth_failure`.
+    Carries the broker's reason string. By dispatch time
+    ``AvailabilityChanged(False)`` has fired and the connection loop has
+    stopped for good, so this is the signal to drive a reauthentication
+    flow. A rejection during ``start()`` itself raises
+    ``AmpioAuthError`` there instead and dispatches nothing.
     """
 
     reason: str
@@ -124,14 +121,12 @@ class ConnectionDied:
     The shape a bug in the connection loop itself produces - anything the
     loop does not recognize as a transport or credential failure. A bug
     triggered by one message's processing is not this: the client guards
-    per message, dropping the failing payload with a logged traceback
-    while the connection stays up. Dispatched after
+    per message and the connection stays up. Dispatched after
     ``AvailabilityChanged(False)``, with the traceback logged and the
-    reason kept in ``ConnectionStats.last_error``; without it a dead loop
-    is indistinguishable from an outage the client is still retrying.
-    Only a fresh ``start()`` recovers. A crash during ``start()`` itself
-    makes ``start()`` raise ``AmpioConnectionError`` instead and
-    dispatches nothing, mirroring the auth path.
+    reason kept in the diagnostics snapshot's ``last_error``. Only a
+    fresh ``start()`` recovers. A crash during ``start()`` itself makes
+    ``start()`` raise ``AmpioConnectionError`` instead and dispatches
+    nothing, mirroring the auth path.
     """
 
     reason: str

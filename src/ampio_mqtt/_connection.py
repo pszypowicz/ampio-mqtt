@@ -103,11 +103,9 @@ class Connection:
         self._client_factory = client_factory or self._default_client
         self._client: aiomqtt.Client | None = None
         self._runner: asyncio.Task[None] | None = None
-        # Serializes open()/close(): without it, overlapping open() calls
-        # tear down each other's runner (one caller returns success on a
-        # session the other just killed). close() cannot wait its turn
-        # behind a full connect timeout, so it trips the abort event first
-        # and the in-flight open() bails out promptly.
+        # Serializes open()/close(). close() cannot wait its turn behind
+        # a full connect timeout, so it trips the abort event first and
+        # the in-flight open() bails out promptly.
         self._lifecycle = asyncio.Lock()
         self._abort_open = asyncio.Event()
         self._connected = asyncio.Event()
@@ -140,9 +138,7 @@ class Connection:
         ``AmpioConnectionError`` if nothing comes up within ``timeout`` or
         ``close()`` is called while this connect is in flight. Concurrent
         ``open()`` calls run one after another, each closing whatever loop
-        the previous one left: the two would otherwise share one client id
-        and take the session from each other on every reconnect, flapping
-        availability forever.
+        the previous one left.
         """
         async with self._lifecycle:
             # Swapped in before the first await so any close() arriving
@@ -242,13 +238,10 @@ class Connection:
         """Drive the session loop, reporting a crash instead of dying silently.
 
         Anything the loop does not recognize as a transport or credential
-        failure is a bug: nothing will retry, so it is terminal. Left inside
-        the task it would surface only when ``close()`` reaps the runner,
-        and a dead loop reads exactly like an outage under retry. After a
-        successful ``open()`` the crash is reported through ``on_fatal``
-        (the iteration's ``finally`` has already dropped availability);
-        during ``open()`` it makes ``open()`` raise instead, mirroring the
-        auth path.
+        failure is a bug: nothing will retry, so it is terminal. After a
+        successful ``open()`` the crash is reported through ``on_fatal``,
+        behind the availability drop; during ``open()`` it makes
+        ``open()`` raise instead, mirroring the auth path.
         """
         try:
             await self._loop()
@@ -271,14 +264,12 @@ class Connection:
             try:
                 async with self._client_factory() as client:
                     self._client = client
-                    # One SUBSCRIBE packet for the whole set - and the SUBACK
-                    # verdicts are read: a broker may reject individual
-                    # filters (the Ampio raw tree is admin-only), and a
-                    # rejected topic that is never diagnosed reads as a
-                    # mysteriously silent connection. The cast narrows away
-                    # the plain-int arm of aiomqtt's annotation: it is the
-                    # pre-VERSION2 callback shape, and the aiomqtt floor
-                    # exists to pin VERSION2 (see the pyproject rationale).
+                    # One SUBSCRIBE packet for the whole set, with the
+                    # SUBACK verdicts read: an undiagnosed rejected filter
+                    # reads as a mysteriously silent connection. The cast
+                    # narrows away the plain-int arm of aiomqtt's
+                    # annotation - the pre-VERSION2 callback shape the
+                    # aiomqtt floor exists to rule out (pyproject).
                     codes = cast(
                         "list[ReasonCode]",
                         await client.subscribe(
@@ -330,12 +321,10 @@ class Connection:
                 self._client = None
                 self._set_available(False, notify=not self._closing)
             if self._auth_failed.is_set() and self._connected.is_set():
-                # A rejection after a successful open(): the loop is stopping
-                # for good and no exception will reach the caller, so this
-                # callback is the only way a consumer learns it should
-                # reauthenticate. Fired after the availability drop so the
-                # consumer observes the connection already down. A rejection
-                # on the initial connect leaves _connected unset and is
+                # A rejection after a successful open() stops the loop for
+                # good with no exception to reach a caller, so this
+                # callback is the consumer's only signal. Fired after the
+                # availability drop; a rejection on the initial connect is
                 # raised from open() instead.
                 self._on_auth_failure(self._auth_error_message or _AUTH_REJECTED)
             if not self._stop:
@@ -420,14 +409,11 @@ def _mqtt_client(
 def _is_auth_error(err: BaseException) -> bool:
     """Whether an MQTT failure is a credential rejection rather than transport.
 
-    Reads the structured reason code off ``MqttCodeError`` instead of matching
-    error text. The cause chain is walked because a drop that surfaces during
-    message iteration arrives as a bare ``MqttError`` with the coded
-    disconnect error chained as its ``__cause__``. Codes outside
-    ``_AUTH_REASON_CODES`` never false-match: paho's own ``MQTTErrorCode``
-    ints stay in single digits (where 5 is "connection refused", an auth code
-    only in raw MQTT 3.1.1 CONNACK numbering, which VERSION2 callbacks never
-    surface).
+    Reads the structured reason code off ``MqttCodeError``; the cause
+    chain is walked because a drop during message iteration arrives as a
+    bare ``MqttError`` with the coded disconnect chained as its
+    ``__cause__``. paho's own ``MQTTErrorCode`` ints stay in single
+    digits, so codes outside ``_AUTH_REASON_CODES`` never false-match.
     """
     current: BaseException | None = err
     while current is not None:

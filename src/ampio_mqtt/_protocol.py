@@ -270,16 +270,12 @@ def parse_scenes(payload: str) -> list[AmpioScene] | None:
         if sid is None:
             continue
         parent = to_int(item.get("parentId"))
-        # A row without the column reads enabled, matching the dataclass
-        # default: the app creates scenes enabled, and surfacing a scene of
-        # unknown state beats silently hiding the catalogue if the column
-        # ever drifts.
+        # Malformed row fields degrade instead of hiding the scene: it is
+        # real and runnable (the M-SERV replays its actions server-side),
+        # and the parse gate covers only the outer List shape, so nothing
+        # row-shaped may escape fetch_scenes as a bare exception. A row
+        # without `active` reads enabled, the state the app creates.
         raw_active = to_int(item.get("active"))
-        # Malformed row fields degrade in the same spirit as `active` above:
-        # the scene itself is real and runnable (the M-SERV replays its
-        # actions server-side), so a broken annex must not hide it - and the
-        # store's parse gate covers only the outer List shape, so nothing
-        # row-shaped may escape fetch_scenes as a bare exception.
         infos = item.get("Infos")
         objects = {
             oid
@@ -427,9 +423,10 @@ def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
 
     The payload may be plain text or a JSON object with a `state` field; in
     either case `value` is set, and `on_ms` is populated when the payload
-    carried a server timestamp.
+    carried a server timestamp. Plain text is stripped, exactly as the raw
+    channel form is.
     """
-    value: str = payload
+    value: str = payload.strip()
     on_ms: int | float | None = None
     tilt: int | None = None
     thermostat: ThermostatState | None = None
@@ -506,25 +503,22 @@ def parse_stan_json(stan_json: str) -> StanJsonSeed | None:
 
 # --- Endpoint table --------------------------------------------------------
 #
-# Every request/response endpoint the M-SERV exposes is one row here, and that
-# row is the single source of truth: the client derives its subscriptions,
-# topic-to-handler routing, discovery-completion signals, and retained payloads
-# from this table. Adding an endpoint is one row, not edits in four places:
-# verify the wire shape live first (tools/probe_config.py publishes candidate
-# keywords and prints the replies), add the row, give the reply an
-# `AmpioStore._handlers` entry only if it mutates state, and expose a
-# `fetch_<name>()` awaiting `AmpioClient._fetch` - `fetch_scenes()` is the
-# three-line reference shape.
+# One row per M-SERV request/response endpoint, and the row is the single
+# source of truth: subscriptions, routing, discovery-completion signals,
+# and retained payloads all derive from it. To add an endpoint: verify
+# the wire shape live (tools/probe_config.py), add the row, give the
+# reply an `AmpioStore._handlers` entry only if it mutates state, and
+# expose a `fetch_<name>()` awaiting `AmpioClient._fetch` -
+# `fetch_scenes()` is the reference shape.
 #
 # A request publishes ``req_payload`` (a keyword, or "" for the dedicated
-# ``states``/``info`` surfaces) to ``ampio/control/<user>/<req_surface>``; the
-# reply lands on ``ampio/fromDB/<user>/<resp_surface>/<resp_leaf>``.
+# ``states``/``info`` surfaces) to ``ampio/control/<user>/<req_surface>``;
+# the reply lands on ``ampio/fromDB/<user>/<resp_surface>/<resp_leaf>``.
 
 
 # The reserved administrator login. The app refuses to create a user of
-# this name, and the broker authenticates it at CONNACK, so holding a
-# session under it IS being the administrator - the account tier is a
-# constructor fact, not a discovered one.
+# this name and the broker authenticates it at CONNACK, so the account
+# tier is a constructor fact, not a discovered one.
 ADMIN_USERNAME = "admin"
 
 
@@ -731,15 +725,12 @@ Inbound = EndpointReply | StateUpdate | RawChannelEdge | DiagnosticsReport | Bus
 class Router:
     """Classifies one MQTT message into a typed inbound message, or None.
 
-    The single home of topic-shape knowledge: every guard lives here, once,
-    and anything unroutable - an unknown shape, a non-hex mac, a non-integer
-    object id, channel, or event number, an unparseable diagnostics frame -
-    returns None. The store then applies typed messages and never inspects a
-    topic. ``endpoints`` is the subset the connection subscribes to (the
-    account tier's served surfaces), so a reply topic outside it is
-    unroutable like any other unknown shape. Endpoint reply and per-object
-    state topics are namespaced by the connecting account (hence ``user``);
-    the raw ``ampio/from`` tree is global.
+    The single home of topic-shape knowledge: anything unroutable returns
+    None, and the store applies typed messages without inspecting a
+    topic. ``endpoints`` is the tier's served subset, so a reply topic
+    outside it is unroutable like any other unknown shape. Endpoint reply
+    and per-object state topics are namespaced by the connecting account
+    (hence ``user``); the raw ``ampio/from`` tree is global.
     """
 
     __slots__ = ("_by_response", "_user")
@@ -780,7 +771,7 @@ class Router:
             return RawChannelEdge(
                 mac=mac, prefix=parts[4], channel=channel, value=payload.strip()
             )
-        if len(parts) == 5 and parts[3] == "b" and parts[4].upper() == "4F":
+        if len(parts) == 5 and parts[3] == "b" and parts[4] == "4F":
             diagnostics = parse_diagnostics(payload)
             if diagnostics is None:
                 return None

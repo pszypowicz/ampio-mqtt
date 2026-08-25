@@ -59,6 +59,11 @@ class AmpioStore:
         self.objects: dict[int, AmpioObject] = {}
         self.modules: dict[int, AmpioModule] = {}
         self.server_info: AmpioServerInfo | None = None
+        # Override macs shared by two or more catalogue rows. The raw
+        # routing tables are keyed by mac, so edges and diagnostics on a
+        # colliding mac cannot be attributed reliably; the collision is
+        # warned once per change and surfaced for diagnostics.
+        self.colliding_macs: frozenset[int] = frozenset()
         # Raw-channel bridge: (module mac, prefix, channel) -> object id.
         self._input_index: dict[tuple[int, str, int], int] = {}
         # Effective bus mac -> module id, for routing a module's own
@@ -69,18 +74,24 @@ class AmpioStore:
         # because the app-sync catalogue carries no params column and the two
         # replies arrive in no fixed order.
         self._params_by_id: dict[int, int] = {}
-        # `{object_id: stan_json}` from the last `data/states` snapshot, kept
-        # for the same reason: the app-sync catalogue carries no stan_json
-        # column either, and only the catalogues decide which objects exist -
-        # a snapshot row for an id no catalogue established creates nothing.
+        # `{object_id: stan_json}` from the last `data/states` snapshot,
+        # kept for the same reason; a snapshot row for an id no catalogue
+        # established creates nothing.
         self._stan_by_id: dict[int, str] = {}
         # Latest live push per id no catalogue has established, with its
-        # local receive time as the undated fallback stamp. Only the
-        # catalogues decide which objects exist, so a push that races ahead
-        # of them (startup, an object just added in the app) waits here and
-        # surfaces with the catalogue row - creating from it would dispatch
-        # updates for an object the next catalogue reply then evicts.
+        # local receive time. Only the catalogues decide which objects
+        # exist, so a push that races ahead of them waits here and
+        # surfaces with the catalogue row.
         self._pending_state: dict[int, tuple[_protocol.StateUpdate, float]] = {}
+        # Ids whose current value carries a local-clock stamp (an undated
+        # push or a raw edge). Local stamps are not comparable to the
+        # M-SERV's `on` stamps, so `_supersedes` never compares them:
+        # `_guarded` (received after the latest snapshot request) outranks
+        # any seed, while an unguarded local stamp predates the request
+        # and loses to the seed the request produced. `begin_refresh`
+        # clears the guard; a server-stamped report clears both.
+        self._local_stamped: set[int] = set()
+        self._guarded: set[int] = set()
         # Endpoints whose reply mutates state, each reporting whether the
         # payload parsed. The rest are pure request/response, parsed by the
         # dispatcher with the endpoint's own `parses` gate and never sent
@@ -104,6 +115,15 @@ class AmpioStore:
             )
 
     # --- routing ----------------------------------------------------------
+
+    def begin_refresh(self) -> None:
+        """Mark the start of a snapshot request cycle.
+
+        Every value held now predates the snapshot the new cycle will
+        deliver, so a dated seed may correct locally-stamped values again.
+        The client calls this before it publishes the discovery requests.
+        """
+        self._guarded.clear()
 
     def apply(self, msg: _protocol.Inbound) -> Applied:
         """Apply one typed message and report what it changed."""
@@ -141,7 +161,7 @@ class AmpioStore:
             touched |= self._merge_metadata(meta, applied)
         evicted = self._evict_missing_objects({meta.id for meta in items}, applied)
         if touched or evicted:
-            self._rebuild_indexes()
+            self._rebuild_indexes(applied)
         return True
 
     def _evict_missing_objects(self, present: set[int], applied: Applied) -> bool:
@@ -165,6 +185,8 @@ class AmpioStore:
             obj = self.objects.pop(oid)
             self._params_by_id.pop(oid, None)
             self._stan_by_id.pop(oid, None)
+            self._local_stamped.discard(oid)
+            self._guarded.discard(oid)
             applied.events.append(ObjectRemoved(obj))
         return True
 
@@ -197,18 +219,21 @@ class AmpioStore:
         if stan_json is not None:
             updated, seeded = self._apply_stan_json(updated, stan_json)
             changed |= seeded
-        # A live push that raced ahead of this row waits in the pending
-        # buffer; replay it under the same dated-supersedes rule the
-        # snapshot uses, so the fresher of push and stan_json seed wins.
+        # Replay a buffered push under the snapshot's dated-supersedes
+        # rule; an undated push has no stamp comparable to the seed's
+        # server clock and arrived live in this session, so it wins.
         pending = self._pending_state.pop(meta.id, None)
         if pending is not None:
             update, received_at = pending
-            stamp = (
-                float(update.on_ms) / 1000.0
-                if update.on_ms is not None
-                else received_at
-            )
-            if self._supersedes(updated, stamp):
+            if update.on_ms is not None:
+                stamp = float(update.on_ms) / 1000.0
+                wins = self._supersedes(updated, stamp)
+            else:
+                stamp = received_at
+                wins = True
+                self._local_stamped.add(meta.id)
+                self._guarded.add(meta.id)
+            if wins:
                 changed |= (
                     updated.value != update.value
                     or (
@@ -270,7 +295,7 @@ class AmpioStore:
             evicted = True
             applied.events.append(ModuleRemoved(self.modules.pop(mid)))
         if changed or evicted:
-            self._rebuild_indexes()
+            self._rebuild_indexes(applied)
         return True
 
     def _handle_params_devices(self, payload: str, applied: Applied) -> bool:
@@ -323,11 +348,9 @@ class AmpioStore:
         for entry in entries:
             obj = self.objects.get(entry.id)
             if obj is None or entry.stan_json is None:
-                # An id no catalogue established stays out of the store: the
-                # snapshot replays DB rows, ghost rows included, and creating
-                # from it would later evict an object no consumer was ever
-                # told existed. The value waits in _stan_by_id for the
-                # catalogue row that may establish it.
+                # An id no catalogue established stays out of the store;
+                # its value waits in _stan_by_id for the catalogue row
+                # that may establish it.
                 continue
             obj, changed = self._apply_stan_json(obj, entry.stan_json)
             self.objects[entry.id] = obj
@@ -344,10 +367,9 @@ class AmpioStore:
             return
         if obj.raw_proven:
             # The raw path owns this object: the per-object echo repeats
-            # what the raw edge already delivered ~150 ms earlier, and
-            # resync comes from the broker's retained raw table on every
-            # subscribe, so the echo is dropped whole. It still counts as
-            # live evidence of the module.
+            # what the raw edge delivered ~150 ms earlier, so it is
+            # dropped whole. It still counts as live evidence of the
+            # module.
             self._touch_module(obj.device_id)
             return
         stamp = (
@@ -363,6 +385,12 @@ class AmpioStore:
             updated_at=stamp,
         )
         self.objects[update.id] = obj
+        if update.on_ms is None:
+            self._local_stamped.add(update.id)
+            self._guarded.add(update.id)
+        else:
+            self._local_stamped.discard(update.id)
+            self._guarded.discard(update.id)
         self._touch_module(obj.device_id)
         self._record(obj, applied)
 
@@ -379,6 +407,8 @@ class AmpioStore:
             updated_at=time.time(),
         )
         self.objects[oid] = obj
+        self._local_stamped.add(oid)
+        self._guarded.add(oid)
         self._touch_module(obj.device_id)
         self._record(obj, applied)
 
@@ -436,22 +466,32 @@ class AmpioStore:
             else obj.thermostat,
             updated_at=reported_at,
         )
+        self._local_stamped.discard(obj.id)
+        self._guarded.discard(obj.id)
         return obj, changed
 
     def _supersedes(self, obj: AmpioObject, reported_at: float | None) -> bool:
         """Whether a dated snapshot report should replace what `obj` holds.
 
-        Undated reports only fill a gap. A dated report beats an undated
-        value, and beats a dated one from the same instant onwards - every
-        dated report on the baseline wire carries the M-SERV's own clock,
-        so RTC skew cancels out. Raw-proven objects never reach this
-        comparison: their snapshot rows are skipped before it.
+        Undated reports only fill a gap. Dated-versus-dated compares the
+        M-SERV's own clock on both sides, so RTC skew cancels out. A
+        locally-stamped value is never stamp-compared - this process's
+        clock is not comparable to a server `on` stamp. Instead the
+        snapshot request is the ordering boundary: a live value received
+        after the latest request (guarded) outranks every seed, and one
+        received before it loses to the seed that request produced.
+        Raw-proven objects never reach this comparison: their snapshot
+        rows are skipped before it.
         """
         if obj.value is None:
             return True
         if reported_at is None:
             return False
         if obj.updated_at is None:
+            return True
+        if obj.id in self._guarded:
+            return False
+        if obj.id in self._local_stamped:
             return True
         return reported_at >= obj.updated_at
 
@@ -469,7 +509,7 @@ class AmpioStore:
         if module is not None:
             self.modules[module_id] = replace(module, last_seen=time.time())
 
-    def _rebuild_indexes(self) -> None:
+    def _rebuild_indexes(self, applied: Applied) -> None:
         """Rebuild the routing tables for the raw tree.
 
         Both are keyed on the module's effective bus address (`mac`, the
@@ -489,17 +529,33 @@ class AmpioStore:
                 continue
             index[(module.mac, prefix, obj.funkcja)] = obj.id
         self._input_index = index
-        self._module_id_by_mac = {
-            module.mac: module.id
-            for module in self.modules.values()
-            if module.mac is not None
-        }
+        by_mac: dict[int, int] = {}
+        colliding: set[int] = set()
+        for module in self.modules.values():
+            if module.mac is None:
+                continue
+            if module.mac in by_mac:
+                colliding.add(module.mac)
+            by_mac[module.mac] = module.id
+        self._module_id_by_mac = by_mac
+        if frozenset(colliding) != self.colliding_macs:
+            self.colliding_macs = frozenset(colliding)
+            if colliding:
+                _LOGGER.warning(
+                    "Ampio modules share the override mac(s) %s; raw edges "
+                    "and diagnostics on a shared mac cannot be attributed "
+                    "reliably - give each module a unique mac in Designer",
+                    sorted(colliding),
+                )
         # An object the index no longer covers must go back to its per-object
-        # updates, or a mac change in Designer would freeze it for good.
+        # updates, or a mac change in Designer would freeze it for good. The
+        # flip is public state, so it dispatches like any other change.
         covered = set(index.values())
         for oid, obj in self.objects.items():
             if obj.raw_proven and oid not in covered:
-                self.objects[oid] = replace(obj, raw_proven=False)
+                obj = replace(obj, raw_proven=False)
+                self.objects[oid] = obj
+                self._record(obj, applied)
 
     def _record(self, obj: AmpioObject, applied: Applied) -> None:
         applied.events.append(ObjectUpdated(obj))
