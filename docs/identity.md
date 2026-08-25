@@ -159,3 +159,36 @@ intact, with the `params` hidden bit set - so it drops out through
 `visible` - while the app-sync surfaces (`data/devices`,
 `data/params_devices`) hard-remove it, which is what lets the
 restricted tier evict for real.
+
+## The Matter device type tag (the `type` column)
+
+The Designer "Description in device" panel lets the installer tag an
+output with a Matter device type ("Lighting - On-off light", "Plugs -
+Pump", and so on). The tag lives in the module itself, as one entry of
+the per-output description record `{descType, outNo, outLoc, outType,
+desc}`. Designer writes that record over
+`device_api/to/<macHex>/descriptions_wr` (base64 frames of
+`[len:2][descType:2][outNo:2][outLoc:2][outType:2][utf8 desc]`,
+little-endian) and mirrors `outType` into the object row's `type`
+column on both catalogues, as a decimal string (`"256"` = 0x0100). The
+library parses that mirror into `AmpioObject.matter_device_type`.
+
+Assignment and exposure are two independent facts. `type` is the
+device-type assignment. `params` bit 37 is the Matter-bridge exposure
+opt-in, and a row can carry a `type` with bit 37 clear. The tag is
+installer intent, and it is the one wire signal that separates a relay
+driving a light from one driving a plug or a pump. It is also opt-in
+per output: untagged rows read `None`, so `kind` (from
+`typ_komponentu`) stays the fallback classification.
+
+The vocabulary is the standard Matter device type table, exactly as the
+Designer web bundle embeds it:
+
+| Group                 | Device types                                                                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lighting              | 0x0100 On-off light, 0x0101 Dimmable light, 0x010C Color temperature light, 0x010D Extended color light                                                 |
+| Plugs                 | 0x010A On-off plug-in unit, 0x010B Dimmable plug-in unit, 0x0303 Pump                                                                                   |
+| Switches and controls | 0x0103 On-off light switch, 0x0104 Dimmer switch, 0x0105 Color dimmer switch, 0x0304 Pump controller, 0x000F Generic switch                             |
+| Sensors               | 0x0015 Contact, 0x0106 Light, 0x0107 Occupancy, 0x0302 Temperature, 0x0305 Pressure, 0x0306 Flow, 0x0307 Humidity, 0x0850 On-off, 0x0076 Smoke/CO alarm |
+| Closures              | 0x000A Door lock, 0x000B Door lock controller, 0x0202 Window covering, 0x0203 Window covering controller                                                |
+| HVAC                  | 0x0300 Heating/cooling unit, 0x0301 Thermostat, 0x002B Fan, 0x002D Air purifier, 0x002C Air quality sensor                                              |

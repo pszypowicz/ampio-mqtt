@@ -46,6 +46,11 @@ class ObjectMetadata:
     # when the reply carried no such column, which the app-sync catalogue never
     # does - the client then keeps whatever `params_devices` supplied.
     params: int | None
+    # `type` column: the Matter device type ID assigned in Designer, carried
+    # as a decimal string on the wire ("256" = 0x0100 On/Off Light). Empty or
+    # null when the object has no tag - both read as None. docs/identity.md
+    # holds the vocabulary.
+    matter_device_type: int | None
     stan_json: str | None  # raw seed for the initial value, applied by the client
 
 
@@ -167,6 +172,7 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
                 # `params` can exceed 32 bits (the matter-exposed flag is bit
                 # 37), which Python ints handle natively.
                 params=to_int(item.get("params")),
+                matter_device_type=to_int(item.get("type")),
                 stan_json=item.get("stan_json") or None,
             )
         )

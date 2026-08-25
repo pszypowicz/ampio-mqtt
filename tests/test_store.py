@@ -567,6 +567,7 @@ def test_details_populate_and_classify() -> None:
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 1,
                 "opis_menu": "Pump",
+                "type": "266",  # 0x010A On/Off Plug-in Unit
             },
         ),
     )
@@ -580,6 +581,10 @@ def test_details_populate_and_classify() -> None:
     assert store.objects[107].interpretacja == 7
     # relay is not a sensor
     assert store.objects[1].is_sensor is False
+    # The Designer's Matter device type tag rides the merge; untagged rows
+    # read None.
+    assert store.objects[1].matter_device_type == 266
+    assert store.objects[41].matter_device_type is None
     assert {i for i, o in store.objects.items() if o.is_sensor} == {41, 107}
 
 
