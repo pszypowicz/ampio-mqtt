@@ -693,6 +693,24 @@ class AmpioClient:
         # seeing each other's list mutations.
         return list(cast("list[AmpioScene]", replies["scenes"]))
 
+    async def fetch_locations(self, timeout: float = 5.0) -> dict[int, str]:
+        """Return ``{location_id: name}`` - the Designer "Lokalizacja" table.
+
+        The name table the per-output location pointer resolves through;
+        :meth:`resolve_locations` consumes it and per-object consumers read
+        :pyattr:`AmpioObject.location` instead. Admin tier only - the
+        ``config`` surface never answers a restricted account, and the call
+        raises ``RuntimeError`` for one. Raises ``AmpioConnectionError`` if
+        the broker is not connected and ``AmpioTimeoutError`` if the
+        response does not arrive within ``timeout``.
+        """
+        replies = await self._fetch(
+            ("locations",),
+            timeout,
+            "Timed out fetching the locations table from the Ampio broker",
+        )
+        return dict(cast("dict[int, str]", replies["locations"]))
+
     async def send_event(self, event_number: int) -> None:
         """Raise a bus event, running whatever Ampio logic is bound to it.
 
@@ -1026,6 +1044,10 @@ class AmpioClient:
         ``AmpioTimeoutError`` as silence.
         """
         for name in names:
+            if name not in self._channels:
+                raise RuntimeError(
+                    f"endpoint {name!r} is not served on the {self._tier.value} tier"
+                )
             if ENDPOINT_BY_NAME[name].parses is None:
                 raise RuntimeError(
                     f"endpoint {name!r} is store-gated and produces no "

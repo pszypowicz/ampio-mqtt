@@ -330,6 +330,27 @@ def parse_rooms(
     return room_map
 
 
+def parse_locations(payload: str) -> dict[int, str] | None:
+    """``{location_id: name}`` from a `config/locations` reply.
+
+    The name table behind the Designer's "Lokalizacja" dropdown; rows with
+    a missing id or an empty name are skipped. None when the payload is
+    not a ``{"List": [...]}`` document.
+    """
+    rows = list_rows(payload)
+    if rows is None:
+        return None
+    out: dict[int, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        lid = to_int(row.get("id"))
+        name = row.get("opis_menu")
+        if lid is not None and isinstance(name, str) and name:
+            out[lid] = name
+    return out
+
+
 def _to_str(value: Any) -> str | None:
     """Coerce a field to a non-empty string, or None.
 
@@ -602,6 +623,18 @@ ENDPOINTS: tuple[Endpoint, ...] = (
         parses=list_rows,
     ),
     Endpoint("scenes", "data", "scenes", "data", "scenes", parses=parse_scenes),
+    # The Designer "Lokalizacja" name table. On-demand; the per-output
+    # pointer that resolves through it rides the device_api record
+    # (resolve_locations()).
+    Endpoint(
+        "locations",
+        "config",
+        "locations",
+        "config",
+        "locations",
+        tier=AccessTier.ADMIN,
+        parses=parse_locations,
+    ),
 )
 
 ENDPOINT_BY_NAME: dict[str, Endpoint] = {ep.name: ep for ep in ENDPOINTS}
