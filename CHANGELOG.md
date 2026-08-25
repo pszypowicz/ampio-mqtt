@@ -14,6 +14,22 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.26.1
+
+A one-paragraph release: the delivery-context guarantee consumers were
+already relying on is now written down and pinned. No behavior changed.
+
+### Added
+
+- **The `subscribe()` docstring states the delivery-context guarantee**
+  (#81). Listeners are invoked synchronously on the asyncio event loop
+  that ran `start()`, never from another thread - the library owns no
+  threads. Home Assistant's callback model depends on exactly this, and
+  the docstring is where a core reviewer looks for it. A transport-driven
+  test pins the contract: a scripted broker message and the connect-time
+  availability event both reach a listener on the start loop's main
+  thread.
+
 ## 0.26.0
 
 One filter for the fan-out question. A consumer with one listener per
