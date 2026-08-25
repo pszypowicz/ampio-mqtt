@@ -400,6 +400,122 @@ def test_subscribe_filters_and_preserves_order() -> None:
     ]
 
 
+def test_subscribe_object_id_dispatches_only_matching_object() -> None:
+    """An object_id-filtered listener runs for its own object's events
+    and never enters for any other object's (#99)."""
+    client = _client()
+    mine: list[int] = []
+    other: list[int] = []
+    client.subscribe(lambda e: mine.append(e.object.id), of=ObjectUpdated, object_id=41)
+    client.subscribe(
+        lambda e: other.append(e.object.id), of=ObjectUpdated, object_id=42
+    )
+    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3), _flaga(42, 4)))
+    assert mine == [41]
+    assert other == [42]
+
+
+def test_subscribe_object_id_tuple_covers_update_and_removal() -> None:
+    """One registration with of=(ObjectUpdated, ObjectRemoved) follows a
+    single object across update and removal, in production order."""
+    client = _client()
+    seen: list[str] = []
+    client.subscribe(
+        lambda e: seen.append(type(e).__name__),
+        of=(ObjectUpdated, ObjectRemoved),
+        object_id=42,
+    )
+    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3), _flaga(42, 4)))
+    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3)))
+    assert seen == ["ObjectUpdated", "ObjectRemoved"]
+
+
+def test_subscribe_object_id_requires_object_bearing_classes() -> None:
+    """object_id is meaningful only for events that carry .object; any
+    other combination - a missing of included - is a registration-time
+    ValueError, so a listener that can never fire is never registered."""
+    client = _client()
+    with pytest.raises(ValueError):
+        client.subscribe(
+            lambda e: None,
+            of=AvailabilityChanged,  # type: ignore[arg-type]
+            object_id=1,
+        )
+    with pytest.raises(ValueError):
+        client.subscribe(
+            lambda e: None,
+            of=(ObjectUpdated, ModuleRemoved),  # type: ignore[arg-type]
+            object_id=1,
+        )
+    with pytest.raises(ValueError):
+        client.subscribe(lambda e: None, object_id=1)  # type: ignore[call-overload]
+
+
+def test_subscribe_object_id_unsubscribe_contract() -> None:
+    """The same listener registered twice on one object id is dispatched
+    twice; either unsubscribe drops exactly its own registration and is
+    idempotent, like the class-only path."""
+    client = _client()
+    seen: list[int] = []
+
+    def listener(e: ObjectUpdated) -> None:
+        seen.append(e.object.id)
+
+    first = client.subscribe(listener, of=ObjectUpdated, object_id=41)
+    client.subscribe(listener, of=ObjectUpdated, object_id=41)
+    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3)))
+    assert seen == [41, 41]
+
+    first()
+    first()  # repeat must not touch the surviving registration
+    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 4)))
+    assert seen == [41, 41, 41]
+
+
+def test_subscribe_object_id_last_unsubscribe_drops_the_bucket() -> None:
+    """Entity churn must not grow the per-object index without bound: the
+    last unsubscribe for an id removes its bucket entirely."""
+    client = _client()
+    unsub_a = client.subscribe(lambda e: None, of=ObjectUpdated, object_id=7)
+    unsub_b = client.subscribe(lambda e: None, of=ObjectUpdated, object_id=7)
+    unsub_a()
+    assert 7 in client._by_object
+    unsub_b()
+    assert 7 not in client._by_object
+
+
+def test_subscribe_object_id_listener_can_unsubscribe_mid_dispatch() -> None:
+    """A listener that unsubscribes itself while its own event is being
+    dispatched neither breaks the walk nor silences its neighbours."""
+    client = _client()
+    calls: list[str] = []
+
+    def one_shot(e: ObjectUpdated) -> None:
+        calls.append("one_shot")
+        unsub()
+
+    unsub = client.subscribe(one_shot, of=ObjectUpdated, object_id=41)
+    client.subscribe(lambda e: calls.append("steady"), of=ObjectUpdated, object_id=41)
+    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3)))
+    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 4)))
+    assert calls == ["one_shot", "steady", "steady"]
+
+
+def test_subscribe_object_id_listener_exception_is_isolated() -> None:
+    """A raising ID-filtered listener is logged and the remaining
+    listeners for the same object still run, like the class-only path."""
+    client = _client()
+    seen: list[int] = []
+
+    def broken(e: ObjectUpdated) -> None:
+        raise RuntimeError("listener bug")
+
+    client.subscribe(broken, of=ObjectUpdated, object_id=41)
+    client.subscribe(lambda e: seen.append(e.object.id), of=ObjectUpdated, object_id=41)
+    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3)))
+    assert seen == [41]
+
+
 async def test_start_times_out_without_auth_error() -> None:
     """A connection that simply never comes up still raises AmpioConnectionError."""
     broker = FakeBroker()
