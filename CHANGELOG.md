@@ -14,6 +14,28 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.25.0
+
+One column for the light question. The object catalogue's `type` column
+carries the Matter device type ID that the Designer "Description in
+device" tag assigns to an output. It is the one wire signal that
+separates a relay driving a light from one driving a plug or a pump.
+The library parses it and hands it to consumers unchanged.
+
+### Added
+
+- **`AmpioObject.matter_device_type`** (#97). Both object catalogues
+  (`config/devicesDetails` and the app-sync `data/devices`) carry a
+  `type` column with the Matter device type ID as a decimal string
+  (`"256"` = 0x0100 On/Off Light). Designer mirrors it from the
+  module-resident description record when the installer tags an output.
+  The column parses into `ObjectMetadata.matter_device_type` and rides
+  the catalogue merge onto `AmpioObject`. Untagged rows (empty or null)
+  read `None`. Classification is unchanged: `kind` still derives from
+  `typ_komponentu` alone, and a consumer maps the tag to a platform
+  itself. The vocabulary and the storage path are documented in
+  `docs/identity.md`.
+
 ## 0.24.0
 
 A consumer-driven batch raised by the Home Assistant integration work

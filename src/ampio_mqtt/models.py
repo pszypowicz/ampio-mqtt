@@ -80,6 +80,13 @@ class AmpioObject:
     # `params` bitfield (Designer config flags; see `hidden`/`visible`).
     # Defaults to 0 so a payload without the column reads "nothing hidden".
     params: int = 0
+    # Matter device type ID from the Designer "Description in device" tag
+    # (`type` column; "256" = 0x0100 On/Off Light). None when untagged. When
+    # set it is installer intent - the signal that a relay drives a light
+    # rather than a plug - and consumers map it to a platform themselves;
+    # `kind` stays derived from `typ_komponentu` alone. docs/identity.md
+    # holds the vocabulary and the storage path.
+    matter_device_type: int | None = None
     # What this object is. Derived - never passed: computed from
     # `typ_komponentu` and `interpretacja` on every construction,
     # `dataclasses.replace` included, so no instance can hold a kind that

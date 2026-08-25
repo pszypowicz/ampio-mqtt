@@ -75,6 +75,7 @@ def test_parse_details_returns_metadata() -> None:
     assert items[1].name is None and items[1].stan_json is None
     assert items[1].funkcja is None  # absent -> None
     assert items[1].leaf_id == ""  # absent -> empty string
+    assert items[1].matter_device_type is None  # absent -> None
 
 
 @pytest.mark.parametrize(
@@ -91,6 +92,20 @@ def test_parse_details_params(raw: object, expected: int | None) -> None:
     payload = json.dumps({"List": [{"id": 1, "params": raw}]})
     items = parse_details(payload)
     assert items is not None and items[0].params == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("256", 256),  # 0x0100 On/Off Light, the tagged shape
+        ("", None),  # untagged (config catalogue shape)
+        (None, None),  # untagged (app-sync null shape)
+    ],
+)
+def test_parse_details_matter_device_type(raw: object, expected: int | None) -> None:
+    payload = json.dumps({"List": [{"id": 1, "type": raw}]})
+    items = parse_details(payload)
+    assert items is not None and items[0].matter_device_type == expected
 
 
 @pytest.mark.parametrize(
