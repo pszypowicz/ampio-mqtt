@@ -14,6 +14,31 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.26.0
+
+One filter for the fan-out question. A consumer with one listener per
+object - the Home Assistant integration's exact shape - paid a full
+listener walk on every object update, because `subscribe` narrowed by
+event class alone. `object_id` moves that narrowing into the client,
+where it costs one dict lookup instead.
+
+### Added
+
+- **`subscribe(..., object_id=)` for O(1) per-object dispatch** (#99).
+  ID-filtered listeners live in per-object buckets keyed by
+  `event.object.id`; an object-bearing event walks the class-filtered
+  registry and then only its own id's bucket. Verified against a live
+  broker: 5000 per-object listeners cost 0.43 ms of callback walk per
+  update through class filters and 0.001 ms through `object_id`, flat
+  as the count grows. The filter applies only to the classes that
+  carry `.object` (`ObjectUpdated`, `ObjectRemoved`, alone or as a
+  tuple); any other `of` - or none - raises `ValueError` at
+  registration time, and the overloads reject it statically the same
+  way. Unsubscribe keeps its contract on the new path: it removes
+  exactly its own registration, stays idempotent, and the last
+  removal for an id drops the bucket, so entity churn cannot grow the
+  index. Each listener still sees its events in production order.
+
 ## 0.25.0
 
 One column for the light question. The object catalogue's `type` column

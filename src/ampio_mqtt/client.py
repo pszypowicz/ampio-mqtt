@@ -41,6 +41,7 @@ from .events import (
     AvailabilityChanged,
     ClientEvent,
     ConnectionDied,
+    ObjectRemoved,
     ObjectUpdated,
 )
 from .models import (
@@ -59,6 +60,16 @@ _EventT = TypeVar("_EventT", bound=ClientEvent)
 _EventT1 = TypeVar("_EventT1", bound=ClientEvent)
 _EventT2 = TypeVar("_EventT2", bound=ClientEvent)
 _EventT3 = TypeVar("_EventT3", bound=ClientEvent)
+
+# The `object_id` filter applies only to the events that carry `.object`;
+# these TypeVars make the checkers reject any other `of` at the call site,
+# mirroring the runtime ValueError.
+_ObjEventT = TypeVar("_ObjEventT", bound=ObjectUpdated | ObjectRemoved)
+_ObjEventT1 = TypeVar("_ObjEventT1", bound=ObjectUpdated | ObjectRemoved)
+_ObjEventT2 = TypeVar("_ObjEventT2", bound=ObjectUpdated | ObjectRemoved)
+
+# One registration in either listener registry: (listener, event-type filter).
+_ListenerEntry = tuple[Callable[[Any], None], tuple[type[ClientEvent], ...] | None]
 
 
 class _ReplyChannel:
@@ -154,10 +165,12 @@ class AmpioClient:
             client_factory=mqtt_client_factory,
         )
 
-        # One registry for every subscriber: (listener, event-type filter).
-        self._listeners: list[
-            tuple[Callable[[Any], None], tuple[type[ClientEvent], ...] | None]
-        ] = []
+        # Two listener registries: the class-filtered list every event
+        # walks, and the per-object buckets an object-bearing event tops
+        # up with its own id's entries - so a consumer with one listener
+        # per object (#99) costs one bucket lookup, not a full walk.
+        self._listeners: list[_ListenerEntry] = []
+        self._by_object: dict[int, list[_ListenerEntry]] = {}
 
         # One reply channel per endpoint-table row the tier is served -
         # see _ReplyChannel. The router covers the same set, so every
@@ -246,11 +259,27 @@ class AmpioClient:
     def _dispatch(self, event: ClientEvent) -> None:
         """Hand `event` to each matching listener, surviving any that raises.
 
+        Every event walks the class-filtered registry; an object-bearing
+        event then reaches the bucket for its own object id, so per-object
+        listeners cost one dict lookup instead of a walk. Each listener
+        still sees its events in production order.
+        """
+        self._dispatch_to(self._listeners, event)
+        if isinstance(event, ObjectUpdated | ObjectRemoved):
+            bucket = self._by_object.get(event.object.id)
+            if bucket is not None:
+                self._dispatch_to(bucket, event)
+
+    @staticmethod
+    def _dispatch_to(entries: list[_ListenerEntry], event: ClientEvent) -> None:
+        """Walk one registry copy, surviving any listener that raises.
+
         Listeners are consumer code. One that raises must not take down the
         connection that feeds every other entity, so the failure is logged
-        and the remaining listeners still run.
+        and the remaining listeners still run. The copy keeps a listener
+        free to unsubscribe - itself included - mid-dispatch.
         """
-        for listener, only in list(self._listeners):
+        for listener, only in list(entries):
             if only is not None and not isinstance(event, only):
                 continue
             try:
@@ -411,11 +440,42 @@ class AmpioClient:
         of: tuple[type[_EventT1], type[_EventT2], type[_EventT3]],
     ) -> Callable[[], None]: ...
 
+    # The object_id forms repeat the single/variadic/pair spellings with
+    # the TypeVars bound to the object-bearing classes, so a filter on
+    # anything else fails to type-check like it fails at runtime.
+    @overload
+    def subscribe(
+        self,
+        listener: Callable[[_ObjEventT], None],
+        *,
+        of: type[_ObjEventT],
+        object_id: int,
+    ) -> Callable[[], None]: ...
+
+    @overload
+    def subscribe(
+        self,
+        listener: Callable[[_ObjEventT], None],
+        *,
+        of: tuple[type[_ObjEventT], ...],
+        object_id: int,
+    ) -> Callable[[], None]: ...
+
+    @overload
+    def subscribe(
+        self,
+        listener: Callable[[_ObjEventT1 | _ObjEventT2], None],
+        *,
+        of: tuple[type[_ObjEventT1], type[_ObjEventT2]],
+        object_id: int,
+    ) -> Callable[[], None]: ...
+
     def subscribe(
         self,
         listener: Callable[[Any], None],
         *,
         of: type | tuple[type, ...] | None = None,
+        object_id: int | None = None,
     ) -> Callable[[], None]:
         """Register ``listener`` on the event stream; returns an unsubscribe.
 
@@ -431,17 +491,57 @@ class AmpioClient:
             client.subscribe(on_object, of=ObjectUpdated)
             client.subscribe(on_gone, of=(ObjectRemoved, ModuleRemoved))
 
+        ``object_id`` narrows further, to one object's events - the shape
+        of a consumer with one listener per object, where class-only
+        registrations would walk every listener on every update (#99).
+        ID-filtered listeners live in per-object buckets, so dispatch
+        reaches only the matching bucket, in O(1) of their total count::
+
+            client.subscribe(on_object, of=ObjectUpdated, object_id=135)
+            client.subscribe(on_135, of=(ObjectUpdated, ObjectRemoved),
+                             object_id=135)
+
+        Only :class:`ObjectUpdated` and :class:`ObjectRemoved` carry the
+        ``.object`` an ID can filter on, so ``object_id`` with any other
+        class - or with no ``of`` at all - raises ``ValueError`` at
+        registration time, where the mistake is visible.
+
         The returned unsubscribe removes exactly its own registration and
         is idempotent - consumer teardown lists routinely invoke a cleanup
         callback more than once, and the same listener registered twice
         keeps its other registration.
         """
         only = (of,) if isinstance(of, type) else of
-        entry = (listener, only)
-        self._listeners.append(entry)
+        if object_id is not None and (
+            only is None
+            or any(not issubclass(cls, ObjectUpdated | ObjectRemoved) for cls in only)
+        ):
+            raise ValueError(
+                "object_id filters on event.object.id, so of= must name only "
+                "ObjectUpdated and/or ObjectRemoved"
+            )
+        entry: _ListenerEntry = (listener, only)
+        if object_id is None:
+            self._listeners.append(entry)
 
-        def _unsubscribe() -> None:
-            self._listeners = [e for e in self._listeners if e is not entry]
+            def _unsubscribe() -> None:
+                self._listeners = [e for e in self._listeners if e is not entry]
+
+        else:
+            self._by_object.setdefault(object_id, []).append(entry)
+
+            def _unsubscribe() -> None:
+                bucket = self._by_object.get(object_id)
+                if bucket is None:
+                    return
+                remaining = [e for e in bucket if e is not entry]
+                if remaining:
+                    self._by_object[object_id] = remaining
+                else:
+                    # The last registration for this id takes the bucket
+                    # with it, or churning entities would grow the dict
+                    # without bound.
+                    del self._by_object[object_id]
 
         return _unsubscribe
 

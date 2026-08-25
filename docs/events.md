@@ -20,13 +20,19 @@ from ampio_mqtt import ModuleRemoved, ObjectRemoved, ObjectUpdated
 client.subscribe(on_any_event)                      # the whole stream
 client.subscribe(on_object, of=ObjectUpdated)       # one class, typed callback
 client.subscribe(on_gone, of=(ObjectRemoved, ModuleRemoved))
+client.subscribe(on_135, of=ObjectUpdated, object_id=135)  # one object
 
 unsubscribe = client.subscribe(on_object, of=ObjectUpdated)
 unsubscribe()                                       # deregister
 ```
 
 `of` narrows the subscription and, for a single class, types the
-callback parameter precisely.
+callback parameter precisely. `object_id` narrows further, to one
+object's events, and dispatches in O(1) of the total count of such
+registrations - the shape for a consumer with one listener per object
+(#99). It applies only to the classes that carry `.object`
+(`ObjectUpdated`, `ObjectRemoved`); any other combination raises
+`ValueError` at registration time.
 
 ## What arrives
 
