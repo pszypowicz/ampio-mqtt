@@ -57,10 +57,10 @@ class ThermostatState:
 
     The push carries every field as a string; the library parses the
     temperatures and the cooling flag and passes the mode letter through
-    verbatim. Of the spec's claimed `A,S,M,H` vocabulary, `S` (schedule)
-    and `M` (manual) are live-proven by an observed transition, `A` has
-    been observed in a live snapshot, and `H` (holiday) is spec-only -
-    the letter is surfaced raw so an unlisted value loses nothing.
+    verbatim. The spec's `A,S,M,H` vocabulary is live-proven in full: a
+    round-trip on a real regulator drove every letter through
+    `setHeatingMode` and read each back here. The letter is still
+    surfaced raw so a future unlisted value loses nothing.
     """
 
     measured_temperature: float | None
