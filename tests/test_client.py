@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 
 import aiomqtt
 import pytest
@@ -23,6 +24,7 @@ from conftest import (
     devices,
     feed,
     info,
+    make_client,
 )
 
 from ampio_mqtt import (
@@ -655,3 +657,24 @@ async def test_username_is_required(username: str | None) -> None:
         AmpioClient("host", username=username)
     with pytest.raises(ValueError):
         await AmpioClient.test_connection("host", username, None)
+
+
+async def test_refresh_resets_the_snapshot_boundary() -> None:
+    """refresh() opens a new request cycle, so the snapshot it requests
+    can correct a value that carries only a local receive stamp."""
+    broker = FakeBroker()
+    client = make_client(broker)
+    await client.start(timeout=1.0, discovery_timeout=0.01)
+    try:
+        feed(client, DATA_DEVICES_TOPIC, details({"id": 10}))
+        feed(client, f"ampio/fromDB/{USER}/ob/10/state", '{"state":"live"}')
+        stan = json.dumps({"state": "0", "on": 1786700900000})
+        snapshot = json.dumps({"List": [{"id": 10, "stan_json": stan}]})
+        feed(client, STATES_TOPIC, snapshot)
+        assert client.objects[10].value == "live"
+
+        await client.refresh()
+        feed(client, STATES_TOPIC, snapshot)
+        assert client.objects[10].value == "0"
+    finally:
+        await client.stop()

@@ -686,8 +686,11 @@ class AmpioClient:
         """Re-request the tier's initial-discovery set.
 
         ``start()`` issues this once on every (re)connect; call it to force
-        a fresh discovery cycle without reconnecting.
+        a fresh discovery cycle without reconnecting. The call also resets
+        the store's live-value protection, so the requested snapshot can
+        correct values that only carry a local receive stamp.
         """
+        self._store.begin_refresh()
         for name in self._initial_endpoints:
             await self._publish(ENDPOINT_BY_NAME[name])
 

@@ -81,6 +81,15 @@ class AmpioStore:
         # surfaces with the catalogue row - creating from it would dispatch
         # updates for an object the next catalogue reply then evicts.
         self._pending_state: dict[int, tuple[_protocol.StateUpdate, float]] = {}
+        # Ids whose current value carries a local-clock stamp (an undated
+        # push or a raw edge). Local stamps are not comparable to the
+        # M-SERV's `on` stamps, so `_supersedes` never compares them:
+        # `_guarded` (received after the latest snapshot request) outranks
+        # any seed, while an unguarded local stamp predates the request
+        # and loses to the seed the request produced. `begin_refresh`
+        # clears the guard; a server-stamped report clears both.
+        self._local_stamped: set[int] = set()
+        self._guarded: set[int] = set()
         # Endpoints whose reply mutates state, each reporting whether the
         # payload parsed. The rest are pure request/response, parsed by the
         # dispatcher with the endpoint's own `parses` gate and never sent
@@ -104,6 +113,15 @@ class AmpioStore:
             )
 
     # --- routing ----------------------------------------------------------
+
+    def begin_refresh(self) -> None:
+        """Mark the start of a snapshot request cycle.
+
+        Every value held now predates the snapshot the new cycle will
+        deliver, so a dated seed may correct locally-stamped values again.
+        The client calls this before it publishes the discovery requests.
+        """
+        self._guarded.clear()
 
     def apply(self, msg: _protocol.Inbound) -> Applied:
         """Apply one typed message and report what it changed."""
@@ -165,6 +183,8 @@ class AmpioStore:
             obj = self.objects.pop(oid)
             self._params_by_id.pop(oid, None)
             self._stan_by_id.pop(oid, None)
+            self._local_stamped.discard(oid)
+            self._guarded.discard(oid)
             applied.events.append(ObjectRemoved(obj))
         return True
 
@@ -200,15 +220,20 @@ class AmpioStore:
         # A live push that raced ahead of this row waits in the pending
         # buffer; replay it under the same dated-supersedes rule the
         # snapshot uses, so the fresher of push and stan_json seed wins.
+        # An undated push has no stamp comparable to the seed's server
+        # clock and was received in this session, so it wins outright.
         pending = self._pending_state.pop(meta.id, None)
         if pending is not None:
             update, received_at = pending
-            stamp = (
-                float(update.on_ms) / 1000.0
-                if update.on_ms is not None
-                else received_at
-            )
-            if self._supersedes(updated, stamp):
+            if update.on_ms is not None:
+                stamp = float(update.on_ms) / 1000.0
+                wins = self._supersedes(updated, stamp)
+            else:
+                stamp = received_at
+                wins = True
+                self._local_stamped.add(meta.id)
+                self._guarded.add(meta.id)
+            if wins:
                 changed |= (
                     updated.value != update.value
                     or (
@@ -363,6 +388,12 @@ class AmpioStore:
             updated_at=stamp,
         )
         self.objects[update.id] = obj
+        if update.on_ms is None:
+            self._local_stamped.add(update.id)
+            self._guarded.add(update.id)
+        else:
+            self._local_stamped.discard(update.id)
+            self._guarded.discard(update.id)
         self._touch_module(obj.device_id)
         self._record(obj, applied)
 
@@ -379,6 +410,8 @@ class AmpioStore:
             updated_at=time.time(),
         )
         self.objects[oid] = obj
+        self._local_stamped.add(oid)
+        self._guarded.add(oid)
         self._touch_module(obj.device_id)
         self._record(obj, applied)
 
@@ -436,22 +469,32 @@ class AmpioStore:
             else obj.thermostat,
             updated_at=reported_at,
         )
+        self._local_stamped.discard(obj.id)
+        self._guarded.discard(obj.id)
         return obj, changed
 
     def _supersedes(self, obj: AmpioObject, reported_at: float | None) -> bool:
         """Whether a dated snapshot report should replace what `obj` holds.
 
-        Undated reports only fill a gap. A dated report beats an undated
-        value, and beats a dated one from the same instant onwards - every
-        dated report on the baseline wire carries the M-SERV's own clock,
-        so RTC skew cancels out. Raw-proven objects never reach this
-        comparison: their snapshot rows are skipped before it.
+        Undated reports only fill a gap. Dated-versus-dated compares the
+        M-SERV's own clock on both sides, so RTC skew cancels out. A
+        locally-stamped value is never stamp-compared - this process's
+        clock is not comparable to a server `on` stamp. Instead the
+        snapshot request is the ordering boundary: a live value received
+        after the latest request (guarded) outranks every seed, and one
+        received before it loses to the seed that request produced.
+        Raw-proven objects never reach this comparison: their snapshot
+        rows are skipped before it.
         """
         if obj.value is None:
             return True
         if reported_at is None:
             return False
         if obj.updated_at is None:
+            return True
+        if obj.id in self._guarded:
+            return False
+        if obj.id in self._local_stamped:
             return True
         return reported_at >= obj.updated_at
 
