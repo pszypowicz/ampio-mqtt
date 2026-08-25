@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 
 import aiomqtt
 import pytest
@@ -34,6 +35,7 @@ from conftest import (
     USER,
     FakeBroker,
     Message,
+    details,
     make_client,
 )
 from paho.mqtt.enums import MQTTErrorCode
@@ -47,7 +49,9 @@ from ampio_mqtt import (
     AmpioTimeoutError,
     AuthFailed,
     AvailabilityChanged,
+    ClientEvent,
     ConnectionDied,
+    ObjectUpdated,
 )
 from ampio_mqtt._connection import _is_auth_error
 from ampio_mqtt.errors import AmpioAuthError
@@ -778,3 +782,42 @@ async def test_a_rejected_namespace_filter_warns(
         finally:
             await client.stop()
     assert any(denied in r.getMessage() for r in caplog.records)
+
+
+# --- listener delivery context --------------------------------------------
+
+
+async def test_listeners_run_on_the_start_loop_in_the_main_thread() -> None:
+    """Transport-driven dispatch invokes listeners synchronously on the
+    event loop that ran start(), never from another thread (#81)."""
+    broker = FakeBroker()
+    broker.scripted_messages = [
+        Message(ADMIN_DEVICES_TOPIC, json.dumps({"List": []}).encode()),
+        Message(ADMIN_DETAILS_TOPIC, details({"id": 41}).encode()),
+        Message(ADMIN_STATES_TOPIC, json.dumps({"List": []}).encode()),
+        Message(
+            ADMIN_INFO_TOPIC,
+            json.dumps({"Results": {"mac": 99, "userId": "-1"}}).encode(),
+        ),
+        Message(f"ampio/fromDB/{ADMIN_USER}/ob/41/state", b'{"state":"1"}'),
+    ]
+    client = make_client(broker, username=ADMIN_USER, reconnect_interval=0.0)
+    contexts: list[tuple[asyncio.AbstractEventLoop, threading.Thread]] = []
+    got_object = asyncio.Event()
+
+    def listener(event: ClientEvent) -> None:
+        contexts.append((asyncio.get_running_loop(), threading.current_thread()))
+        if isinstance(event, ObjectUpdated):
+            got_object.set()
+
+    client.subscribe(listener)
+    await client.start(timeout=2.0, discovery_timeout=0.05)
+    try:
+        await asyncio.wait_for(got_object.wait(), timeout=2.0)
+    finally:
+        await client.stop()
+    # AvailabilityChanged from the connect plus the scripted ObjectUpdated,
+    # every one delivered on this loop's main thread.
+    assert contexts
+    here = (asyncio.get_running_loop(), threading.main_thread())
+    assert all(ctx == here for ctx in contexts)

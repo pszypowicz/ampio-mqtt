@@ -491,6 +491,11 @@ class AmpioClient:
             client.subscribe(on_object, of=ObjectUpdated)
             client.subscribe(on_gone, of=(ObjectRemoved, ModuleRemoved))
 
+        Listeners are invoked synchronously on the asyncio event loop
+        that ran :meth:`start`, never from another thread - the library
+        owns no threads, so a listener can touch loop-bound state
+        directly (#81).
+
         ``object_id`` narrows further, to one object's events - the shape
         of a consumer with one listener per object, where class-only
         registrations would walk every listener on every update (#99).
