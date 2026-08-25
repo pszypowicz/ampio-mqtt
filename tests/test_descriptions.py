@@ -107,3 +107,47 @@ def test_router_routes_info_reply_case_insensitively() -> None:
 
 def test_request_topic_uses_lowercase_hex() -> None:
     assert device_api_request_topic(0xCB89) == "device_api/to/cb89/get_data"
+
+
+from ampio_mqtt._protocol import DesignerResolution, resolve_designer
+from ampio_mqtt.models import AmpioObject
+
+
+def _entries(*specs: tuple[int, int, int, int, str]) -> tuple[OutputDescription, ...]:
+    return tuple(OutputDescription(*s) for s in specs)
+
+
+def test_resolve_designer_joins_location_and_type() -> None:
+    objects = {
+        64: AmpioObject(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
+        48: AmpioObject(
+            id=48, typ_komponentu="roleta_procenty", leaf_id="0_cb89_5_0_1"
+        ),
+    }
+    by_mac = {
+        0xCB89: _entries((12, 0, 14, 256, "Lampa"), (26, 1, 0, 0, "Roleta")),
+    }
+    resolved = resolve_designer(objects, by_mac, {14: "Potter"}, frozenset())
+    assert resolved == {
+        64: DesignerResolution(location="Potter", matter_device_type=256),
+        48: DesignerResolution(location=None, matter_device_type=None),
+    }
+
+
+def test_resolve_designer_skips_the_unjoinable() -> None:
+    objects = {
+        1: AmpioObject(id=1, typ_komponentu="flaga_x", leaf_id="0_cb89_3_0_0"),
+        2: AmpioObject(id=2, typ_komponentu="przekaznik", leaf_id=""),
+        3: AmpioObject(id=3, typ_komponentu="przekaznik", leaf_id="0_beef_257_2_0"),
+        4: AmpioObject(id=4, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_9"),
+    }
+    by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
+    assert resolve_designer(objects, by_mac, {14: "P"}, frozenset()) == {}
+
+
+def test_resolve_designer_skips_colliding_macs() -> None:
+    objects = {
+        64: AmpioObject(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
+    }
+    by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
+    assert resolve_designer(objects, by_mac, {14: "P"}, frozenset({0xCB89})) == {}
