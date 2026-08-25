@@ -8,11 +8,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .classification import (
-    InputKind,
     ObjectKind,
     OutputKind,
-    SensorKind,
-    ThermostatKind,
     classify,
     is_system_type,
 )
@@ -140,31 +137,6 @@ class AmpioObject:
         object.__setattr__(
             self, "kind", classify(self.typ_komponentu, self.interpretacja)
         )
-
-    @property
-    def is_sensor(self) -> bool:
-        """Whether this object is exposed by the sensor platform."""
-        return isinstance(self.kind, SensorKind)
-
-    @property
-    def is_input(self) -> bool:
-        """Whether this object is exposed by the binary_sensor/input platform."""
-        return isinstance(self.kind, InputKind)
-
-    @property
-    def is_output(self) -> bool:
-        """Whether this object accepts commands (switch/light/cover platforms)."""
-        return isinstance(self.kind, OutputKind)
-
-    @property
-    def is_thermostat(self) -> bool:
-        """Whether this is a temperature controller (climate platform).
-
-        Its `value` is the running flag (`is_on` applies), the climate
-        readback lives on :attr:`thermostat`, and the setpoint is driven
-        with :meth:`AmpioClient.set_temperature`.
-        """
-        return isinstance(self.kind, ThermostatKind)
 
     @property
     def supports_tilt(self) -> bool:

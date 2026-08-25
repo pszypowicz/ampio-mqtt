@@ -66,7 +66,6 @@ EventListener = Callable[[ClientEvent], None]
 _EventT = TypeVar("_EventT", bound=ClientEvent)
 _EventT1 = TypeVar("_EventT1", bound=ClientEvent)
 _EventT2 = TypeVar("_EventT2", bound=ClientEvent)
-_EventT3 = TypeVar("_EventT3", bound=ClientEvent)
 
 # The `object_id` filter applies only to the events that carry `.object`;
 # these TypeVars make the checkers reject any other `of` at the call site,
@@ -445,13 +444,11 @@ class AmpioClient:
         self, listener: Callable[[_EventT], None], *, of: type[_EventT]
     ) -> Callable[[], None]: ...
 
-    # One tuple contract, three spellings: the checkers solve generics
-    # over a heterogeneous tuple differently. Pyright infers the member
-    # union for the variadic form; mypy joins the members up to the
-    # TypeVar bound and needs the per-member arity forms instead (#92).
-    # Beyond three classes, type the listener as
-    # ``Callable[[ClientEvent], None]`` and the variadic form matches in
-    # both.
+    # One tuple contract, two spellings: pyright infers the member union
+    # for the variadic form; mypy joins the members up to the TypeVar
+    # bound and needs the two-class arity form instead (#92). Beyond two
+    # classes, type the listener as ``Callable[[ClientEvent], None]`` and
+    # the variadic form matches in both.
     @overload
     def subscribe(
         self, listener: Callable[[_EventT], None], *, of: tuple[type[_EventT], ...]
@@ -463,14 +460,6 @@ class AmpioClient:
         listener: Callable[[_EventT1 | _EventT2], None],
         *,
         of: tuple[type[_EventT1], type[_EventT2]],
-    ) -> Callable[[], None]: ...
-
-    @overload
-    def subscribe(
-        self,
-        listener: Callable[[_EventT1 | _EventT2 | _EventT3], None],
-        *,
-        of: tuple[type[_EventT1], type[_EventT2], type[_EventT3]],
     ) -> Callable[[], None]: ...
 
     # The object_id forms repeat the single/variadic/pair spellings with

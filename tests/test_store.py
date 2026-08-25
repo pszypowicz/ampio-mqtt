@@ -32,6 +32,12 @@ from conftest import (
 from ampio_mqtt import _protocol
 from ampio_mqtt._protocol import ENDPOINTS, Router
 from ampio_mqtt._store import AmpioStore, Applied
+from ampio_mqtt.classification import (
+    InputKind,
+    OutputKind,
+    SensorKind,
+    ThermostatKind,
+)
 from ampio_mqtt.events import (
     BusEvent,
     ModuleRemoved,
@@ -621,12 +627,15 @@ def test_details_populate_and_classify() -> None:
     # alongside the resolved `kind` the library derives from it.
     assert store.objects[107].interpretacja == 7
     # relay is not a sensor
-    assert store.objects[1].is_sensor is False
+    assert not isinstance(store.objects[1].kind, SensorKind)
     # The Designer's Matter device type tag rides the merge; untagged rows
     # read None.
     assert store.objects[1].matter_device_type == 266
     assert store.objects[41].matter_device_type is None
-    assert {i for i, o in store.objects.items() if o.is_sensor} == {41, 107}
+    assert {i for i, o in store.objects.items() if isinstance(o.kind, SensorKind)} == {
+        41,
+        107,
+    }
 
 
 def test_devices_populate_modules_with_model_and_versions() -> None:
@@ -961,7 +970,7 @@ def test_a_push_for_an_uncatalogued_id_waits_for_its_catalogue_row() -> None:
 
     applied = _apply(store, DETAILS_TOPIC, details({"id": 93}))
     obj = store.objects[93]
-    assert obj.is_sensor is True  # no typ_komponentu -> generic fallback
+    assert isinstance(obj.kind, SensorKind)  # no typ_komponentu -> fallback
     assert obj.value == "187.6"
     assert [o.value for o in _updated(applied)] == ["187.6"]
 
@@ -1062,10 +1071,10 @@ def _panel_store() -> AmpioStore:
 def test_details_classify_input_and_funkcja() -> None:
     store = _panel_store()
     obj = store.objects[50]
-    assert obj.is_input is True
-    assert obj.kind is not None and obj.kind.key == "flaga"
+    assert isinstance(obj.kind, InputKind)
+    assert obj.kind.key == "flaga"
     assert obj.funkcja == 32
-    assert obj.is_sensor is False
+    assert not isinstance(obj.kind, SensorKind)
 
 
 def test_raw_channel_routes_to_input_object_and_notifies() -> None:
@@ -1166,7 +1175,7 @@ def test_symulacja_classifies_but_is_not_bridged() -> None:
         "opis_menu": "Sim",
     }
     _apply(store, DETAILS_TOPIC, details(sym))
-    assert store.objects[61].is_input is True
+    assert isinstance(store.objects[61].kind, InputKind)
     applied = _apply(store, "ampio/from/CAFE/state/f/1", "1")
     assert store.objects[61].value is None and _updated(applied) == []
 
@@ -1250,7 +1259,7 @@ def test_lammel_is_parsed_into_tilt_position() -> None:
     assert obj.value == "95"
     assert obj.tilt_position == 65
     assert obj.supports_tilt is True
-    assert obj.is_output is True
+    assert isinstance(obj.kind, OutputKind)
 
 
 def test_plain_cover_reports_no_tilt() -> None:
@@ -1308,7 +1317,7 @@ def test_reg_push_carries_thermostat_readback() -> None:
     _apply(store, f"ampio/fromDB/{USER}/ob/138/state", REG_PAYLOAD)
     obj = store.objects[138]
     assert obj.value == "0"
-    assert obj.is_thermostat is True
+    assert isinstance(obj.kind, ThermostatKind)
     assert obj.thermostat == REG_READBACK
 
 
