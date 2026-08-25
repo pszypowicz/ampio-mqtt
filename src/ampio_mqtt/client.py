@@ -12,7 +12,7 @@ import math
 import time
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import Any, TypeVar, cast, overload
+from typing import Any, Final, TypeVar, cast, overload
 
 from . import _connection, _protocol
 from ._protocol import (
@@ -54,6 +54,12 @@ from .models import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# The regulator mode letters `setHeatingMode` accepts - all four verified
+# live to write and echo (docs/protocol.md carries the round trip). The
+# canonical vocabulary for a consumer's mode map; the readback letter is
+# `ThermostatState.mode`.
+HEATING_MODES: Final[frozenset[str]] = frozenset({"A", "S", "M", "H"})
 
 EventListener = Callable[[ClientEvent], None]
 _EventT = TypeVar("_EventT", bound=ClientEvent)
@@ -917,6 +923,27 @@ class AmpioClient:
         return await self.command(
             object_id, "setTemperature", temperature, confirm=confirm
         )
+
+    async def set_heating_mode(
+        self, object_id: int, mode: str, *, confirm: float | None = None
+    ) -> AmpioObject | None:
+        """Set a thermostat's (``reg``) operating mode.
+
+        ``mode`` is one of :data:`HEATING_MODES` (``A``, ``S``, ``M``,
+        ``H``), exactly as the wire spells it - `S` is the Designer's
+        Schedule mode and `M` its Manual mode. The regulator echoes the
+        letter in its state push, readable as
+        :attr:`ThermostatState.mode`; an unlisted letter raises
+        ``ValueError`` here rather than being dropped by the M-SERV
+        (:meth:`command` is the escape hatch for experimenting).
+        ``confirm`` awaits the state echo exactly as :meth:`command`
+        documents.
+        """
+        if mode not in HEATING_MODES:
+            raise ValueError(
+                f"mode must be one of {sorted(HEATING_MODES)}, got {mode!r}"
+            )
+        return await self.command(object_id, "setHeatingMode", mode, confirm=confirm)
 
     async def set_color(
         self,

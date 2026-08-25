@@ -20,7 +20,12 @@ from conftest import (
     feed,
 )
 
-from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioTimeoutError
+from ampio_mqtt import (
+    HEATING_MODES,
+    AmpioClient,
+    AmpioConnectionError,
+    AmpioTimeoutError,
+)
 
 
 async def test_command_builds_payload_on_the_account_topic(
@@ -299,6 +304,30 @@ async def test_set_temperature_rejects_non_numbers(
     client, broker = connected
     with pytest.raises(ValueError):
         await client.set_temperature(138, bad)
+    assert broker.published == []
+
+
+async def test_set_heating_mode_publishes_the_letter(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
+    for mode in sorted(HEATING_MODES):
+        await client.set_heating_mode(138, mode)
+    assert broker.published == [
+        (API_TOPIC, f"/api/set/138/setHeatingMode/{m}".encode())
+        for m in sorted(HEATING_MODES)
+    ]
+
+
+@pytest.mark.parametrize("bad", ["", "s", "X", "SM", "Schedule"])
+async def test_set_heating_mode_rejects_unlisted_letters(
+    connected: tuple[AmpioClient, FakeBroker], bad: str
+) -> None:
+    """An unlisted letter raises here instead of being dropped by the
+    M-SERV; command() stays the escape hatch for experimenting."""
+    client, broker = connected
+    with pytest.raises(ValueError):
+        await client.set_heating_mode(138, bad)
     assert broker.published == []
 
 

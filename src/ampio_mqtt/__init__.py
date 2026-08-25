@@ -14,7 +14,7 @@ from .classification import (
     SensorKind,
     ThermostatKind,
 )
-from .client import AmpioClient
+from .client import HEATING_MODES, AmpioClient
 from .errors import (
     AmpioAuthError,
     AmpioConnectionError,
@@ -43,6 +43,7 @@ from .models import (
 )
 
 __all__ = [
+    "HEATING_MODES",
     "INPUT_KIND_KEYS",
     "OPEN_SENSOR_KEY_PREFIXES",
     "OUTPUT_KIND_KEYS",
@@ -78,7 +79,7 @@ __all__ = [
     "discover",
 ]
 
-__version__ = "0.27.0"
+__version__ = "0.28.0"
 
 
 def __getattr__(name: str) -> object:

@@ -14,6 +14,31 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.28.0
+
+The mode write, typed. Exercising `setHeatingMode` live overturned the
+documented one-way constraint: all four claimed letters write and echo,
+so a climate entity can offer full mode control and the wrapper for it
+is now wire-proven end to end.
+
+### Added
+
+- **`set_heating_mode()` and the `HEATING_MODES` vocabulary** - a typed
+  wrapper for `setHeatingMode`, validating the letter against the
+  live-proven `A,S,M,H` set (`ValueError` on anything else;
+  `command()` stays the escape hatch for experimenting). The echo
+  carries the letter back through `ThermostatState.mode`. Live-verified
+  with a confirmed `S -> M -> S` round trip on a real regulator.
+
+### Changed
+
+- **The mode vocabulary docs no longer grade the letters.** A live
+  round trip drove every claimed letter through `setHeatingMode`
+  (`S -> A -> H -> M -> S`), each echoed in the state push; the earlier
+  observation that `S` was silently ignored does not reproduce on the
+  baseline server. `docs/protocol.md` and the `ThermostatState`
+  docstring now state the proven, symmetric vocabulary.
+
 ## 0.27.0
 
 The climate readback. A regulator pushes its full picture - measured and
