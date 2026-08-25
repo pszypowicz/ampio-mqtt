@@ -124,7 +124,7 @@ class ThermostatKind:
     commands (:meth:`AmpioClient.set_temperature`) without answering the
     output verbs - so it is none of the other three kinds. The rich state
     the regulator pushes (measured and target temperature, mode, cooling)
-    is not surfaced yet; #73 tracks the climate readback.
+    is surfaced as :attr:`AmpioObject.thermostat`.
     """
 
     key: str

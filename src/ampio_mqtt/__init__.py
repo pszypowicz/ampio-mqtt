@@ -39,6 +39,7 @@ from .models import (
     AmpioScene,
     AmpioServerInfo,
     ConnectionStats,
+    ThermostatState,
 )
 
 __all__ = [
@@ -73,10 +74,11 @@ __all__ = [
     "OutputKind",
     "SensorKind",
     "ThermostatKind",
+    "ThermostatState",
     "discover",
 ]
 
-__version__ = "0.26.1"
+__version__ = "0.27.0"
 
 
 def __getattr__(name: str) -> object:

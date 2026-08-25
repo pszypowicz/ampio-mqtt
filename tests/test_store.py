@@ -39,7 +39,12 @@ from ampio_mqtt.events import (
     ObjectRemoved,
     ObjectUpdated,
 )
-from ampio_mqtt.models import AccessTier, AmpioModule, AmpioObject
+from ampio_mqtt.models import (
+    AccessTier,
+    AmpioModule,
+    AmpioObject,
+    ThermostatState,
+)
 
 
 def _updated(applied: Applied) -> list[AmpioObject]:
@@ -1244,6 +1249,78 @@ def test_states_snapshot_seeds_tilt_position() -> None:
         ),
     )
     assert store.objects[66].tilt_position == 100
+
+
+# --- reg climate readback --------------------------------------------------
+
+# A reg state as a live M-SERV serializes it: every field a string.
+REG_PAYLOAD = (
+    '{ "state": "0", "cooling": "0", "mode": "S",'
+    '"measureTemp": "25.90","setTemperature": "21.00", "on": 1787682427583}'
+)
+REG_READBACK = ThermostatState(
+    measured_temperature=25.9,
+    target_temperature=21.0,
+    mode="S",
+    cooling=False,
+)
+
+
+def test_reg_push_carries_thermostat_readback() -> None:
+    store = _store()
+    _apply(store, DETAILS_TOPIC, details({"id": 138, "typ_komponentu": "reg"}))
+    _apply(store, f"ampio/fromDB/{USER}/ob/138/state", REG_PAYLOAD)
+    obj = store.objects[138]
+    assert obj.value == "0"
+    assert obj.is_thermostat is True
+    assert obj.thermostat == REG_READBACK
+
+
+def test_plain_push_keeps_last_readback() -> None:
+    """A later report without the reg shape keeps the readback, like tilt."""
+    store = _store()
+    _apply(store, DETAILS_TOPIC, details({"id": 138, "typ_komponentu": "reg"}))
+    _apply(store, f"ampio/fromDB/{USER}/ob/138/state", REG_PAYLOAD)
+    _apply(
+        store,
+        f"ampio/fromDB/{USER}/ob/138/state",
+        '{"state": "1", "on": 1787682500000}',
+    )
+    obj = store.objects[138]
+    assert obj.value == "1"
+    assert obj.thermostat == REG_READBACK
+
+
+def test_snapshot_readback_change_alone_dispatches() -> None:
+    """A dated snapshot that moves only the readback still reports the
+    object changed - a climate consumer must see the temperature tick."""
+    store = _store()
+    _apply(store, DETAILS_TOPIC, details({"id": 138, "typ_komponentu": "reg"}))
+    _apply(store, f"ampio/fromDB/{USER}/ob/138/state", REG_PAYLOAD)
+    newer = REG_PAYLOAD.replace('"25.90"', '"26.40"').replace(
+        "1787682427583", "1787682600000"
+    )
+    applied = _apply(store, STATES_TOPIC, devices({"id": 138, "stan_json": newer}))
+    assert [o.id for o in _updated(applied)] == [138]
+    assert store.objects[138].thermostat is not None
+    assert store.objects[138].thermostat.measured_temperature == 26.4
+
+
+def test_states_snapshot_seeds_thermostat() -> None:
+    store = _store()
+    _apply(store, DETAILS_TOPIC, details({"id": 138, "typ_komponentu": "reg"}))
+    _apply(store, STATES_TOPIC, devices({"id": 138, "stan_json": REG_PAYLOAD}))
+    assert store.objects[138].thermostat == REG_READBACK
+
+
+def test_pending_reg_push_replays_thermostat() -> None:
+    """A reg push racing ahead of its catalogue row keeps its readback."""
+    store = _store()
+    _apply(store, f"ampio/fromDB/{USER}/ob/138/state", REG_PAYLOAD)
+    _apply(store, DETAILS_TOPIC, details({"id": 138, "typ_komponentu": "reg"}))
+    obj = store.objects[138]
+    assert obj.value == "0"
+    assert obj.thermostat == REG_READBACK
 
 
 # --- module diagnostics ----------------------------------------------------

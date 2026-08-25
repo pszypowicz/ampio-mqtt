@@ -23,8 +23,8 @@ generic value sensor / `analog_<n>` fallback.
 
 ## Wire notes the tables cannot carry
 
-- `reg` state is the running flag; #73 tracks the rich climate readback
-  (measured and target temperature, mode, cooling).
+- `reg` state is the running flag; the rich climate readback (measured
+  and target temperature, mode, cooling) is `AmpioObject.thermostat`.
 - `detekcja` and `symulacja` are system objects: always exposed by the
   M-SERV, visible even with an empty `leafId` (unless hidden).
   `symulacja`'s raw-channel prefix is not yet bridged (#26).
