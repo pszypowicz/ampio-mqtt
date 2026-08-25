@@ -39,7 +39,7 @@ _HIDDEN_FLAG = 1 << 4
 # M-SERV's own Matter bridge parses (docs/identity.md). Only the mac
 # segment is extracted; the F segments' meaning stays opaque. Strict on
 # purpose - a half-parsed mac that is wrong is worse than None.
-_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_[^_]+_[^_]+_[^_]+")
+_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_[^_]+_[^_]+_([^_]+)")
 
 # The M-SERV's Designer override mac: its objects' leafId embeds this value
 # (not the factory mac_global), and its own module row reports it as
@@ -102,6 +102,11 @@ class AmpioObject:
     # `kind` stays derived from `typ_komponentu` alone. docs/identity.md
     # holds the vocabulary and the storage path.
     matter_device_type: int | None = None
+    # Designer per-output location name (the "Lokalizacja" dropdown),
+    # resolved from the module's CAN-resident description record by
+    # AmpioClient.resolve_locations() - admin tier only. None until a
+    # resolve ran, and for objects it could not match. docs/identity.md.
+    location: str | None = None
     # What this object is. Derived - never passed: computed from
     # `typ_komponentu` and `interpretacja` on every construction,
     # `dataclasses.replace` included, so no instance can hold a kind that
@@ -257,6 +262,23 @@ class AmpioObject:
         """
         match = _LEAF_ID_RE.fullmatch(self.leaf_id)
         return int(match.group(1), 16) if match is not None else None
+
+    @property
+    def leaf_out_no(self) -> int | None:
+        """The output index within the module's description record.
+
+        Parsed from ``leaf_id``'s last segment - the join key that pairs
+        this object with its :class:`OutputDescription` entry
+        (docs/identity.md). None when ``leaf_id`` is empty, malformed,
+        or the segment is not a number.
+        """
+        match = _LEAF_ID_RE.fullmatch(self.leaf_id)
+        if match is None:
+            return None
+        try:
+            return int(match.group(2))
+        except ValueError:
+            return None
 
     @property
     def is_server_owned(self) -> bool:
