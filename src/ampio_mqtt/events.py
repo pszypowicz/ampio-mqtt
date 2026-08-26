@@ -26,7 +26,9 @@ class ObjectUpdated:
 
     Fires on live pushes, raw-channel edges, snapshot corrections, and
     catalogue rows that actually changed something - a re-requested
-    catalogue that says nothing new dispatches nothing.
+    catalogue that says nothing new dispatches nothing. A catalogue row
+    establishing an id the store did not already hold dispatches the
+    :class:`ObjectAdded` subclass instead.
     """
 
     object: AmpioObject

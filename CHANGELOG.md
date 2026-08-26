@@ -14,6 +14,41 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.31.0
+
+The dynamic catalogue. A running client already learned about additions
+and evictions the account's catalogue reported at reconnect; this
+release makes an addition a distinctly typed event and gives a
+long-running client a way to notice one without waiting for a
+reconnect, plus the LAN discovery facts a Home Assistant config flow
+needs to plan its own discovery path.
+
+### Added
+
+- **`ObjectAdded`** (#79) - an object's first event: dispatched instead
+  of `ObjectUpdated` on initial discovery, a later catalogue addition,
+  and the re-creation that follows an eviction. A subclass of
+  `ObjectUpdated`, so an existing `of=ObjectUpdated` subscription keeps
+  receiving these unchanged; a listener that wants only appearances
+  subscribes with `of=ObjectAdded` instead. A consumer that asserts
+  exact event types on a first appearance now needs to expect
+  `ObjectAdded` rather than `ObjectUpdated`.
+- **`AmpioClient(..., refresh_interval=...)`** (#80) - opts into a
+  periodic `refresh()` while the connection is up; `None` (the default)
+  leaves the cadence to the consumer. Each cycle re-publishes the
+  initial-discovery requests, so Designer additions and evictions
+  surface as `ObjectAdded` / `ObjectRemoved` without a reconnect. An
+  offline tick skips silently, and `stop()` cancels the task.
+- **`docs/lan-discovery.md`** (#85) - what a live mDNS and DHCP/ARP
+  probe found on the M-SERV's LAN presence: no service type or TXT
+  record is Ampio-specific (a co-located Matter process shares the
+  address but carries only generic Matter TXT data), so a Home
+  Assistant manifest `zeroconf` matcher has nothing reliable to match;
+  the DHCP-matcher facts (the Raspberry Pi OUI, shared by every Pi on
+  the LAN, and the hostname) and why the config flow's unique id comes
+  from probing the broker (`test_connection()`, `AmpioServerInfo.key`)
+  instead.
+
 ## 0.30.0
 
 The per-output location. Designer's "Lokalizacja" dropdown writes a
