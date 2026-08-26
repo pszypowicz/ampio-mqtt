@@ -74,6 +74,10 @@ class AmpioStore:
         # because the app-sync catalogue carries no params column and the two
         # replies arrive in no fixed order.
         self._params_by_id: dict[int, int] = {}
+        # `{object_id: DesignerResolution}` from the last resolve_locations()
+        # sweep, kept so a catalogue refresh re-applies what the CAN record
+        # proved (the catalogue itself never carries it).
+        self._designer_by_id: dict[int, _protocol.DesignerResolution] = {}
         # `{object_id: stan_json}` from the last `data/states` snapshot,
         # kept for the same reason; a snapshot row for an id no catalogue
         # established creates nothing.
@@ -124,6 +128,36 @@ class AmpioStore:
         The client calls this before it publishes the discovery requests.
         """
         self._guarded.clear()
+
+    def apply_designer_metadata(
+        self, resolved: dict[int, _protocol.DesignerResolution]
+    ) -> Applied:
+        """Hold the resolved designer table and fold it into known objects.
+
+        ``location`` is authoritative from the record (None clears a stale
+        name); ``matter_device_type`` refines and never clears - a record
+        without a tag leaves the held value standing. The catalogue merge
+        path (``_merge_metadata``) is where the column re-asserts itself.
+        """
+        applied = Applied()
+        self._designer_by_id = dict(resolved)
+        for oid, res in resolved.items():
+            obj = self.objects.get(oid)
+            if obj is None:
+                continue
+            updates: dict[str, Any] = {}
+            if obj.location != res.location:
+                updates["location"] = res.location
+            if (
+                res.matter_device_type is not None
+                and obj.matter_device_type != res.matter_device_type
+            ):
+                updates["matter_device_type"] = res.matter_device_type
+            if updates:
+                obj = replace(obj, **updates)
+                self.objects[oid] = obj
+                self._record(obj, applied)
+        return applied
 
     def apply(self, msg: _protocol.Inbound) -> Applied:
         """Apply one typed message and report what it changed."""
@@ -206,6 +240,14 @@ class AmpioStore:
         # A row without the column leaves the params_devices value standing.
         if updates["params"] is None:
             updates["params"] = self._params_by_id.get(meta.id, obj.params)
+        # The catalogue never carries the designer record's fields, so the
+        # held table re-applies them on every merge - including the
+        # re-creation after an eviction.
+        designer = self._designer_by_id.get(meta.id)
+        if designer is not None:
+            updates["location"] = designer.location
+            if designer.matter_device_type is not None:
+                updates["matter_device_type"] = designer.matter_device_type
         changed = any(getattr(obj, name) != value for name, value in updates.items())
         updated = replace(obj, **updates)
         # A row without the column (the app-sync shape) falls back to the

@@ -30,7 +30,7 @@ from conftest import (
 )
 
 from ampio_mqtt import _protocol
-from ampio_mqtt._protocol import ENDPOINTS, Router
+from ampio_mqtt._protocol import ENDPOINTS, DesignerResolution, Router
 from ampio_mqtt._store import AmpioStore, Applied
 from ampio_mqtt.classification import (
     InputKind,
@@ -1545,3 +1545,102 @@ def test_colliding_override_macs_warn_once_and_surface(
     resolved = dict(row_b, mac=0xBEEF)
     _apply(store, DEVICES_TOPIC, devices(row_a, resolved))
     assert store.colliding_macs == frozenset()
+
+
+# --- Designer-resolved location and matter type -----------------------------
+
+
+def _seed_catalogue(store: AmpioStore, *rows: dict) -> Applied:
+    """Apply a `devicesDetails` catalogue reply carrying `rows` (or none)."""
+    return _apply(store, DETAILS_TOPIC, details(*rows))
+
+
+def test_apply_designer_metadata_sets_location_and_refines_type() -> None:
+    store = AmpioStore()
+    _seed_catalogue(
+        store, {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
+    )
+    applied = store.apply_designer_metadata(
+        {64: DesignerResolution(location="Potter", matter_device_type=256)}
+    )
+    assert store.objects[64].location == "Potter"
+    assert store.objects[64].matter_device_type == 256
+    assert [e.object.id for e in applied.events] == [64]
+    # Re-applying the identical table is not news.
+    assert (
+        store.apply_designer_metadata(
+            {64: DesignerResolution(location="Potter", matter_device_type=256)}
+        ).events
+        == []
+    )
+
+
+def test_designer_type_never_clears_the_db_column() -> None:
+    store = AmpioStore()
+    _seed_catalogue(
+        store,
+        {
+            "id": 5,
+            "typ_komponentu": "przekaznik",
+            "leafId": "0_cb89_257_2_1",
+            "type": "266",
+        },
+    )
+    store.apply_designer_metadata(
+        {5: DesignerResolution(location="Testowe", matter_device_type=None)}
+    )
+    assert store.objects[5].matter_device_type == 266
+    assert store.objects[5].location == "Testowe"
+
+
+def test_catalogue_merge_reapplies_the_designer_table() -> None:
+    store = AmpioStore()
+    row = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
+    _seed_catalogue(store, row)
+    store.apply_designer_metadata(
+        {64: DesignerResolution(location="Potter", matter_device_type=256)}
+    )
+    _seed_catalogue(store)  # eviction: empty catalogue
+    _seed_catalogue(store, row)  # the object returns
+    assert store.objects[64].location == "Potter"
+    assert store.objects[64].matter_device_type == 256
+
+
+def test_apply_designer_metadata_for_an_unknown_id_waits_for_the_catalogue() -> None:
+    """A resolution racing ahead of the catalogue (or arriving for an object
+    just evicted) creates no placeholder - the held table applies it once the
+    id's own catalogue row lands, mirroring the params_devices convention
+    (`test_params_table_before_catalogue_supplies_hidden_flag`)."""
+    store = AmpioStore()
+    applied = store.apply_designer_metadata(
+        {999: DesignerResolution(location="X", matter_device_type=256)}
+    )
+    assert applied.events == []
+    assert store.objects == {}
+
+    _seed_catalogue(
+        store, {"id": 999, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
+    )
+    assert store.objects[999].location == "X"
+    assert store.objects[999].matter_device_type == 256
+
+
+def test_designer_location_none_clears_a_stale_name() -> None:
+    store = AmpioStore()
+    row = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
+    _seed_catalogue(store, row)
+    store.apply_designer_metadata(
+        {64: DesignerResolution(location="Potter", matter_device_type=None)}
+    )
+    assert store.objects[64].location == "Potter"
+
+    applied = store.apply_designer_metadata(
+        {64: DesignerResolution(location=None, matter_device_type=None)}
+    )
+    assert store.objects[64].location is None
+    assert [e.object.id for e in applied.events] == [64]
+
+    # The clear survives a catalogue re-merge.
+    again = _seed_catalogue(store, row)
+    assert store.objects[64].location is None
+    assert again.events == []

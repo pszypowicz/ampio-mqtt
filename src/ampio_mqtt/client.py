@@ -184,6 +184,13 @@ class AmpioClient:
         # poison payload logs its traceback once instead of per delivery.
         self._poisoned_topics: set[str] = set()
 
+        # Per-mac futures awaiting a device_api info reply; every waiter
+        # for a mac receives the same reply, exactly as endpoint fetches
+        # share one.
+        self._descriptions_waiters: dict[
+            int, list[asyncio.Future[tuple[_protocol.OutputDescription, ...]]]
+        ] = {}
+
     def _subscriptions(self) -> list[str]:
         """Every topic the client needs on each (re)connect."""
         topics = [
@@ -197,6 +204,7 @@ class AmpioClient:
                 *RAW_INPUT_WILDCARDS,
                 RAW_DIAGNOSTICS_WILDCARD,
                 RAW_EVENT_WILDCARD,
+                _protocol.DEVICE_API_INFO_WILDCARD,
             ]
         return topics
 
@@ -224,6 +232,10 @@ class AmpioClient:
                 if parsed is None:
                     _LOGGER.warning("Could not parse Ampio %s reply", msg.endpoint.name)
                 self._channels[msg.endpoint.name].deliver(payload, parsed)
+                return
+            if isinstance(msg, _protocol.DeviceDescriptions):
+                for future in self._descriptions_waiters.pop(msg.mac, []):
+                    future.set_result(msg.entries)
                 return
             applied = self._store.apply(msg)
             if isinstance(msg, _protocol.EndpointReply):
@@ -693,6 +705,106 @@ class AmpioClient:
         # seeing each other's list mutations.
         return list(cast("list[AmpioScene]", replies["scenes"]))
 
+    async def fetch_locations(self, timeout: float = 5.0) -> dict[int, str]:
+        """Return ``{location_id: name}`` - the Designer "Lokalizacja" table.
+
+        The name table the per-output location pointer resolves through;
+        :meth:`resolve_locations` consumes it and per-object consumers read
+        :pyattr:`AmpioObject.location` instead. Admin tier only - the
+        ``config`` surface never answers a restricted account, and the call
+        raises ``RuntimeError`` for one.
+
+        Requires ``start()`` to have completed. Raises
+        ``AmpioConnectionError`` if the broker is not connected and
+        ``AmpioTimeoutError`` if the response does not arrive within
+        ``timeout``.
+        """
+        replies = await self._fetch(
+            ("locations",),
+            timeout,
+            "Timed out fetching the locations table from the Ampio broker",
+        )
+        return dict(cast("dict[int, str]", replies["locations"]))
+
+    async def resolve_locations(self, timeout: float = 10.0) -> dict[int, str]:
+        """Resolve every object's Designer location and return the map.
+
+        Fetches the locations name table, asks each catalogued module for
+        its CAN-resident description record over the ``device_api`` tree,
+        joins the entries to objects, and folds the result into the store:
+        :pyattr:`AmpioObject.location` carries the name afterwards, and a
+        record's Matter tag refines :pyattr:`AmpioObject.matter_device_type`
+        (#110). Changes dispatch as :class:`ObjectUpdated`.
+
+        Returns ``{object_id: location_name}`` for what resolved. A module
+        that does not answer within ``timeout`` is skipped without error -
+        offline modules are normal - so the map can be partial; call again
+        for another sweep. An object absent from a sweep's resolution keeps
+        its previous ``location`` - a partial sweep never clears it - until
+        a catalogue eviction or a later sweep that covers the object.
+
+        The sweep waits out the full ``timeout`` whenever any module stays
+        silent, which is normal on a real install, and the name table is
+        fetched first on its own ``timeout`` budget, so the call can take
+        up to twice ``timeout`` end to end.
+
+        Admin tier only: the ``device_api`` tree answers no other account,
+        and the call raises ``RuntimeError`` for one. Requires ``start()``
+        to have completed. Raises ``AmpioConnectionError`` if the broker is
+        not connected and ``AmpioTimeoutError`` if the name table itself
+        does not arrive.
+        """
+        if self._tier is not AccessTier.ADMIN:
+            raise RuntimeError(
+                "resolve_locations() needs the reserved admin login - the "
+                "device_api tree answers no other account"
+            )
+        names = await self.fetch_locations(timeout=timeout)
+        macs = sorted(
+            {mod.mac for mod in self._store.modules.values() if mod.mac is not None}
+        )
+        loop = asyncio.get_running_loop()
+        futures: dict[int, asyncio.Future[tuple[_protocol.OutputDescription, ...]]] = {}
+        for mac in macs:
+            future = loop.create_future()
+            futures[mac] = future
+            self._descriptions_waiters.setdefault(mac, []).append(future)
+        try:
+            # The publishes sit inside the window, as _fetch's do; the
+            # window elapsing is not an error - it bounds how long the
+            # sweep waits for stragglers.
+            async with asyncio.timeout(timeout):
+                for mac in macs:
+                    await self._connection.publish(
+                        _protocol.device_api_request_topic(mac), b""
+                    )
+                await asyncio.gather(*futures.values())
+        except TimeoutError:
+            pass
+        finally:
+            for mac, future in futures.items():
+                waiters = self._descriptions_waiters.get(mac)
+                if waiters is not None:
+                    waiters.remove(future)
+                    if not waiters:
+                        del self._descriptions_waiters[mac]
+        by_mac = {
+            mac: future.result()
+            for mac, future in futures.items()
+            if future.done() and not future.cancelled()
+        }
+        resolved = _protocol.resolve_designer(
+            self._store.objects, by_mac, names, self._store.colliding_macs
+        )
+        applied = self._store.apply_designer_metadata(resolved)
+        for event in applied.events:
+            self._dispatch(event)
+        return {
+            oid: res.location
+            for oid, res in resolved.items()
+            if res.location is not None
+        }
+
     async def send_event(self, event_number: int) -> None:
         """Raise a bus event, running whatever Ampio logic is bound to it.
 
@@ -1026,6 +1138,10 @@ class AmpioClient:
         ``AmpioTimeoutError`` as silence.
         """
         for name in names:
+            if name not in self._channels:
+                raise RuntimeError(
+                    f"endpoint {name!r} is not served on the {self._tier.value} tier"
+                )
             if ENDPOINT_BY_NAME[name].parses is None:
                 raise RuntimeError(
                     f"endpoint {name!r} is store-gated and produces no "

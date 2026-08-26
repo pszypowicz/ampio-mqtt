@@ -35,7 +35,7 @@ of the account's app permissions). Everything on the
 | ---------------- | ----------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `devicesDetails` | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devicesDetails` | `{Status, List: [{id, id_urzadzenia, typ_komponentu, interpretacja, funkcja, leafId, opis_menu, type, stan_json, ...}]}` - `type` is the Matter device type tag; see [`identity.md`](identity.md).                                                                                                                                                                 |
 | `devices`        | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devices`        | `{List: [{id, mac, mac_global, typ_urzadzenia, nazwa_urzadzenia, wersja_softu, wersja_pcb, ...}]}`                                                                                                                                                                                                                                                                 |
-| `locations`      | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/locations`      | `{List: [{id, opis_menu}]}` - Designer's "Location" name table only (see [`untapped-surfaces.md`](untapped-surfaces.md) for the per-output pointer half).                                                                                                                                                                                                          |
+| `locations`      | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/locations`      | `{List: [{id, opis_menu, opis_rozwiniety}]}` - Designer's "Lokalizacja" name table; the per-output pointer that resolves through it rides the `device_api` tree below, see [`identity.md`](identity.md).                                                                                                                                                           |
 | `devices`        | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/devices`          | `{List: [...]}` - app-sync object catalogue: the `devicesDetails` row shape minus `params`/`stan_json`, filtered to the account's app grants.                                                                                                                                                                                                                      |
 | `params_devices` | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/params_devices`   | `{List: [{id, params, param1, czas, powiazane, url}]}` - per-object `params` bitfields for the **full** catalogue (not grant-filtered).                                                                                                                                                                                                                            |
 | `groups`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/groups`           | `{List: [{id, id_rodzica, opis_menu}]}` - room tree.                                                                                                                                                                                                                                                                                                               |
@@ -43,6 +43,21 @@ of the account's app permissions). Everything on the
 | `scenes`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/scenes`           | `{List: [{id, parentId, sceneName, active, Actions, Infos, Schedules}]}` - scene catalogue. `Actions` are wire command strings, `Infos` their structured form.                                                                                                                                                                                                     |
 | (empty)          | `ampio/control/<user>/states` | `ampio/fromDB/<user>/data/states`           | `{List: [{id, stan_json}]}` - bulk snapshot of the account's object states.                                                                                                                                                                                                                                                                                        |
 | (empty)          | `ampio/control/<user>/info`   | `ampio/fromDB/<user>/data/info`             | `{Results: {mac, userId, serverVersion, serverRevision, mqttVersion, local_ip, device_id, ...}}` - server self-report; retained in the account namespace. `userId` is the asking account's id (`-1` for the reserved `admin` login), surfaced as `AmpioServerInfo.access_tier` for config flows; a running client's tier is decided by its authenticated username. |
+
+## Per-module CAN records (`device_api`)
+
+A third topic pair, alongside the `config`/`data` request-response
+surfaces and the raw tree: `device_api/to/<machex>/get_data` (empty
+payload, mac lowercase hex) asks one module for its full CAN-resident
+description record; the reply lands on
+`device_api/from/<MACHEX>/info` (mac UPPERCASE hex on the wire). The
+reply's `descriptions` field carries, base64-encoded, the per-output
+entries behind both the Matter device type tag and the Designer
+"Lokalizacja" location pointer - the frame layout, the descType
+enum, and the join rule that resolves an object to its entry are in
+[`identity.md`](identity.md). Admin-only, exactly like the raw tree.
+`AmpioClient.resolve_locations()` drives this pair; a consumer never
+calls it directly.
 
 Each account namespace also carries a retained
 `ampio/fromDB/<user>/md5/<keyword>` topic per app-sync table (`devices`,
