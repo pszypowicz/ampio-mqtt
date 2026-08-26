@@ -14,6 +14,38 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.32.0
+
+The device-metadata batch behind the HA topology contract pinned on
+issue #114: the partition of objects into devices must build identically
+on both account tiers, so everything here is either a tier-independent
+classification or admin-only decoration that never moves an entity
+between devices.
+
+### Added
+
+- **`wej` classifies as `InputKind`** (#117) - the per-channel
+  physical-input object the Designer creates for a wired button, a
+  generic boolean like `flaga`. Its raw mirror rides the existing
+  digital-input wildcard (`state/i/<funkcja>`), so an admin session gets
+  the low-latency edge exactly as flags do; the per-object 255/0 form
+  serves both tiers. `INPUT_KIND_KEYS` grows by `"wej"`, which trips a
+  consumer's exhaustiveness test by design.
+- **`AmpioModule.location`** (#114) - the module-level Designer
+  "Lokalizacja" (where the box is mounted, not where its loads are),
+  read from the DEVICE_NAME entry of the same `get_data` record
+  `resolve_locations()` already fetches. None is authoritative for an
+  answering module; an unswept module keeps its value, and the held
+  table re-applies it across catalogue refreshes and evictions.
+  `ModuleUpdated` dispatches on change. Admin tier only, like the rest
+  of the `device_api` surface.
+- **`AmpioModule.mounting`** (#115) - curated form-factor class per
+  type code: `cabinet` (DIN rail), `wall` (panels, sensors, outdoor
+  field devices), `flush` (in-box `-p` modules), None for virtual,
+  bridge-only, handheld, and unknown codes. Derived like `model`;
+  the table is `device_types.MODULE_MOUNTING`. Decoration for device
+  info only - the topology contract forbids branching on it.
+
 ## 0.31.0
 
 The dynamic catalogue. A running client already learned about additions
