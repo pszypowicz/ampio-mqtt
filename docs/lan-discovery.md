@@ -54,12 +54,11 @@ weak on their own:
   OUI block, shared by every Raspberry Pi on the same LAN, whatever
   they run. A DHCP matcher keyed on this OUI alone would match any Pi,
   not specifically an M-SERV.
-- **Hostname.** The only hostname advertised anywhere on the LAN during
-  the probe was `ampio.local` itself; the ARP read produced no separate
-  DHCP-assigned hostname for the broker's address. So there is no
-  alternate hostname spelling to add to a DHCP matcher - the hostname
-  signal a matcher could use is the same `ampio.local` name the mDNS
-  path already resolves directly, not an independent confirmation.
+- **Hostname.** No hostname other than `ampio.local` was observed for
+  the broker's address. The probe did not read a DHCP lease, so the
+  DHCP client hostname is unknown - `arp -n` only maps an IP to a MAC
+  and cannot see it. A DHCP matcher keyed on hostname would need the
+  lease table read first; that has not been done.
 
 Neither signal is strong enough to identify an M-SERV on its own; both
 are weaker than the mDNS hostname resolution already in `discover()`.

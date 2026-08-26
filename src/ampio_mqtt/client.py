@@ -137,7 +137,7 @@ class AmpioClient:
         cadence to the consumer. Each cycle re-publishes the
         initial-discovery requests, so Designer additions and evictions
         surface as :class:`ObjectAdded` / :class:`ObjectRemoved` without
-        a reconnect (#80).
+        a reconnect (#80). Zero or negative raises ``ValueError``.
 
         ``mqtt_client_factory`` is the transport seam: a zero-argument
         callable returning the MQTT session object for one connect
@@ -515,10 +515,10 @@ class AmpioClient:
             client.subscribe(on_135, of=(ObjectUpdated, ObjectRemoved),
                              object_id=135)
 
-        Only :class:`ObjectUpdated` and :class:`ObjectRemoved` carry the
-        ``.object`` an ID can filter on; ``object_id`` with any other
-        class, or with no ``of`` at all, raises ``ValueError`` at
-        registration time.
+        Only :class:`ObjectUpdated` (and its :class:`ObjectAdded` subclass)
+        and :class:`ObjectRemoved` carry the ``.object`` an ID can filter
+        on; ``object_id`` with any other class, or with no ``of`` at all,
+        raises ``ValueError`` at registration time.
 
         The returned unsubscribe removes exactly its own registration and
         is idempotent; the same listener registered twice keeps its other

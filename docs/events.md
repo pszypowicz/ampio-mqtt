@@ -31,8 +31,8 @@ callback parameter precisely. `object_id` narrows further, to one
 object's events, and dispatches in O(1) of the total count of such
 registrations - the shape for a consumer with one listener per object
 (#99). It applies only to the classes that carry `.object`
-(`ObjectUpdated`, `ObjectRemoved`); any other combination raises
-`ValueError` at registration time.
+(`ObjectUpdated`, and its `ObjectAdded` subclass, and `ObjectRemoved`);
+any other combination raises `ValueError` at registration time.
 
 ## What arrives
 
@@ -47,6 +47,12 @@ registrations - the shape for a consumer with one listener per object
 | `AvailabilityChanged` | The broker connection came up or went down (never for a `stop()`).                                                                                                                                                                    | both       | no       |
 | `AuthFailed`          | The broker rejected the credentials after `start()`; reauthenticate.                                                                                                                                                                  | both       | yes      |
 | `ConnectionDied`      | The connection loop crashed; only a fresh `start()` recovers.                                                                                                                                                                         | both       | yes      |
+
+Because `ObjectAdded` subclasses `ObjectUpdated`, a `match` statement
+that destructures the stream needs its `case ObjectAdded():` arm before
+`case ObjectUpdated():` - the reverse order matches every `ObjectAdded`
+on the `ObjectUpdated` arm first and never reaches the `ObjectAdded`
+one.
 
 "Admin only" reflects what the M-SERV serves each account tier - see
 [`account-tiers.md`](account-tiers.md). A standard account can still

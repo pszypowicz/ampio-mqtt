@@ -32,7 +32,12 @@ needs to plan its own discovery path.
   receiving these unchanged; a listener that wants only appearances
   subscribes with `of=ObjectAdded` instead. A consumer that asserts
   exact event types on a first appearance now needs to expect
-  `ObjectAdded` rather than `ObjectUpdated`.
+  `ObjectAdded` rather than `ObjectUpdated`. Two other spots break the
+  same way. Dataclass equality is class-exact, so
+  `ObjectUpdated(obj) == ObjectAdded(obj)` is `False` even for the same
+  object. And in a `match` statement, a `case ObjectUpdated():` arm
+  placed before `case ObjectAdded():` shadows it, since case patterns
+  test top to bottom.
 - **`AmpioClient(..., refresh_interval=...)`** (#80) - opts into a
   periodic `refresh()` while the connection is up; `None` (the default)
   leaves the cadence to the consumer. Each cycle re-publishes the

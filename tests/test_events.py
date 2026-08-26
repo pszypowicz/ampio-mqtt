@@ -104,3 +104,40 @@ async def test_object_added_object_id_filter() -> None:
         assert [e.object.id for e in events] == [5]
     finally:
         await client.stop()
+
+
+async def test_reconnect_replay_does_not_redispatch_object_added() -> None:
+    """A reconnect re-requests the catalogue; replaying an already-known
+    row must not re-fire `ObjectAdded` for it."""
+    broker = FakeBroker()
+    client = AmpioClient("host", username="u", mqtt_client_factory=broker.factory)
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    try:
+        feed(
+            client,
+            "ampio/fromDB/u/data/devices",
+            details({"id": 5, "typ_komponentu": "flaga"}),
+        )
+        added: list[ObjectAdded] = []
+        client.subscribe(added.append, of=ObjectAdded)
+
+        # A reconnect's replay of the same catalogue must not re-add object 5.
+        feed(
+            client,
+            "ampio/fromDB/u/data/devices",
+            details({"id": 5, "typ_komponentu": "flaga"}),
+        )
+        assert added == []
+
+        # A genuinely new row (6) alongside the known one (5) adds only 6.
+        feed(
+            client,
+            "ampio/fromDB/u/data/devices",
+            details(
+                {"id": 5, "typ_komponentu": "flaga"},
+                {"id": 6, "typ_komponentu": "flaga"},
+            ),
+        )
+        assert [e.object.id for e in added] == [6]
+    finally:
+        await client.stop()

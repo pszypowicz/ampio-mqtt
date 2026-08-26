@@ -89,6 +89,13 @@ cycle re-publishes the same initial-discovery requests `start()` and
 side surfaces as `ObjectAdded` / `ObjectRemoved` on the next tick,
 without needing a reconnect to notice it.
 
+Each tick also runs `begin_refresh()`, which clears the live-value
+guard, so an undated live value can be re-seeded from the M-SERV's DB
+snapshot on the next reply (a raw-proven object is exempt - its resync
+is the broker's retained raw table, not the DB snapshot). Each cycle
+re-fetches the full catalogue, so `refresh_interval` is sized in
+minutes, not seconds.
+
 ## What runs on demand, not automatically
 
 Two helpers are not part of the auto sequence because the consumer
