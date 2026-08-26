@@ -462,6 +462,36 @@ def resolve_designer(
     return out
 
 
+# The description class describing the module itself rather than one output:
+# its `desc` is the module name and its `out_loc` the module-level location.
+DEVICE_NAME_DESC_TYPE = 1
+
+
+def resolve_module_locations(
+    descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
+    location_names: Mapping[int, str],
+    colliding_macs: frozenset[int],
+) -> dict[int, str | None]:
+    """The module-level location of every answering module, by mac.
+
+    Reads the DEVICE_NAME entry of each record. A record without the
+    entry, with ``out_loc`` 0, or with a pointer the names table lacks
+    reads unassigned - the module answered, so None is authoritative.
+    Colliding macs are skipped: the reply cannot be attributed.
+    """
+    out: dict[int, str | None] = {}
+    for mac, entries in descriptions_by_mac.items():
+        if mac in colliding_macs:
+            continue
+        entry = next((e for e in entries if e.desc_type == DEVICE_NAME_DESC_TYPE), None)
+        out[mac] = (
+            location_names.get(entry.out_loc)
+            if entry is not None and entry.out_loc
+            else None
+        )
+    return out
+
+
 def _to_str(value: Any) -> str | None:
     """Coerce a field to a non-empty string, or None.
 

@@ -17,7 +17,7 @@ from conftest import (
     feed,
 )
 
-from ampio_mqtt import AmpioClient, ObjectUpdated
+from ampio_mqtt import AmpioClient, ModuleUpdated, ObjectUpdated
 from ampio_mqtt._protocol import (
     ENDPOINTS,
     DesignerResolution,
@@ -28,6 +28,7 @@ from ampio_mqtt._protocol import (
     parse_descriptions_blob,
     parse_device_info,
     resolve_designer,
+    resolve_module_locations,
 )
 from ampio_mqtt.models import AmpioObject
 
@@ -167,6 +168,26 @@ def test_resolve_designer_skips_colliding_macs() -> None:
     assert resolve_designer(objects, by_mac, {14: "P"}, frozenset({0xCB89})) == {}
 
 
+def test_resolve_module_locations_reads_the_device_name_entry() -> None:
+    by_mac = {
+        0xCB89: _entries((1, 0, 14, 0, "Modul"), (12, 0, 19, 256, "Lampa")),
+        0xBEEF: _entries((12, 0, 19, 256, "L")),  # no DEVICE_NAME entry
+        0xCAFE: _entries((1, 0, 0, 0, "M")),  # DEVICE_NAME with outLoc 0
+    }
+    names = {14: "Rozdzielnia", 19: "Salon"}
+    assert resolve_module_locations(by_mac, names, frozenset()) == {
+        0xCB89: "Rozdzielnia",
+        0xBEEF: None,
+        0xCAFE: None,
+    }
+
+
+def test_resolve_module_locations_skips_colliding_macs() -> None:
+    by_mac = {0xCB89: _entries((1, 0, 14, 0, "M"))}
+    names = {14: "Rozdzielnia"}
+    assert resolve_module_locations(by_mac, names, frozenset({0xCB89})) == {}
+
+
 async def _admin_client_with_catalogue() -> tuple[AmpioClient, FakeBroker]:
     broker = FakeBroker()
     client = AmpioClient(
@@ -229,14 +250,27 @@ async def test_resolve_locations_sweeps_joins_and_merges() -> None:
     try:
         events: list[ObjectUpdated] = []
         client.subscribe(events.append, of=ObjectUpdated, object_id=64)
+        module_events: list[ModuleUpdated] = []
+        client.subscribe(module_events.append, of=ModuleUpdated)
         info_payload = json.dumps(
-            {"descriptions": base64.b64encode(frame(12, 0, 14, 256, "L")).decode()}
+            {
+                "descriptions": base64.b64encode(
+                    frame(1, 0, 19, 0, "Modul") + frame(12, 0, 14, 256, "L")
+                ).decode()
+            }
         )
         delivery = asyncio.create_task(
             _deliver_causally(
                 client,
                 broker,
-                json.dumps({"List": [{"id": 14, "opis_menu": "Potter"}]}),
+                json.dumps(
+                    {
+                        "List": [
+                            {"id": 14, "opis_menu": "Potter"},
+                            {"id": 19, "opis_menu": "Rozdzielnia"},
+                        ]
+                    }
+                ),
                 [("device_api/from/CB89/info", info_payload)],
             )
         )
@@ -249,6 +283,8 @@ async def test_resolve_locations_sweeps_joins_and_merges() -> None:
         assert client.objects[64].matter_device_type == 256
         assert ("device_api/to/cb89/get_data", b"") in broker.published
         assert [e.object.location for e in events] == ["Potter"]
+        assert client.modules[16].location == "Rozdzielnia"
+        assert [m.module.location for m in module_events] == ["Rozdzielnia"]
     finally:
         await client.stop()
 

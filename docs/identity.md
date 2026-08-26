@@ -19,6 +19,17 @@ The M-SERV's default `mac` is `1`, which is not unique. Treat `mac` as
 unique _within a single install_ (the user assigns the overrides), not
 globally.
 
+`typ_urzadzenia` also derives two decoration fields on `AmpioModule`:
+`model` (the product name from the vendored catalogue) and `mounting`
+(#115) - the curated form-factor class `cabinet` (DIN rail) / `wall`
+(panels, sensors, outdoor field devices) / `flush` (in-box `-p`
+modules), None for virtual, bridge-only, handheld, and unknown codes.
+The classification follows Ampio's naming convention, which no official
+source asserts, so it is a hand-curated table
+(`device_types.MODULE_MOUNTING`). Both fields decorate device info
+only; the device topology never branches on them (#114 pins that
+contract).
+
 ## Objects
 
 | Field                     | Stable across module replacement?                                                                                                                                        | Notes |
@@ -255,6 +266,20 @@ web bundle's enum):
 | 25    | SatelOutput                                                         |
 | 26    | ROLLER                                                              |
 | 34    | (the RGBW output class; no symbolic name recovered from the bundle) |
+
+### The module-level location (`AmpioModule.location`)
+
+The record's one DEVICE_NAME frame (descType 1) describes the module
+itself: its `desc` is the module name and its `outLoc` the module-level
+"Lokalizacja" - where the module is mounted, not where its loads are
+(#114). `resolve_locations()` reads it from the same reply and sets
+`AmpioModule.location`, dispatching `ModuleUpdated` on change. A record
+without the frame, or with `outLoc` 0, reads unassigned (None) - the
+module answered, so None is authoritative; a module the sweep did not
+cover keeps its previous value, exactly like the per-object side. On
+the reference install the installer tagged wall devices this way (an
+M-SENS and three M-DOT panels carry room names) and left the cabinet
+modules untagged.
 
 ### The join rule
 

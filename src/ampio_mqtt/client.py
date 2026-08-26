@@ -778,7 +778,11 @@ class AmpioClient:
         joins the entries to objects, and folds the result into the store:
         :pyattr:`AmpioObject.location` carries the name afterwards, and a
         record's Matter tag refines :pyattr:`AmpioObject.matter_device_type`
-        (#110). Changes dispatch as :class:`ObjectUpdated`.
+        (#110). Changes dispatch as :class:`ObjectUpdated`. The same record
+        carries the module-level location (the DEVICE_NAME entry - where
+        the module itself is mounted), folded into
+        :pyattr:`AmpioModule.location` with :class:`ModuleUpdated`
+        dispatched on change (#114).
 
         Returns ``{object_id: location_name}`` for what resolved. A module
         that does not answer within ``timeout`` is skipped without error -
@@ -841,7 +845,12 @@ class AmpioClient:
             self._store.objects, by_mac, names, self._store.colliding_macs
         )
         applied = self._store.apply_designer_metadata(resolved)
-        for event in applied.events:
+        module_applied = self._store.apply_module_locations(
+            _protocol.resolve_module_locations(
+                by_mac, names, self._store.colliding_macs
+            )
+        )
+        for event in (*applied.events, *module_applied.events):
             self._dispatch(event)
         return {
             oid: res.location

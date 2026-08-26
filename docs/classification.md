@@ -28,6 +28,10 @@ generic value sensor / `analog_<n>` fallback.
 - `detekcja` and `symulacja` are system objects: always exposed by the
   M-SERV, visible even with an empty `leafId` (unless hidden).
   `symulacja`'s raw-channel prefix is not yet bridged (#26).
+- `wej` is the per-channel physical-input object the Designer creates
+  for a wired button. Its per-object payload is 255 pressed / 0
+  released, and its `interpretacja` mirrors `funkcja` (the channel
+  number), so it refines nothing (#117).
 - `roleta_lamelki` is what the Ampio app writes when a cover's type is
   set to "blinds - slats"; the same cover reads back as
   `roleta_procenty` while it is set to "blinds - percentage". Only the
