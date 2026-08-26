@@ -835,3 +835,58 @@ async def test_listeners_run_on_the_start_loop_in_the_main_thread() -> None:
     assert contexts
     here = (asyncio.get_running_loop(), threading.main_thread())
     assert all(ctx == here for ctx in contexts)
+
+
+# --- periodic refresh cadence (#80) ----------------------------------------
+
+
+async def test_refresh_interval_republishes_discovery() -> None:
+    broker = FakeBroker()
+    client = AmpioClient(
+        "host", username="u", mqtt_client_factory=broker.factory, refresh_interval=0.05
+    )
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    try:
+        broker.published.clear()
+        await asyncio.sleep(0.12)
+        # At least one full cycle re-published the discovery set.
+        assert ("ampio/control/u/states", b"") in broker.published
+    finally:
+        await client.stop()
+    broker.published.clear()
+    await asyncio.sleep(0.12)
+    assert broker.published == []
+
+
+async def test_refresh_interval_defaults_off() -> None:
+    broker = FakeBroker()
+    client = AmpioClient("host", username="u", mqtt_client_factory=broker.factory)
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    try:
+        broker.published.clear()
+        await asyncio.sleep(0.12)
+        assert broker.published == []
+    finally:
+        await client.stop()
+
+
+def test_refresh_interval_must_be_positive() -> None:
+    for bad in (0, -1, -0.5):
+        with pytest.raises(ValueError):
+            AmpioClient("host", username="u", refresh_interval=bad)
+
+
+async def test_refresh_interval_skips_an_offline_tick() -> None:
+    """An offline tick publishes nothing and the loop survives to the next
+    tick - mirrors the connection-drop pattern the backoff test uses."""
+    broker = FakeBroker()
+    broker.stream_error = aiomqtt.MqttError("connection lost")
+    client = make_client(broker, refresh_interval=0.05, reconnect_interval=3600)
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    await asyncio.sleep(0.05)  # the drop has happened; the loop is in backoff
+    assert client.available is False
+    broker.published.clear()
+    await asyncio.sleep(0.12)  # a tick lands while still offline
+    assert broker.published == []
+    async with asyncio.timeout(1.0):
+        await client.stop()
