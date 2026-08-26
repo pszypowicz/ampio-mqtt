@@ -29,6 +29,7 @@ from .events import (
     ConnectionDied,
     ModuleRemoved,
     ModuleUpdated,
+    ObjectAdded,
     ObjectRemoved,
     ObjectUpdated,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "InputKind",
     "ModuleRemoved",
     "ModuleUpdated",
+    "ObjectAdded",
     "ObjectKind",
     "ObjectRemoved",
     "ObjectUpdated",

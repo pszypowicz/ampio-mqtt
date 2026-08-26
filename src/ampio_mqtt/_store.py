@@ -20,6 +20,7 @@ from .events import (
     BusEvent,
     ModuleRemoved,
     ModuleUpdated,
+    ObjectAdded,
     ObjectRemoved,
     ObjectUpdated,
     StoreEvent,
@@ -232,6 +233,7 @@ class AmpioStore:
         nothing new.
         """
         obj = self.objects.get(meta.id)
+        created = obj is None
         if obj is None:
             obj = AmpioObject(id=meta.id)
         updates: dict[str, Any] = {
@@ -302,9 +304,13 @@ class AmpioStore:
                     updated_at=stamp,
                 )
         self.objects[meta.id] = updated
-        if changed:
+        if created:
+            # Existence is the news: a bare row dispatches too, and the
+            # addition is the object's first event.
+            applied.events.append(ObjectAdded(updated))
+        elif changed:
             self._record(updated, applied)
-        return changed
+        return changed or created
 
     def _handle_devices(self, payload: str, applied: Applied) -> bool:
         modules = _protocol.parse_devices(payload)
