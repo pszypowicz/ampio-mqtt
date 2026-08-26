@@ -192,3 +192,88 @@ Designer web bundle embeds it:
 | Sensors               | 0x0015 Contact, 0x0106 Light, 0x0107 Occupancy, 0x0302 Temperature, 0x0305 Pressure, 0x0306 Flow, 0x0307 Humidity, 0x0850 On-off, 0x0076 Smoke/CO alarm |
 | Closures              | 0x000A Door lock, 0x000B Door lock controller, 0x0202 Window covering, 0x0203 Window covering controller                                                |
 | HVAC                  | 0x0300 Heating/cooling unit, 0x0301 Thermostat, 0x002B Fan, 0x002D Air purifier, 0x002C Air quality sensor                                              |
+
+The CAN-resident description record is authoritative for the tag; the
+`type` column mirror lags it - an output tagged 256 (0x0100) on the CAN
+record can still show an empty `type` column, live-observed on the
+reference install. `AmpioClient.resolve_locations()` reads the CAN
+record directly and refines `AmpioObject.matter_device_type` from it: a
+record's tag overrides the column value, and a record without one
+leaves the column value standing (#110).
+
+## The Designer location (per-output `outLoc`)
+
+The Designer "Lokalizacja" dropdown on an output's "Description in
+device" panel writes a second pointer into the same per-output
+description record as the Matter tag above: `{descType, outNo, outLoc,
+outType, desc}`. `outLoc` indexes the locations name table (request
+keyword `locations` on the admin `config` surface, `{id, opis_menu,
+opis_rozwiniety}` rows); 0 means unassigned. Reading it back needs the
+same CAN-resident record the Matter tag lives in, since Designer does
+not mirror `outLoc` to the object catalogue: the DB row's `lokalizacja`
+column reads 0 for every object on the reference install, unlike
+`outType`, which the `type` column does mirror (if lagged, as above).
+
+### The get_data request/reply pair
+
+Request: an empty payload to `device_api/to/<machex>/get_data`, mac in
+lowercase hex. Reply: JSON on `device_api/from/<MACHEX>/info`, mac in
+UPPERCASE hex on the wire - parse the topic segment with `int(x, 16)`,
+never compare strings. The reply's `descriptions` field is base64 of
+the module's full description record.
+
+The blob decodes into repeated little-endian frames:
+
+```
+[len:2][descType:2][outNo:2][outLoc:2][outType:2][utf8 desc]
+```
+
+`len` counts the whole frame, header included. A frame whose `len` is
+below the 10-byte header, or that would run past the end of the blob,
+ends the walk - the remainder is unreadable either way.
+
+`descType` is the description class the frame belongs to (the Designer
+web bundle's enum):
+
+| Value | Name                                                                |
+| ----- | ------------------------------------------------------------------- |
+| 1     | DEVICE_NAME                                                         |
+| 3     | OW                                                                  |
+| 6     | FLAG_BIN                                                            |
+| 7     | FLAG_U8                                                             |
+| 8     | FLAG_I16                                                            |
+| 10    | INPUTS                                                              |
+| 12    | OUTPUTS                                                             |
+| 14    | IN_U8                                                               |
+| 15    | MLED                                                                |
+| 16    | OUT_OC_U8                                                           |
+| 17    | MRT                                                                 |
+| 20    | SCREEN_NO                                                           |
+| 22    | FLAG_BIN_SIMPLE                                                     |
+| 23    | SatelZone                                                           |
+| 24    | SatelInput                                                          |
+| 25    | SatelOutput                                                         |
+| 26    | ROLLER                                                              |
+| 34    | (the RGBW output class; no symbolic name recovered from the bundle) |
+
+### The join rule
+
+An object joins its entry through `(DESC_TYPE_BY_KIND[typ_komponentu],
+leaf_out_no)` within the description record of its own module
+(`AmpioObject.module_mac`) - `leaf_out_no` is the last `leafId`
+segment, live-proven as the out-no key over `funkcja` across the full
+catalogue (`funkcja` under- or over-matches depending on the kind;
+`leaf_out_no` does not). `DESC_TYPE_BY_KIND` ships only live-proven
+pairs: `przekaznik` -> 12 (OUTPUTS), `roleta_procenty` -> 26 (ROLLER),
+`roleta_lamelki` -> 26 (ROLLER), `led` -> 16 (OUT_OC_U8), `rgbw` -> 34.
+A kind outside that table - `bit32`, `flaga`, `lin_wej`, `satel_alarm`,
+`temp` among them - resolves no location: each landed on two or more
+descTypes clearing a majority at once on the full-catalogue probe, so
+the join for it is ambiguous rather than merely unproven by sample size.
+
+### Tier gate
+
+The whole `device_api` tree is admin-only, exactly like the raw tree:
+a restricted account gets silence on both the subscribe and the
+request, and `AmpioClient.resolve_locations()` raises `RuntimeError`
+naming the tier rather than hanging on a reply that never comes.

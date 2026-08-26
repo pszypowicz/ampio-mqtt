@@ -14,6 +14,49 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.30.0
+
+The per-output location. Designer's "Lokalizacja" dropdown writes a
+location pointer into the same CAN-resident description record as the
+Matter device type tag, and the object catalogue never mirrors it -
+reading it back needs the same `device_api` tree the Matter tag also
+lives on. `resolve_locations()` sweeps that tree and joins each object
+to its entry, so `AmpioObject.location` carries the Designer location
+name and `matter_device_type` gains a second, more current source.
+
+### Added
+
+- **`AmpioObject.location`** (#25) - the Designer per-output location
+  name, resolved by `AmpioClient.resolve_locations()`. None until a
+  resolve has run, and for objects it could not match.
+- **`AmpioObject.leaf_out_no`** - the last `leafId` segment, parsed as
+  an int; the join key that pairs an object with its CAN description
+  entry. None for an empty, malformed, or non-numeric segment.
+- **`AmpioClient.resolve_locations()`** (#25, #110) - sweeps every
+  catalogued module over the admin-only `device_api` tree, joins each
+  object to its description entry through `(descType, leaf_out_no)`,
+  and folds the result into the store: `AmpioObject.location` and a
+  refined `matter_device_type` follow, each change dispatched as
+  `ObjectUpdated`. A module that never answers is skipped rather than
+  failing the whole sweep, so the returned map can be partial. Raises
+  `RuntimeError` naming the tier on a non-admin account.
+- **`AmpioClient.fetch_locations()`** restored (#25) - the
+  `{location_id: name}` table behind Designer's "Lokalizacja" dropdown,
+  admin tier only. Removed in 0.19.0 pending the per-output pointer's
+  route; `resolve_locations()` is that route.
+
+### Changed
+
+- **`matter_device_type` is refined from the CAN description record
+  during a resolve** (#110). The object catalogue's `type` column
+  mirror lags the CAN record - an output tagged 256 on the CAN record
+  can carry an empty `type` column - so `resolve_locations()` reads
+  the record directly and updates the field. A record without a tag
+  leaves the column's value standing; the CAN record only ever adds
+  information, never clears it.
+- **`_fetch` raises `RuntimeError` naming the tier for a non-served
+  endpoint**, rather than the `KeyError` a missing dict key produced.
+
 ## 0.29.0
 
 The review release. A clean-slate review of the whole codebase produced
