@@ -890,3 +890,25 @@ async def test_refresh_interval_skips_an_offline_tick() -> None:
     assert broker.published == []
     async with asyncio.timeout(1.0):
         await client.stop()
+
+
+async def test_refresh_interval_survives_a_publish_error_on_tick() -> None:
+    """A publish failure on a periodic tick is swallowed - unlike the same
+    failure during the on-connect refresh (see
+    test_publish_failure_during_refresh_recycles_the_session), a tick runs
+    outside the connection loop, so the session is never recycled and a
+    later tick still republishes."""
+    broker = FakeBroker()
+    client = make_client(broker, refresh_interval=0.05)
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    try:
+        broker.published.clear()
+        # One scripted failure: the next tick's first publish raises and
+        # is caught, publishing nothing for that cycle; the tick after it
+        # finds no more scripted errors and republishes normally.
+        broker.publish_errors = [aiomqtt.MqttError("broken pipe")]
+        await asyncio.sleep(0.12)
+        assert client.available is True
+        assert ("ampio/control/u/states", b"") in broker.published
+    finally:
+        await client.stop()
