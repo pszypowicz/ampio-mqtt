@@ -392,13 +392,13 @@ def test_subscribe_filters_and_preserves_order() -> None:
     feed(client, topic, details(_flaga(41, 3), _flaga(42, 4)))
     feed(client, topic, details(_flaga(41, 3)))
     assert [type(e).__name__ for e in everything] == [
-        "ObjectUpdated",
-        "ObjectUpdated",
+        "ObjectAdded",
+        "ObjectAdded",
         "ObjectRemoved",
     ]
     assert [type(e).__name__ for e in only_updates] == [
-        "ObjectUpdated",
-        "ObjectUpdated",
+        "ObjectAdded",
+        "ObjectAdded",
     ]
 
 
@@ -429,7 +429,7 @@ def test_subscribe_object_id_tuple_covers_update_and_removal() -> None:
     )
     feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3), _flaga(42, 4)))
     feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3)))
-    assert seen == ["ObjectUpdated", "ObjectRemoved"]
+    assert seen == ["ObjectAdded", "ObjectRemoved"]
 
 
 def test_subscribe_object_id_requires_object_bearing_classes() -> None:

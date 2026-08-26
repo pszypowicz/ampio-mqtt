@@ -29,6 +29,7 @@ from .events import (
     ConnectionDied,
     ModuleRemoved,
     ModuleUpdated,
+    ObjectAdded,
     ObjectRemoved,
     ObjectUpdated,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "InputKind",
     "ModuleRemoved",
     "ModuleUpdated",
+    "ObjectAdded",
     "ObjectKind",
     "ObjectRemoved",
     "ObjectUpdated",
@@ -77,7 +79,7 @@ __all__ = [
     "discover",
 ]
 
-__version__ = "0.30.0"
+__version__ = "0.31.0"
 
 
 def __getattr__(name: str) -> object:

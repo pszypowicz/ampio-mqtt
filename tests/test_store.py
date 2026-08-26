@@ -42,6 +42,7 @@ from ampio_mqtt.events import (
     BusEvent,
     ModuleRemoved,
     ModuleUpdated,
+    ObjectAdded,
     ObjectRemoved,
     ObjectUpdated,
 )
@@ -1644,3 +1645,39 @@ def test_designer_location_none_clears_a_stale_name() -> None:
     again = _seed_catalogue(store, row)
     assert store.objects[64].location is None
     assert again.events == []
+
+
+# --- ObjectAdded: an object's first event -----------------------------------
+
+
+def test_new_catalogue_row_dispatches_object_added() -> None:
+    store = AmpioStore()
+    applied = _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
+    assert [type(e) for e in applied.events] == [ObjectAdded]
+    assert applied.events[0].object.id == 7
+    # The same reply again says nothing new.
+    assert _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"}).events == []
+
+
+def test_known_row_change_dispatches_updated_not_added() -> None:
+    store = AmpioStore()
+    _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
+    applied = _seed_catalogue(
+        store, {"id": 7, "typ_komponentu": "flaga", "opis_menu": "x"}
+    )
+    assert [type(e) for e in applied.events] == [ObjectUpdated]
+
+
+def test_recreation_after_eviction_dispatches_added_again() -> None:
+    store = AmpioStore()
+    _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
+    removed = _seed_catalogue(store)  # empty catalogue evicts
+    assert [type(e) for e in removed.events] == [ObjectRemoved]
+    readded = _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
+    assert [type(e) for e in readded.events] == [ObjectAdded]
+
+
+def test_bare_row_creation_still_dispatches_added() -> None:
+    store = AmpioStore()
+    applied = _seed_catalogue(store, {"id": 9})
+    assert [type(e) for e in applied.events] == [ObjectAdded]

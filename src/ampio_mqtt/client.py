@@ -7,6 +7,7 @@ runs automatically vs on demand.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import math
 import time
@@ -36,7 +37,7 @@ from ._protocol import (
 from ._store import AmpioStore
 from .classification import OutputKind
 from .device_types import is_hub
-from .errors import AmpioTimeoutError
+from .errors import AmpioConnectionError, AmpioTimeoutError
 from .events import (
     AuthFailed,
     AvailabilityChanged,
@@ -125,10 +126,18 @@ class AmpioClient:
         *,
         port: int = 1883,
         reconnect_interval: float = 5.0,
+        refresh_interval: float | None = None,
         mqtt_client_factory: _connection.MqttClientFactory | None = None,
     ) -> None:
         """Initialize the client. `username` names the Ampio account and
         namespaces every MQTT topic; an empty one is rejected here.
+
+        ``refresh_interval`` opts into a periodic re-request of the
+        tier's discovery set, in seconds; None (the default) leaves the
+        cadence to the consumer. Each cycle re-publishes the
+        initial-discovery requests, so Designer additions and evictions
+        surface as :class:`ObjectAdded` / :class:`ObjectRemoved` without
+        a reconnect (#80). Zero or negative raises ``ValueError``.
 
         ``mqtt_client_factory`` is the transport seam: a zero-argument
         callable returning the MQTT session object for one connect
@@ -141,6 +150,10 @@ class AmpioClient:
             )
         if reconnect_interval <= 0:
             raise ValueError("reconnect_interval must be positive seconds")
+        if refresh_interval is not None and refresh_interval <= 0:
+            raise ValueError("refresh_interval must be positive seconds or None")
+        self._refresh_interval = refresh_interval
+        self._refresh_task: asyncio.Task[None] | None = None
         self._username = username
         # The tier (see AccessTier) shapes the endpoints served, and from
         # them the subscriptions, router, reply channels, and the
@@ -502,10 +515,10 @@ class AmpioClient:
             client.subscribe(on_135, of=(ObjectUpdated, ObjectRemoved),
                              object_id=135)
 
-        Only :class:`ObjectUpdated` and :class:`ObjectRemoved` carry the
-        ``.object`` an ID can filter on; ``object_id`` with any other
-        class, or with no ``of`` at all, raises ``ValueError`` at
-        registration time.
+        Only :class:`ObjectUpdated` (and its :class:`ObjectAdded` subclass)
+        and :class:`ObjectRemoved` carry the ``.object`` an ID can filter
+        on; ``object_id`` with any other class, or with no ``of`` at all,
+        raises ``ValueError`` at registration time.
 
         The returned unsubscribe removes exactly its own registration and
         is idempotent; the same listener registered twice keeps its other
@@ -615,6 +628,11 @@ class AmpioClient:
         building on the client checks this result or awaits that method.
         """
         await self._connection.open(timeout)
+        await self._cancel_refresh_task()
+        if self._refresh_interval is not None:
+            self._refresh_task = asyncio.get_running_loop().create_task(
+                self._refresh_periodically(self._refresh_interval)
+            )
         return await self.wait_for_initial_discovery(timeout=discovery_timeout)
 
     async def wait_for_initial_discovery(self, *, timeout: float = 8.0) -> bool:
@@ -656,7 +674,33 @@ class AmpioClient:
         are not invoked for the resulting drop - a deliberate shutdown is not
         an availability event.
         """
+        await self._cancel_refresh_task()
         await self._connection.close()
+
+    async def _cancel_refresh_task(self) -> None:
+        if self._refresh_task is None:
+            return
+        self._refresh_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._refresh_task
+        self._refresh_task = None
+
+    async def _refresh_periodically(self, interval: float) -> None:
+        """Re-run refresh() every `interval` seconds while the broker is up.
+
+        An offline tick skips silently: the reconnect path refreshes on
+        connect, so a periodic request adds nothing while the broker is
+        away, and the drop that races the availability check surfaces as
+        the connection error swallowed here for the same reason.
+        """
+        while True:
+            await asyncio.sleep(interval)
+            if not self.available:
+                continue
+            try:
+                await self.refresh()
+            except AmpioConnectionError:
+                continue
 
     async def refresh(self) -> None:
         """Re-request the tier's initial-discovery set.

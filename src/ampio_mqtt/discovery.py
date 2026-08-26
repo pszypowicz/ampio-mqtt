@@ -1,10 +1,11 @@
 """Best-effort discovery of an Ampio M-SERV broker on the LAN.
 
-The M-SERV runs Avahi with default-only hostname publishing: no service type,
-no TXT records identifying it as Ampio - only an A/AAAA record for the
-well-known hostname ``ampio.local``. So discovery is a multicast DNS A-record
-query for that hostname, followed by a TCP probe to confirm the broker port
-is open.
+The M-SERV runs Avahi with default-only hostname publishing: no service type
+or TXT record on the LAN identifies it as Ampio (a co-located Matter process
+can share its address, but nothing there is Ampio-specific either) - the
+hostname A/AAAA record for the well-known name ``ampio.local`` is the only
+reliable signal. So discovery is a multicast DNS A-record query for that
+hostname, followed by a TCP probe to confirm the broker port is open.
 
 The mDNS query is driven from Python via the ``zeroconf`` package, the
 ``ampio-mqtt[discovery]`` extra. Callers that already own an

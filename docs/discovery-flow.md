@@ -60,18 +60,41 @@ for the `start()` / `stop()` lifecycle that joins them.
    `stats.last_message_at`. The signals latch, so a later
    `wait_for_initial_discovery()` call returns immediately once its
    set has fired (and stays correct across reconnects).
-5. **Return.** The library does not periodically refetch the
-   catalogues; live state arrives via push on the per-object topic
-   (and, for inputs, the raw-channel topics).
+5. **Return.** The library does not refetch the catalogues on its own
+   schedule; live state arrives via push on the per-object topic (and,
+   for inputs, the raw-channel topics) unless the consumer opts into
+   `refresh_interval` (see below).
 
 Every catalogue reply also evicts what it stopped listing, fired as
 `ObjectRemoved` / `ModuleRemoved` - the per-tier rules and the
 deletion-tool differences live on the event docstrings and in
 [`identity.md`](identity.md). Since catalogues are request/response, a
 server-side deletion is noticed at the next reply (the refresh a
-reconnect issues, or an explicit `refresh()`), so a consumer that wants
-prompt removals refreshes on its own schedule. An empty reply is a
-complete reply listing nothing and evicts like any other.
+reconnect issues, an explicit `refresh()`, or a `refresh_interval`
+tick), so a consumer that wants prompt removals refreshes on its own
+schedule, calls `refresh()` directly, or sets `refresh_interval`
+instead of rolling its own timer. An empty reply is a complete reply
+listing nothing and evicts like any other.
+
+### Keeping the catalogue current without a reconnect: `refresh_interval`
+
+`AmpioClient(..., refresh_interval=<seconds>)` opts into a periodic
+`refresh()` while the connection is up; the default, `None`, leaves the
+cadence entirely to the consumer. `start()` schedules the periodic task
+and `stop()` cancels it. A tick while the connection is down skips
+silently - the reconnect path already refreshes on connect, so a
+periodic request adds nothing while the broker is unreachable. Each
+cycle re-publishes the same initial-discovery requests `start()` and
+`refresh()` do, so a Designer addition or an eviction on the server
+side surfaces as `ObjectAdded` / `ObjectRemoved` on the next tick,
+without needing a reconnect to notice it.
+
+Each tick also runs `begin_refresh()`, which clears the live-value
+guard, so an undated live value can be re-seeded from the M-SERV's DB
+snapshot on the next reply (a raw-proven object is exempt - its resync
+is the broker's retained raw table, not the DB snapshot). Each cycle
+re-fetches the full catalogue, so `refresh_interval` is sized in
+minutes, not seconds.
 
 ## What runs on demand, not automatically
 
@@ -95,9 +118,11 @@ decides when - and whether - to call them:
 `discover()` resolves `ampio.local` with an explicit multicast DNS
 A-record query driven by `python-zeroconf` (the `ampio-mqtt[discovery]`
 extra),
-then TCP-probes the resolved address on the broker port. The M-SERV
-publishes only its hostname over Avahi, with no service type and no TXT
-records, which is why the lookup targets the well-known name. Because
+then TCP-probes the resolved address on the broker port. No service
+type or TXT record on the LAN identifies that address as Ampio, which
+is why the lookup targets the well-known hostname instead of a browse -
+see [`lan-discovery.md`](lan-discovery.md) for the full probe facts,
+including the generic Matter records that share the address. Because
 the query runs inside the process, it behaves the same on macOS, HAOS,
 plain Linux, and Docker, without host-side `nss-mdns`/avahi
 configuration. A Home Assistant integration passes its shared

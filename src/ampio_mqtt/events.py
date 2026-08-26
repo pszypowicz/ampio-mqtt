@@ -26,10 +26,26 @@ class ObjectUpdated:
 
     Fires on live pushes, raw-channel edges, snapshot corrections, and
     catalogue rows that actually changed something - a re-requested
-    catalogue that says nothing new dispatches nothing.
+    catalogue that says nothing new dispatches nothing. A catalogue row
+    establishing an id the store did not already hold dispatches the
+    :class:`ObjectAdded` subclass instead.
     """
 
     object: AmpioObject
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectAdded(ObjectUpdated):
+    """An object appeared in the account's catalogue.
+
+    The object's first event: dispatched when a catalogue reply
+    establishes an id the store did not hold - initial discovery, a
+    Designer addition surfacing on a later reply, and the re-creation
+    after an eviction all qualify (#79). A subclass of
+    :class:`ObjectUpdated`, so ``of=ObjectUpdated`` subscriptions
+    receive additions too; ``of=ObjectAdded`` narrows to appearances
+    alone.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +149,14 @@ class ConnectionDied:
 
 
 # The store's subset: what one inbound MQTT message can produce.
-StoreEvent = ObjectUpdated | ObjectRemoved | ModuleUpdated | ModuleRemoved | BusEvent
+StoreEvent = (
+    ObjectAdded
+    | ObjectUpdated
+    | ObjectRemoved
+    | ModuleUpdated
+    | ModuleRemoved
+    | BusEvent
+)
 
 # Everything a subscriber can receive.
 ClientEvent = StoreEvent | AvailabilityChanged | AuthFailed | ConnectionDied
