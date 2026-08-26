@@ -54,7 +54,7 @@ plus the store's `_apply_raw_channel`.
 
 ```
 ampio/from/+/state/f/+   # flags  ("flaga")
-ampio/from/+/state/i/+   # digital inputs  ("detekcja")
+ampio/from/+/state/i/+   # digital inputs  ("detekcja", "wej")
 ampio/from/+/b/4F        # per-module diagnostics broadcast
 ampio/from/+/event       # bus events
 ```
