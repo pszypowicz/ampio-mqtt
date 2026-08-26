@@ -330,6 +330,12 @@ class AmpioModule:
     model: str | None = field(init=False)
     sw_version: int | None = None  # wersja_softu
     hw_version: int | None = None  # wersja_pcb
+    # Designer module-level location (the "Lokalizacja" set on the module
+    # itself - where the box is mounted, not where its loads are), read
+    # from the DEVICE_NAME entry of the module's CAN description record by
+    # :meth:`AmpioClient.resolve_locations` - admin tier only. None until
+    # a sweep covers the module, or when the installer never set one.
+    location: str | None = None
     # Local epoch seconds when this process last received live evidence of
     # the module: a state push or raw edge for one of its objects, or its own
     # diagnostics broadcast. One clock only - snapshot and catalogue seeds do

@@ -1203,6 +1203,36 @@ def test_wej_per_object_edge_reads_255_as_on() -> None:
     assert store.objects[63].is_on is False
 
 
+def test_module_location_survives_refresh_and_eviction() -> None:
+    """The catalogue never carries the module location; the held table
+    re-applies it on every merge, including re-creation after eviction."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    applied = store.apply_module_locations({0xCAFE: "Rozdzielnia"})
+    assert store.modules[7].location == "Rozdzielnia"
+    assert [e.module.location for e in applied.events] == ["Rozdzielnia"]
+
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # refresh keeps it
+    assert store.modules[7].location == "Rozdzielnia"
+
+    _apply(store, DEVICES_TOPIC, devices())  # evict
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # re-add re-applies
+    assert store.modules[7].location == "Rozdzielnia"
+
+
+def test_module_location_unswept_mac_is_untouched() -> None:
+    """A sweep that does not cover a module leaves its value standing."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    store.apply_module_locations({0xCAFE: "Rozdzielnia"})
+    applied = store.apply_module_locations({})
+    assert store.modules[7].location == "Rozdzielnia"
+    assert applied.events == []
+    applied = store.apply_module_locations({0xCAFE: None})  # authoritative clear
+    assert store.modules[7].location is None
+    assert [e.module.location for e in applied.events] == [None]
+
+
 def test_symulacja_classifies_but_is_not_bridged() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))

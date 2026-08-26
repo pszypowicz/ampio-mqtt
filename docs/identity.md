@@ -256,6 +256,20 @@ web bundle's enum):
 | 26    | ROLLER                                                              |
 | 34    | (the RGBW output class; no symbolic name recovered from the bundle) |
 
+### The module-level location (`AmpioModule.location`)
+
+The record's one DEVICE_NAME frame (descType 1) describes the module
+itself: its `desc` is the module name and its `outLoc` the module-level
+"Lokalizacja" - where the module is mounted, not where its loads are
+(#114). `resolve_locations()` reads it from the same reply and sets
+`AmpioModule.location`, dispatching `ModuleUpdated` on change. A record
+without the frame, or with `outLoc` 0, reads unassigned (None) - the
+module answered, so None is authoritative; a module the sweep did not
+cover keeps its previous value, exactly like the per-object side. On
+the reference install the installer tagged wall devices this way (an
+M-SENS and three M-DOT panels carry room names) and left the cabinet
+modules untagged.
+
 ### The join rule
 
 An object joins its entry through `(DESC_TYPE_BY_KIND[typ_komponentu],

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields, replace
 from functools import partial
 from typing import Any
@@ -79,6 +79,10 @@ class AmpioStore:
         # sweep, kept so a catalogue refresh re-applies what the CAN record
         # proved (the catalogue itself never carries it).
         self._designer_by_id: dict[int, _protocol.DesignerResolution] = {}
+        # `{mac: module-level location}` accumulated across sweeps, kept for
+        # the same reason on the module side; None is an authoritative
+        # "answered, unassigned".
+        self._module_location_by_mac: dict[int, str | None] = {}
         # `{object_id: stan_json}` from the last `data/states` snapshot,
         # kept for the same reason; a snapshot row for an id no catalogue
         # established creates nothing.
@@ -158,6 +162,26 @@ class AmpioStore:
                 obj = replace(obj, **updates)
                 self.objects[oid] = obj
                 self._record(obj, applied)
+        return applied
+
+    def apply_module_locations(self, by_mac: Mapping[int, str | None]) -> Applied:
+        """Hold the swept module-level locations and fold them into modules.
+
+        The value is authoritative per answering mac (None clears); a mac
+        the sweep did not cover leaves both the held table and the module
+        untouched.
+        """
+        applied = Applied()
+        self._module_location_by_mac.update(by_mac)
+        for mac, location in by_mac.items():
+            mid = self._module_id_by_mac.get(mac)
+            if mid is None:
+                continue
+            module = self.modules[mid]
+            if module.location != location:
+                module = replace(module, location=location)
+                self.modules[mid] = module
+                applied.events.append(ModuleUpdated(module))
         return applied
 
     def apply(self, msg: _protocol.Inbound) -> Applied:
@@ -326,6 +350,16 @@ class AmpioStore:
                     last_seen=previous.last_seen,
                     supply_voltage=previous.supply_voltage,
                     temperature=previous.temperature,
+                )
+            # The catalogue never carries the module-level location; the
+            # held table re-applies it on every merge - including the
+            # re-creation after an eviction.
+            if (
+                module.mac is not None
+                and module.mac in self._module_location_by_mac
+            ):
+                module = replace(
+                    module, location=self._module_location_by_mac[module.mac]
                 )
             self.modules[module.id] = module
             # A new module or a changed catalogue row is news, exactly as an
