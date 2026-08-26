@@ -354,10 +354,7 @@ class AmpioStore:
             # The catalogue never carries the module-level location; the
             # held table re-applies it on every merge - including the
             # re-creation after an eviction.
-            if (
-                module.mac is not None
-                and module.mac in self._module_location_by_mac
-            ):
+            if module.mac is not None and module.mac in self._module_location_by_mac:
                 module = replace(
                     module, location=self._module_location_by_mac[module.mac]
                 )

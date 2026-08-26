@@ -483,9 +483,7 @@ def resolve_module_locations(
     for mac, entries in descriptions_by_mac.items():
         if mac in colliding_macs:
             continue
-        entry = next(
-            (e for e in entries if e.desc_type == DEVICE_NAME_DESC_TYPE), None
-        )
+        entry = next((e for e in entries if e.desc_type == DEVICE_NAME_DESC_TYPE), None)
         out[mac] = (
             location_names.get(entry.out_loc)
             if entry is not None and entry.out_loc
