@@ -19,6 +19,17 @@ The M-SERV's default `mac` is `1`, which is not unique. Treat `mac` as
 unique _within a single install_ (the user assigns the overrides), not
 globally.
 
+`typ_urzadzenia` also derives two decoration fields on `AmpioModule`:
+`model` (the product name from the vendored catalogue) and `mounting`
+(#115) - the curated form-factor class `cabinet` (DIN rail) / `wall`
+(panels, sensors, outdoor field devices) / `flush` (in-box `-p`
+modules), None for virtual, bridge-only, handheld, and unknown codes.
+The classification follows Ampio's naming convention, which no official
+source asserts, so it is a hand-curated table
+(`device_types.MODULE_MOUNTING`). Both fields decorate device info
+only; the device topology never branches on them (#114 pins that
+contract).
+
 ## Objects
 
 | Field                     | Stable across module replacement?                                                                                                                                        | Notes |

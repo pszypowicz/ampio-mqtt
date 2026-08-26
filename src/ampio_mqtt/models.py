@@ -13,7 +13,7 @@ from .classification import (
     classify,
     is_system_type,
 )
-from .device_types import module_model
+from .device_types import Mounting, module_model, module_mounting
 
 
 class AccessTier(Enum):
@@ -328,6 +328,10 @@ class AmpioModule:
     # Resolved model name for `type`. Derived - never passed: computed on
     # every construction (#94), None when `type` is unknown or missing.
     model: str | None = field(init=False)
+    # Curated mounting class for `type` ("cabinet" DIN rail / "wall" /
+    # "flush" in-box), derived exactly like `model` (#115). Decoration for
+    # device info only - never a topology input. None when unclassified.
+    mounting: Mounting | None = field(init=False)
     sw_version: int | None = None  # wersja_softu
     hw_version: int | None = None  # wersja_pcb
     # Designer module-level location (the "Lokalizacja" set on the module
@@ -350,6 +354,7 @@ class AmpioModule:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "model", module_model(self.type))
+        object.__setattr__(self, "mounting", module_mounting(self.type))
 
 
 @dataclass(slots=True, frozen=True)
