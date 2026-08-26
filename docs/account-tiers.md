@@ -23,22 +23,23 @@ reject an account whose tier will not support what the consumer needs
 
 ## What each tier gets
 
-| Capability                                    | Administrator | Standard user                         |
-| --------------------------------------------- | ------------- | ------------------------------------- |
-| Object catalogue with full metadata           | all objects   | objects granted in the app            |
-| `params` bitfields (visibility, hidden flag)  | yes           | yes (the table is not grant-filtered) |
-| Per-object live state                         | all objects   | granted objects                       |
-| Rooms (`fetch_rooms`)                         | yes           | yes                                   |
-| Server identity (`server_info`)               | yes           | yes                                   |
-| Scenes (`fetch_scenes`, scene commands)       | yes           | yes                                   |
-| `resources` / `icons` tables (`data` surface) | yes           | yes                                   |
-| `logging` config table (`data` surface)       | yes           | yes (the table is not grant-filtered) |
-| md5 change-detection tree                     | yes           | yes                                   |
-| Commands                                      | all objects   | granted objects                       |
-| **Module list** (`modules`, `mserv`)          | yes           | **no**                                |
-| **Raw channel tree** (`ampio/from/#`)         | yes           | **no**                                |
-| **Module diagnostics** (voltage, temperature) | yes           | **no**                                |
-| **CAN write tree** (`ampio/to/#`)             | yes           | **no**                                |
+| Capability                                                                                       | Administrator | Standard user                         |
+| ------------------------------------------------------------------------------------------------ | ------------- | ------------------------------------- |
+| Object catalogue with full metadata                                                              | all objects   | objects granted in the app            |
+| `params` bitfields (visibility, hidden flag)                                                     | yes           | yes (the table is not grant-filtered) |
+| Per-object live state                                                                            | all objects   | granted objects                       |
+| Rooms (`fetch_rooms`)                                                                            | yes           | yes                                   |
+| Server identity (`server_info`)                                                                  | yes           | yes                                   |
+| Scenes (`fetch_scenes`, scene commands)                                                          | yes           | yes                                   |
+| `resources` / `icons` tables (`data` surface)                                                    | yes           | yes                                   |
+| `logging` config table (`data` surface)                                                          | yes           | yes (the table is not grant-filtered) |
+| md5 change-detection tree                                                                        | yes           | yes                                   |
+| Commands                                                                                         | all objects   | granted objects                       |
+| Designer per-output location (the `device_api` tree, `resolve_locations()`, `fetch_locations()`) | yes           | no                                    |
+| **Module list** (`modules`, `mserv`)                                                             | yes           | **no**                                |
+| **Raw channel tree** (`ampio/from/#`)                                                            | yes           | **no**                                |
+| **Module diagnostics** (voltage, temperature)                                                    | yes           | **no**                                |
+| **CAN write tree** (`ampio/to/#`)                                                                | yes           | **no**                                |
 
 The raw-tree denial is enforced in the SUBACK: a standard account's
 subscription to the `ampio/from/...` filters comes back with reason
@@ -122,3 +123,5 @@ Prefer an administrator account when the install needs:
   sagging bus or a hot module before it misbehaves.
 - **The CAN vocabulary** for device classes `/api` cannot express (CCT,
   DALI, display text); see [`untapped-surfaces.md`](untapped-surfaces.md).
+- **Per-object Designer locations** for area assignment - `resolve_locations()`
+  and `fetch_locations()` answer no other account.

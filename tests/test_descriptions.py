@@ -20,13 +20,18 @@ from conftest import (
 from ampio_mqtt import AmpioClient, ObjectUpdated
 from ampio_mqtt._protocol import (
     ENDPOINTS,
+    DesignerResolution,
     DeviceDescriptions,
     OutputDescription,
     Router,
     device_api_request_topic,
     parse_descriptions_blob,
     parse_device_info,
+    resolve_designer,
 )
+from ampio_mqtt.models import AmpioObject
+
+LOCATIONS_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/locations"
 
 
 def frame(desc_type: int, out_no: int, out_loc: int, out_type: int, desc: str) -> bytes:
@@ -122,10 +127,6 @@ def test_request_topic_uses_lowercase_hex() -> None:
     assert device_api_request_topic(0xCB89) == "device_api/to/cb89/get_data"
 
 
-from ampio_mqtt._protocol import DesignerResolution, resolve_designer
-from ampio_mqtt.models import AmpioObject
-
-
 def _entries(*specs: tuple[int, int, int, int, str]) -> tuple[OutputDescription, ...]:
     return tuple(OutputDescription(*s) for s in specs)
 
@@ -164,9 +165,6 @@ def test_resolve_designer_skips_colliding_macs() -> None:
     }
     by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
     assert resolve_designer(objects, by_mac, {14: "P"}, frozenset({0xCB89})) == {}
-
-
-LOCATIONS_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/locations"
 
 
 async def _admin_client_with_catalogue() -> tuple[AmpioClient, FakeBroker]:

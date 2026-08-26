@@ -136,7 +136,8 @@ class AmpioStore:
 
         ``location`` is authoritative from the record (None clears a stale
         name); ``matter_device_type`` refines and never clears - a record
-        without a tag leaves the catalogue column's value standing.
+        without a tag leaves the held value standing. The catalogue merge
+        path (``_merge_metadata``) is where the column re-asserts itself.
         """
         applied = Applied()
         self._designer_by_id = dict(resolved)

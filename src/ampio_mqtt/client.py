@@ -235,8 +235,7 @@ class AmpioClient:
                 return
             if isinstance(msg, _protocol.DeviceDescriptions):
                 for future in self._descriptions_waiters.pop(msg.mac, []):
-                    if not future.done():
-                        future.set_result(msg.entries)
+                    future.set_result(msg.entries)
                 return
             applied = self._store.apply(msg)
             if isinstance(msg, _protocol.EndpointReply):
@@ -713,9 +712,12 @@ class AmpioClient:
         :meth:`resolve_locations` consumes it and per-object consumers read
         :pyattr:`AmpioObject.location` instead. Admin tier only - the
         ``config`` surface never answers a restricted account, and the call
-        raises ``RuntimeError`` for one. Raises ``AmpioConnectionError`` if
-        the broker is not connected and ``AmpioTimeoutError`` if the
-        response does not arrive within ``timeout``.
+        raises ``RuntimeError`` for one.
+
+        Requires ``start()`` to have completed. Raises
+        ``AmpioConnectionError`` if the broker is not connected and
+        ``AmpioTimeoutError`` if the response does not arrive within
+        ``timeout``.
         """
         replies = await self._fetch(
             ("locations",),
@@ -737,11 +739,20 @@ class AmpioClient:
         Returns ``{object_id: location_name}`` for what resolved. A module
         that does not answer within ``timeout`` is skipped without error -
         offline modules are normal - so the map can be partial; call again
-        for another sweep. Admin tier only: the ``device_api`` tree answers
-        no other account, and the call raises ``RuntimeError`` for one.
-        Requires ``start()`` to have completed. Raises
-        ``AmpioConnectionError`` if the broker is not connected and
-        ``AmpioTimeoutError`` if the name table itself does not arrive.
+        for another sweep. An object absent from a sweep's resolution keeps
+        its previous ``location`` - a partial sweep never clears it - until
+        a catalogue eviction or a later sweep that covers the object.
+
+        The sweep waits out the full ``timeout`` whenever any module stays
+        silent, which is normal on a real install, and the name table is
+        fetched first on its own ``timeout`` budget, so the call can take
+        up to twice ``timeout`` end to end.
+
+        Admin tier only: the ``device_api`` tree answers no other account,
+        and the call raises ``RuntimeError`` for one. Requires ``start()``
+        to have completed. Raises ``AmpioConnectionError`` if the broker is
+        not connected and ``AmpioTimeoutError`` if the name table itself
+        does not arrive.
         """
         if self._tier is not AccessTier.ADMIN:
             raise RuntimeError(
@@ -774,8 +785,7 @@ class AmpioClient:
             for mac, future in futures.items():
                 waiters = self._descriptions_waiters.get(mac)
                 if waiters is not None:
-                    if future in waiters:
-                        waiters.remove(future)
+                    waiters.remove(future)
                     if not waiters:
                         del self._descriptions_waiters[mac]
         by_mac = {

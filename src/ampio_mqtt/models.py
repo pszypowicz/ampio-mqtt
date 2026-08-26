@@ -104,7 +104,7 @@ class AmpioObject:
     matter_device_type: int | None = None
     # Designer per-output location name (the "Lokalizacja" dropdown),
     # resolved from the module's CAN-resident description record by
-    # AmpioClient.resolve_locations() - admin tier only. None until a
+    # `AmpioClient.resolve_locations()` - admin tier only. None until a
     # resolve ran, and for objects it could not match. docs/identity.md.
     location: str | None = None
     # What this object is. Derived - never passed: computed from
