@@ -12,6 +12,24 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.38.0
+
+Designer's "Bell object" checkbox surfaces as `AmpioObject.bell` (#139). The
+checkbox marks an object that is meant for a single press: the Ampio app renders
+it as a press-only button instead of a toggle. A consumer can now model such an
+object as a press-only entity instead of a switch.
+
+### Added
+
+- **`AmpioObject.bell`** - True when the object is a `przekaznik` or `flaga` and
+  `params` bit 15 (`OPTION1`) is set. The bit is a generic per-type option
+  slot - on other component types it carries an unrelated meaning (slider
+  layout, lamella step), so the property gates on the component type. The marker
+  is readable on both account tiers, because `data/params_devices` serves
+  `params` unfiltered. It is display intent: whether the output auto-releases is
+  the module's own configuration. The per-type `OPTION1` labels are documented
+  in [`docs/identity.md`](docs/identity.md).
+
 ## 0.37.0
 
 The diagnostics snapshot no longer leaks location and identity facts through the

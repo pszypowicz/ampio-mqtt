@@ -187,8 +187,22 @@ MATTER:2^37               USE_ONLY_VALUE_FROM_RANGE:2^38
 SHOW_AT_FULL_WIDTH:2^39
 ```
 
-The library reads two of these bits. `DELETED` (bit 4) backs `hidden` and
-`visible`. `READ_ONLY` (bit 6) backs `read_only`.
+The `OPTION1` through `OPTION6` slots are generic. Their meaning depends on the
+component type, and the Designer editor renders each with a per-type label. For
+`OPTION1` (bit 15): "Bell object" on `przekaznik` and `flaga`, "show switch in
+slider" on slider-shaped outputs, "1% lamella" on tilt covers, "block
+heating/cooling change" on `reg`, and other labels on camera, webview, and alarm
+objects. A reader of an OPTION bit must gate on the component type first.
+
+The library reads three of these bits. `DELETED` (bit 4) backs `hidden` and
+`visible`. `READ_ONLY` (bit 6) backs `read_only`. `OPTION1` (bit 15) backs
+`bell`, gated on the two component types the label applies to.
+
+A bell object is meant for a single press. The Ampio app renders it as a
+press-only button instead of a toggle. The checkbox is display intent: it sets
+bit 15 and nothing else, and whether the output auto-releases is the module's
+own configuration. The marker is readable on both account tiers, because
+`data/params_devices` serves `params` unfiltered.
 
 The M-SERV ships its own Matter bridge (a matter.js app launched by
 `ampio-server`). That bridge's production gate corroborates the enum: it exposes

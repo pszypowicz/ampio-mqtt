@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Static visibility for the lazily served names below, so type
+    # checkers accept them in `__all__` and resolve their types. The
+    # runtime import stays inside `__getattr__`.
+    from .discovery import DiscoveryResult, discover
+
 from .classification import (
     INPUT_KIND_KEYS,
     OPEN_SENSOR_KEY_PREFIXES,
@@ -83,7 +91,7 @@ __all__ = [
     "discover",
 ]
 
-__version__ = "0.37.0"
+__version__ = "0.38.0"
 
 
 def __getattr__(name: str) -> object:

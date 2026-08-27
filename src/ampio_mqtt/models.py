@@ -35,9 +35,17 @@ class AccessTier(Enum):
 # probing (docs/identity.md). Bit 4 is the hidden/stub marker (see
 # `AmpioObject.hidden`); bit 6 is the Designer read-only checkbox (see
 # `AmpioObject.read_only`); bit 37 is the per-object Matter opt-in, not a
-# visibility signal, and nothing here reads it.
+# visibility signal, and nothing here reads it. Bit 15 is the generic
+# `OPTION1` slot, whose meaning depends on the component type - Designer
+# labels it "Bell object" on `przekaznik` and `flaga` only, so
+# `AmpioObject.bell` gates on the type before reading it.
 _HIDDEN_FLAG = 1 << 4
 _READ_ONLY_FLAG = 1 << 6
+_BELL_FLAG = 1 << 15
+# The component types whose Designer editor renders `OPTION1` as the
+# "Bell object" checkbox. On every other type the bit means something
+# else (slider layout, lamella step, ...), so it must not read as bell.
+_BELL_TYPES = frozenset({"przekaznik", "flaga"})
 
 # The `leafId` shape: `0_<macHex>_<F2>_<F3>_<F4>`, the same structure the
 # M-SERV's own Matter bridge parses (docs/identity.md). Only the mac
@@ -284,6 +292,20 @@ class AmpioObject:
         re-registering the entity. See docs/identity.md.
         """
         return bool(self.params & _READ_ONLY_FLAG)
+
+    @property
+    def bell(self) -> bool:
+        """Whether Designer marks this object as a bell (``params`` bit 15).
+
+        The "Bell object" checkbox: the object is meant for a single
+        press, and the Ampio app renders it as a press-only button
+        instead of a toggle. The checkbox exists on ``przekaznik`` and
+        ``flaga`` only; on other component types bit 15 carries an
+        unrelated per-type option, so this reads False for them. The
+        marker is display intent - whether the output auto-releases is
+        the module's own configuration. See docs/identity.md.
+        """
+        return self.typ_komponentu in _BELL_TYPES and bool(self.params & _BELL_FLAG)
 
     @property
     def stable_key(self) -> str | None:
