@@ -111,6 +111,26 @@ def test_read_only_reads_params_bit_6(params: int, read_only: bool) -> None:
     assert obj.read_only is read_only
 
 
+@pytest.mark.parametrize(
+    ("typ", "params", "bell"),
+    [
+        ("przekaznik", 1 << 15, True),  # bit 15 -> Designer bell-object checkbox
+        ("przekaznik", 134250497, True),  # the live bell-relay shape (bits 0/15/27)
+        ("flaga", 1 << 15, True),  # the checkbox exists on flags too
+        ("przekaznik", 1, False),  # the live plain-relay shape
+        ("przekaznik", 0, False),  # absent -> not a bell
+        ("led", 1 << 15, False),  # OPTION1 on a dimmer = show-switch-in-slider
+        ("roleta_lamelki", 1 << 15, False),  # OPTION1 on a tilt cover = 1% lamella
+        (None, 1 << 15, False),  # unknown type -> the bit's meaning is unknown
+    ],
+)
+def test_bell_reads_params_bit_15_only_on_relay_and_flag(
+    typ: str | None, params: int, bell: bool
+) -> None:
+    obj = AmpioObject(id=1, typ_komponentu=typ, params=params)
+    assert obj.bell is bell
+
+
 def test_hidden_overrides_leaf_id_visibility() -> None:
     """Bit 4 (hidden) drops an object even when its leaf_id would show it.
 
