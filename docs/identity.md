@@ -105,6 +105,35 @@ join can never pair an object with a replaced module's stale row. The
 join keys the lookup rather than the mac because override macs may
 collide across rows; the mac then gates what the join found.
 
+## The F segments (`0_<macHex>_<F2>_<F3>_<F4>`)
+
+The library parses only the mac and the trailing `F4` (the 0-based
+output index, `AmpioObject.leaf_out_no`); `F2` and `F3` stay
+unparsed. What they hold, from a live join of every leaf-bearing object
+against the module catalogue (#116):
+
+- **`F2` is a per-leaf class code, not the module type.** No module
+  showed `F2` equal to its `typ_urzadzenia`, and virtual cover objects
+  hosted on a relay module carry the roller code - the code follows the
+  configured leaf class, not the host product.
+- The low codes match the Designer bundle's IO type enum exactly where
+  both are known: 3 = binary flag (`flaga`), 5 = roller (`roleta_*`),
+  13 = heating regulator (`reg`), 30 = `rgbw`. Higher codes observed:
+  67 = open-collector output (`led`/`przekaznik` on M-INOC), 73-76 =
+  M-SENS channels (`lin_wej`, `temp`), 257 = binary I/O, 296 =
+  `satel_alarm`, and codes above 1000 on bridged/wireless leaves
+  (`temp` 1001, `bit8` 1002, `bit32` 1005).
+- **`F3` is a role discriminator within the class**, not a bank index:
+  class 257 carries inputs as `F3` 1 (`wej`) and outputs as `F3` 2
+  (`przekaznik`), and the two `satel_alarm` roles (armed, alarmed)
+  ride 296 as `F3` 3 and 4. Every single-role class observed uses 0.
+
+`F2` therefore carries a tier-independent function-class signal (it
+rides the app-sync catalogue the restricted tier receives), but it
+cannot replace the module type code, and the enum above is observed
+coverage, not a specification - an unlisted code proves nothing. The
+library keeps classifying on `typ_komponentu` alone.
+
 ## Visibility (`AmpioObject.visible`)
 
 Not every row in `devicesDetails` is meant to be surfaced. The

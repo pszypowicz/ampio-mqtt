@@ -225,6 +225,85 @@ unchanged. Durable external control therefore needs the LED left out
 of Designer logic, with its app object created in Designer - the same
 recipe as any other output object.
 
+## Legacy CAN bridge surfaces
+
+Two request/response endpoints predate the `fromDB` catalogues; the
+Node-RED palette (`node-red-contrib-ampio`) is their public consumer.
+Both are admin-gated like the rest of the `ampio/to` tree.
+
+**Module discovery** (#103) - still answers on the baseline server.
+Publish `1` to `ampio/to/can/dev/list`; the reply arrives, not
+retained, on `ampio/from/can/dev/list`:
+
+```json
+{"devices": [{"mac": "C0DE", "user_mac": "1", "typ": 10, "pcb": 7,
+              "date_prod": ..., "protocol": 23, "soft_ver": ...,
+              "name": "<base64>"}]}
+```
+
+Macs are uppercase hex strings; `user_mac` is the override (the
+M-SERV reports its factory mac with override `1`). `typ` is the same
+enumeration as `typ_urzadzenia` - every code on the baseline install
+resolves in `_devtypes.json`. Older firmware wrapped the list as
+`{"s": ..., "d": [...]}` with per-module capability counts (`i`, `o`,
+`a`, `au`, `t`, `f`); both are gone. Value: a module enumeration
+independent of the `fromDB` config surface, usable as a resolver
+cross-check.
+
+**Per-module descriptions** (#113) - documented by the palette as an
+empty publish to `ampio/to/<MAC>/description` answered on
+`ampio/from/<MAC>/description` with a JSON object keyed
+`<descType>_<index>` (base64 names; the palette reads descTypes 12,
+13, 16, 17 for outputs, 6 for flags, 21 for IR, and indexes descTypes
+11, 13, 15, 17 from 256). On the baseline server the surface is
+**dead**: probed live with both mac cases, empty payload, wildcard
+reply subscription - no reply, nothing retained. Read names through
+the `device_api` record instead (see [`identity.md`](identity.md));
+the palette's contract is recorded here for older bridge firmware
+only.
+
+## The Designer's own surfaces
+
+The web Designer (served by the M-SERV, bundle at
+`/assets/index-*.js`) is an ordinary MQTT client of the same broker,
+so everything it does is observable and reproducible (#66).
+
+**Transport.** Plain MQTT over websocket via mqtt.js, one connection
+for everything: locally `ws://<host>:9001` (alongside TCP 1883), and
+through Ampio's cloud as
+`wss://<device_id>-0.<cloud-domain>:6214/?_cloud_access_token=...`
+plus a support tunnel on `cloud3.ampio.com`. Connect options:
+MQTT 3.1.1, `keepalive: 180`, `clean: true`,
+`reconnectPeriod: 2000`, no will, QoS 0 throughout - and the publish
+wrapper drops messages while disconnected instead of queueing.
+
+**Surfaces.** The Designer never publishes to the
+`ampio/control/<user>/api` command surface - the `/api/set` strings in
+the bundle are only the embedded OpenAPI spec. It works on:
+
+- Config reads and saves: `ampio/control/admin/config/...` (including
+  the `save/leaves` table that maps every output leaf to command
+  function 48 = `0x30` - the frame documented under Panel outputs),
+  with replies on `ampio/fromDB/admin/config/#`.
+- The `device_api` tree: `get_data`, `name_wr`, `descriptions_wr`,
+  `firmware_wr`, `mac_user_wr`, `ow_search`, plus the broadcast
+  helpers (`list`, `discover`, `version`, `alive`, `devices_log`).
+- The JSON-RPC pair
+  `rpc/v1/ctx/admin/{call,response}/com.ampio.mserv.rpc.mqtt.restricted`
+  (and a `.system.restricted` twin) - `device_raw_api`,
+  `config_get`/`config_set`/`config_reload`, `sf_get`, `params_set`,
+  and `devices_status` notifications.
+- Raw CAN writes: `ampio/to/<machex>/raw` and `rawf` (hex-encoded
+  frames; the live-control vocabulary observed so far is the generic
+  output write `[0x30, 0xF9, value, channel]`, DALI set
+  `[57, 0xF9, ch, val]`, an MLED family `[54, 0xDF, 1|2|3, ...]` on
+  MLED-capable panels, and flash config transfer
+  `[dst, 0xFB|0xFC, blockLo, blockHi, ...]`), plus raw CAN frames to
+  `hw/out` (first byte the send-with-id opcode, then `0x80|len`, a
+  32-bit CAN id, and the data).
+- Raw feeds: `fc` / `fcocb`, `ampio/from/+/raw`, and the same
+  `ampio/from` state tree this library consumes.
+
 ## Bus events
 
 Events are logical signals numbered 1-65535 that Ampio's own logic raises
