@@ -99,10 +99,14 @@ library logs a warning when the connected server reports a lower or missing
 first.
 
 Ampio does not guarantee the stability of these wire surfaces. A server update
-can change or remove behavior this library depends on, without notice. If your
-install meets the baseline, works, and you are happy with it, stay on your
-current version and do not chase the latest one. If you decide to update anyway,
-make a full backup first - ideally a full image of the M-SERV's microSD card.
+or a module firmware update can change or remove behavior this library depends
+on, without notice. Breaking changes by Ampio are a known pattern. The author of
+an earlier Ampio integration
+[stopped maintenance for exactly this reason](https://github.com/kstaniek/ampio-hacc/issues/2).
+If your install meets the baseline, works, and you are happy with it, stay on
+your current versions and do not chase the latest ones. If you decide to update
+anyway, make a full backup first - ideally a full image of the M-SERV's microSD
+card.
 
 ## Disclaimer
 
