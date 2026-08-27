@@ -30,7 +30,7 @@ from conftest import (
 )
 
 from ampio_mqtt import _protocol
-from ampio_mqtt._protocol import ENDPOINTS, DesignerResolution, Router
+from ampio_mqtt._protocol import ENDPOINTS, Router
 from ampio_mqtt._store import AmpioStore, Applied
 from ampio_mqtt.classification import (
     InputKind,
@@ -50,6 +50,7 @@ from ampio_mqtt.models import (
     AccessTier,
     AmpioModule,
     AmpioObject,
+    DesignerRecord,
     ThermostatState,
 )
 
@@ -1631,7 +1632,7 @@ def test_apply_designer_metadata_sets_location_and_refines_type() -> None:
         store, {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     )
     applied = store.apply_designer_metadata(
-        {64: DesignerResolution(location="Potter", matter_device_type=256)}
+        {64: DesignerRecord(location="Potter", matter_device_type=256)}
     )
     assert store.objects[64].location == "Potter"
     assert store.objects[64].matter_device_type == 256
@@ -1639,7 +1640,7 @@ def test_apply_designer_metadata_sets_location_and_refines_type() -> None:
     # Re-applying the identical table is not news.
     assert (
         store.apply_designer_metadata(
-            {64: DesignerResolution(location="Potter", matter_device_type=256)}
+            {64: DesignerRecord(location="Potter", matter_device_type=256)}
         ).events
         == []
     )
@@ -1657,7 +1658,7 @@ def test_designer_type_never_clears_the_db_column() -> None:
         },
     )
     store.apply_designer_metadata(
-        {5: DesignerResolution(location="Testowe", matter_device_type=None)}
+        {5: DesignerRecord(location="Testowe", matter_device_type=None)}
     )
     assert store.objects[5].matter_device_type == 266
     assert store.objects[5].location == "Testowe"
@@ -1668,7 +1669,7 @@ def test_catalogue_merge_reapplies_the_designer_table() -> None:
     row = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     _seed_catalogue(store, row)
     store.apply_designer_metadata(
-        {64: DesignerResolution(location="Potter", matter_device_type=256)}
+        {64: DesignerRecord(location="Potter", matter_device_type=256)}
     )
     _seed_catalogue(store)  # eviction: empty catalogue
     _seed_catalogue(store, row)  # the object returns
@@ -1683,7 +1684,7 @@ def test_apply_designer_metadata_for_an_unknown_id_waits_for_the_catalogue() -> 
     (`test_params_table_before_catalogue_supplies_hidden_flag`)."""
     store = AmpioStore()
     applied = store.apply_designer_metadata(
-        {999: DesignerResolution(location="X", matter_device_type=256)}
+        {999: DesignerRecord(location="X", matter_device_type=256)}
     )
     assert applied.events == []
     assert store.objects == {}
@@ -1700,12 +1701,12 @@ def test_designer_location_none_clears_a_stale_name() -> None:
     row = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     _seed_catalogue(store, row)
     store.apply_designer_metadata(
-        {64: DesignerResolution(location="Potter", matter_device_type=None)}
+        {64: DesignerRecord(location="Potter", matter_device_type=None)}
     )
     assert store.objects[64].location == "Potter"
 
     applied = store.apply_designer_metadata(
-        {64: DesignerResolution(location=None, matter_device_type=None)}
+        {64: DesignerRecord(location=None, matter_device_type=None)}
     )
     assert store.objects[64].location is None
     assert [e.object.id for e in applied.events] == [64]

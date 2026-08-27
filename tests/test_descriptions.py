@@ -17,10 +17,9 @@ from conftest import (
     feed,
 )
 
-from ampio_mqtt import AmpioClient, ModuleUpdated, ObjectUpdated
+from ampio_mqtt import AmpioClient, DesignerRecord, ModuleUpdated, ObjectUpdated
 from ampio_mqtt._protocol import (
     ENDPOINTS,
-    DesignerResolution,
     DeviceDescriptions,
     OutputDescription,
     Router,
@@ -144,8 +143,8 @@ def test_resolve_designer_joins_location_and_type() -> None:
     }
     resolved = resolve_designer(objects, by_mac, {14: "Potter"}, frozenset())
     assert resolved == {
-        64: DesignerResolution(location="Potter", matter_device_type=256),
-        48: DesignerResolution(location=None, matter_device_type=None),
+        64: DesignerRecord(location="Potter", matter_device_type=256, name="Lampa"),
+        48: DesignerRecord(location=None, matter_device_type=None, name="Roleta"),
     }
 
 
@@ -166,6 +165,16 @@ def test_resolve_designer_skips_colliding_macs() -> None:
     }
     by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
     assert resolve_designer(objects, by_mac, {14: "P"}, frozenset({0xCB89})) == {}
+
+
+def test_resolve_designer_reads_empty_desc_as_none() -> None:
+    objects = {
+        64: AmpioObject(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
+    }
+    by_mac = {0xCB89: _entries((12, 0, 0, 0, ""))}
+    assert resolve_designer(objects, by_mac, {}, frozenset()) == {
+        64: DesignerRecord(location=None, matter_device_type=None, name=None)
+    }
 
 
 def test_resolve_module_locations_reads_the_device_name_entry() -> None:

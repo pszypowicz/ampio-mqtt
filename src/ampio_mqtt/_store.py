@@ -29,6 +29,7 @@ from .models import (
     AmpioModule,
     AmpioObject,
     AmpioServerInfo,
+    DesignerRecord,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,10 +76,10 @@ class AmpioStore:
         # because the app-sync catalogue carries no params column and the two
         # replies arrive in no fixed order.
         self._params_by_id: dict[int, int] = {}
-        # `{object_id: DesignerResolution}` from the last resolve_locations()
+        # `{object_id: DesignerRecord}` from the last resolve_locations()
         # sweep, kept so a catalogue refresh re-applies what the CAN record
         # proved (the catalogue itself never carries it).
-        self._designer_by_id: dict[int, _protocol.DesignerResolution] = {}
+        self._designer_by_id: dict[int, DesignerRecord] = {}
         # `{mac: module-level location}` accumulated across sweeps, kept for
         # the same reason on the module side; None is an authoritative
         # "answered, unassigned".
@@ -134,9 +135,7 @@ class AmpioStore:
         """
         self._guarded.clear()
 
-    def apply_designer_metadata(
-        self, resolved: dict[int, _protocol.DesignerResolution]
-    ) -> Applied:
+    def apply_designer_metadata(self, resolved: dict[int, DesignerRecord]) -> Applied:
         """Hold the resolved designer table and fold it into known objects.
 
         ``location`` is authoritative from the record (None clears a stale

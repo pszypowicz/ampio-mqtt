@@ -37,6 +37,7 @@ from .models import (
     AmpioObject,
     AmpioScene,
     AmpioServerInfo,
+    DesignerRecord,
     ThermostatState,
 )
 
@@ -417,33 +418,25 @@ def parse_device_info(payload: str) -> tuple[OutputDescription, ...] | None:
     return parse_descriptions_blob(blob)
 
 
-@dataclass(slots=True, frozen=True)
-class DesignerResolution:
-    """What one object's CAN description entry proves."""
-
-    location: str | None
-    matter_device_type: int | None
-
-
 def resolve_designer(
     objects: Mapping[int, AmpioObject],
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
     location_names: Mapping[int, str],
     colliding_macs: frozenset[int],
-) -> dict[int, DesignerResolution]:
+) -> dict[int, DesignerRecord]:
     """Join each object to its module's description entry.
 
     The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], leaf_out_no)`` within
     the module record of ``module_mac``. Objects on a colliding mac are
     skipped - the reply cannot be attributed to one module. ``out_loc`` 0
     reads unassigned and ``out_type`` 0 untagged, so neither produces a
-    value.
+    value. An empty ``desc`` reads as None, like the other two fields.
     """
     entries_by_key = {
         mac: {(e.desc_type, e.out_no): e for e in entries}
         for mac, entries in descriptions_by_mac.items()
     }
-    out: dict[int, DesignerResolution] = {}
+    out: dict[int, DesignerRecord] = {}
     for obj in objects.values():
         desc_type = DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "")
         mac = obj.module_mac
@@ -455,9 +448,10 @@ def resolve_designer(
         entry = entries_by_key.get(mac, {}).get((desc_type, out_no))
         if entry is None:
             continue
-        out[obj.id] = DesignerResolution(
+        out[obj.id] = DesignerRecord(
             location=location_names.get(entry.out_loc) if entry.out_loc else None,
             matter_device_type=entry.out_type or None,
+            name=entry.desc or None,
         )
     return out
 
