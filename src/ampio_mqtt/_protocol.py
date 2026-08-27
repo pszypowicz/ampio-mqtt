@@ -38,6 +38,7 @@ from .models import (
     AmpioScene,
     AmpioServerInfo,
     DesignerRecord,
+    ModuleRecord,
     ThermostatState,
 )
 
@@ -461,28 +462,30 @@ def resolve_designer(
 DEVICE_NAME_DESC_TYPE = 1
 
 
-def resolve_module_locations(
+def resolve_module_records(
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
     location_names: Mapping[int, str],
     colliding_macs: frozenset[int],
-) -> dict[int, str | None]:
-    """The module-level location of every answering module, by mac.
+) -> dict[int, ModuleRecord]:
+    """The DEVICE_NAME record entry of every answering module, by mac.
 
-    Reads the DEVICE_NAME entry of each record. A record without the
-    entry, with ``out_loc`` 0, or with a pointer the names table lacks
-    reads unassigned - the module answered, so None is authoritative.
-    Colliding macs are skipped: the reply cannot be attributed.
+    A record without the entry reads an empty bundle - the module
+    answered, so the emptiness is authoritative. ``out_loc`` 0 and an
+    empty ``desc`` read None. Colliding macs are skipped: the reply
+    cannot be attributed.
     """
-    out: dict[int, str | None] = {}
+    out: dict[int, ModuleRecord] = {}
     for mac, entries in descriptions_by_mac.items():
         if mac in colliding_macs:
             continue
         entry = next((e for e in entries if e.desc_type == DEVICE_NAME_DESC_TYPE), None)
-        out[mac] = (
-            location_names.get(entry.out_loc)
-            if entry is not None and entry.out_loc
-            else None
-        )
+        if entry is None:
+            out[mac] = ModuleRecord()
+        else:
+            out[mac] = ModuleRecord(
+                location=(location_names.get(entry.out_loc) if entry.out_loc else None),
+                name=entry.desc or None,
+            )
     return out
 
 

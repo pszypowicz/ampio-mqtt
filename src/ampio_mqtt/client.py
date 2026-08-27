@@ -849,10 +849,8 @@ class AmpioClient:
             self._store.objects, by_mac, names, self._store.colliding_macs
         )
         applied = self._store.apply_designer_records(resolved)
-        module_applied = self._store.apply_module_locations(
-            _protocol.resolve_module_locations(
-                by_mac, names, self._store.colliding_macs
-            )
+        module_applied = self._store.apply_module_records(
+            _protocol.resolve_module_records(by_mac, names, self._store.colliding_macs)
         )
         for event in (*applied.events, *module_applied.events):
             self._dispatch(event)

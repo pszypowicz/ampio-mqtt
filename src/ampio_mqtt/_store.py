@@ -30,6 +30,7 @@ from .models import (
     AmpioObject,
     AmpioServerInfo,
     DesignerRecord,
+    ModuleRecord,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -81,10 +82,10 @@ class AmpioStore:
         # kept so a catalogue refresh re-applies what the CAN records
         # proved (the catalogue itself never carries them).
         self._record_by_id: dict[int, DesignerRecord] = {}
-        # `{mac: module-level location}` accumulated across sweeps, kept for
-        # the same reason on the module side; None is an authoritative
-        # "answered, unassigned".
-        self._module_location_by_mac: dict[int, str | None] = {}
+        # `{mac: ModuleRecord}` accumulated across sweeps, kept for the
+        # same reason on the module side; an empty bundle is an
+        # authoritative "answered, unassigned".
+        self._module_record_by_mac: dict[int, ModuleRecord] = {}
         # `{object_id: stan_json}` from the last `data/states` snapshot,
         # kept for the same reason; a snapshot row for an id no catalogue
         # established creates nothing.
@@ -156,22 +157,22 @@ class AmpioStore:
             self._record(obj, applied)
         return applied
 
-    def apply_module_locations(self, by_mac: Mapping[int, str | None]) -> Applied:
-        """Hold the swept module-level locations and fold them into modules.
+    def apply_module_records(self, by_mac: Mapping[int, ModuleRecord]) -> Applied:
+        """Hold the swept DEVICE_NAME entries and fold them into modules.
 
-        The value is authoritative per answering mac (None clears); a mac
-        the sweep did not cover leaves both the held table and the module
-        untouched.
+        Wholesale per answering mac, exactly as the object side; a mac
+        the sweep did not cover leaves both the held table and the
+        module untouched.
         """
         applied = Applied()
-        self._module_location_by_mac.update(by_mac)
-        for mac, location in by_mac.items():
+        self._module_record_by_mac.update(by_mac)
+        for mac, rec in by_mac.items():
             mid = self._module_id_by_mac.get(mac)
             if mid is None:
                 continue
             module = self.modules[mid]
-            if module.location != location:
-                module = replace(module, location=location)
+            if module.record != rec:
+                module = replace(module, record=rec)
                 self.modules[mid] = module
                 applied.events.append(ModuleUpdated(module))
         return applied
@@ -341,13 +342,11 @@ class AmpioStore:
                     supply_voltage=previous.supply_voltage,
                     temperature=previous.temperature,
                 )
-            # The catalogue never carries the module-level location; the
-            # held table re-applies it on every merge - including the
+            # The catalogue never carries the record entry; the held
+            # table re-applies it on every merge - including the
             # re-creation after an eviction.
-            if module.mac is not None and module.mac in self._module_location_by_mac:
-                module = replace(
-                    module, location=self._module_location_by_mac[module.mac]
-                )
+            if module.mac is not None and module.mac in self._module_record_by_mac:
+                module = replace(module, record=self._module_record_by_mac[module.mac])
             self.modules[module.id] = module
             # A new module or a changed catalogue row is news, exactly as an
             # object catalogue row is; the live fields were carried over

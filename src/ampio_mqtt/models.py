@@ -381,12 +381,6 @@ class AmpioModule:
     mounting: Mounting | None = field(init=False)
     sw_version: int | None = None  # wersja_softu
     hw_version: int | None = None  # wersja_pcb
-    # Designer module-level location (the "Lokalizacja" set on the module
-    # itself - where the box is mounted, not where its loads are), read
-    # from the DEVICE_NAME entry of the module's CAN description record by
-    # :meth:`AmpioClient.resolve_locations` - admin tier only. None until
-    # a sweep covers the module, or when the installer never set one.
-    location: str | None = None
     # The module's DEVICE_NAME record entry, admin sweep only; None
     # until a sweep covers the module.
     record: ModuleRecord | None = None

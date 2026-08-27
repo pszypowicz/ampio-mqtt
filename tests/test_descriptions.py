@@ -17,7 +17,13 @@ from conftest import (
     feed,
 )
 
-from ampio_mqtt import AmpioClient, DesignerRecord, ModuleUpdated, ObjectUpdated
+from ampio_mqtt import (
+    AmpioClient,
+    DesignerRecord,
+    ModuleRecord,
+    ModuleUpdated,
+    ObjectUpdated,
+)
 from ampio_mqtt._protocol import (
     ENDPOINTS,
     DeviceDescriptions,
@@ -27,7 +33,7 @@ from ampio_mqtt._protocol import (
     parse_descriptions_blob,
     parse_device_info,
     resolve_designer,
-    resolve_module_locations,
+    resolve_module_records,
 )
 from ampio_mqtt.models import AmpioObject
 
@@ -177,24 +183,24 @@ def test_resolve_designer_reads_empty_desc_as_none() -> None:
     }
 
 
-def test_resolve_module_locations_reads_the_device_name_entry() -> None:
+def test_resolve_module_records_reads_the_device_name_entry() -> None:
     by_mac = {
         0xCB89: _entries((1, 0, 14, 0, "Modul"), (12, 0, 19, 256, "Lampa")),
         0xBEEF: _entries((12, 0, 19, 256, "L")),  # no DEVICE_NAME entry
         0xCAFE: _entries((1, 0, 0, 0, "M")),  # DEVICE_NAME with outLoc 0
     }
     names = {14: "Rozdzielnia", 19: "Salon"}
-    assert resolve_module_locations(by_mac, names, frozenset()) == {
-        0xCB89: "Rozdzielnia",
-        0xBEEF: None,
-        0xCAFE: None,
+    assert resolve_module_records(by_mac, names, frozenset()) == {
+        0xCB89: ModuleRecord(location="Rozdzielnia", name="Modul"),
+        0xBEEF: ModuleRecord(),
+        0xCAFE: ModuleRecord(location=None, name="M"),
     }
 
 
-def test_resolve_module_locations_skips_colliding_macs() -> None:
+def test_resolve_module_records_skips_colliding_macs() -> None:
     by_mac = {0xCB89: _entries((1, 0, 14, 0, "M"))}
     names = {14: "Rozdzielnia"}
-    assert resolve_module_locations(by_mac, names, frozenset({0xCB89})) == {}
+    assert resolve_module_records(by_mac, names, frozenset({0xCB89})) == {}
 
 
 async def _admin_client_with_catalogue() -> tuple[AmpioClient, FakeBroker]:
@@ -294,8 +300,10 @@ async def test_resolve_locations_sweeps_joins_and_merges() -> None:
         assert client.objects[64].matter_device_type is None
         assert ("device_api/to/cb89/get_data", b"") in broker.published
         assert [e.object.record.location for e in events] == ["Potter"]
-        assert client.modules[16].location == "Rozdzielnia"
-        assert [m.module.location for m in module_events] == ["Rozdzielnia"]
+        assert client.modules[16].record == ModuleRecord(
+            location="Rozdzielnia", name="Modul"
+        )
+        assert [m.module.record.location for m in module_events] == ["Rozdzielnia"]
     finally:
         await client.stop()
 
