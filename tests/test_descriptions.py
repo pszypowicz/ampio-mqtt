@@ -260,7 +260,7 @@ async def test_admin_subscribes_the_device_api_wildcard() -> None:
         await restricted.stop()
 
 
-async def test_resolve_locations_sweeps_joins_and_merges() -> None:
+async def test_resolve_records_sweeps_joins_and_merges() -> None:
     client, broker = await _admin_client_with_catalogue()
     try:
         events: list[ObjectUpdated] = []
@@ -290,10 +290,12 @@ async def test_resolve_locations_sweeps_joins_and_merges() -> None:
             )
         )
         try:
-            result = await client.resolve_locations(timeout=1.0)
+            result = await client.resolve_records(timeout=1.0)
         finally:
             await delivery
-        assert result == {64: "Potter"}
+        assert result == {
+            64: DesignerRecord(location="Potter", matter_device_type=256, name="L")
+        }
         assert client.objects[64].record == DesignerRecord(
             location="Potter", matter_device_type=256, name="L"
         )
@@ -308,7 +310,7 @@ async def test_resolve_locations_sweeps_joins_and_merges() -> None:
         await client.stop()
 
 
-async def test_resolve_locations_tolerates_silent_modules() -> None:
+async def test_resolve_records_tolerates_silent_modules() -> None:
     client, broker = await _admin_client_with_catalogue()
     try:
         feed(
@@ -328,20 +330,22 @@ async def test_resolve_locations_tolerates_silent_modules() -> None:
             )
         )
         try:
-            result = await client.resolve_locations(timeout=0.2)
+            result = await client.resolve_records(timeout=0.2)
         finally:
             await delivery
-        assert result == {64: "Potter"}
+        assert result == {
+            64: DesignerRecord(location="Potter", matter_device_type=256, name="L")
+        }
     finally:
         await client.stop()
 
 
-async def test_resolve_locations_raises_on_restricted_tier() -> None:
+async def test_resolve_records_raises_on_restricted_tier() -> None:
     broker = FakeBroker()
     client = AmpioClient("host", username="u", mqtt_client_factory=broker.factory)
     await client.start(timeout=2.0, discovery_timeout=0.01)
     try:
         with pytest.raises(RuntimeError, match="admin"):
-            await client.resolve_locations(timeout=0.1)
+            await client.resolve_records(timeout=0.1)
     finally:
         await client.stop()

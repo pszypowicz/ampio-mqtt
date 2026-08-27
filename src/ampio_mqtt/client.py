@@ -56,6 +56,7 @@ from .models import (
     AmpioScene,
     AmpioServerInfo,
     ConnectionStats,
+    DesignerRecord,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -757,8 +758,8 @@ class AmpioClient:
         """Return ``{location_id: name}`` - the Designer "Lokalizacja" table.
 
         The name table the per-output location pointer resolves through;
-        :meth:`resolve_locations` consumes it and per-object consumers read
-        :pyattr:`AmpioObject.location` instead. Admin tier only - the
+        :meth:`resolve_records` consumes it and per-object consumers read
+        :pyattr:`AmpioObject.record` instead. Admin tier only - the
         ``config`` surface never answers a restricted account, and the call
         raises ``RuntimeError`` for one.
 
@@ -774,41 +775,40 @@ class AmpioClient:
         )
         return dict(cast("dict[int, str]", replies["locations"]))
 
-    async def resolve_locations(self, timeout: float = 10.0) -> dict[int, str]:
-        """Resolve every object's Designer location and return the map.
+    async def resolve_records(self, timeout: float = 10.0) -> dict[int, DesignerRecord]:
+        """Sweep the CAN description records and return what resolved.
 
-        Fetches the locations name table, asks each catalogued module for
-        its CAN-resident description record over the ``device_api`` tree,
-        joins the entries to objects, and folds the result into the store:
-        :pyattr:`AmpioObject.location` carries the name afterwards, and a
-        record's Matter tag refines :pyattr:`AmpioObject.matter_device_type`
-        (#110). Changes dispatch as :class:`ObjectUpdated`. The same record
-        carries the module-level location (the DEVICE_NAME entry - where
-        the module itself is mounted), folded into
-        :pyattr:`AmpioModule.location` with :class:`ModuleUpdated`
-        dispatched on change (#114).
+        Fetches the locations name table, asks each catalogued module
+        for its CAN-resident description record over the ``device_api``
+        tree, joins the entries to objects, and folds each joined
+        object's entry into :pyattr:`AmpioObject.record` - wholesale,
+        None fields included - with :class:`ObjectUpdated` dispatched on
+        change. The same reply's DEVICE_NAME entry folds into
+        :pyattr:`AmpioModule.record` with :class:`ModuleUpdated` (#114).
+        The catalogue facts (``matter_device_type``, ``name``) are never
+        touched: the record is the separate, admin-guarded fact (#133).
 
-        Returns ``{object_id: location_name}`` for what resolved. A module
-        that does not answer within ``timeout`` is skipped without error -
-        offline modules are normal - so the map can be partial; call again
-        for another sweep. An object absent from a sweep's resolution keeps
-        its previous ``location`` - a partial sweep never clears it - until
-        a catalogue eviction or a later sweep that covers the object.
+        Returns ``{object_id: DesignerRecord}`` for what resolved. A
+        module that does not answer within ``timeout`` is skipped
+        without error - offline modules are normal - so the map can be
+        partial; call again for another sweep. An object absent from a
+        sweep keeps its previous ``record`` until a later sweep covers
+        it.
 
-        The sweep waits out the full ``timeout`` whenever any module stays
-        silent, which is normal on a real install, and the name table is
-        fetched first on its own ``timeout`` budget, so the call can take
-        up to twice ``timeout`` end to end.
+        The sweep waits out the full ``timeout`` whenever any module
+        stays silent, and the name table is fetched first on its own
+        ``timeout`` budget, so the call can take up to twice ``timeout``
+        end to end.
 
-        Admin tier only: the ``device_api`` tree answers no other account,
-        and the call raises ``RuntimeError`` for one. Requires ``start()``
-        to have completed. Raises ``AmpioConnectionError`` if the broker is
-        not connected and ``AmpioTimeoutError`` if the name table itself
-        does not arrive.
+        Admin tier only: the ``device_api`` tree answers no other
+        account, and the call raises ``RuntimeError`` for one. Requires
+        ``start()`` to have completed. Raises ``AmpioConnectionError``
+        if the broker is not connected and ``AmpioTimeoutError`` if the
+        name table itself does not arrive.
         """
         if self._tier is not AccessTier.ADMIN:
             raise RuntimeError(
-                "resolve_locations() needs the reserved admin login - the "
+                "resolve_records() needs the reserved admin login - the "
                 "device_api tree answers no other account"
             )
         names = await self.fetch_locations(timeout=timeout)
@@ -854,11 +854,7 @@ class AmpioClient:
         )
         for event in (*applied.events, *module_applied.events):
             self._dispatch(event)
-        return {
-            oid: res.location
-            for oid, res in resolved.items()
-            if res.location is not None
-        }
+        return dict(resolved)
 
     async def send_event(self, event_number: int) -> None:
         """Raise a bus event, running whatever Ampio logic is bound to it.

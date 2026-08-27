@@ -763,7 +763,7 @@ ENDPOINTS: tuple[Endpoint, ...] = (
     Endpoint("scenes", "data", "scenes", "data", "scenes", parses=parse_scenes),
     # The Designer "Lokalizacja" name table. On-demand; the per-output
     # pointer that resolves through it rides the device_api record
-    # (resolve_locations()).
+    # (resolve_records()).
     Endpoint(
         "locations",
         "config",
