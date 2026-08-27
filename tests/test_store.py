@@ -1618,7 +1618,7 @@ def test_colliding_override_macs_warn_once_and_surface(
     assert store.colliding_macs == frozenset()
 
 
-# --- Designer-resolved location and matter type -----------------------------
+# --- Designer record bundles -------------------------------------------------
 
 
 def _seed_catalogue(store: AmpioStore, *rows: dict) -> Applied:
@@ -1626,27 +1626,20 @@ def _seed_catalogue(store: AmpioStore, *rows: dict) -> Applied:
     return _apply(store, DETAILS_TOPIC, details(*rows))
 
 
-def test_apply_designer_metadata_sets_location_and_refines_type() -> None:
+def test_apply_designer_records_sets_the_bundle() -> None:
     store = AmpioStore()
     _seed_catalogue(
         store, {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     )
-    applied = store.apply_designer_metadata(
-        {64: DesignerRecord(location="Potter", matter_device_type=256)}
-    )
-    assert store.objects[64].location == "Potter"
-    assert store.objects[64].matter_device_type == 256
+    rec = DesignerRecord(location="Potter", matter_device_type=256, name="Lampa")
+    applied = store.apply_designer_records({64: rec})
+    assert store.objects[64].record == rec
     assert [e.object.id for e in applied.events] == [64]
     # Re-applying the identical table is not news.
-    assert (
-        store.apply_designer_metadata(
-            {64: DesignerRecord(location="Potter", matter_device_type=256)}
-        ).events
-        == []
-    )
+    assert store.apply_designer_records({64: rec}).events == []
 
 
-def test_designer_type_never_clears_the_db_column() -> None:
+def test_sweep_never_touches_the_catalogue_type_column() -> None:
     store = AmpioStore()
     _seed_catalogue(
         store,
@@ -1657,64 +1650,52 @@ def test_designer_type_never_clears_the_db_column() -> None:
             "type": "266",
         },
     )
-    store.apply_designer_metadata(
-        {5: DesignerRecord(location="Testowe", matter_device_type=None)}
+    store.apply_designer_records(
+        {5: DesignerRecord(location="Testowe", matter_device_type=256)}
     )
     assert store.objects[5].matter_device_type == 266
-    assert store.objects[5].location == "Testowe"
+    assert store.objects[5].record == DesignerRecord(
+        location="Testowe", matter_device_type=256
+    )
 
 
-def test_catalogue_merge_reapplies_the_designer_table() -> None:
+def test_record_replaces_wholesale() -> None:
     store = AmpioStore()
     row = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     _seed_catalogue(store, row)
-    store.apply_designer_metadata(
-        {64: DesignerRecord(location="Potter", matter_device_type=256)}
+    store.apply_designer_records(
+        {64: DesignerRecord(location="Potter", matter_device_type=256, name="Lampa")}
     )
-    _seed_catalogue(store)  # eviction: empty catalogue
-    _seed_catalogue(store, row)  # the object returns
-    assert store.objects[64].location == "Potter"
-    assert store.objects[64].matter_device_type == 256
+    applied = store.apply_designer_records({64: DesignerRecord(location="Salon")})
+    assert store.objects[64].record == DesignerRecord(location="Salon")
+    assert [e.object.id for e in applied.events] == [64]
 
 
-def test_apply_designer_metadata_for_an_unknown_id_waits_for_the_catalogue() -> None:
-    """A resolution racing ahead of the catalogue (or arriving for an object
-    just evicted) creates no placeholder - the held table applies it once the
-    id's own catalogue row lands, mirroring the params_devices convention
-    (`test_params_table_before_catalogue_supplies_hidden_flag`)."""
+def test_held_records_accumulate_across_partial_sweeps() -> None:
     store = AmpioStore()
-    applied = store.apply_designer_metadata(
-        {999: DesignerRecord(location="X", matter_device_type=256)}
-    )
+    row_a = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
+    row_b = {"id": 48, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_1"}
+    _seed_catalogue(store, row_a, row_b)
+    store.apply_designer_records({64: DesignerRecord(location="Potter")})
+    store.apply_designer_records({48: DesignerRecord(location="Salon")})
+    _seed_catalogue(store)  # eviction: empty catalogue
+    _seed_catalogue(store, row_a, row_b)  # both return
+    assert store.objects[64].record == DesignerRecord(location="Potter")
+    assert store.objects[48].record == DesignerRecord(location="Salon")
+
+
+def test_record_for_an_unknown_id_waits_for_the_catalogue() -> None:
+    """A resolution racing ahead of the catalogue (or arriving for an
+    object just evicted) creates no placeholder - the held table applies
+    it once the id's own catalogue row lands."""
+    store = AmpioStore()
+    applied = store.apply_designer_records({999: DesignerRecord(location="X")})
     assert applied.events == []
     assert store.objects == {}
-
     _seed_catalogue(
         store, {"id": 999, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     )
-    assert store.objects[999].location == "X"
-    assert store.objects[999].matter_device_type == 256
-
-
-def test_designer_location_none_clears_a_stale_name() -> None:
-    store = AmpioStore()
-    row = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
-    _seed_catalogue(store, row)
-    store.apply_designer_metadata(
-        {64: DesignerRecord(location="Potter", matter_device_type=None)}
-    )
-    assert store.objects[64].location == "Potter"
-
-    applied = store.apply_designer_metadata(
-        {64: DesignerRecord(location=None, matter_device_type=None)}
-    )
-    assert store.objects[64].location is None
-    assert [e.object.id for e in applied.events] == [64]
-
-    # The clear survives a catalogue re-merge.
-    again = _seed_catalogue(store, row)
-    assert store.objects[64].location is None
-    assert again.events == []
+    assert store.objects[999].record == DesignerRecord(location="X")
 
 
 # --- ObjectAdded: an object's first event -----------------------------------

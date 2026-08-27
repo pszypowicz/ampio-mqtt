@@ -131,17 +131,13 @@ class AmpioObject:
     # Defaults to 0 so a payload without the column reads "nothing hidden".
     params: int = 0
     # Matter device type ID from the Designer "Description in device" tag
-    # (`type` column; "256" = 0x0100 On/Off Light). None when untagged. When
-    # set it is installer intent - the signal that a relay drives a light
-    # rather than a plug - and consumers map it to a platform themselves;
-    # `kind` stays derived from `typ_komponentu` alone. docs/identity.md
-    # holds the vocabulary and the storage path.
+    # (`type` column; "256" = 0x0100 On/Off Light). None when untagged. A
+    # pure catalogue fact, served identically to both tiers and never
+    # mutated after the seed; the record's own (fresher, admin-only) tag
+    # is `record.matter_device_type`, and which one wins is the
+    # consumer's choice. docs/identity.md holds the vocabulary and the
+    # storage path.
     matter_device_type: int | None = None
-    # Designer per-output location name (the "Lokalizacja" dropdown),
-    # resolved from the module's CAN-resident description record by
-    # `AmpioClient.resolve_locations()` - admin tier only. None until a
-    # resolve ran, and for objects it could not match. docs/identity.md.
-    location: str | None = None
     # The object's description-record entry, admin sweep only; None on
     # the restricted tier and before a sweep covers the object.
     record: DesignerRecord | None = None

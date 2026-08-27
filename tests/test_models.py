@@ -263,10 +263,9 @@ def test_position_reads_none_off_the_position_axis() -> None:
     assert _cover("55", typ="roleta_lamelki").position == 55
 
 
-def test_location_defaults_to_none_and_survives_replace() -> None:
-    obj = AmpioObject(id=1, location="Potter")
-    assert AmpioObject(id=1).location is None
-    assert replace(obj, value="1").location == "Potter"
+def test_record_survives_replace() -> None:
+    obj = AmpioObject(id=1, record=DesignerRecord(location="Potter"))
+    assert replace(obj, value="1").record == DesignerRecord(location="Potter")
 
 
 def test_leaf_out_no_parses_last_segment() -> None:

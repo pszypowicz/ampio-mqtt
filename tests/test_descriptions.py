@@ -288,10 +288,12 @@ async def test_resolve_locations_sweeps_joins_and_merges() -> None:
         finally:
             await delivery
         assert result == {64: "Potter"}
-        assert client.objects[64].location == "Potter"
-        assert client.objects[64].matter_device_type == 256
+        assert client.objects[64].record == DesignerRecord(
+            location="Potter", matter_device_type=256, name="L"
+        )
+        assert client.objects[64].matter_device_type is None
         assert ("device_api/to/cb89/get_data", b"") in broker.published
-        assert [e.object.location for e in events] == ["Potter"]
+        assert [e.object.record.location for e in events] == ["Potter"]
         assert client.modules[16].location == "Rozdzielnia"
         assert [m.module.location for m in module_events] == ["Rozdzielnia"]
     finally:

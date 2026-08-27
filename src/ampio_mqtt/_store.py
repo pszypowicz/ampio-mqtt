@@ -76,10 +76,11 @@ class AmpioStore:
         # because the app-sync catalogue carries no params column and the two
         # replies arrive in no fixed order.
         self._params_by_id: dict[int, int] = {}
-        # `{object_id: DesignerRecord}` from the last resolve_locations()
-        # sweep, kept so a catalogue refresh re-applies what the CAN record
-        # proved (the catalogue itself never carries it).
-        self._designer_by_id: dict[int, DesignerRecord] = {}
+        # `{object_id: DesignerRecord}` accumulated across resolve
+        # sweeps (a sweep updates its joined ids and leaves the rest),
+        # kept so a catalogue refresh re-applies what the CAN records
+        # proved (the catalogue itself never carries them).
+        self._record_by_id: dict[int, DesignerRecord] = {}
         # `{mac: module-level location}` accumulated across sweeps, kept for
         # the same reason on the module side; None is an authoritative
         # "answered, unassigned".
@@ -135,32 +136,24 @@ class AmpioStore:
         """
         self._guarded.clear()
 
-    def apply_designer_metadata(self, resolved: dict[int, DesignerRecord]) -> Applied:
-        """Hold the resolved designer table and fold it into known objects.
+    def apply_designer_records(self, resolved: dict[int, DesignerRecord]) -> Applied:
+        """Hold the swept record entries and fold them into known objects.
 
-        ``location`` is authoritative from the record (None clears a stale
-        name); ``matter_device_type`` refines and never clears - a record
-        without a tag leaves the held value standing. The catalogue merge
-        path (``_merge_metadata``) is where the column re-asserts itself.
+        A joined object's ``record`` is replaced wholesale - the entry is
+        what its module answered, None fields included. Objects a sweep
+        did not join keep their previous record, and the held table
+        accumulates across sweeps so a catalogue re-seed re-folds
+        everything this session learned.
         """
         applied = Applied()
-        self._designer_by_id = dict(resolved)
-        for oid, res in resolved.items():
+        self._record_by_id.update(resolved)
+        for oid, rec in resolved.items():
             obj = self.objects.get(oid)
-            if obj is None:
+            if obj is None or obj.record == rec:
                 continue
-            updates: dict[str, Any] = {}
-            if obj.location != res.location:
-                updates["location"] = res.location
-            if (
-                res.matter_device_type is not None
-                and obj.matter_device_type != res.matter_device_type
-            ):
-                updates["matter_device_type"] = res.matter_device_type
-            if updates:
-                obj = replace(obj, **updates)
-                self.objects[oid] = obj
-                self._record(obj, applied)
+            obj = replace(obj, record=rec)
+            self.objects[oid] = obj
+            self._record(obj, applied)
         return applied
 
     def apply_module_locations(self, by_mac: Mapping[int, str | None]) -> Applied:
@@ -265,14 +258,12 @@ class AmpioStore:
         # A row without the column leaves the params_devices value standing.
         if updates["params"] is None:
             updates["params"] = self._params_by_id.get(meta.id, obj.params)
-        # The catalogue never carries the designer record's fields, so the
-        # held table re-applies them on every merge - including the
-        # re-creation after an eviction.
-        designer = self._designer_by_id.get(meta.id)
-        if designer is not None:
-            updates["location"] = designer.location
-            if designer.matter_device_type is not None:
-                updates["matter_device_type"] = designer.matter_device_type
+        # The catalogue never carries the record entry, so the held table
+        # re-applies it on every merge - including the re-creation after
+        # an eviction.
+        record = self._record_by_id.get(meta.id)
+        if record is not None:
+            updates["record"] = record
         changed = any(getattr(obj, name) != value for name, value in updates.items())
         updated = replace(obj, **updates)
         # A row without the column (the app-sync shape) falls back to the
