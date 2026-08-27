@@ -38,6 +38,9 @@ catalogue serves that field to both tiers, so any consumer can detect it.
   learns the marker.
 - `docs/protocol.md` lists the read-only drop next to the grant-scoped drop, and
   adds it to the silent-drop list that bounds `confirm=` timeouts.
+- The README warns that Ampio does not guarantee the stability of the wire
+  surfaces across server updates, and recommends a full backup - ideally a
+  microSD card image - before any M-SERV update.
 
 ## 0.34.0
 
