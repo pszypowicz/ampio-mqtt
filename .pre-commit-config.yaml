@@ -1,6 +1,6 @@
 # Install once with: uvx pre-commit install
-# The hooks mirror what CI enforces: ruff for Python, prettier for
-# markdown prose wrapping (.prettierrc sets proseWrap: always).
+# ruff and prettier mirror what CI enforces (.prettierrc sets
+# proseWrap: always). betterleaks scans staged changes for secrets.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.4
@@ -12,3 +12,7 @@ repos:
     hooks:
       - id: prettier
         files: '\.md$'
+  - repo: https://github.com/betterleaks/betterleaks
+    rev: v1.8.1
+    hooks:
+      - id: betterleaks

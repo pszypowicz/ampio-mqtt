@@ -714,7 +714,11 @@ async def test_fetch_rejects_a_store_gated_endpoint() -> None:
 def test_diagnostics_snapshot_is_credential_free_and_complete() -> None:
     """The one dict a consumer diagnostics platform emits as-is: every
     documented key present, no trace of host or password."""
-    client = AmpioClient("secret-host.local", username=ADMIN_USER, password="s3cr3t-pw")
+    client = AmpioClient(
+        "secret-host.local",
+        username=ADMIN_USER,
+        password="s3cr3t-pw",  # betterleaks:allow
+    )
     feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
     feed(
         client,
