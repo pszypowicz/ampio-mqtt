@@ -166,19 +166,64 @@ Designer.
 
 ## Where the `params` bit semantics come from
 
+The Designer web bundle embeds the enum that names every bit of the object
+`params` integer:
+
+```text
+SHOW_ACTIVE:1             DALI_OBJECT:2              DALI_GROUP:4
+OWA_OBJECT:8              DELETED:16                 MAKE_SEMICOLON:32
+READ_ONLY:64              BLOCK_LOCAL:128            BLOCK_REMOTE:256
+HIDE_DESC_ON_SKETCH:512   BLOCK_LOGGING:1024         PRESENCE_DETECT_ENT:2048
+PRESENCE_DETECT_INS:4096  REDIRECT_USING_OLD_CLOUD:8192
+HIDE_TITLE:16384          OPTION1:32768              SHOW_CONNECTED_AS_LIST:65536
+ADD_UNIT_TO_DESC:131072   ADD_DESC_TO_ICON:262144    ADD_VALUE_TO_ICON:524288
+CUSTOM_RANGE:2^20         REVERSE_ROLLERS:2^21       USE_IN_WEATHER:2^22
+HIDE_LOADER:2^23          HIDE_ADDITIONAL_OPTIONS:2^24
+OPTION2:2^25              OPTION3:2^26               OPTION4:2^27
+HIDE_IN_LOGBOOK:2^28      STEP_OBJECT:2^29           OPTION5:2^30
+OPTION6:2^31              INCREMENTAL:2^32           HIDE_MIN_MAX:2^33
+KNX_VALUE:2^34            LORA_VALUE:2^35            HIDE_LAST:2^36
+MATTER:2^37               USE_ONLY_VALUE_FROM_RANGE:2^38
+SHOW_AT_FULL_WIDTH:2^39
+```
+
+The library reads two of these bits. `DELETED` (bit 4) backs `hidden` and
+`visible`. `READ_ONLY` (bit 6) backs `read_only`.
+
 The M-SERV ships its own Matter bridge (a matter.js app launched by
-`ampio-server`). That bridge's production gate is the corroboration for the two
-bits this library reads: it exposes an object only when
-`(params & 2**37) && !(params & 16)`. Bit 37 is the per-object Matter opt-in set
-in Designer. Bit 4 is the hidden/stub marker that `hidden` and `visible` build
-on. The `leafId` structure `0_<macHex>_<F2>_<F3>_<F4>` that
-`AmpioObject.module_mac` parses is likewise the structure the bridge's own
-classifier reads. The bridge also shows why a dedicated integration is the right
-path for sensors. It types objects through a registry with known gaps (no
-`lin_wej` branch, and loudness has no Matter device type at all). It keys
-endpoints on the volatile DB `id`. And it exposes only the channels hand-flagged
-for Matter - a dozen on the reference install, with humidity, pressure,
-illuminance, and CO2 on zero modules.
+`ampio-server`). That bridge's production gate corroborates the enum: it exposes
+an object only when `(params & 2**37) && !(params & 16)`. Bit 37 is the
+per-object Matter opt-in set in Designer. Bit 4 is the hidden/stub marker that
+`hidden` and `visible` build on. The `leafId` structure
+`0_<macHex>_<F2>_<F3>_<F4>` that `AmpioObject.module_mac` parses is likewise the
+structure the bridge's own classifier reads. The bridge also shows why a
+dedicated integration is the right path for sensors. It types objects through a
+registry with known gaps (no `lin_wej` branch, and loudness has no Matter device
+type at all). It keys endpoints on the volatile DB `id`. And it exposes only the
+channels hand-flagged for Matter - a dozen on the reference install, with
+humidity, pressure, illuminance, and CO2 on zero modules.
+
+## The read-only marker (`AmpioObject.read_only`)
+
+Designer has a per-object "read only" checkbox. The checkbox sets `params` bit 6
+and nothing else. A live probe on a flag pinned down the behavior:
+
+- The M-SERV enforces the marker itself, on both account tiers. An `/api` write
+  to a read-only object produces no echo and no error. A watch on `hw/out`
+  during the write shows why. The M-SERV emits zero CAN frames for the read-only
+  object. The same write to a writable flag emits the normal frame set. Reads
+  are unaffected on every surface.
+- The marker never reaches the module. The CAN description record is identical
+  for a read-only flag and a writable one, so only the catalogue `params` field
+  announces it.
+- The restricted tier can detect it. `data/params_devices` is served unfiltered,
+  so `params` is available even for objects outside the grant.
+
+The checkbox can change at any time in Designer. While `read_only` is True, a
+consumer must reject writes and keep the entity's platform stable. In Home
+Assistant, keep the entity a switch and raise an error on the service call. Do
+not rebuild it as a binary sensor. A platform swap breaks the entity id, its
+history, and every automation on each checkbox change.
 
 Deletion behaves as follows on the wire, on the baseline server. A **module**
 delete hard-removes its row from the `devices` list (the library evicts it and

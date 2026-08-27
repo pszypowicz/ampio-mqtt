@@ -12,6 +12,37 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.35.0
+
+The Designer read-only checkbox becomes a readable fact (#130). A live probe on
+a flag marked read-only established what the checkbox does on the wire. The
+M-SERV drops every `/api` write to such an object before the CAN bus, on both
+account tiers, with no echo and no error. The only announcement is bit 6 of the
+object `params` bitfield, which the Designer bundle names `READ_ONLY`. The
+catalogue serves that field to both tiers, so any consumer can detect it.
+
+### Added
+
+- **`AmpioObject.read_only`** - True when Designer marks the object read-only
+  (`params` bit 6). The M-SERV enforces the marker server-side, so a write to
+  such an object is a guaranteed silent drop. A consumer keeps the entity's
+  platform and rejects writes while the flag is set. The checkbox can change at
+  any time, and a platform swap would break the consumer's entity identity on
+  every change.
+
+### Documentation
+
+- `docs/identity.md` records the full Designer `params` bit enum from the web
+  bundle, and a new section on the read-only marker: server-side enforcement,
+  detection on the restricted tier, and the fact that the owning module never
+  learns the marker.
+- `docs/protocol.md` lists the read-only drop next to the grant-scoped drop, and
+  adds it to the silent-drop list that bounds `confirm=` timeouts.
+- The README warns that Ampio does not guarantee the stability of the wire
+  surfaces across server and module firmware updates, links a prior
+  integration's abandonment over exactly that, and recommends a full backup -
+  ideally a microSD card image - before any update.
+
 ## 0.34.0
 
 Flags become a promised target of the switch verbs (#125). The pass-through
