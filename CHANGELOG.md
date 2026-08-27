@@ -12,6 +12,49 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.34.0
+
+Flags become a promised target of the switch verbs (#125). The pass-through
+already worked, because a flag's kind is an `InputKind` and no output gate
+applies to it. What was missing was the contract, so a consumer could not build
+on it. The Home Assistant integration wants to model a writable flag as a switch
+entity, and this release makes that safe to do.
+
+The same probe settled the read-only half. A `wej` object answers no write at
+all. `turnOn`, `turnOff`, and `setValue` were all sent live to two `wej` objects
+on both account tiers, and every call produced no effect and no reply.
+
+A second probe closed the per-command fade question (#126). No such primitive
+exists, and the Matter bridge's apparent support for one is phantom.
+
+### Added
+
+- **`InputKind.switchable`** - the `turnOn` / `turnOff` / `switch` verb family,
+  carrying the same claim it does on `OutputKind`. A consumer can now partition
+  writable inputs from read-only ones with one predicate across both classes,
+  instead of hardcoding the `flaga` type key. True for `flaga` alone. `wej` is
+  False on live proof. `detekcja` and `symulacja` are False because neither has
+  been driven.
+
+### Documentation
+
+- **No per-command fade exists, and the apparent gap was phantom** (#126). The
+  M-SERV Matter bridge advertises a transition on its dimmable outputs and
+  ignores the value. Driving one dimmable output through the bridge with
+  transition times of 0, 5, and 20 seconds produced an identical CAN frame
+  sequence every time, and the output reached its new level in about 0.3 seconds
+  on all three runs with no intermediate steps. `docs/protocol.md` now records
+  that ramps are device-side `fadeTime` configuration only, so a consumer
+  rightly omits a transition on a light service call.
+- The switch verbs name flags as supported targets, in the client docstrings and
+  in `docs/protocol.md`. A flag rides `/api` on both account tiers and never
+  takes the raw CAN write path.
+- `docs/protocol.md` records that a `wej` answers no write on either tier, and
+  warns against aiming the raw output frame at a flag channel or an input
+  channel. Each leaf class numbers its channels in its own space, so that frame
+  drives the binary output holding that number, which is a different device on
+  the same module.
+
 ## 0.33.0
 
 Touch-panel status LEDs become first-class outputs (#119, part of #60). The

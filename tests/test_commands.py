@@ -713,3 +713,53 @@ async def test_admin_subscribes_the_o_wildcard_and_restricted_does_not(
         await admin_client.stop()
     _, restricted_broker = connected
     assert "ampio/from/+/state/o/+" not in restricted_broker.subscribed
+
+
+# --- flags as switch targets (#125) ----------------------------------------
+
+
+async def test_flag_switch_verbs_ride_api_on_the_admin_tier() -> None:
+    """A flag answers the switch family over `/api`, and never over the raw
+    write topic - the raw output frame addresses the module's output
+    channels, a space a flag index does not belong to."""
+    client, broker = await _admin_with_panel_output()
+    try:
+        feed(
+            client,
+            ADMIN_DETAILS_TOPIC,
+            details(
+                {
+                    "id": 93,
+                    "id_urzadzenia": 7,
+                    "typ_komponentu": "flaga",
+                    "leafId": "0_cafe_3_0_23",
+                    "opis_menu": "Flag",
+                }
+            ),
+        )
+        broker.published.clear()
+        await client.turn_on(93)
+        await client.toggle(93)
+        await client.turn_off(93)
+        assert broker.published == [
+            (ADMIN_API_TOPIC, b"/api/set/93/turnOn"),
+            (ADMIN_API_TOPIC, b"/api/set/93/switch"),
+            (ADMIN_API_TOPIC, b"/api/set/93/turnOff"),
+        ]
+    finally:
+        await client.stop()
+
+
+async def test_flag_switch_verbs_ride_api_on_the_restricted_tier(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    client, broker = connected
+    _learn(client, 70, "flaga")
+    await client.turn_on(70)
+    await client.toggle(70)
+    await client.turn_off(70)
+    assert broker.published == [
+        (API_TOPIC, b"/api/set/70/turnOn"),
+        (API_TOPIC, b"/api/set/70/switch"),
+        (API_TOPIC, b"/api/set/70/turnOff"),
+    ]

@@ -1021,6 +1021,11 @@ class AmpioClient:
     ) -> AmpioObject | None:
         """Turn an object fully on.
 
+        Outputs and flags are both valid targets: a `flaga` object answers
+        this verb family over `/api` on either account tier, which is what
+        lets a consumer model a writable flag as a switch entity
+        (:attr:`InputKind.switchable`). A `wej` is read-only.
+
         Raises ``ValueError`` for an output whose kind says the switch verbs
         do not apply (``rgbw``): turning a color light on means choosing a
         color - the consumer's call, via :meth:`set_color` (the rgbw
@@ -1028,8 +1033,10 @@ class AmpioClient:
         output on a CAN module is driven over the raw CAN write topic
         instead - the one write that also reaches a panel's status LEDs,
         which ignore `/api` on every tier (docs/protocol.md, "Panel
-        outputs"). ``confirm`` awaits the state echo exactly as
-        :meth:`command` documents.
+        outputs"). A flag never takes that path: the raw frame addresses a
+        module's output channels, which a flag index does not index.
+        ``confirm`` awaits the state echo exactly as :meth:`command`
+        documents.
         """
         self._check_switchable(object_id, "turnOn")
         address = self._raw_output_address(object_id)
@@ -1041,6 +1048,9 @@ class AmpioClient:
         self, object_id: int, *, confirm: float | None = None
     ) -> AmpioObject | None:
         """Turn an object off.
+
+        Outputs and flags are both valid targets, exactly as
+        :meth:`turn_on` documents.
 
         A color output that does not answer the switch verbs (``rgbw``) is
         turned off with ``setColors 0/0/0/0`` instead - off is unambiguous,
@@ -1061,6 +1071,9 @@ class AmpioClient:
         self, object_id: int, *, confirm: float | None = None
     ) -> AmpioObject | None:
         """Invert an object's current on/off state.
+
+        Outputs and flags are both valid targets, exactly as
+        :meth:`turn_on` documents.
 
         Raises ``ValueError`` for an output whose kind says the switch verbs
         do not apply (``rgbw``), exactly as :meth:`turn_on` does. The raw

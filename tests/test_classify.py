@@ -128,6 +128,23 @@ def test_classify_input_types(typ, key, device_class) -> None:
     assert kind.device_class == device_class
 
 
+@pytest.mark.parametrize(
+    ("typ", "switchable"),
+    [
+        ("flaga", True),
+        ("wej", False),
+        ("detekcja", False),
+        ("symulacja", False),
+    ],
+)
+def test_input_switchability(typ: str, switchable: bool) -> None:
+    """Only `flaga` answers the switch verbs. A `wej` ignores them on both
+    account tiers, and the other two have never been driven."""
+    kind = _input(typ, 1)
+    assert kind is not None
+    assert kind.switchable is switchable
+
+
 def _output(typ, interp=1):
     kind = classify(typ, interp)
     return kind if isinstance(kind, OutputKind) else None
