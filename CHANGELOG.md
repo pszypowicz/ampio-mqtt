@@ -24,6 +24,9 @@ The same probe settled the read-only half. A `wej` object answers no write at
 all. `turnOn`, `turnOff`, and `setValue` were all sent live to two `wej` objects
 on both account tiers, and every call produced no effect and no reply.
 
+A second probe closed the per-command fade question (#126). No such primitive
+exists, and the Matter bridge's apparent support for one is phantom.
+
 ### Added
 
 - **`InputKind.switchable`** - the `turnOn` / `turnOff` / `switch` verb family,
@@ -35,6 +38,14 @@ on both account tiers, and every call produced no effect and no reply.
 
 ### Documentation
 
+- **No per-command fade exists, and the apparent gap was phantom** (#126). The
+  M-SERV Matter bridge advertises a transition on its dimmable outputs and
+  ignores the value. Driving one dimmable output through the bridge with
+  transition times of 0, 5, and 20 seconds produced an identical CAN frame
+  sequence every time, and the output reached its new level in about 0.3 seconds
+  on all three runs with no intermediate steps. `docs/protocol.md` now records
+  that ramps are device-side `fadeTime` configuration only, so a consumer
+  rightly omits a transition on a light service call.
 - The switch verbs name flags as supported targets, in the client docstrings and
   in `docs/protocol.md`. A flag rides `/api` on both account tiers and never
   takes the raw CAN write path.

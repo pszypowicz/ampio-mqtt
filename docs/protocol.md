@@ -148,6 +148,23 @@ M-SERV accepts. State echoes report the unsigned form. A consumer that wants
 non-zero state value (the packed color, decoded as `AmpioObject.rgbw`), and
 replay it with `setColors`.
 
+**No command carries a fade time.** No verb on this surface ramps an output. The
+`setValue` `time` argument reverts the object after the delay, which makes it a
+timed pulse. `setColors` accepts no time argument. The object catalogue carries
+a per-object `fadeTime` column. That column is device-side configuration, and it
+applies to every change of the object rather than to one command.
+
+The M-SERV Matter bridge advertises a per-command transition on its dimmable
+outputs, and it does not honor the value. A live test drove one dimmable output
+through the bridge three times, with transition times of 0, 5, and 20 seconds.
+The bridge emitted an identical CAN frame sequence on all three runs. The output
+reached its new level in about 0.3 seconds every time, with no intermediate
+steps in the state stream. The bridge also takes the slower route. It emits a
+ten-frame command where an `/api` `setValue` emits one frame.
+
+A consumer must therefore not offer a per-command transition on a light. Ramps
+are available only as device-side `fadeTime` configuration.
+
 **Flags answer the switch verbs. Physical inputs do not.** The switch family
 reaches more than outputs. A `flaga` object answers `turnOn`, `turnOff`, and
 `switch` over `/api`. This works on the admin tier and on the restricted tier. A
