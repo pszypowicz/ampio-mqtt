@@ -98,6 +98,18 @@ library logs a warning when the connected server reports a lower or missing
 `serverVersion`. If something misbehaves on an older server, upgrade the M-SERV
 first.
 
+## Disclaimer
+
+This library is an independent, best-effort project and has no affiliation with
+Ampio. Use it at your own risk. It commands real hardware, and a wrong command
+moves real devices.
+
+The M-SERV itself guarantees the safety of a standard account. The broker limits
+such an account to the objects granted in the Ampio app, and it denies the raw
+CAN surfaces on the wire. A defect in this library cannot widen that boundary.
+Bus events are the one exception, because any account can raise any event (see
+[Choosing an account](#choosing-an-account)).
+
 ## License
 
 MIT
