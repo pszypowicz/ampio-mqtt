@@ -66,7 +66,7 @@ Each account namespace also carries a retained
 would receive, per-account for the grant-filtered tables. The Designer
 SPA uses these to skip redundant refetches. The library does not: the
 hashes cover neither the `config` catalogues nor `states`, so the
-requests worth saving have no hash - the analysis is recorded in #24.
+requests worth saving have no hash.
 
 ## Commands (write)
 
@@ -98,7 +98,7 @@ positive control from the same account confirming its command path
 works. The account's namespace likewise carries state only for granted
 objects, including ones it just commanded.
 
-**The state echo is the only confirmation** (#67). The library's
+**The state echo is the only confirmation.** The library's
 `confirm=` option on `command()` and the typed wrappers arms a waiter
 before the publish and resolves on the next `ObjectUpdated` for the
 object - the per-object echo on both tiers, or the earlier raw edge on
@@ -231,7 +231,7 @@ Two request/response endpoints predate the `fromDB` catalogues; the
 Node-RED palette (`node-red-contrib-ampio`) is their public consumer.
 Both are admin-gated like the rest of the `ampio/to` tree.
 
-**Module discovery** (#103) - still answers on the baseline server.
+**Module discovery** - still answers on the baseline server.
 Publish `1` to `ampio/to/can/dev/list`; the reply arrives, not
 retained, on `ampio/from/can/dev/list`:
 
@@ -250,7 +250,7 @@ resolves in `_devtypes.json`. Older firmware wrapped the list as
 independent of the `fromDB` config surface, usable as a resolver
 cross-check.
 
-**Per-module descriptions** (#113) - documented by the palette as an
+**Per-module descriptions** - documented by the palette as an
 empty publish to `ampio/to/<MAC>/description` answered on
 `ampio/from/<MAC>/description` with a JSON object keyed
 `<descType>_<index>` (base64 names; the palette reads descTypes 12,
@@ -266,7 +266,7 @@ only.
 
 The web Designer (served by the M-SERV, bundle at
 `/assets/index-*.js`) is an ordinary MQTT client of the same broker,
-so everything it does is observable and reproducible (#66).
+so everything it does is observable and reproducible.
 
 **Transport.** Plain MQTT over websocket via mqtt.js, one connection
 for everything: locally `ws://<host>:9001` (alongside TCP 1883), and

@@ -21,14 +21,13 @@ globally.
 
 `typ_urzadzenia` also derives two decoration fields on `AmpioModule`:
 `model` (the product name from the vendored catalogue) and `mounting`
-(#115) - the curated form-factor class `cabinet` (DIN rail) / `wall`
+- the curated form-factor class `cabinet` (DIN rail) / `wall`
 (panels, sensors, outdoor field devices) / `flush` (in-box `-p`
 modules), None for virtual, bridge-only, handheld, and unknown codes.
 The classification follows Ampio's naming convention, which no official
 source asserts, so it is a hand-curated table
 (`device_types.MODULE_MOUNTING`). Both fields decorate device info
-only; the device topology never branches on them (#114 pins that
-contract).
+only. The device topology must never branch on them.
 
 ## Objects
 
@@ -68,7 +67,7 @@ True). Why `leaf_id` rather than the module-mac composite
   The known collision - a hidden phantom stub sharing its labelled
   twin's `leaf_id` - is exactly what the `hidden` flag removes; filter
   on `visible` before keying. (Live installs can carry several such
-  pairs at once, all on M-SENS analog channels.) #15 tracks the history.
+  pairs at once, all on M-SENS analog channels.)
   If a user deliberately exposes one physical signal as several visible
   Designer objects, those would share a `leafId` - and the same shape
   collides the composite too (same mac, typ, and funkcja), so
@@ -110,7 +109,7 @@ collide across rows; the mac then gates what the join found.
 The library parses only the mac and the trailing `F4` (the 0-based
 output index, `AmpioObject.leaf_out_no`); `F2` and `F3` stay
 unparsed. What they hold, from a live join of every leaf-bearing object
-against the module catalogue (#116):
+against the module catalogue:
 
 - **`F2` is a per-leaf class code, not the module type.** No module
   showed `F2` equal to its `typ_urzadzenia`, and virtual cover objects
@@ -239,7 +238,7 @@ record can still show an empty `type` column, live-observed on the
 reference install. `AmpioClient.resolve_locations()` reads the CAN
 record directly and refines `AmpioObject.matter_device_type` from it: a
 record's tag overrides the column value, and a record without one
-leaves the column value standing (#110).
+leaves the column value standing.
 
 ## The Designer location (per-output `outLoc`)
 
@@ -300,8 +299,8 @@ web bundle's enum):
 
 The record's one DEVICE_NAME frame (descType 1) describes the module
 itself: its `desc` is the module name and its `outLoc` the module-level
-"Lokalizacja" - where the module is mounted, not where its loads are
-(#114). `resolve_locations()` reads it from the same reply and sets
+"Lokalizacja" - where the module is mounted, not where its loads are.
+`resolve_locations()` reads it from the same reply and sets
 `AmpioModule.location`, dispatching `ModuleUpdated` on change. A record
 without the frame, or with `outLoc` 0, reads unassigned (None) - the
 module answered, so None is authoritative; a module the sweep did not

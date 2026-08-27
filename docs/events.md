@@ -29,8 +29,8 @@ unsubscribe()                                       # deregister
 `of` narrows the subscription and, for a single class, types the
 callback parameter precisely. `object_id` narrows further, to one
 object's events, and dispatches in O(1) of the total count of such
-registrations - the shape for a consumer with one listener per object
-(#99). It applies only to the classes that carry `.object`
+registrations - the shape for a consumer with one listener per object.
+It applies only to the classes that carry `.object`
 (`ObjectUpdated`, and its `ObjectAdded` subclass, and `ObjectRemoved`);
 any other combination raises `ValueError` at registration time.
 
