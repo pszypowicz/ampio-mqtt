@@ -22,3 +22,7 @@ secrets*
 # Local capture artifacts
 devicesDetails.json
 *.tsv
+
+# Local planning artifacts
+docs/superpowers/
+.superpowers/
