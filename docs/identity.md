@@ -334,14 +334,14 @@ bundle's enum):
 The record's one DEVICE_NAME frame (descType 1) describes the module itself. Its
 `desc` is the module name, and its `outLoc` is the module-level "Lokalizacja" -
 where the module is mounted, not where its loads are. `resolve_records()` reads
-it from the same reply and sets `AmpioModule.record`, with `record.location` the
-mounting location and `record.name` the CAN-resident module name, and a
-`ModuleUpdated` dispatch on change. A record without the frame, or with `outLoc`
-0, reads unassigned (None). The module answered, so None is authoritative. A
-module the sweep did not cover keeps its previous value, exactly like the
-per-object side. On the reference install the installer tagged wall devices this
-way (an M-SENS and three M-DOT panels carry room names) and left the cabinet
-modules untagged.
+it from the same reply and sets `AmpioModule.record`, with a `ModuleUpdated`
+dispatch on change. `record.location` is the mounting location and `record.name`
+the CAN-resident module name. A record without the frame, or with `outLoc` 0,
+reads unassigned (None). The module answered, so None is authoritative. A module
+the sweep did not cover keeps its previous value, exactly like the per-object
+side. On the reference install the installer tagged wall devices this way (an
+M-SENS and three M-DOT panels carry room names) and left the cabinet modules
+untagged.
 
 ### The join rule
 

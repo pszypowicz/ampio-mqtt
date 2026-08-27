@@ -98,10 +98,10 @@ when - and whether - to call them:
   `turn_scene_off()` / `undo_scene()`. Same rationale: a consumer that surfaces
   no scenes never pays for the fetch.
 - **`resolve_records()`** - sweeps every catalogued module over the `device_api`
-  tree and folds the per-output Designer record into `AmpioObject.record`, and
-  the per-module record into `AmpioModule.record` (admin tier only, see
-  [`identity.md`](identity.md)). A consumer that does not surface per-object
-  records never pays for the sweep.
+  tree and folds the per-output Designer record into `AmpioObject.record` (admin
+  tier only, see [`identity.md`](identity.md)). The per-module record folds into
+  `AmpioModule.record`. A consumer that does not surface per-object records
+  never pays for the sweep.
 
 ## Finding the M-SERV on the LAN
 

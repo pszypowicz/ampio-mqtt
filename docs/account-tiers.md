@@ -77,7 +77,7 @@ needs the admin tier, and the bundle stays `None` on a standard account. The
 library adds no precedence helper. When the two sources disagree, the consumer
 picks.
 
-Some flat fields are also admin-fed, without a tier-shared counterpart:
+The admin-fed fields, the nested bundles included:
 
 | Field                                        | Why it is admin-only                  |
 | -------------------------------------------- | ------------------------------------- |
