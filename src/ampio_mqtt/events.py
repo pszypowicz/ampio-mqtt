@@ -26,10 +26,26 @@ class ObjectUpdated:
 
     Fires on live pushes, raw-channel edges, snapshot corrections, and
     catalogue rows that actually changed something - a re-requested
-    catalogue that says nothing new dispatches nothing.
+    catalogue that says nothing new dispatches nothing. A catalogue row
+    establishing an id the store did not already hold dispatches the
+    :class:`ObjectAdded` subclass instead.
     """
 
     object: AmpioObject
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectAdded(ObjectUpdated):
+    """An object appeared in the account's catalogue.
+
+    The object's first event: dispatched when a catalogue reply
+    establishes an id the store did not hold - initial discovery, a
+    Designer addition surfacing on a later reply, and the re-creation
+    after an eviction all qualify (#79). A subclass of
+    :class:`ObjectUpdated`, so ``of=ObjectUpdated`` subscriptions
+    receive additions too; ``of=ObjectAdded`` narrows to appearances
+    alone.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,12 +106,11 @@ class AvailabilityChanged:
 
     Fires for every transition the consumer did not cause itself: the
     connection coming up, an outage, and the drop preceding the terminal
-    :class:`AuthFailed` / :class:`ConnectionDied` events (which are
-    dispatched after it, so entities read unavailable by then). A
-    consumer-initiated ``stop()`` is deliberately not reported - it is not
-    news to the consumer, and reporting it made every orderly shutdown
-    look like a lost connection. ``AmpioClient.available`` still reads
-    False after a stop.
+    :class:`AuthFailed` / :class:`ConnectionDied` events (dispatched
+    after it, so entities read unavailable by then). A consumer-initiated
+    ``stop()`` is not reported - a deliberate shutdown is not an
+    availability event - though ``AmpioClient.available`` still reads
+    False after it.
     """
 
     available: bool
@@ -105,13 +120,11 @@ class AvailabilityChanged:
 class AuthFailed:
     """Terminal: the broker rejected the credentials after ``start()``.
 
-    Carries the broker's reason string. The shape a credential change on
-    the broker produces: by dispatch time ``AvailabilityChanged(False)``
-    has fired and the connection loop has stopped for good, so this is the
-    signal to drive a reauthentication flow. A rejection during
-    ``start()`` itself raises ``AmpioAuthError`` there instead and
-    dispatches nothing. The reason is also queryable as
-    :pyattr:`AmpioClient.auth_failure`.
+    Carries the broker's reason string. By dispatch time
+    ``AvailabilityChanged(False)`` has fired and the connection loop has
+    stopped for good, so this is the signal to drive a reauthentication
+    flow. A rejection during ``start()`` itself raises
+    ``AmpioAuthError`` there instead and dispatches nothing.
     """
 
     reason: str
@@ -124,21 +137,26 @@ class ConnectionDied:
     The shape a bug in the connection loop itself produces - anything the
     loop does not recognize as a transport or credential failure. A bug
     triggered by one message's processing is not this: the client guards
-    per message, dropping the failing payload with a logged traceback
-    while the connection stays up. Dispatched after
+    per message and the connection stays up. Dispatched after
     ``AvailabilityChanged(False)``, with the traceback logged and the
-    reason kept in ``ConnectionStats.last_error``; without it a dead loop
-    is indistinguishable from an outage the client is still retrying.
-    Only a fresh ``start()`` recovers. A crash during ``start()`` itself
-    makes ``start()`` raise ``AmpioConnectionError`` instead and
-    dispatches nothing, mirroring the auth path.
+    reason kept in the diagnostics snapshot's ``last_error``. Only a
+    fresh ``start()`` recovers. A crash during ``start()`` itself makes
+    ``start()`` raise ``AmpioConnectionError`` instead and dispatches
+    nothing, mirroring the auth path.
     """
 
     reason: str
 
 
 # The store's subset: what one inbound MQTT message can produce.
-StoreEvent = ObjectUpdated | ObjectRemoved | ModuleUpdated | ModuleRemoved | BusEvent
+StoreEvent = (
+    ObjectAdded
+    | ObjectUpdated
+    | ObjectRemoved
+    | ModuleUpdated
+    | ModuleRemoved
+    | BusEvent
+)
 
 # Everything a subscriber can receive.
 ClientEvent = StoreEvent | AvailabilityChanged | AuthFailed | ConnectionDied

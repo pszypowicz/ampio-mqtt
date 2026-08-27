@@ -7,12 +7,14 @@ runs automatically vs on demand.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import math
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import asdict
 from types import MappingProxyType
-from typing import Any, TypeVar, cast, overload
+from typing import Any, Final, TypeVar, cast, overload
 
 from . import _connection, _protocol
 from ._protocol import (
@@ -23,11 +25,14 @@ from ._protocol import (
     RAW_DIAGNOSTICS_WILDCARD,
     RAW_EVENT_WILDCARD,
     RAW_INPUT_WILDCARDS,
+    RAW_OUTPUT_WILDCARD,
     Endpoint,
     command_payload,
     command_topic,
     event_payload,
     ob_state_wildcard,
+    raw_output_payload,
+    raw_write_topic,
     request_topic,
     response_topic,
     scene_payload,
@@ -35,7 +40,7 @@ from ._protocol import (
 from ._store import AmpioStore
 from .classification import OutputKind
 from .device_types import is_hub
-from .errors import AmpioTimeoutError
+from .errors import AmpioConnectionError, AmpioTimeoutError
 from .events import (
     AuthFailed,
     AvailabilityChanged,
@@ -55,15 +60,17 @@ from .models import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# The regulator mode letters `setHeatingMode` accepts (docs/protocol.md);
+# the readback letter is `ThermostatState.mode`.
+HEATING_MODES: Final[frozenset[str]] = frozenset({"A", "S", "M", "H"})
+
 EventListener = Callable[[ClientEvent], None]
 _EventT = TypeVar("_EventT", bound=ClientEvent)
 _EventT1 = TypeVar("_EventT1", bound=ClientEvent)
 _EventT2 = TypeVar("_EventT2", bound=ClientEvent)
-_EventT3 = TypeVar("_EventT3", bound=ClientEvent)
 
-# The `object_id` filter applies only to the events that carry `.object`;
-# these TypeVars make the checkers reject any other `of` at the call site,
-# mirroring the runtime ValueError.
+# Bounded so an `object_id` filter on a class without `.object` fails to
+# type-check, mirroring the runtime ValueError.
 _ObjEventT = TypeVar("_ObjEventT", bound=ObjectUpdated | ObjectRemoved)
 _ObjEventT1 = TypeVar("_ObjEventT1", bound=ObjectUpdated | ObjectRemoved)
 _ObjEventT2 = TypeVar("_ObjEventT2", bound=ObjectUpdated | ObjectRemoved)
@@ -73,14 +80,11 @@ _ListenerEntry = tuple[Callable[[Any], None], tuple[type[ClientEvent], ...] | No
 
 
 class _ReplyChannel:
-    """Everything the client tracks about one endpoint's replies.
+    """One endpoint's reply tracking.
 
-    One instance per endpoint-table row, so a new endpoint needs no new
-    client plumbing: ``received`` latches on the first parsed reply (the
-    discovery signal - it never clears, which is what makes
-    ``wait_for_initial_discovery`` instant after a reconnect),
-    ``last_payload`` keeps the verbatim payload for the diagnostics blob,
-    and ``waiters`` are fetch futures awaiting the next parsed reply.
+    ``received`` latches on the first parsed reply and never clears;
+    ``last_payload`` keeps the verbatim payload for diagnostics;
+    ``waiters`` are fetch futures awaiting the next parsed reply.
     """
 
     __slots__ = ("last_payload", "received", "waiters")
@@ -91,14 +95,10 @@ class _ReplyChannel:
         self.waiters: list[asyncio.Future[Any]] = []
 
     def deliver(self, payload: str, parsed: object | None) -> None:
-        """Record one reply; ``parsed`` is its parsed form, None when the
-        payload could not be read.
-
-        A malformed reply must neither falsely complete discovery nor hand a
-        fetch garbage - the fetch keeps waiting and times out into the same
-        retryable error as silence. The bad bytes still land in
-        ``last_payload``: they are exactly what a diagnostics report needs.
-        """
+        """Record one reply; ``parsed`` is None when the payload could not
+        be read. A malformed reply neither latches discovery nor resolves
+        a waiter - the fetch times out into the same retryable error as
+        silence - but its bytes still land in ``last_payload``."""
         self.last_payload = payload
         if parsed is None:
             return
@@ -107,6 +107,15 @@ class _ReplyChannel:
         for future in waiters:
             if not future.done():
                 future.set_result(parsed)
+
+    def record(self, payload: str, parsed_ok: bool) -> None:
+        """Record a store-gated reply: latch discovery when it parsed and
+        keep the verbatim payload either way. These endpoints produce no
+        fetchable value, so no waiter is resolved - ``_fetch`` rejects
+        their names outright."""
+        self.last_payload = payload
+        if parsed_ok:
+            self.received.set()
 
 
 class AmpioClient:
@@ -120,26 +129,37 @@ class AmpioClient:
         *,
         port: int = 1883,
         reconnect_interval: float = 5.0,
+        refresh_interval: float | None = None,
         mqtt_client_factory: _connection.MqttClientFactory | None = None,
     ) -> None:
         """Initialize the client. `username` names the Ampio account and
-        namespaces every MQTT topic; an empty one is rejected here because
-        the client would otherwise subscribe to a namespace no M-SERV
-        serves and fail only minutes later as "discovery never completes".
+        namespaces every MQTT topic; an empty one is rejected here.
+
+        ``refresh_interval`` opts into a periodic re-request of the
+        tier's discovery set, in seconds; None (the default) leaves the
+        cadence to the consumer. Each cycle re-publishes the
+        initial-discovery requests, so Designer additions and evictions
+        surface as :class:`ObjectAdded` / :class:`ObjectRemoved` without
+        a reconnect (#80). Zero or negative raises ``ValueError``.
 
         ``mqtt_client_factory`` is the transport seam: a zero-argument
-        callable returning the MQTT session object for one connect attempt.
-        Leave it None for the real broker connection; a test injects a fake
-        broker instance here instead of patching aiomqtt.
+        callable returning the MQTT session object for one connect
+        attempt. Leave it None for the real broker connection; a test
+        injects a fake broker instance here.
         """
         if not username:
             raise ValueError(
                 "username is required - the Ampio topics are namespaced by account"
             )
+        if reconnect_interval <= 0:
+            raise ValueError("reconnect_interval must be positive seconds")
+        if refresh_interval is not None and refresh_interval <= 0:
+            raise ValueError("refresh_interval must be positive seconds or None")
+        self._refresh_interval = refresh_interval
+        self._refresh_task: asyncio.Task[None] | None = None
         self._username = username
-        # The tier is the authenticated login name - see AccessTier. It
-        # shapes everything downstream: the endpoints served, and from them
-        # the subscriptions, the router, the reply channels, and the
+        # The tier (see AccessTier) shapes the endpoints served, and from
+        # them the subscriptions, router, reply channels, and the
         # initial-discovery set.
         self._tier = (
             AccessTier.ADMIN if username == ADMIN_USERNAME else AccessTier.RESTRICTED
@@ -148,7 +168,7 @@ class AmpioClient:
         self._initial_endpoints = tuple(ep.name for ep in self._served if ep.initial)
         self._router = _protocol.Router(username, self._served)
         self._store = AmpioStore()
-        self.stats = ConnectionStats()
+        self._stats = ConnectionStats()
         self._connection = _connection.Connection(
             host,
             port,
@@ -156,7 +176,7 @@ class AmpioClient:
             password,
             reconnect_interval=reconnect_interval,
             topics=self._subscriptions(),
-            stats=self.stats,
+            stats=self._stats,
             on_message=self._handle_message,
             on_availability=self._handle_availability,
             on_connected=self.refresh,
@@ -165,16 +185,13 @@ class AmpioClient:
             client_factory=mqtt_client_factory,
         )
 
-        # Two listener registries: the class-filtered list every event
-        # walks, and the per-object buckets an object-bearing event tops
-        # up with its own id's entries - so a consumer with one listener
-        # per object (#99) costs one bucket lookup, not a full walk.
+        # The class-filtered list every event walks, and the per-object
+        # buckets that make one-listener-per-object dispatch O(1) (#99).
         self._listeners: list[_ListenerEntry] = []
         self._by_object: dict[int, list[_ListenerEntry]] = {}
 
-        # One reply channel per endpoint-table row the tier is served -
-        # see _ReplyChannel. The router covers the same set, so every
-        # routed reply has a channel.
+        # One reply channel per served endpoint; the router covers the
+        # same set, so every routed reply has a channel.
         self._channels: dict[str, _ReplyChannel] = {
             ep.name: _ReplyChannel() for ep in self._served
         }
@@ -182,6 +199,13 @@ class AmpioClient:
         # Topics whose messages have failed processing, so a recurring
         # poison payload logs its traceback once instead of per delivery.
         self._poisoned_topics: set[str] = set()
+
+        # Per-mac futures awaiting a device_api info reply; every waiter
+        # for a mac receives the same reply, exactly as endpoint fetches
+        # share one.
+        self._descriptions_waiters: dict[
+            int, list[asyncio.Future[tuple[_protocol.OutputDescription, ...]]]
+        ] = {}
 
     def _subscriptions(self) -> list[str]:
         """Every topic the client needs on each (re)connect."""
@@ -194,8 +218,10 @@ class AmpioClient:
             # client never asks, so a SUBACK rejection is always a fault.
             topics += [
                 *RAW_INPUT_WILDCARDS,
+                RAW_OUTPUT_WILDCARD,
                 RAW_DIAGNOSTICS_WILDCARD,
                 RAW_EVENT_WILDCARD,
+                _protocol.DEVICE_API_INFO_WILDCARD,
             ]
         return topics
 
@@ -203,14 +229,11 @@ class AmpioClient:
         """Apply one message, then dispatch what it changed.
 
         Guarded per message: a processing bug costs the one message that
-        triggered it, never the connection - unguarded, the exception would
-        reach the connection loop's terminal path, and a retained poison
-        payload would then kill the client seconds after every restart.
-        The traceback is logged once per topic (repeats at debug, the
-        anti-drowning convention); bugs in the connection loop itself
+        triggered it, never the connection. The traceback logs once per
+        topic and repeats at debug; bugs in the connection loop itself
         remain terminal.
         """
-        self.stats.last_message_at = time.time()
+        self._stats.last_message_at = time.time()
         try:
             msg = self._router.route(topic, payload)
             if msg is None:
@@ -219,19 +242,21 @@ class AmpioClient:
                 isinstance(msg, _protocol.EndpointReply)
                 and msg.endpoint.parses is not None
             ):
-                # Pure request/response: the endpoint's own parser is the
-                # gate, run exactly once - its output is what a fetch
-                # returns. Nothing here mutates the store.
+                # Pure request/response: the endpoint's parser runs once
+                # and its output is what a fetch returns; nothing here
+                # mutates the store.
                 parsed = msg.endpoint.parses(payload)
                 if parsed is None:
                     _LOGGER.warning("Could not parse Ampio %s reply", msg.endpoint.name)
                 self._channels[msg.endpoint.name].deliver(payload, parsed)
                 return
+            if isinstance(msg, _protocol.DeviceDescriptions):
+                for future in self._descriptions_waiters.pop(msg.mac, []):
+                    future.set_result(msg.entries)
+                return
             applied = self._store.apply(msg)
             if isinstance(msg, _protocol.EndpointReply):
-                self._channels[msg.endpoint.name].deliver(
-                    payload, applied.parsed or None
-                )
+                self._channels[msg.endpoint.name].record(payload, applied.parsed)
         except Exception:
             if topic in self._poisoned_topics:
                 _LOGGER.debug("Dropped another failing Ampio message on %s", topic)
@@ -257,13 +282,9 @@ class AmpioClient:
         self._dispatch(ConnectionDied(message))
 
     def _dispatch(self, event: ClientEvent) -> None:
-        """Hand `event` to each matching listener, surviving any that raises.
-
-        Every event walks the class-filtered registry; an object-bearing
-        event then reaches the bucket for its own object id, so per-object
-        listeners cost one dict lookup instead of a walk. Each listener
-        still sees its events in production order.
-        """
+        """Hand `event` to the class-filtered registry, then to the bucket
+        for its object id. Each listener sees its events in production
+        order."""
         self._dispatch_to(self._listeners, event)
         if isinstance(event, ObjectUpdated | ObjectRemoved):
             bucket = self._by_object.get(event.object.id)
@@ -272,13 +293,10 @@ class AmpioClient:
 
     @staticmethod
     def _dispatch_to(entries: list[_ListenerEntry], event: ClientEvent) -> None:
-        """Walk one registry copy, surviving any listener that raises.
-
-        Listeners are consumer code. One that raises must not take down the
-        connection that feeds every other entity, so the failure is logged
-        and the remaining listeners still run. The copy keeps a listener
-        free to unsubscribe - itself included - mid-dispatch.
-        """
+        """Walk one registry copy; a listener that raises is logged and
+        the rest still run. The copy pins this dispatch's audience: a
+        listener registered mid-dispatch must not receive the in-flight
+        event."""
         for listener, only in list(entries):
             if only is not None and not isinstance(event, only):
                 continue
@@ -338,18 +356,14 @@ class AmpioClient:
     def module_for(self, obj: AmpioObject) -> AmpioModule | None:
         """The catalogue row of the module that owns ``obj``, mac-validated.
 
-        Joins ``obj.device_id`` to the module list and returns the row
-        only when its effective bus mac agrees with the object's
-        leaf-derived :pyattr:`AmpioObject.module_mac`: the DB ids are
-        volatile across a module replacement while the leaf mac is the
-        stable identity (docs/identity.md), so the bare join can pair an
-        object with a row that is no longer its module. The join keys the
-        lookup rather than the mac because override macs may collide
-        across rows; the mac then gates what the join found. None when
-        either side of the validation is missing or they disagree - and
-        always on the restricted tier, which never receives the module
-        catalogue. Grouping that works on both tiers reads ``module_mac``
-        directly.
+        Joins ``obj.device_id`` to the module list, gated on the row's
+        mac agreeing with the object's leaf-derived
+        :pyattr:`AmpioObject.module_mac` - DB ids are volatile across a
+        module replacement while the leaf mac is the stable identity
+        (docs/identity.md). None when either side is missing or they
+        disagree, and always on the restricted tier, which never receives
+        the module catalogue; tier-independent grouping reads
+        ``module_mac`` directly.
         """
         if obj.device_id is None:
             return None
@@ -364,44 +378,57 @@ class AmpioClient:
         return self._connection.available
 
     @property
-    def auth_failure(self) -> str | None:
-        """Why the connection stopped, if the broker rejected the credentials.
-
-        ``None`` while the credentials are accepted, including through outages
-        the client is still trying to reconnect across. Once set, the
-        connection loop has stopped for good. A fresh ``start()`` clears it
-        but retries the constructor credentials; recovering from a genuinely
-        changed password means building a new client.
-        """
-        return self._connection.auth_failure
-
-    @property
     def access_tier(self) -> AccessTier:
-        """The account tier: the reserved ``admin`` login, or restricted.
-
-        Decided by the authenticated username at construction - see
-        :class:`AccessTier` for what each tier is served. A config flow can
-        read the wire's own confirmation from :meth:`test_connection`'s
-        result (:pyattr:`AmpioServerInfo.access_tier`) before any client
-        exists.
-        """
+        """The account tier, decided by the authenticated username at
+        construction - see :class:`AccessTier`. Before any client exists,
+        a config flow reads :pyattr:`AmpioServerInfo.access_tier` from a
+        :meth:`test_connection` result instead."""
         return self._tier
 
-    @property
-    def last_payloads(self) -> dict[str, str]:
-        """Verbatim last response payload per endpoint, keyed by endpoint name.
+    def diagnostics_snapshot(self) -> dict[str, Any]:
+        """One credential-free report of the client's health.
 
-        Retained for the HA integration's diagnostics blob so a report can
-        include the actual JSON the M-SERV emitted. Keyed by endpoint name,
-        covering the endpoints the account tier is served; an endpoint is
-        absent until its first reply lands. A payload that failed to parse
-        is retained too - the bad bytes are exactly what a diagnostics
-        report needs.
+        The dict a bug report or a consumer diagnostics platform can emit
+        as-is: it carries no host, username, or password. Keys:
+
+        - ``access_tier``: the account tier's value string.
+        - ``available``: whether the broker connection is up.
+        - ``auth_failure``: the broker's rejection reason once the
+          connection loop has stopped for auth, else None.
+        - ``server_info``: the safe self-report subset as a dict
+          (:class:`AmpioServerInfo` excludes the private fields by
+          construction), or None before discovery.
+        - ``connection``: the run's liveness counters. ``started_at`` and
+          ``reconnect_count`` cover the current ``start()`` run, so a
+          deliberate restart never reads as a flapping connection;
+          ``last_error`` and ``last_message_at`` roll across runs.
+          ``subscribe_failures`` maps each topic the broker rejected in
+          the latest SUBACK to its reason code.
+        - ``mac_collisions``: override macs shared by two or more module
+          rows, on which raw traffic cannot be attributed reliably.
+        - ``last_payloads``: each endpoint's verbatim last reply, absent
+          until one lands. A payload that failed to parse is retained
+          too - the bad bytes are what the report needs.
         """
+        server_info = self._store.server_info
         return {
-            name: channel.last_payload
-            for name, channel in self._channels.items()
-            if channel.last_payload is not None
+            "access_tier": self._tier.value,
+            "available": self.available,
+            "auth_failure": self._connection.auth_failure,
+            "server_info": None if server_info is None else asdict(server_info),
+            "connection": {
+                "started_at": self._stats.started_at,
+                "reconnect_count": self._stats.reconnect_count,
+                "last_message_at": self._stats.last_message_at,
+                "last_error": self._stats.last_error,
+                "subscribe_failures": dict(self._stats.subscribe_failures),
+            },
+            "mac_collisions": sorted(self._store.colliding_macs),
+            "last_payloads": {
+                name: channel.last_payload
+                for name, channel in self._channels.items()
+                if channel.last_payload is not None
+            },
         }
 
     @overload
@@ -412,13 +439,11 @@ class AmpioClient:
         self, listener: Callable[[_EventT], None], *, of: type[_EventT]
     ) -> Callable[[], None]: ...
 
-    # One tuple contract, three spellings: the checkers solve generics
-    # over a heterogeneous tuple differently. Pyright infers the member
-    # union for the variadic form; mypy joins the members up to the
-    # TypeVar bound and needs the per-member arity forms instead (#92).
-    # Beyond three classes, type the listener as
-    # ``Callable[[ClientEvent], None]`` and the variadic form matches in
-    # both.
+    # One tuple contract, two spellings: pyright infers the member union
+    # for the variadic form; mypy joins the members up to the TypeVar
+    # bound and needs the two-class arity form instead (#92). Beyond two
+    # classes, type the listener as ``Callable[[ClientEvent], None]`` and
+    # the variadic form matches in both.
     @overload
     def subscribe(
         self, listener: Callable[[_EventT], None], *, of: tuple[type[_EventT], ...]
@@ -430,14 +455,6 @@ class AmpioClient:
         listener: Callable[[_EventT1 | _EventT2], None],
         *,
         of: tuple[type[_EventT1], type[_EventT2]],
-    ) -> Callable[[], None]: ...
-
-    @overload
-    def subscribe(
-        self,
-        listener: Callable[[_EventT1 | _EventT2 | _EventT3], None],
-        *,
-        of: tuple[type[_EventT1], type[_EventT2], type[_EventT3]],
     ) -> Callable[[], None]: ...
 
     # The object_id forms repeat the single/variadic/pair spellings with
@@ -483,40 +500,37 @@ class AmpioClient:
         order it was produced - :mod:`ampio_mqtt.events` documents each
         event class, its ordering guarantees, and which account tiers
         produce it. ``of`` narrows the subscription to one event class or
-        a tuple of classes, typing the callback parameter as precisely
-        that class or union - one registration covers the union, no
-        per-class re-registration::
+        a tuple of classes, typing the callback parameter as that class
+        or union::
 
             client.subscribe(on_any_event)
             client.subscribe(on_object, of=ObjectUpdated)
             client.subscribe(on_gone, of=(ObjectRemoved, ModuleRemoved))
 
         Listeners are invoked synchronously on the asyncio event loop
-        that ran :meth:`start`, never from another thread - the library
-        owns no threads, so a listener can touch loop-bound state
-        directly (#81).
+        that ran :meth:`start`, never from another thread, so a listener
+        can touch loop-bound state directly (#81).
 
-        ``object_id`` narrows further, to one object's events - the shape
-        of a consumer with one listener per object, where class-only
-        registrations would walk every listener on every update (#99).
-        ID-filtered listeners live in per-object buckets, so dispatch
-        reaches only the matching bucket, in O(1) of their total count::
+        ``object_id`` narrows further, to one object's events. ID-filtered
+        listeners live in per-object buckets, so dispatch reaches only the
+        matching bucket, in O(1) of their total count (#99)::
 
             client.subscribe(on_object, of=ObjectUpdated, object_id=135)
             client.subscribe(on_135, of=(ObjectUpdated, ObjectRemoved),
                              object_id=135)
 
-        Only :class:`ObjectUpdated` and :class:`ObjectRemoved` carry the
-        ``.object`` an ID can filter on, so ``object_id`` with any other
-        class - or with no ``of`` at all - raises ``ValueError`` at
-        registration time, where the mistake is visible.
+        Only :class:`ObjectUpdated` (and its :class:`ObjectAdded` subclass)
+        and :class:`ObjectRemoved` carry the ``.object`` an ID can filter
+        on; ``object_id`` with any other class, or with no ``of`` at all,
+        raises ``ValueError`` at registration time.
 
         The returned unsubscribe removes exactly its own registration and
-        is idempotent - consumer teardown lists routinely invoke a cleanup
-        callback more than once, and the same listener registered twice
-        keeps its other registration.
+        is idempotent; the same listener registered twice keeps its other
+        registration.
         """
         only = (of,) if isinstance(of, type) else of
+        if only is not None and not only:
+            raise ValueError("of= must name at least one event class")
         if object_id is not None and (
             only is None
             or any(not issubclass(cls, ObjectUpdated | ObjectRemoved) for cls in only)
@@ -543,9 +557,8 @@ class AmpioClient:
                 if remaining:
                     self._by_object[object_id] = remaining
                 else:
-                    # The last registration for this id takes the bucket
-                    # with it, or churning entities would grow the dict
-                    # without bound.
+                    # The last registration takes the bucket with it, so
+                    # entity churn cannot grow the dict without bound.
                     del self._by_object[object_id]
 
         return _unsubscribe
@@ -562,19 +575,14 @@ class AmpioClient:
     ) -> AmpioServerInfo:
         """Connect, request the server info, and return it.
 
-        Raises ``AmpioAuthError`` on credential rejection, ``AmpioTimeoutError``
-        when the connection succeeds but no parseable info reply arrives
-        within ``info_timeout`` (slow or overloaded broker - worth retrying),
-        and ``AmpioConnectionError`` on any other connection failure. A reply
-        without the server identity is unparseable like any other corrupt
-        shape, so a returned info always has a populated
-        :pyattr:`AmpioServerInfo.key` for the config flow's unique id.
-
-        The result's ``access_tier`` tells a config flow what the account
-        will get before any client exists: a ``RESTRICTED`` account never
-        receives the module list, so a consumer that needs ``modules`` or
-        ``mserv`` can reject it here with an accurate message instead of
-        failing at setup.
+        Raises ``AmpioAuthError`` on credential rejection,
+        ``AmpioTimeoutError`` (retryable) when the connection succeeds but
+        no parseable info reply arrives within ``info_timeout``, and
+        ``AmpioConnectionError`` on any other connection failure. A
+        returned info always has a populated
+        :pyattr:`AmpioServerInfo.key` for the config flow's unique id,
+        and its ``access_tier`` tells the flow what the account will be
+        served before any client exists.
         """
         if not username:
             raise ValueError(
@@ -612,22 +620,23 @@ class AmpioClient:
         """Start the connection, wait for connect and initial discovery.
 
         After connecting, waits up to `discovery_timeout` for the initial
-        object catalogue so names and classification are known before
-        entities are created; which catalogue pair completes it depends on
-        the account tier - see :meth:`wait_for_initial_discovery`. Calling
-        ``start()`` on a running client closes the previous session first
-        and starts over.
+        discovery cycle - see :meth:`wait_for_initial_discovery` for what
+        completes it per tier. Calling ``start()`` on a running client
+        closes the previous session first and starts over.
 
-        Returns True when that discovery cycle completed in time and False
-        when `discovery_timeout` elapsed first. A False leaves the connection
-        up and discovery continuing opportunistically, so the caller can
-        await :meth:`wait_for_initial_discovery` (the explicit form of the
-        same guarantee) rather than restarting. A consumer that must read
-        `modules`/`objects`/`server_info` before building on top of the
-        client should check this result or call that method rather than
-        relying on `start()`'s timing.
+        Returns True when discovery completed in time and False when
+        `discovery_timeout` elapsed first. A False leaves the connection
+        up and discovery continuing; await
+        :meth:`wait_for_initial_discovery` rather than restarting. A
+        consumer that must read `modules`/`objects`/`server_info` before
+        building on the client checks this result or awaits that method.
         """
         await self._connection.open(timeout)
+        await self._cancel_refresh_task()
+        if self._refresh_interval is not None:
+            self._refresh_task = asyncio.get_running_loop().create_task(
+                self._refresh_periodically(self._refresh_interval)
+            )
         return await self.wait_for_initial_discovery(timeout=discovery_timeout)
 
     async def wait_for_initial_discovery(self, *, timeout: float = 8.0) -> bool:
@@ -641,17 +650,12 @@ class AmpioClient:
         flags). Returns True on completion and False if ``timeout``
         elapses first.
 
-        This is the contract a consumer relies on when it must read
-        ``objects``/``server_info`` (and, on the admin tier, ``modules``)
-        before building anything on top of the client. A True additionally
-        guarantees the server identity: ``server_info`` is populated, and
-        :pyattr:`AmpioServerInfo.key` is a string by construction. It never
-        raises on timeout - discovery continues opportunistically and this
-        simply returns False.
-
-        Safe to call repeatedly and after reconnects - the underlying signals
-        latch on first completion, so once discovery has happened this returns
-        immediately.
+        A True guarantees ``objects`` and ``server_info`` (and, on the
+        admin tier, ``modules``) are populated, with
+        :pyattr:`AmpioServerInfo.key` a string by construction. It never
+        raises on timeout - discovery continues and this returns False.
+        Safe to call repeatedly and after reconnects: the signals latch
+        on first completion, so this then returns immediately.
         """
         try:
             async with asyncio.timeout(timeout):
@@ -674,14 +678,43 @@ class AmpioClient:
         are not invoked for the resulting drop - a deliberate shutdown is not
         an availability event.
         """
+        await self._cancel_refresh_task()
         await self._connection.close()
+
+    async def _cancel_refresh_task(self) -> None:
+        if self._refresh_task is None:
+            return
+        self._refresh_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._refresh_task
+        self._refresh_task = None
+
+    async def _refresh_periodically(self, interval: float) -> None:
+        """Re-run refresh() every `interval` seconds while the broker is up.
+
+        An offline tick skips silently: the reconnect path refreshes on
+        connect, so a periodic request adds nothing while the broker is
+        away, and the drop that races the availability check surfaces as
+        the connection error swallowed here for the same reason.
+        """
+        while True:
+            await asyncio.sleep(interval)
+            if not self.available:
+                continue
+            try:
+                await self.refresh()
+            except AmpioConnectionError:
+                continue
 
     async def refresh(self) -> None:
         """Re-request the tier's initial-discovery set.
 
         ``start()`` issues this once on every (re)connect; call it to force
-        a fresh discovery cycle without reconnecting.
+        a fresh discovery cycle without reconnecting. The call also resets
+        the store's live-value protection, so the requested snapshot can
+        correct values that only carry a local receive stamp.
         """
+        self._store.begin_refresh()
         for name in self._initial_endpoints:
             await self._publish(ENDPOINT_BY_NAME[name])
 
@@ -715,9 +748,119 @@ class AmpioClient:
         replies = await self._fetch(
             ("scenes",), timeout, "Timed out fetching scenes from Ampio broker"
         )
-        # The channel resolved with the scenes endpoint's own parser output;
-        # the cast recovers the type the table's Callable field erases.
-        return cast("list[AmpioScene]", replies["scenes"])
+        # The cast recovers the type the endpoint table's Callable field
+        # erases; the copy keeps concurrent callers of one reply from
+        # seeing each other's list mutations.
+        return list(cast("list[AmpioScene]", replies["scenes"]))
+
+    async def fetch_locations(self, timeout: float = 5.0) -> dict[int, str]:
+        """Return ``{location_id: name}`` - the Designer "Lokalizacja" table.
+
+        The name table the per-output location pointer resolves through;
+        :meth:`resolve_locations` consumes it and per-object consumers read
+        :pyattr:`AmpioObject.location` instead. Admin tier only - the
+        ``config`` surface never answers a restricted account, and the call
+        raises ``RuntimeError`` for one.
+
+        Requires ``start()`` to have completed. Raises
+        ``AmpioConnectionError`` if the broker is not connected and
+        ``AmpioTimeoutError`` if the response does not arrive within
+        ``timeout``.
+        """
+        replies = await self._fetch(
+            ("locations",),
+            timeout,
+            "Timed out fetching the locations table from the Ampio broker",
+        )
+        return dict(cast("dict[int, str]", replies["locations"]))
+
+    async def resolve_locations(self, timeout: float = 10.0) -> dict[int, str]:
+        """Resolve every object's Designer location and return the map.
+
+        Fetches the locations name table, asks each catalogued module for
+        its CAN-resident description record over the ``device_api`` tree,
+        joins the entries to objects, and folds the result into the store:
+        :pyattr:`AmpioObject.location` carries the name afterwards, and a
+        record's Matter tag refines :pyattr:`AmpioObject.matter_device_type`
+        (#110). Changes dispatch as :class:`ObjectUpdated`. The same record
+        carries the module-level location (the DEVICE_NAME entry - where
+        the module itself is mounted), folded into
+        :pyattr:`AmpioModule.location` with :class:`ModuleUpdated`
+        dispatched on change (#114).
+
+        Returns ``{object_id: location_name}`` for what resolved. A module
+        that does not answer within ``timeout`` is skipped without error -
+        offline modules are normal - so the map can be partial; call again
+        for another sweep. An object absent from a sweep's resolution keeps
+        its previous ``location`` - a partial sweep never clears it - until
+        a catalogue eviction or a later sweep that covers the object.
+
+        The sweep waits out the full ``timeout`` whenever any module stays
+        silent, which is normal on a real install, and the name table is
+        fetched first on its own ``timeout`` budget, so the call can take
+        up to twice ``timeout`` end to end.
+
+        Admin tier only: the ``device_api`` tree answers no other account,
+        and the call raises ``RuntimeError`` for one. Requires ``start()``
+        to have completed. Raises ``AmpioConnectionError`` if the broker is
+        not connected and ``AmpioTimeoutError`` if the name table itself
+        does not arrive.
+        """
+        if self._tier is not AccessTier.ADMIN:
+            raise RuntimeError(
+                "resolve_locations() needs the reserved admin login - the "
+                "device_api tree answers no other account"
+            )
+        names = await self.fetch_locations(timeout=timeout)
+        macs = sorted(
+            {mod.mac for mod in self._store.modules.values() if mod.mac is not None}
+        )
+        loop = asyncio.get_running_loop()
+        futures: dict[int, asyncio.Future[tuple[_protocol.OutputDescription, ...]]] = {}
+        for mac in macs:
+            future = loop.create_future()
+            futures[mac] = future
+            self._descriptions_waiters.setdefault(mac, []).append(future)
+        try:
+            # The publishes sit inside the window, as _fetch's do; the
+            # window elapsing is not an error - it bounds how long the
+            # sweep waits for stragglers.
+            async with asyncio.timeout(timeout):
+                for mac in macs:
+                    await self._connection.publish(
+                        _protocol.device_api_request_topic(mac), b""
+                    )
+                await asyncio.gather(*futures.values())
+        except TimeoutError:
+            pass
+        finally:
+            for mac, future in futures.items():
+                waiters = self._descriptions_waiters.get(mac)
+                if waiters is not None:
+                    waiters.remove(future)
+                    if not waiters:
+                        del self._descriptions_waiters[mac]
+        by_mac = {
+            mac: future.result()
+            for mac, future in futures.items()
+            if future.done() and not future.cancelled()
+        }
+        resolved = _protocol.resolve_designer(
+            self._store.objects, by_mac, names, self._store.colliding_macs
+        )
+        applied = self._store.apply_designer_metadata(resolved)
+        module_applied = self._store.apply_module_locations(
+            _protocol.resolve_module_locations(
+                by_mac, names, self._store.colliding_macs
+            )
+        )
+        for event in (*applied.events, *module_applied.events):
+            self._dispatch(event)
+        return {
+            oid: res.location
+            for oid, res in resolved.items()
+            if res.location is not None
+        }
 
     async def send_event(self, event_number: int) -> None:
         """Raise a bus event, running whatever Ampio logic is bound to it.
@@ -765,29 +908,46 @@ class AmpioClient:
         ignores.
 
         ``confirm`` opts into awaiting that state: the call returns the
-        snapshot of the next :class:`~ampio_mqtt.events.ObjectUpdated` for
-        the object within ``confirm`` seconds, raising ``AmpioTimeoutError``
-        on expiry. The `/api` surface has no reply topic, so the echo is an
-        observation and nothing stronger: an update for the object arrived
-        after the publish - a concurrent change from another source
-        satisfies it just as well. A timeout, conversely, is how every
-        silent drop finally surfaces: a verb the M-SERV ignores, an object
-        outside the account's grant, or a command whose effect left the
-        state unchanged and pushed nothing. Most verbs echo on the
-        per-object path in under ~200 ms and `arm`/`disarm` take ~1 s
-        (docs/protocol.md), so ``confirm=2.0`` covers the measured surface.
-        The waiter is armed before the publish, so an echo cannot slip past
-        the wait however fast it lands. Scene commands and
-        :meth:`send_event` fan out beyond a single object and offer no
-        per-object echo to await.
+        snapshot of the next :class:`~ampio_mqtt.events.ObjectUpdated`
+        for the object within ``confirm`` seconds, raising
+        ``AmpioTimeoutError`` on expiry. The `/api` surface has no reply
+        topic, so the echo is an observation, not an acknowledgment: a
+        concurrent change satisfies it, and a timeout is how a silent
+        drop surfaces (an ignored verb, an out-of-grant object, or a
+        command that changed nothing). Most verbs echo in under ~200 ms
+        and `arm`/`disarm` take ~1 s (docs/protocol.md), so
+        ``confirm=2.0`` covers the measured surface. The waiter is armed
+        before the publish. Scene commands and :meth:`send_event` fan out
+        beyond a single object and offer no per-object echo.
 
         Raises ``AmpioConnectionError`` when the broker is unreachable and
         ``AmpioTimeoutError`` when it fails to acknowledge in time; never an
         aiomqtt exception type.
         """
-        payload = command_payload(object_id, verb, args).encode()
+        return await self._publish_command(
+            command_topic(self._username),
+            command_payload(object_id, verb, args).encode(),
+            object_id,
+            repr(verb),
+            confirm,
+        )
+
+    async def _publish_command(
+        self,
+        topic: str,
+        payload: bytes,
+        object_id: int,
+        action: str,
+        confirm: float | None,
+    ) -> AmpioObject | None:
+        """Publish one object write, optionally awaiting the state echo.
+
+        The confirm semantics documented on :meth:`command` live here;
+        both the `/api` surface and the raw CAN write topic share them,
+        since neither has a reply topic of its own.
+        """
         if confirm is None:
-            await self._connection.publish(command_topic(self._username), payload)
+            await self._connection.publish(topic, payload)
             return None
         future: asyncio.Future[AmpioObject] = asyncio.get_running_loop().create_future()
 
@@ -800,16 +960,61 @@ class AmpioClient:
             # The publish sits inside the window so `confirm` bounds the
             # whole call, exactly as `_fetch` bounds its own publishes.
             async with asyncio.timeout(confirm):
-                await self._connection.publish(command_topic(self._username), payload)
+                await self._connection.publish(topic, payload)
                 return await future
         except TimeoutError as err:
             raise AmpioTimeoutError(
                 f"No state echo for object {object_id} within {confirm}s - "
-                f"the M-SERV ignored {verb!r}, the object is outside this "
+                f"the M-SERV ignored {action}, the object is outside this "
                 "account's grant, or the command changed nothing"
             ) from err
         finally:
             unsubscribe()
+
+    def _raw_output_address(self, object_id: int) -> tuple[int, int] | None:
+        """The (module mac, frame channel) of a binary output the admin
+        session drives over the raw CAN write topic, or None.
+
+        Admin-tier `przekaznik` objects on CAN modules, addressed by their
+        own leaf: mac from ``leaf_id`` (the replacement-stable override)
+        and the 0-based :pyattr:`AmpioObject.leaf_out_no` channel. The
+        M-SERV's own virtual outputs stay on `/api` - they live in its DB,
+        not on the CAN bus. The restricted tier always returns None: the
+        raw write tree is admin-only, so `/api` is all that tier has -
+        which a panel output ignores (docs/protocol.md, "Panel outputs").
+        """
+        if self._tier is not AccessTier.ADMIN:
+            return None
+        obj = self._store.objects.get(object_id)
+        if obj is None or obj.typ_komponentu != "przekaznik" or obj.is_server_owned:
+            return None
+        mac = obj.module_mac
+        channel = obj.leaf_out_no
+        if mac is None or channel is None:
+            return None
+        return mac, channel
+
+    async def _raw_output(
+        self,
+        object_id: int,
+        address: tuple[int, int],
+        value: int,
+        confirm: float | None,
+    ) -> AmpioObject | None:
+        """Drive a binary output over the raw CAN write topic.
+
+        The one write that reaches a panel's status LEDs, and equivalent
+        to the `/api` switch verbs on relay outputs (docs/protocol.md,
+        "Panel outputs"); admin-only, like the raw tree it echoes on.
+        """
+        mac, channel = address
+        return await self._publish_command(
+            raw_write_topic(mac),
+            raw_output_payload(value, channel).encode(),
+            object_id,
+            "the raw output write",
+            confirm,
+        )
 
     async def turn_on(
         self, object_id: int, *, confirm: float | None = None
@@ -819,10 +1024,17 @@ class AmpioClient:
         Raises ``ValueError`` for an output whose kind says the switch verbs
         do not apply (``rgbw``): turning a color light on means choosing a
         color - the consumer's call, via :meth:`set_color` (the rgbw
-        replay pattern in docs/protocol.md). ``confirm`` awaits the state
-        echo exactly as :meth:`command` documents.
+        replay pattern in docs/protocol.md). On the admin tier a binary
+        output on a CAN module is driven over the raw CAN write topic
+        instead - the one write that also reaches a panel's status LEDs,
+        which ignore `/api` on every tier (docs/protocol.md, "Panel
+        outputs"). ``confirm`` awaits the state echo exactly as
+        :meth:`command` documents.
         """
         self._check_switchable(object_id, "turnOn")
+        address = self._raw_output_address(object_id)
+        if address is not None:
+            return await self._raw_output(object_id, address, 255, confirm)
         return await self.command(object_id, "turnOn", confirm=confirm)
 
     async def turn_off(
@@ -832,13 +1044,17 @@ class AmpioClient:
 
         A color output that does not answer the switch verbs (``rgbw``) is
         turned off with ``setColors 0/0/0/0`` instead - off is unambiguous,
-        so the library routes it. An object whose kind is not yet known gets
-        the plain verb. ``confirm`` awaits the state echo exactly as
-        :meth:`command` documents.
+        so the library routes it. An admin session's binary outputs ride
+        the raw CAN write topic, exactly as :meth:`turn_on` documents. An
+        object whose kind is not yet known gets the plain verb. ``confirm``
+        awaits the state echo exactly as :meth:`command` documents.
         """
         kind = self._output_kind(object_id)
         if kind is not None and not kind.switchable and kind.color:
             return await self.set_color(object_id, 0, 0, 0, 0, confirm=confirm)
+        address = self._raw_output_address(object_id)
+        if address is not None:
+            return await self._raw_output(object_id, address, 0, confirm)
         return await self.command(object_id, "turnOff", confirm=confirm)
 
     async def toggle(
@@ -847,10 +1063,19 @@ class AmpioClient:
         """Invert an object's current on/off state.
 
         Raises ``ValueError`` for an output whose kind says the switch verbs
-        do not apply (``rgbw``), exactly as :meth:`turn_on` does. ``confirm``
-        awaits the state echo exactly as :meth:`command` documents.
+        do not apply (``rgbw``), exactly as :meth:`turn_on` does. The raw
+        write path binary outputs ride on the admin tier has no invert
+        command, so the library inverts the state it holds - an object
+        with no value yet reads off and turns on. ``confirm`` awaits the
+        state echo exactly as :meth:`command` documents.
         """
         self._check_switchable(object_id, "switch")
+        address = self._raw_output_address(object_id)
+        if address is not None:
+            obj = self._store.objects[object_id]
+            return await self._raw_output(
+                object_id, address, 0 if obj.is_on else 255, confirm
+            )
         return await self.command(object_id, "switch", confirm=confirm)
 
     def _output_kind(self, object_id: int) -> OutputKind | None:
@@ -883,12 +1108,20 @@ class AmpioClient:
         With ``pulse_ms`` the M-SERV reverts the object to its previous state
         after that many milliseconds - a timed pulse, not a fade. The wire unit
         is 10 ms, so the value is rounded down to the nearest 10 ms; a gate
-        pulse of 500 ms is ``pulse_ms=500``. ``confirm`` awaits the state
-        echo exactly as :meth:`command` documents - for a pulse that is the
-        set edge, not the later revert.
+        pulse of 500 ms is ``pulse_ms=500``. A pulse always rides `/api` -
+        the raw write frame has no timed form - so a panel output, which
+        ignores `/api`, cannot pulse; ``confirm`` is what surfaces that
+        (docs/protocol.md, "Panel outputs"). Otherwise an admin session's
+        binary outputs ride the raw CAN write topic, exactly as
+        :meth:`turn_on` documents. ``confirm`` awaits the state echo as
+        :meth:`command` documents - for a pulse that is the set edge, not
+        the later revert.
         """
         _check_range("value", value, 0, 255)
         if pulse_ms is None:
+            address = self._raw_output_address(object_id)
+            if address is not None:
+                return await self._raw_output(object_id, address, value, confirm)
             return await self.command(object_id, "setValue", value, confirm=confirm)
         _check_range("pulse_ms", pulse_ms, 0, 655350)
         return await self.command(
@@ -900,8 +1133,8 @@ class AmpioClient:
     ) -> AmpioObject | None:
         """Set a thermostat's (``reg``) target temperature in °C.
 
-        The library surfaces only the regulator's running flag until the
-        climate readback lands (#73). Bools and non-finite floats are
+        The regulator echoes the new target in its state push, readable
+        as :attr:`AmpioObject.thermostat`. Bools and non-finite floats are
         rejected: both would serialize as text the M-SERV silently drops.
         ``confirm`` awaits the state echo exactly as :meth:`command`
         documents.
@@ -917,6 +1150,27 @@ class AmpioClient:
         return await self.command(
             object_id, "setTemperature", temperature, confirm=confirm
         )
+
+    async def set_heating_mode(
+        self, object_id: int, mode: str, *, confirm: float | None = None
+    ) -> AmpioObject | None:
+        """Set a thermostat's (``reg``) operating mode.
+
+        ``mode`` is one of :data:`HEATING_MODES` (``A``, ``S``, ``M``,
+        ``H``), exactly as the wire spells it - `S` is the Designer's
+        Schedule mode and `M` its Manual mode. The regulator echoes the
+        letter in its state push, readable as
+        :attr:`ThermostatState.mode`; an unlisted letter raises
+        ``ValueError`` here rather than being dropped by the M-SERV
+        (:meth:`command` is the escape hatch for experimenting).
+        ``confirm`` awaits the state echo exactly as :meth:`command`
+        documents.
+        """
+        if mode not in HEATING_MODES:
+            raise ValueError(
+                f"mode must be one of {sorted(HEATING_MODES)}, got {mode!r}"
+            )
+        return await self.command(object_id, "setHeatingMode", mode, confirm=confirm)
 
     async def set_color(
         self,
@@ -1026,17 +1280,24 @@ class AmpioClient:
     ) -> dict[str, Any]:
         """Request the given endpoints and return each parsed reply by name.
 
-        One future per endpoint correlates this caller with the next parseable
-        reply, so concurrent fetches never disturb each other and the
-        discovery latches stay untouched; every concurrent caller of the same
-        endpoint receives the same reply, already parsed by the endpoint's
-        own gate. The wire carries no correlation ids - a reply already in
+        One future per endpoint awaits the next parseable reply; every
+        concurrent caller of the same endpoint receives that same parsed
+        reply. The wire carries no correlation ids - a reply already in
         flight from an earlier request can satisfy a later ask, which for
-        these idempotent read endpoints is the intended semantics. A reply
-        that does not parse resolves nothing (see ``_handle_message``), so a
-        corrupt reply ends in the same retryable ``AmpioTimeoutError`` as no
-        reply at all.
+        these idempotent read endpoints is the intended semantics. A
+        corrupt reply resolves nothing and ends in the same retryable
+        ``AmpioTimeoutError`` as silence.
         """
+        for name in names:
+            if name not in self._channels:
+                raise RuntimeError(
+                    f"endpoint {name!r} is not served on the {self._tier.value} tier"
+                )
+            if ENDPOINT_BY_NAME[name].parses is None:
+                raise RuntimeError(
+                    f"endpoint {name!r} is store-gated and produces no "
+                    "fetchable value; give it a parses gate to fetch it"
+                )
         loop = asyncio.get_running_loop()
         futures: dict[str, asyncio.Future[Any]] = {
             name: loop.create_future() for name in names
@@ -1045,10 +1306,7 @@ class AmpioClient:
             self._channels[name].waiters.append(future)
         try:
             # The publishes sit inside the window so `timeout` bounds the
-            # whole call: each one otherwise awaits its PUBACK under the
-            # connection's own deadline, and a slow-to-ack broker would
-            # stretch a "5 s" fetch to three times that before the reply
-            # wait even began.
+            # whole call, PUBACK waits included.
             async with asyncio.timeout(timeout):
                 for name in names:
                     await self._publish(ENDPOINT_BY_NAME[name])
@@ -1056,9 +1314,8 @@ class AmpioClient:
         except TimeoutError as err:
             raise AmpioTimeoutError(timeout_message) from err
         finally:
-            # A resolved future was already dropped by deliver(); on timeout,
-            # cancellation, or a failed publish, remove this call's own
-            # waiters so a late reply resolves nothing stale.
+            # Remove this call's remaining waiters so a late reply
+            # resolves nothing stale.
             for name, future in futures.items():
                 waiters = self._channels[name].waiters
                 if future in waiters:
@@ -1069,10 +1326,9 @@ class AmpioClient:
 def _check_range(name: str, value: int, low: int, high: int) -> None:
     """Reject a mis-typed or out-of-range command argument before the wire.
 
-    Rejects bool explicitly: it passes ``isinstance(int)`` (and the type
-    checker, which treats bool as an int subtype), but the wire encoding is
-    ``str()``, so a bool would go out as the literal ``True`` - a malformed
-    command the M-SERV silently drops.
+    Rejects bool explicitly: it passes ``isinstance(int)``, but the wire
+    encoding is ``str()``, so a bool would go out as the literal ``True``
+    - a malformed command the M-SERV silently drops.
     """
     if (
         isinstance(value, bool)

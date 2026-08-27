@@ -1,4 +1,4 @@
-aioampio - Third-party notices
+ampio-mqtt - Third-party notices
 
 This project bundles or derives data from the following third-party project:
 
@@ -6,7 +6,7 @@ This project bundles or derives data from the following third-party project:
     https://github.com/ampio-com/node-red-contrib-ampio
 
 The Ampio module type code -> model name table in
-`src/aioampio/device_types.py` is derived from
+`src/ampio_mqtt/device_types.py` is derived from
 `node-red-contrib-ampio` (version 0.6.8). That project is distributed under
 the ISC License and is reproduced verbatim below as required by the license.
 

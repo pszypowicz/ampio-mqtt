@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -147,3 +148,20 @@ async def test_fetch_scenes_requests_and_parses_the_reply(
         await delivery
     assert [s.name for s in scenes] == ["Schody noc", "Wyjście", "Bez kolumny"]
     assert broker.published == [(f"ampio/control/{USER}/data", b"scenes")]
+
+
+async def test_concurrent_fetches_get_distinct_lists(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """One reply resolves every concurrent caller with equal scenes, but
+    each caller gets its own list - sorting one must not reorder another."""
+    client, _broker = connected
+    delivery = deliver_later(client, (f"ampio/fromDB/{USER}/data/scenes", _PAYLOAD))
+    try:
+        first, second = await asyncio.gather(
+            client.fetch_scenes(timeout=2), client.fetch_scenes(timeout=2)
+        )
+    finally:
+        await delivery
+    assert first == second
+    assert first is not second

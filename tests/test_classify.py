@@ -90,7 +90,16 @@ def test_bit32_is_generic_measurement() -> None:
 
 @pytest.mark.parametrize(
     "typ",
-    ["przekaznik", "rgbw", "led", "roleta_procenty", "flaga", "detekcja", "symulacja"],
+    [
+        "przekaznik",
+        "rgbw",
+        "led",
+        "roleta_procenty",
+        "flaga",
+        "detekcja",
+        "symulacja",
+        "wej",
+    ],
 )
 def test_non_sensor_types(typ) -> None:
     assert _sensor(typ, 1) is None
@@ -109,6 +118,7 @@ def test_unknown_type_falls_back_to_generic() -> None:
         ("flaga", "flaga", None),  # generic boolean
         ("detekcja", "detekcja", "motion"),
         ("symulacja", "symulacja", None),  # generic boolean
+        ("wej", "wej", None),  # physical input, generic boolean (#117)
     ],
 )
 def test_classify_input_types(typ, key, device_class) -> None:
@@ -151,6 +161,7 @@ def test_output_kinds(typ, key, dimmable, color, cover, position, tilt) -> None:
         ("flaga", InputKind),
         ("detekcja", InputKind),
         ("symulacja", InputKind),
+        ("wej", InputKind),
         ("przekaznik", OutputKind),
         ("led", OutputKind),
         ("rgbw", OutputKind),
@@ -186,7 +197,7 @@ def test_bit8_is_a_numeric_measurement() -> None:
 def test_kind_key_vocabulary_contents() -> None:
     """The exhaustiveness tripwire: adding a kind must update this list,
     exactly as a consumer's own mapping test will demand of its mapping."""
-    assert {"flaga", "detekcja", "symulacja"} == INPUT_KIND_KEYS
+    assert {"flaga", "detekcja", "symulacja", "wej"} == INPUT_KIND_KEYS
     assert {
         "relay",
         "rgbw",

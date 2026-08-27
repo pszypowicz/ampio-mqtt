@@ -160,7 +160,7 @@ async def test_fetch_rooms_treats_malformed_response_as_no_response(
             await client.fetch_rooms(timeout=0.1)
     finally:
         await delivery
-    assert client.last_payloads["groups"] == "not-json"
+    assert client.diagnostics_snapshot()["last_payloads"]["groups"] == "not-json"
 
 
 async def test_concurrent_fetch_does_not_steal_the_first_callers_reply(

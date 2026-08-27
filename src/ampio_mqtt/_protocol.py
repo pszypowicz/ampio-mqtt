@@ -21,14 +21,24 @@ the endpoint table below.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
-from collections.abc import Callable, Sequence
+import math
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from .events import BusEvent
-from .models import AccessTier, AmpioModule, AmpioScene, AmpioServerInfo
+from .models import (
+    AccessTier,
+    AmpioModule,
+    AmpioObject,
+    AmpioScene,
+    AmpioServerInfo,
+    ThermostatState,
+)
 
 
 @dataclass(slots=True)
@@ -70,6 +80,8 @@ class StateUpdate:
     value: str
     on_ms: int | float | None
     tilt: int | None  # `lammel` percent, present only for tilt-capable covers
+    # Climate readback, present only in the rich `reg` push shape.
+    thermostat: ThermostatState | None = None
 
 
 @dataclass(slots=True)
@@ -87,6 +99,8 @@ class StanJsonSeed:
     value: str | None
     on_ms: int | float | None
     tilt: int | None
+    # Climate readback, present only in the rich `reg` snapshot shape.
+    thermostat: ThermostatState | None = None
 
 
 def server_below_baseline(version: str | None) -> bool:
@@ -259,16 +273,12 @@ def parse_scenes(payload: str) -> list[AmpioScene] | None:
         if sid is None:
             continue
         parent = to_int(item.get("parentId"))
-        # A row without the column reads enabled, matching the dataclass
-        # default: the app creates scenes enabled, and surfacing a scene of
-        # unknown state beats silently hiding the catalogue if the column
-        # ever drifts.
+        # Malformed row fields degrade instead of hiding the scene: it is
+        # real and runnable (the M-SERV replays its actions server-side),
+        # and the parse gate covers only the outer List shape, so nothing
+        # row-shaped may escape fetch_scenes as a bare exception. A row
+        # without `active` reads enabled, the state the app creates.
         raw_active = to_int(item.get("active"))
-        # Malformed row fields degrade in the same spirit as `active` above:
-        # the scene itself is real and runnable (the M-SERV replays its
-        # actions server-side), so a broken annex must not hide it - and the
-        # store's parse gate covers only the outer List shape, so nothing
-        # row-shaped may escape fetch_scenes as a bare exception.
         infos = item.get("Infos")
         objects = {
             oid
@@ -321,6 +331,165 @@ def parse_rooms(
         if name:
             room_map[oid] = name
     return room_map
+
+
+def parse_locations(payload: str) -> dict[int, str] | None:
+    """``{location_id: name}`` from a `config/locations` reply.
+
+    The name table behind the Designer's "Lokalizacja" dropdown; rows with
+    a missing id or an empty name are skipped. None when the payload is
+    not a ``{"List": [...]}`` document.
+    """
+    rows = list_rows(payload)
+    if rows is None:
+        return None
+    out: dict[int, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        lid = to_int(row.get("id"))
+        name = row.get("opis_menu")
+        if lid is not None and isinstance(name, str) and name:
+            out[lid] = name
+    return out
+
+
+@dataclass(slots=True, frozen=True)
+class OutputDescription:
+    """One per-output entry of a module's CAN-resident description record."""
+
+    desc_type: int  # description class (OUTPUTS=12, ROLLER=26, ...)
+    out_no: int  # output index within the class
+    out_loc: int  # pointer into the locations name table; 0 = unassigned
+    out_type: int  # Matter device type; 0 = untagged
+    desc: str
+
+
+def parse_descriptions_blob(blob: bytes) -> tuple[OutputDescription, ...]:
+    """Decode the flat description frames.
+
+    ``[len:2][descType:2][outNo:2][outLoc:2][outType:2][utf8 desc]``,
+    little-endian, repeated; ``len`` counts the whole frame. A length
+    below the 10-byte header or past the end stops the walk - the
+    remainder is unreadable either way.
+    """
+    out: list[OutputDescription] = []
+    offset = 0
+    while offset + 10 <= len(blob):
+        length = int.from_bytes(blob[offset : offset + 2], "little")
+        if length < 10 or offset + length > len(blob):
+            break
+        out.append(
+            OutputDescription(
+                desc_type=int.from_bytes(blob[offset + 2 : offset + 4], "little"),
+                out_no=int.from_bytes(blob[offset + 4 : offset + 6], "little"),
+                out_loc=int.from_bytes(blob[offset + 6 : offset + 8], "little"),
+                out_type=int.from_bytes(blob[offset + 8 : offset + 10], "little"),
+                desc=blob[offset + 10 : offset + length].decode("utf-8", "replace"),
+            )
+        )
+        offset += length
+    return tuple(out)
+
+
+def parse_device_info(payload: str) -> tuple[OutputDescription, ...] | None:
+    """The description entries of a ``device_api/from/<mac>/info`` reply.
+
+    A record without a ``descriptions`` field reads as empty - a module
+    with no descriptions written. None when the payload is not a JSON
+    object or the base64 is unreadable.
+    """
+    try:
+        data = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("descriptions")
+    if raw in (None, ""):
+        return ()
+    if not isinstance(raw, str):
+        return None
+    try:
+        blob = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    return parse_descriptions_blob(blob)
+
+
+@dataclass(slots=True, frozen=True)
+class DesignerResolution:
+    """What one object's CAN description entry proves."""
+
+    location: str | None
+    matter_device_type: int | None
+
+
+def resolve_designer(
+    objects: Mapping[int, AmpioObject],
+    descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
+    location_names: Mapping[int, str],
+    colliding_macs: frozenset[int],
+) -> dict[int, DesignerResolution]:
+    """Join each object to its module's description entry.
+
+    The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], leaf_out_no)`` within
+    the module record of ``module_mac``. Objects on a colliding mac are
+    skipped - the reply cannot be attributed to one module. ``out_loc`` 0
+    reads unassigned and ``out_type`` 0 untagged, so neither produces a
+    value.
+    """
+    entries_by_key = {
+        mac: {(e.desc_type, e.out_no): e for e in entries}
+        for mac, entries in descriptions_by_mac.items()
+    }
+    out: dict[int, DesignerResolution] = {}
+    for obj in objects.values():
+        desc_type = DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "")
+        mac = obj.module_mac
+        out_no = obj.leaf_out_no
+        if desc_type is None or mac is None or out_no is None:
+            continue
+        if mac in colliding_macs:
+            continue
+        entry = entries_by_key.get(mac, {}).get((desc_type, out_no))
+        if entry is None:
+            continue
+        out[obj.id] = DesignerResolution(
+            location=location_names.get(entry.out_loc) if entry.out_loc else None,
+            matter_device_type=entry.out_type or None,
+        )
+    return out
+
+
+# The description class describing the module itself rather than one output:
+# its `desc` is the module name and its `out_loc` the module-level location.
+DEVICE_NAME_DESC_TYPE = 1
+
+
+def resolve_module_locations(
+    descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
+    location_names: Mapping[int, str],
+    colliding_macs: frozenset[int],
+) -> dict[int, str | None]:
+    """The module-level location of every answering module, by mac.
+
+    Reads the DEVICE_NAME entry of each record. A record without the
+    entry, with ``out_loc`` 0, or with a pointer the names table lacks
+    reads unassigned - the module answered, so None is authoritative.
+    Colliding macs are skipped: the reply cannot be attributed.
+    """
+    out: dict[int, str | None] = {}
+    for mac, entries in descriptions_by_mac.items():
+        if mac in colliding_macs:
+            continue
+        entry = next((e for e in entries if e.desc_type == DEVICE_NAME_DESC_TYPE), None)
+        out[mac] = (
+            location_names.get(entry.out_loc)
+            if entry is not None and entry.out_loc
+            else None
+        )
+    return out
 
 
 def _to_str(value: Any) -> str | None:
@@ -379,16 +548,50 @@ def parse_states_snapshot(payload: str) -> list[SnapshotEntry] | None:
     return out
 
 
+def _finite_float(raw: object) -> float | None:
+    """A finite float from a wire value (string on the wire), else None."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        return None
+    try:
+        parsed = float(raw)
+    except ValueError:
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _parse_thermostat(data: dict[str, Any]) -> ThermostatState | None:
+    """The climate readback from a state dict, None unless reg-shaped.
+
+    The rich `reg` shape is recognized by its own keys - `measureTemp`,
+    `setTemperature`, `mode`, `cooling` - so every other object's push
+    (including the cover shape with `block`) reads None.
+    """
+    if not any(
+        key in data for key in ("measureTemp", "setTemperature", "mode", "cooling")
+    ):
+        return None
+    raw_mode = data.get("mode")
+    raw_cooling = data.get("cooling")
+    return ThermostatState(
+        measured_temperature=_finite_float(data.get("measureTemp")),
+        target_temperature=_finite_float(data.get("setTemperature")),
+        mode=str(raw_mode) if raw_mode is not None else None,
+        cooling=None if raw_cooling is None else str(raw_cooling) not in ("", "0"),
+    )
+
+
 def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
     """Parse a live per-object state payload into a `StateUpdate`.
 
     The payload may be plain text or a JSON object with a `state` field; in
     either case `value` is set, and `on_ms` is populated when the payload
-    carried a server timestamp.
+    carried a server timestamp. Plain text is stripped, exactly as the raw
+    channel form is.
     """
-    value: str = payload
+    value: str = payload.strip()
     on_ms: int | float | None = None
     tilt: int | None = None
+    thermostat: ThermostatState | None = None
     try:
         data = json.loads(payload)
     except (ValueError, TypeError):
@@ -403,7 +606,10 @@ def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
         if isinstance(raw_on, (int, float)):
             on_ms = raw_on
         tilt = to_int(data.get("lammel"))
-    return StateUpdate(id=oid, value=value, on_ms=on_ms, tilt=tilt)
+        thermostat = _parse_thermostat(data)
+    return StateUpdate(
+        id=oid, value=value, on_ms=on_ms, tilt=tilt, thermostat=thermostat
+    )
 
 
 def parse_diagnostics(payload: str) -> ModuleDiagnostics | None:
@@ -453,30 +659,28 @@ def parse_stan_json(stan_json: str) -> StanJsonSeed | None:
         value=str(raw_state) if raw_state is not None else None,
         on_ms=on_ms,
         tilt=to_int(data.get("lammel")),
+        thermostat=_parse_thermostat(data),
     )
 
 
 # --- Endpoint table --------------------------------------------------------
 #
-# Every request/response endpoint the M-SERV exposes is one row here, and that
-# row is the single source of truth: the client derives its subscriptions,
-# topic-to-handler routing, discovery-completion signals, and retained payloads
-# from this table. Adding an endpoint is one row, not edits in four places:
-# verify the wire shape live first (tools/probe_config.py publishes candidate
-# keywords and prints the replies), add the row, give the reply an
-# `AmpioStore._handlers` entry only if it mutates state, and expose a
-# `fetch_<name>()` awaiting `AmpioClient._fetch` - `fetch_scenes()` is the
-# three-line reference shape.
+# One row per M-SERV request/response endpoint, and the row is the single
+# source of truth: subscriptions, routing, discovery-completion signals,
+# and retained payloads all derive from it. To add an endpoint: verify
+# the wire shape live (tools/probe_config.py), add the row, give the
+# reply an `AmpioStore._handlers` entry only if it mutates state, and
+# expose a `fetch_<name>()` awaiting `AmpioClient._fetch` -
+# `fetch_scenes()` is the reference shape.
 #
 # A request publishes ``req_payload`` (a keyword, or "" for the dedicated
-# ``states``/``info`` surfaces) to ``ampio/control/<user>/<req_surface>``; the
-# reply lands on ``ampio/fromDB/<user>/<resp_surface>/<resp_leaf>``.
+# ``states``/``info`` surfaces) to ``ampio/control/<user>/<req_surface>``;
+# the reply lands on ``ampio/fromDB/<user>/<resp_surface>/<resp_leaf>``.
 
 
 # The reserved administrator login. The app refuses to create a user of
-# this name, and the broker authenticates it at CONNACK, so holding a
-# session under it IS being the administrator - the account tier is a
-# constructor fact, not a discovered one.
+# this name and the broker authenticates it at CONNACK, so the account
+# tier is a constructor fact, not a discovered one.
 ADMIN_USERNAME = "admin"
 
 
@@ -560,6 +764,18 @@ ENDPOINTS: tuple[Endpoint, ...] = (
         parses=list_rows,
     ),
     Endpoint("scenes", "data", "scenes", "data", "scenes", parses=parse_scenes),
+    # The Designer "Lokalizacja" name table. On-demand; the per-output
+    # pointer that resolves through it rides the device_api record
+    # (resolve_locations()).
+    Endpoint(
+        "locations",
+        "config",
+        "locations",
+        "config",
+        "locations",
+        tier=AccessTier.ADMIN,
+        parses=parse_locations,
+    ),
 )
 
 ENDPOINT_BY_NAME: dict[str, Endpoint] = {ep.name: ep for ep in ENDPOINTS}
@@ -612,6 +828,32 @@ def scene_payload(scene_id: int, verb: str) -> str:
 KEEP_POSITION = 101
 
 
+# --- Raw CAN writes --------------------------------------------------------
+#
+# The admin-only `ampio/to/<machex>/raw` topic broadcasts a raw CAN frame
+# from the M-SERV. Frame `[0x30, 0xF9, value, channel]` sets a module's
+# output: 0x30 is the generic output-write function (the Designer SPA maps
+# every output leaf to it) and 0xF9 the set-u8 command. It is the ONLY
+# write that reaches a classic panel's binary outputs (status LEDs) - the
+# `/api` verbs and the per-channel `o/<ch>/cmd` form are silently dropped
+# for those, while a relay module answers all three. docs/protocol.md
+# ("Panel outputs") carries the live evidence.
+
+
+def raw_write_topic(mac: int) -> str:
+    """The raw CAN write topic for one module, mac in lowercase hex."""
+    return f"ampio/to/{mac:x}/raw"
+
+
+def raw_output_payload(value: int, channel: int) -> str:
+    """The set-output frame as the wire's ASCII hex form.
+
+    ``channel`` is the 0-based output index - :pyattr:`AmpioObject.leaf_out_no`,
+    one below the 1-based raw state channel.
+    """
+    return f"30f9{value:02x}{channel:02x}"
+
+
 def request_topic(ep: Endpoint, user: str) -> str:
     """Control topic an endpoint's request keyword is published to."""
     return f"ampio/control/{user}/{ep.req_surface}"
@@ -632,12 +874,41 @@ def ob_state_wildcard(user: str) -> str:
 # on-change input prefixes are subscribed and the high-rate ones are not.
 RAW_INPUT_WILDCARDS = ("ampio/from/+/state/f/+", "ampio/from/+/state/i/+")
 
+# Binary output channels, bridged for `przekaznik` objects. A touch
+# panel's status LEDs have no other retained surface, and every module's
+# binary outputs share the channel shape (docs/raw-channel-bridge.md).
+RAW_OUTPUT_WILDCARD = "ampio/from/+/state/o/+"
+
 # Per-module diagnostics broadcasts (CAN supply voltage, own temperature).
 RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
 
 # Bus events (1-65535); receiving rides the admin-only raw tree, raising goes
 # to the command surface - the rights model is in docs/protocol.md.
 RAW_EVENT_WILDCARD = "ampio/from/+/event"
+
+
+# The admin-only device_api tree: get_data asks the M-SERV for a module's
+# full CAN-resident record; the info reply carries the description
+# entries. Request macs are lowercase hex, reply macs uppercase - the
+# router parses the segment numerically.
+DEVICE_API_INFO_WILDCARD = "device_api/from/+/info"
+
+
+def device_api_request_topic(mac: int) -> str:
+    """The get_data request topic for one module's CAN-resident record."""
+    return f"device_api/to/{mac:x}/get_data"
+
+
+# typ_komponentu -> description class (descType), live-proven pairs only
+# (docs/identity.md): an unlisted kind resolves no location. Extend only
+# with a live-proven pair.
+DESC_TYPE_BY_KIND: dict[str, int] = {
+    "przekaznik": 12,  # OUTPUTS
+    "roleta_procenty": 26,  # ROLLER
+    "roleta_lamelki": 26,  # ROLLER
+    "led": 16,  # OUT_OC_U8
+    "rgbw": 34,  # RGBW output class; no symbolic name in the recovered enum
+}
 
 
 # --- topic routing ---------------------------------------------------------
@@ -675,23 +946,35 @@ class DiagnosticsReport:
     diagnostics: ModuleDiagnostics
 
 
+@dataclass(slots=True, frozen=True)
+class DeviceDescriptions:
+    """A module's parsed description record from a device_api info reply."""
+
+    mac: int
+    entries: tuple[OutputDescription, ...]
+
+
 # Everything one MQTT message can classify into. `BusEvent` is the public
 # event class itself - for bus events the wire message IS the event.
-Inbound = EndpointReply | StateUpdate | RawChannelEdge | DiagnosticsReport | BusEvent
+Inbound = (
+    EndpointReply
+    | StateUpdate
+    | RawChannelEdge
+    | DiagnosticsReport
+    | DeviceDescriptions
+    | BusEvent
+)
 
 
 class Router:
     """Classifies one MQTT message into a typed inbound message, or None.
 
-    The single home of topic-shape knowledge: every guard lives here, once,
-    and anything unroutable - an unknown shape, a non-hex mac, a non-integer
-    object id, channel, or event number, an unparseable diagnostics frame -
-    returns None. The store then applies typed messages and never inspects a
-    topic. ``endpoints`` is the subset the connection subscribes to (the
-    account tier's served surfaces), so a reply topic outside it is
-    unroutable like any other unknown shape. Endpoint reply and per-object
-    state topics are namespaced by the connecting account (hence ``user``);
-    the raw ``ampio/from`` tree is global.
+    The single home of topic-shape knowledge: anything unroutable returns
+    None, and the store applies typed messages without inspecting a
+    topic. ``endpoints`` is the tier's served subset, so a reply topic
+    outside it is unroutable like any other unknown shape. Endpoint reply
+    and per-object state topics are namespaced by the connecting account
+    (hence ``user``); the raw ``ampio/from`` tree is global.
     """
 
     __slots__ = ("_by_response", "_user")
@@ -719,6 +1002,22 @@ class Router:
         ):
             oid = to_int(parts[4])
             return None if oid is None else _parse_state_payload(oid, payload)
+        if (
+            len(parts) == 4
+            and parts[0] == "device_api"
+            and parts[1] == "from"
+            and parts[3] == "info"
+        ):
+            try:
+                mac = int(parts[2], 16)
+            except ValueError:
+                return None
+            entries = parse_device_info(payload)
+            return (
+                None
+                if entries is None
+                else DeviceDescriptions(mac=mac, entries=entries)
+            )
         if len(parts) < 4 or parts[0] != "ampio" or parts[1] != "from":
             return None
         try:
@@ -732,7 +1031,7 @@ class Router:
             return RawChannelEdge(
                 mac=mac, prefix=parts[4], channel=channel, value=payload.strip()
             )
-        if len(parts) == 5 and parts[3] == "b" and parts[4].upper() == "4F":
+        if len(parts) == 5 and parts[3] == "b" and parts[4] == "4F":
             diagnostics = parse_diagnostics(payload)
             if diagnostics is None:
                 return None

@@ -6,7 +6,13 @@ import json
 
 import pytest
 
-from ampio_mqtt import AccessTier, AmpioModule, AmpioServerInfo, BusEvent
+from ampio_mqtt import (
+    AccessTier,
+    AmpioModule,
+    AmpioServerInfo,
+    BusEvent,
+    ThermostatState,
+)
 from ampio_mqtt._protocol import (
     ENDPOINTS,
     DiagnosticsReport,
@@ -21,6 +27,8 @@ from ampio_mqtt._protocol import (
     parse_server_info,
     parse_stan_json,
     parse_states_snapshot,
+    raw_output_payload,
+    raw_write_topic,
     server_below_baseline,
     to_int,
 )
@@ -289,6 +297,14 @@ def test_state_route_plain_payload() -> None:
     assert update.value == "ok" and update.on_ms is None
 
 
+def test_state_route_strips_plain_payload_whitespace() -> None:
+    """A trailing newline must not flip `is_on`; the per-object plain form
+    strips exactly as the raw channel form does."""
+    update = _route("ampio/fromDB/u/ob/41/state", "0\n")
+    assert isinstance(update, StateUpdate)
+    assert update.value == "0"
+
+
 @pytest.mark.parametrize(
     ("raw_state", "expected"),
     [
@@ -368,6 +384,77 @@ def test_parse_stan_json_invalid(payload: str) -> None:
     assert parse_stan_json(payload) is None
 
 
+# A reg state as a live M-SERV serializes it: every field a string, the
+# spacing verbatim from the capture.
+REG_PAYLOAD = (
+    '{ "state": "0", "cooling": "0", "mode": "S",'
+    '"measureTemp": "25.90","setTemperature": "21.00", "on": 1787682427583}'
+)
+
+
+def test_state_route_reg_payload_carries_thermostat() -> None:
+    update = _route("ampio/fromDB/u/ob/138/state", REG_PAYLOAD)
+    assert isinstance(update, StateUpdate)
+    assert update.value == "0" and update.on_ms == 1787682427583
+    assert update.thermostat == ThermostatState(
+        measured_temperature=25.9,
+        target_temperature=21.0,
+        mode="S",
+        cooling=False,
+    )
+
+
+def test_state_route_plain_shape_has_no_thermostat() -> None:
+    update = _route(
+        "ampio/fromDB/u/ob/41/state", json.dumps({"state": "1", "desc": "x", "on": 1})
+    )
+    assert isinstance(update, StateUpdate)
+    assert update.thermostat is None
+
+
+def test_parse_stan_json_reg_shape_carries_thermostat() -> None:
+    seed = parse_stan_json(REG_PAYLOAD)
+    assert seed is not None
+    assert seed.thermostat == ThermostatState(
+        measured_temperature=25.9,
+        target_temperature=21.0,
+        mode="S",
+        cooling=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("fields", "expected"),
+    [
+        pytest.param(
+            {"mode": "A"},
+            ThermostatState(
+                measured_temperature=None,
+                target_temperature=None,
+                mode="A",
+                cooling=None,
+            ),
+            id="mode-only",
+        ),
+        pytest.param(
+            {"cooling": "1", "measureTemp": "junk", "setTemperature": "inf"},
+            ThermostatState(
+                measured_temperature=None,
+                target_temperature=None,
+                mode=None,
+                cooling=True,
+            ),
+            id="cooling-true-unparseable-temps",
+        ),
+    ],
+)
+def test_reg_shape_partial_fields(fields: dict, expected: ThermostatState) -> None:
+    """Any reg key makes the shape; absent or unparseable fields read None."""
+    update = _route("ampio/fromDB/u/ob/138/state", json.dumps({"state": "0", **fields}))
+    assert isinstance(update, StateUpdate)
+    assert update.thermostat == expected
+
+
 @pytest.mark.parametrize(
     ("topic", "expected"),
     [
@@ -425,7 +512,7 @@ def test_event_route_malformed(topic: str, payload: str) -> None:
 
 
 def test_diagnostics_route_ok() -> None:
-    report = _route("ampio/from/cafe/b/4f", json.dumps({"d": [254, 79, 63, 142]}))
+    report = _route("ampio/from/cafe/b/4F", json.dumps({"d": [254, 79, 63, 142]}))
     assert isinstance(report, DiagnosticsReport)
     assert report.mac == 0xCAFE
     assert report.diagnostics.supply_voltage == 12.6
@@ -464,3 +551,17 @@ def test_diagnostics_three_element_frame_has_no_temperature() -> None:
     assert isinstance(report, DiagnosticsReport)
     assert report.diagnostics.supply_voltage == 12.2
     assert report.diagnostics.temperature is None
+
+
+# --- raw write builders ---------------------------------------------------
+
+
+def test_raw_write_topic_is_lowercase_hex() -> None:
+    assert raw_write_topic(0xCAFE) == "ampio/to/cafe/raw"
+    assert raw_write_topic(1) == "ampio/to/1/raw"
+
+
+def test_raw_output_payload_encodes_value_and_channel() -> None:
+    assert raw_output_payload(255, 1) == "30f9ff01"
+    assert raw_output_payload(0, 0) == "30f90000"
+    assert raw_output_payload(128, 23) == "30f98017"

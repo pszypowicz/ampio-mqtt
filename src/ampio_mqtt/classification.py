@@ -124,7 +124,7 @@ class ThermostatKind:
     commands (:meth:`AmpioClient.set_temperature`) without answering the
     output verbs - so it is none of the other three kinds. The rich state
     the regulator pushes (measured and target temperature, mode, cooling)
-    is not surfaced yet; #73 tracks the climate readback.
+    is surfaced as :attr:`AmpioObject.thermostat`.
     """
 
     key: str
@@ -185,6 +185,10 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     "reg": TypeProfile(ThermostatKind("thermostat", "Thermostat")),
     "bit8": TypeProfile(_Selector.NUMERIC),
     "flaga": TypeProfile(InputKind("flaga", "Flag", None), channel_prefix="f"),
+    # The per-channel physical-input object (a wall button wired to a module
+    # terminal). Same 255/0 payload as flags on the per-object topic; the
+    # raw mirror rides the digital-input prefix (#117).
+    "wej": TypeProfile(InputKind("wej", "Input", None), channel_prefix="i"),
     "detekcja": TypeProfile(
         InputKind("detekcja", "Detection", "motion"),
         channel_prefix="i",

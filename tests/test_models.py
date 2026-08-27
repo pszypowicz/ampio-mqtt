@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 
 from ampio_mqtt import AmpioModule, AmpioObject, AmpioServerInfo
-from ampio_mqtt.classification import classify
+from ampio_mqtt.classification import ThermostatKind, classify
 from ampio_mqtt.device_types import module_model
 
 
@@ -144,10 +144,9 @@ def test_module_model_derives_from_type() -> None:
         AmpioModule(id=1, model="M-REL")  # type: ignore[call-arg]
 
 
-def test_is_thermostat_and_the_running_flag() -> None:
+def test_reg_classifies_as_thermostat_and_surfaces_the_running_flag() -> None:
     obj = AmpioObject(id=138, typ_komponentu="reg")
-    assert obj.is_thermostat
-    assert not (obj.is_sensor or obj.is_input or obj.is_output)
+    assert isinstance(obj.kind, ThermostatKind)
     assert replace(obj, value="1").is_on  # the surfaced value is the running flag
 
 
@@ -207,6 +206,9 @@ def _colored(value: str | None) -> AmpioObject:
         ("0", (0, 0, 0, 0)),
         ("4294967295", (255, 255, 255, 255)),
         ("4294967296", None),  # past 32 bits
+        ("-2147483648", (0, 0, 0, 128)),  # INT32_MIN, the deepest signed form
+        ("-2147483649", None),  # below the signed window: no 32-bit encoding
+        ("-4294967296", None),
         ("junk", None),
         (None, None),
     ],
@@ -242,3 +244,17 @@ def test_position_reads_none_off_the_position_axis() -> None:
     assert _cover("55", typ="roleta").position is None
     assert _colored("55").position is None
     assert _cover("55", typ="roleta_lamelki").position == 55
+
+
+def test_location_defaults_to_none_and_survives_replace() -> None:
+    obj = AmpioObject(id=1, location="Potter")
+    assert AmpioObject(id=1).location is None
+    assert replace(obj, value="1").location == "Potter"
+
+
+def test_leaf_out_no_parses_last_segment() -> None:
+    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_7").leaf_out_no == 7
+    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_0").leaf_out_no == 0
+    assert AmpioObject(id=1, leaf_id="").leaf_out_no is None
+    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_x").leaf_out_no is None
+    assert AmpioObject(id=1, leaf_id="junk").leaf_out_no is None

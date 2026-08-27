@@ -1,0 +1,14 @@
+# Install once with: uvx pre-commit install
+# The hooks mirror what CI enforces: ruff for Python, prettier for
+# markdown prose wrapping (.prettierrc sets proseWrap: always).
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.10
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+  - repo: https://github.com/rbubley/mirrors-prettier
+    rev: v3.6.2
+    hooks:
+      - id: prettier
+        files: '\.md$'

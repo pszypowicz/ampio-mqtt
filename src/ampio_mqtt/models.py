@@ -8,15 +8,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .classification import (
-    InputKind,
     ObjectKind,
     OutputKind,
-    SensorKind,
-    ThermostatKind,
     classify,
     is_system_type,
 )
-from .device_types import module_model
+from .device_types import Mounting, module_model, module_mounting
 
 
 class AccessTier(Enum):
@@ -42,13 +39,31 @@ _HIDDEN_FLAG = 1 << 4
 # M-SERV's own Matter bridge parses (docs/identity.md). Only the mac
 # segment is extracted; the F segments' meaning stays opaque. Strict on
 # purpose - a half-parsed mac that is wrong is worse than None.
-_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_[^_]+_[^_]+_[^_]+")
+_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_[^_]+_[^_]+_([^_]+)")
 
 # The M-SERV's Designer override mac: its objects' leafId embeds this value
 # (not the factory mac_global), and its own module row reports it as
 # `AmpioModule.mac`. The one place the rule lives - consumers read
 # `AmpioObject.is_server_owned` instead of comparing macs themselves.
 _MSERV_MAC = 1
+
+
+@dataclass(slots=True, frozen=True)
+class ThermostatState:
+    """A regulator's climate readback, from the rich `reg` state push.
+
+    The push carries every field as a string; the library parses the
+    temperatures and the cooling flag and passes the mode letter through
+    verbatim, so a future unlisted letter loses nothing. The `A,S,M,H`
+    vocabulary is in docs/protocol.md.
+    """
+
+    measured_temperature: float | None
+    target_temperature: float | None
+    # Mode letter, verbatim from the wire.
+    mode: str | None
+    # The push's cooling flag; `"0"` reads False, anything else True.
+    cooling: bool | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -87,12 +102,15 @@ class AmpioObject:
     # `kind` stays derived from `typ_komponentu` alone. docs/identity.md
     # holds the vocabulary and the storage path.
     matter_device_type: int | None = None
+    # Designer per-output location name (the "Lokalizacja" dropdown),
+    # resolved from the module's CAN-resident description record by
+    # `AmpioClient.resolve_locations()` - admin tier only. None until a
+    # resolve ran, and for objects it could not match. docs/identity.md.
+    location: str | None = None
     # What this object is. Derived - never passed: computed from
     # `typ_komponentu` and `interpretacja` on every construction,
     # `dataclasses.replace` included, so no instance can hold a kind that
-    # disagrees with its inputs (#94). Exactly one kind applies; a typ the
-    # tables do not know (or no metadata at all) reads as the generic
-    # value-only sensor, exactly as `classify` documents.
+    # disagrees with its inputs (#94).
     kind: ObjectKind = field(init=False)
     value: str | None = None
     # Epoch seconds of the report `value` came from: the M-SERV's own `on`
@@ -109,38 +127,16 @@ class AmpioObject:
     # Slat angle percent, from the `lammel` state field. Only tilt-capable
     # covers report it.
     tilt_position: int | None = None
+    # Climate readback, from the rich state shape only `reg` objects push.
+    # None until a reg-shaped report arrives; a later report that lacks the
+    # shape keeps the last readback, like `tilt_position` does.
+    thermostat: ThermostatState | None = None
 
     def __post_init__(self) -> None:
-        # The frozen dance: derived fields are set once, here, and nowhere
-        # else.
+        # Derived fields are set once, here, and nowhere else.
         object.__setattr__(
             self, "kind", classify(self.typ_komponentu, self.interpretacja)
         )
-
-    @property
-    def is_sensor(self) -> bool:
-        """Whether this object is exposed by the sensor platform."""
-        return isinstance(self.kind, SensorKind)
-
-    @property
-    def is_input(self) -> bool:
-        """Whether this object is exposed by the binary_sensor/input platform."""
-        return isinstance(self.kind, InputKind)
-
-    @property
-    def is_output(self) -> bool:
-        """Whether this object accepts commands (switch/light/cover platforms)."""
-        return isinstance(self.kind, OutputKind)
-
-    @property
-    def is_thermostat(self) -> bool:
-        """Whether this is a temperature controller (climate platform).
-
-        Its `value` is the running flag (`is_on` applies); the setpoint is
-        driven with :meth:`AmpioClient.set_temperature`, and the rich
-        readback is tracked in #73.
-        """
-        return isinstance(self.kind, ThermostatKind)
 
     @property
     def supports_tilt(self) -> bool:
@@ -192,10 +188,10 @@ class AmpioObject:
             packed = int(self.value)
         except ValueError:
             return None
+        if not -(1 << 31) <= packed <= 0xFFFFFFFF:
+            return None
         if packed < 0:
             packed += 1 << 32
-        if not 0 <= packed <= 0xFFFFFFFF:
-            return None
         return (
             packed & 0xFF,
             (packed >> 8) & 0xFF,
@@ -236,11 +232,9 @@ class AmpioObject:
     def hidden(self) -> bool:
         """Whether the M-SERV flags this object as hidden / a stub (``params`` bit 4).
 
-        This is the authoritative "do not surface" marker - the same one the
-        M-SERV's own Matter bridge honours. It catches the phantom rows that
-        duplicate a real Designer channel (sharing its ``leaf_id`` but carrying
-        no value), which the ``leaf_id`` heuristic alone lets through. See
-        docs/identity.md.
+        The authoritative "do not surface" marker, honored by the
+        M-SERV's own Matter bridge; it catches the phantom rows that
+        duplicate a real Designer channel. See docs/identity.md.
         """
         return bool(self.params & _HIDDEN_FLAG)
 
@@ -268,6 +262,23 @@ class AmpioObject:
         """
         match = _LEAF_ID_RE.fullmatch(self.leaf_id)
         return int(match.group(1), 16) if match is not None else None
+
+    @property
+    def leaf_out_no(self) -> int | None:
+        """The output index within the module's description record.
+
+        Parsed from ``leaf_id``'s last segment - the join key that pairs
+        this object with its :class:`OutputDescription` entry
+        (docs/identity.md). None when ``leaf_id`` is empty, malformed,
+        or the segment is not a number.
+        """
+        match = _LEAF_ID_RE.fullmatch(self.leaf_id)
+        if match is None:
+            return None
+        try:
+            return int(match.group(2))
+        except ValueError:
+            return None
 
     @property
     def is_server_owned(self) -> bool:
@@ -317,8 +328,18 @@ class AmpioModule:
     # Resolved model name for `type`. Derived - never passed: computed on
     # every construction (#94), None when `type` is unknown or missing.
     model: str | None = field(init=False)
+    # Curated mounting class for `type` ("cabinet" DIN rail / "wall" /
+    # "flush" in-box), derived exactly like `model` (#115). Decoration for
+    # device info only - never a topology input. None when unclassified.
+    mounting: Mounting | None = field(init=False)
     sw_version: int | None = None  # wersja_softu
     hw_version: int | None = None  # wersja_pcb
+    # Designer module-level location (the "Lokalizacja" set on the module
+    # itself - where the box is mounted, not where its loads are), read
+    # from the DEVICE_NAME entry of the module's CAN description record by
+    # :meth:`AmpioClient.resolve_locations` - admin tier only. None until
+    # a sweep covers the module, or when the installer never set one.
+    location: str | None = None
     # Local epoch seconds when this process last received live evidence of
     # the module: a state push or raw edge for one of its objects, or its own
     # diagnostics broadcast. One clock only - snapshot and catalogue seeds do
@@ -333,6 +354,7 @@ class AmpioModule:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "model", module_model(self.type))
+        object.__setattr__(self, "mounting", module_mounting(self.type))
 
 
 @dataclass(slots=True, frozen=True)
@@ -399,15 +421,13 @@ class AmpioServerInfo:
 
 @dataclass(slots=True)
 class ConnectionStats:
-    """Lightweight liveness counters surfaced for downstream diagnostics.
+    """Internal liveness counters behind ``diagnostics_snapshot()``.
 
     Updated by the connection layer (`last_message_at` by the client).
     `started_at` and `reconnect_count` cover the current ``start()`` run -
-    a deliberate stop/start restarts them, so a diagnostics blob never
-    reads a consumer-initiated restart as a flapping connection.
-    `last_error` and `last_message_at` roll across runs. Intended for HA's
-    per-config-entry diagnostics blob so a maintainer can correlate a
-    "flapping" report with the actual reconnect count seen by the client.
+    a deliberate stop/start restarts them, so a snapshot never reads a
+    consumer-initiated restart as a flapping connection. `last_error` and
+    `last_message_at` roll across runs.
     """
 
     reconnect_count: int = 0  # reconnects within the current run
