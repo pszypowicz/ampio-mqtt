@@ -123,5 +123,8 @@ credentials are known, confirm identity with `test_connection()`.
 `client.diagnostics_snapshot()` returns the one credential-free dict a
 diagnostics platform emits as-is. It holds the connection counters, the SUBACK
 rejections, the mac collisions, and each endpoint's verbatim last reply. The
-counters are cheap to update - the dispatch hot path touches only
-`last_message_at`.
+`info` entry is the exception. Its reply carries the account's address,
+coordinates, cloud endpoint, and public key, and a key-based redactor cannot
+reach inside one retained string. The snapshot therefore masks every info value
+outside a safe-key set and withholds an unparseable info reply. The counters are
+cheap to update - the dispatch hot path touches only `last_message_at`.

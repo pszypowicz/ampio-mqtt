@@ -36,6 +36,7 @@ from ampio_mqtt import (
     ObjectRemoved,
     ObjectUpdated,
 )
+from ampio_mqtt._protocol import REDACTED
 
 
 def _flaga(oid: int, funkcja: int, dev: int = 7) -> dict:
@@ -583,6 +584,40 @@ def test_last_payloads_retained_for_each_handler() -> None:
     feed(client, f"ampio/fromDB/{USER}/config/devices", devices_payload)
     assert "devices" not in client.diagnostics_snapshot()["last_payloads"]
     assert client.modules == {}
+
+
+def test_snapshot_retains_the_info_payload_redacted() -> None:
+    """The retained info entry masks every non-safelisted field, so a
+    snapshot attached verbatim to a bug report carries no address or
+    coordinates; the store still parses the raw reply (#137)."""
+    client = _client()
+    payload = info(
+        mac=12345,
+        serverVersion="1865",
+        city="Example Street 1, Springfield",
+        lat="52.1000",
+        lon="21.0000",
+        local_ip="192.168.1.10",
+        device_id="hw-0042",
+        publicKey="PEMPEMPEM",
+    )
+    feed(client, f"ampio/fromDB/{USER}/data/info", payload)
+    snap = client.diagnostics_snapshot()
+    retained = snap["last_payloads"]["info"]
+    for secret in ("Springfield", "52.1000", "21.0000", "192.168.1.10", "hw-0042"):
+        assert secret not in retained
+    assert json.loads(retained)["Results"]["mac"] == 12345
+    # The parsed form still carries the fields a consumer masks by key.
+    assert snap["server_info"]["local_ip"] == "192.168.1.10"
+    assert snap["server_info"]["device_id"] == "hw-0042"
+
+
+def test_snapshot_withholds_unparseable_info_bytes() -> None:
+    """Bad info bytes never reach the snapshot: a truncated info reply can
+    carry the address in clear text, unlike the other endpoints' payloads."""
+    client = _client()
+    feed(client, f"ampio/fromDB/{USER}/data/info", '{"Results": {"city": "Example Str')
+    assert client.diagnostics_snapshot()["last_payloads"]["info"] == REDACTED
 
 
 def test_access_tier_is_the_authenticated_username() -> None:
