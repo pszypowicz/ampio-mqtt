@@ -63,6 +63,11 @@ class ObjectMetadata:
     # null when the object has no tag - both read as None. docs/identity.md
     # holds the vocabulary.
     matter_device_type: int | None
+    # `czas` column converted to milliseconds (the wire unit is 10 ms ticks):
+    # Designer's per-object time, the app's default pulse length. None when
+    # the reply carried no such column, which the app-sync catalogue never
+    # does - the client then keeps whatever `params_devices` supplied.
+    pulse_ms: int | None
     stan_json: str | None  # raw seed for the initial value, applied by the client
 
 
@@ -189,10 +194,17 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
                 # 37), which Python ints handle natively.
                 params=to_int(item.get("params")),
                 matter_device_type=to_int(item.get("type")),
+                pulse_ms=_czas_to_pulse_ms(item.get("czas")),
                 stan_json=item.get("stan_json") or None,
             )
         )
     return out
+
+
+def _czas_to_pulse_ms(value: Any) -> int | None:
+    """The `czas` column in milliseconds, or None when absent / not a number."""
+    czas = to_int(value)
+    return czas * 10 if czas is not None else None
 
 
 def _parse_leaf_id(value: Any) -> str:
@@ -237,23 +249,35 @@ def parse_devices(payload: str) -> list[AmpioModule] | None:
     return out
 
 
-def parse_params_devices(payload: str) -> dict[int, int] | None:
-    """Parse a `data/params_devices` payload into `{object_id: params}`.
+@dataclass(slots=True, frozen=True)
+class ParamsEntry:
+    """One object's row in the ``data/params_devices`` table."""
+
+    params: int
+    pulse_ms: int
+
+
+def parse_params_devices(payload: str) -> dict[int, ParamsEntry] | None:
+    """Parse a `data/params_devices` payload into per-object config facts.
 
     The table covers the full object catalogue regardless of the account's
-    grants. Returns None when the payload is not parseable JSON.
+    grants, and it is complete: an absent column reads as the off value, not
+    as unknown. Returns None when the payload is not parseable JSON.
     """
     rows = list_rows(payload)
     if rows is None:
         return None
-    out: dict[int, int] = {}
+    out: dict[int, ParamsEntry] = {}
     for item in rows:
         if not isinstance(item, dict):
             continue
         oid = to_int(item.get("id"))
         if oid is None:
             continue
-        out[oid] = to_int(item.get("params")) or 0
+        out[oid] = ParamsEntry(
+            params=to_int(item.get("params")) or 0,
+            pulse_ms=_czas_to_pulse_ms(item.get("czas")) or 0,
+        )
     return out
 
 

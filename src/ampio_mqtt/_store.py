@@ -73,10 +73,10 @@ class AmpioStore:
         # broadcasts. Ids, not instances: modules are frozen and replaced on
         # every change, so a cached instance would go stale.
         self._module_id_by_mac: dict[int, int] = {}
-        # Full-catalogue `{object_id: params}` from `data/params_devices`, kept
-        # because the app-sync catalogue carries no params column and the two
-        # replies arrive in no fixed order.
-        self._params_by_id: dict[int, int] = {}
+        # Full-catalogue per-object config facts (`params`, `czas`) from
+        # `data/params_devices`, kept because the app-sync catalogue carries
+        # neither column and the two replies arrive in no fixed order.
+        self._params_by_id: dict[int, _protocol.ParamsEntry] = {}
         # `{object_id: DesignerRecord}` accumulated across resolve
         # sweeps (a sweep updates its joined ids and leaves the rest),
         # kept so a catalogue refresh re-applies what the CAN records
@@ -257,8 +257,11 @@ class AmpioStore:
             name: getattr(meta, name) for name in _METADATA_FIELDS
         }
         # A row without the column leaves the params_devices value standing.
+        entry = self._params_by_id.get(meta.id)
         if updates["params"] is None:
-            updates["params"] = self._params_by_id.get(meta.id, obj.params)
+            updates["params"] = entry.params if entry is not None else obj.params
+        if updates["pulse_ms"] is None:
+            updates["pulse_ms"] = entry.pulse_ms if entry is not None else obj.pulse_ms
         # The catalogue never carries the record entry, so the held table
         # re-applies it on every merge - including the re-creation after
         # an eviction.
@@ -379,10 +382,12 @@ class AmpioStore:
             _LOGGER.warning("Could not parse Ampio params_devices table")
             return False
         self._params_by_id = table
-        for oid, params in table.items():
+        for oid, entry in table.items():
             obj = self.objects.get(oid)
-            if obj is not None and obj.params != params:
-                obj = replace(obj, params=params)
+            if obj is not None and (
+                obj.params != entry.params or obj.pulse_ms != entry.pulse_ms
+            ):
+                obj = replace(obj, params=entry.params, pulse_ms=entry.pulse_ms)
                 self.objects[oid] = obj
                 self._record(obj, applied)
         return True

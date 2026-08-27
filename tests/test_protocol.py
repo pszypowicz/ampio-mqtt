@@ -119,6 +119,38 @@ def test_parse_details_matter_device_type(raw: object, expected: int | None) -> 
 
 
 @pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        ({"id": 1, "czas": 500}, 5000),  # 10 ms wire ticks -> ms
+        ({"id": 1, "czas": "500"}, 5000),  # string coerced
+        ({"id": 1, "czas": 0}, 0),  # configured off
+        ({"id": 1}, None),  # absent column -> None, the client keeps what it has
+        ({"id": 1, "czas": "junk"}, None),  # junk is indistinguishable from absent
+    ],
+)
+def test_parse_details_pulse_ms(row: dict, expected: int | None) -> None:
+    items = parse_details(json.dumps({"List": [row]}))
+    assert items is not None and items[0].pulse_ms == expected
+
+
+@pytest.mark.parametrize(
+    ("row", "params", "pulse_ms"),
+    [
+        ({"id": 5, "params": 17, "czas": 500}, 17, 5000),
+        ({"id": 5, "params": 17}, 17, 0),  # the table is complete: absent = off
+        ({"id": 5, "czas": 500}, 0, 5000),
+    ],
+)
+def test_parse_params_devices_carries_pulse_ms(
+    row: dict, params: int, pulse_ms: int
+) -> None:
+    table = parse_params_devices(json.dumps({"List": [row]}))
+    assert table is not None
+    assert table[5].params == params
+    assert table[5].pulse_ms == pulse_ms
+
+
+@pytest.mark.parametrize(
     "parser",
     [
         parse_details,
