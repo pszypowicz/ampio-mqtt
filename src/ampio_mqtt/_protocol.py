@@ -419,6 +419,25 @@ def parse_device_info(payload: str) -> tuple[OutputDescription, ...] | None:
     return parse_descriptions_blob(blob)
 
 
+# Designer's cleared-entry form, live-proven: a clear never deletes the
+# frame, it rewrites it in place with `out_loc` 0x3FFF, `out_type` 0 and
+# the placeholder description "." - so both sentinels read as absent.
+_UNASSIGNED_OUT_LOC = 0x3FFF
+_EMPTY_DESC = "."
+
+
+def _entry_location(
+    entry: OutputDescription, location_names: Mapping[int, str]
+) -> str | None:
+    if entry.out_loc in (0, _UNASSIGNED_OUT_LOC):
+        return None
+    return location_names.get(entry.out_loc)
+
+
+def _entry_name(entry: OutputDescription) -> str | None:
+    return None if entry.desc in ("", _EMPTY_DESC) else entry.desc
+
+
 def resolve_designer(
     objects: Mapping[int, AmpioObject],
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
@@ -430,8 +449,9 @@ def resolve_designer(
     The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], leaf_out_no)`` within
     the module record of ``module_mac``. Objects on a colliding mac are
     skipped - the reply cannot be attributed to one module. ``out_loc`` 0
-    reads unassigned and ``out_type`` 0 untagged, so neither produces a
-    value. An empty ``desc`` reads as None, like the other two fields.
+    or 16383 reads unassigned and ``out_type`` 0 untagged, so none
+    produces a value. A ``desc`` that is empty or the ``.`` placeholder
+    reads as None, like the other two fields.
     """
     entries_by_key = {
         mac: {(e.desc_type, e.out_no): e for e in entries}
@@ -450,9 +470,9 @@ def resolve_designer(
         if entry is None:
             continue
         out[obj.id] = DesignerRecord(
-            location=location_names.get(entry.out_loc) if entry.out_loc else None,
+            location=_entry_location(entry, location_names),
             matter_device_type=entry.out_type or None,
-            name=entry.desc or None,
+            name=_entry_name(entry),
         )
     return out
 
@@ -470,9 +490,10 @@ def resolve_module_records(
     """The DEVICE_NAME record entry of every answering module, by mac.
 
     A record without the entry reads an empty bundle - the module
-    answered, so the emptiness is authoritative. ``out_loc`` 0 and an
-    empty ``desc`` read None. Colliding macs are skipped: the reply
-    cannot be attributed.
+    answered, so the emptiness is authoritative. The unassigned and
+    placeholder sentinels read None, exactly as ``resolve_designer``
+    reads them. Colliding macs are skipped: the reply cannot be
+    attributed.
     """
     out: dict[int, ModuleRecord] = {}
     for mac, entries in descriptions_by_mac.items():
@@ -483,8 +504,8 @@ def resolve_module_records(
             out[mac] = ModuleRecord()
         else:
             out[mac] = ModuleRecord(
-                location=(location_names.get(entry.out_loc) if entry.out_loc else None),
-                name=entry.desc or None,
+                location=_entry_location(entry, location_names),
+                name=_entry_name(entry),
             )
     return out
 
