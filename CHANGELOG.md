@@ -2,1158 +2,1070 @@
 
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
-adheres to [Semantic Versioning](https://semver.org/) with one important
-caveat documented in the [README](README.md): everything below `1.0.0` is
-beta. Any 0.x.x bump is free to break consumers without a migration path
-and without backwards-compatibility shims. `1.0.0` is reserved for the
-release that accompanies the `home-assistant/core` integration PR being
-accepted upstream.
+adheres to [Semantic Versioning](https://semver.org/) with one important caveat
+documented in the [README](README.md): everything below `1.0.0` is beta. Any
+0.x.x bump is free to break consumers without a migration path and without
+backwards-compatibility shims. `1.0.0` is reserved for the release that
+accompanies the `home-assistant/core` integration PR being accepted upstream.
 
-The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series
-cut while the HA integration was taking shape; it has been retired in
-favour of the explicit beta posture above and is no longer the supported
-upgrade path.
+The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
+while the HA integration was taking shape; it has been retired in favour of the
+explicit beta posture above and is no longer the supported upgrade path.
 
 ## 0.33.0
 
-Touch-panel status LEDs become first-class outputs (#119, part of #60).
-The M-DOT panels expose one binary output per touch field - the status
-LED - but those outputs ignore the whole `/api` command surface and the
-per-channel `ampio/to/<mac>/o/<ch>/cmd` form, an Ampio limitation that
-leaves a standard account no path to them at all. The write that works
-is the raw CAN frame the Designer SPA itself sends, captured and
-replicated live on a baseline install, on a panel LED and a relay
-output alike.
+Touch-panel status LEDs become first-class outputs (#119, part of #60). The
+M-DOT panels expose one binary output per touch field - the status LED - but
+those outputs ignore the whole `/api` command surface and the per-channel
+`ampio/to/<mac>/o/<ch>/cmd` form, an Ampio limitation that leaves a standard
+account no path to them at all. The write that works is the raw CAN frame the
+Designer SPA itself sends, captured and replicated live on a baseline install,
+on a panel LED and a relay output alike.
 
 ### Changed
 
-- **Admin binary-output writes ride the raw CAN frame** - on the admin
-  tier `turn_on()`, `turn_off()`, `toggle()`, and `set_value()` publish
-  `30f9<value><channel>` to `ampio/to/<machex>/raw` for every
-  `przekaznik` on a CAN module, addressed purely by the object's own
-  leaf (mac plus the 0-based `AmpioObject.leaf_out_no`) - deliberately
-  dumb routing, with no module-type table to maintain. `confirm=`
-  works unchanged: the raw `state/o` edge echoes in ~30-50 ms and the
-  per-object push in ~150 ms. Two writes stay on `/api`: the M-SERV's
-  own virtual outputs (DB residents, not CAN modules) and every
-  `pulse_ms` write (the raw frame has no timed form - a panel output
-  therefore cannot pulse, surfaced by `confirm=`). `toggle()` on the
-  raw path inverts the state the store holds. The restricted tier
-  keeps the `/api` form everywhere, which a panel output silently
-  ignores. Writes to a condition-bound LED apply and are then
-  re-asserted by the module's own logic within seconds - durable
-  control needs an output left out of Designer logic
-  (docs/protocol.md, "Panel outputs").
+- **Admin binary-output writes ride the raw CAN frame** - on the admin tier
+  `turn_on()`, `turn_off()`, `toggle()`, and `set_value()` publish
+  `30f9<value><channel>` to `ampio/to/<machex>/raw` for every `przekaznik` on a
+  CAN module, addressed purely by the object's own leaf (mac plus the 0-based
+  `AmpioObject.leaf_out_no`) - deliberately dumb routing, with no module-type
+  table to maintain. `confirm=` works unchanged: the raw `state/o` edge echoes
+  in ~30-50 ms and the per-object push in ~150 ms. Two writes stay on `/api`:
+  the M-SERV's own virtual outputs (DB residents, not CAN modules) and every
+  `pulse_ms` write (the raw frame has no timed form - a panel output therefore
+  cannot pulse, surfaced by `confirm=`). `toggle()` on the raw path inverts the
+  state the store holds. The restricted tier keeps the `/api` form everywhere,
+  which a panel output silently ignores. Writes to a condition-bound LED apply
+  and are then re-asserted by the module's own logic within seconds - durable
+  control needs an output left out of Designer logic (docs/protocol.md, "Panel
+  outputs").
 
 ### Added
 
 - **`o` raw-channel bridge** (#119) - the admin session now subscribes
   `ampio/from/+/state/o/+` and bridges binary-output channels to their
-  `przekaznik` objects, exactly as the `f`/`i` input bridge works:
-  retained resync, raw-first latency, `raw_proven` ownership. A
-  panel's LEDs gain their only state surface; a relay's outputs gain
-  the same raw-first path, so their value reads the raw `"1"`/`"0"`
-  form once an edge arrives - the form `is_on` already documents.
+  `przekaznik` objects, exactly as the `f`/`i` input bridge works: retained
+  resync, raw-first latency, `raw_proven` ownership. A panel's LEDs gain their
+  only state surface; a relay's outputs gain the same raw-first path, so their
+  value reads the raw `"1"`/`"0"` form once an edge arrives - the form `is_on`
+  already documents.
 
 ## 0.32.0
 
-The device-metadata batch behind the HA topology contract pinned on
-issue #114: the partition of objects into devices must build identically
-on both account tiers, so everything here is either a tier-independent
-classification or admin-only decoration that never moves an entity
-between devices.
+The device-metadata batch behind the HA topology contract pinned on issue #114:
+the partition of objects into devices must build identically on both account
+tiers, so everything here is either a tier-independent classification or
+admin-only decoration that never moves an entity between devices.
 
 ### Added
 
-- **`wej` classifies as `InputKind`** (#117) - the per-channel
-  physical-input object the Designer creates for a wired button, a
-  generic boolean like `flaga`. Its raw mirror rides the existing
-  digital-input wildcard (`state/i/<funkcja>`), so an admin session gets
-  the low-latency edge exactly as flags do; the per-object 255/0 form
-  serves both tiers. `INPUT_KIND_KEYS` grows by `"wej"`, which trips a
-  consumer's exhaustiveness test by design.
-- **`AmpioModule.location`** (#114) - the module-level Designer
-  "Lokalizacja" (where the box is mounted, not where its loads are),
-  read from the DEVICE_NAME entry of the same `get_data` record
-  `resolve_locations()` already fetches. None is authoritative for an
-  answering module; an unswept module keeps its value, and the held
-  table re-applies it across catalogue refreshes and evictions.
-  `ModuleUpdated` dispatches on change. Admin tier only, like the rest
-  of the `device_api` surface.
-- **`AmpioModule.mounting`** (#115) - curated form-factor class per
-  type code: `cabinet` (DIN rail), `wall` (panels, sensors, outdoor
-  field devices), `flush` (in-box `-p` modules), None for virtual,
-  bridge-only, handheld, and unknown codes. Derived like `model`;
-  the table is `device_types.MODULE_MOUNTING`. Decoration for device
-  info only - the topology contract forbids branching on it.
+- **`wej` classifies as `InputKind`** (#117) - the per-channel physical-input
+  object the Designer creates for a wired button, a generic boolean like
+  `flaga`. Its raw mirror rides the existing digital-input wildcard
+  (`state/i/<funkcja>`), so an admin session gets the low-latency edge exactly
+  as flags do; the per-object 255/0 form serves both tiers. `INPUT_KIND_KEYS`
+  grows by `"wej"`, which trips a consumer's exhaustiveness test by design.
+- **`AmpioModule.location`** (#114) - the module-level Designer "Lokalizacja"
+  (where the box is mounted, not where its loads are), read from the DEVICE_NAME
+  entry of the same `get_data` record `resolve_locations()` already fetches.
+  None is authoritative for an answering module; an unswept module keeps its
+  value, and the held table re-applies it across catalogue refreshes and
+  evictions. `ModuleUpdated` dispatches on change. Admin tier only, like the
+  rest of the `device_api` surface.
+- **`AmpioModule.mounting`** (#115) - curated form-factor class per type code:
+  `cabinet` (DIN rail), `wall` (panels, sensors, outdoor field devices), `flush`
+  (in-box `-p` modules), None for virtual, bridge-only, handheld, and unknown
+  codes. Derived like `model`; the table is `device_types.MODULE_MOUNTING`.
+  Decoration for device info only - the topology contract forbids branching on
+  it.
 
 ## 0.31.0
 
-The dynamic catalogue. A running client already learned about additions
-and evictions the account's catalogue reported at reconnect; this
-release makes an addition a distinctly typed event and gives a
-long-running client a way to notice one without waiting for a
-reconnect, plus the LAN discovery facts a Home Assistant config flow
-needs to plan its own discovery path.
+The dynamic catalogue. A running client already learned about additions and
+evictions the account's catalogue reported at reconnect; this release makes an
+addition a distinctly typed event and gives a long-running client a way to
+notice one without waiting for a reconnect, plus the LAN discovery facts a Home
+Assistant config flow needs to plan its own discovery path.
 
 ### Added
 
-- **`ObjectAdded`** (#79) - an object's first event: dispatched instead
-  of `ObjectUpdated` on initial discovery, a later catalogue addition,
-  and the re-creation that follows an eviction. A subclass of
-  `ObjectUpdated`, so an existing `of=ObjectUpdated` subscription keeps
-  receiving these unchanged; a listener that wants only appearances
-  subscribes with `of=ObjectAdded` instead. A consumer that asserts
-  exact event types on a first appearance now needs to expect
-  `ObjectAdded` rather than `ObjectUpdated`. Two other spots break the
+- **`ObjectAdded`** (#79) - an object's first event: dispatched instead of
+  `ObjectUpdated` on initial discovery, a later catalogue addition, and the
+  re-creation that follows an eviction. A subclass of `ObjectUpdated`, so an
+  existing `of=ObjectUpdated` subscription keeps receiving these unchanged; a
+  listener that wants only appearances subscribes with `of=ObjectAdded` instead.
+  A consumer that asserts exact event types on a first appearance now needs to
+  expect `ObjectAdded` rather than `ObjectUpdated`. Two other spots break the
   same way. Dataclass equality is class-exact, so
-  `ObjectUpdated(obj) == ObjectAdded(obj)` is `False` even for the same
-  object. And in a `match` statement, a `case ObjectUpdated():` arm
-  placed before `case ObjectAdded():` shadows it, since case patterns
-  test top to bottom.
-- **`AmpioClient(..., refresh_interval=...)`** (#80) - opts into a
-  periodic `refresh()` while the connection is up; `None` (the default)
-  leaves the cadence to the consumer. Each cycle re-publishes the
-  initial-discovery requests, so Designer additions and evictions
-  surface as `ObjectAdded` / `ObjectRemoved` without a reconnect. An
-  offline tick skips silently, and `stop()` cancels the task.
-- **`docs/lan-discovery.md`** (#85) - what a live mDNS and DHCP/ARP
-  probe found on the M-SERV's LAN presence: no service type or TXT
-  record is Ampio-specific (a co-located Matter process shares the
-  address but carries only generic Matter TXT data), so a Home
-  Assistant manifest `zeroconf` matcher has nothing reliable to match;
-  the DHCP-matcher facts (the Raspberry Pi OUI, shared by every Pi on
-  the LAN, and the hostname) and why the config flow's unique id comes
-  from probing the broker (`test_connection()`, `AmpioServerInfo.key`)
+  `ObjectUpdated(obj) == ObjectAdded(obj)` is `False` even for the same object.
+  And in a `match` statement, a `case ObjectUpdated():` arm placed before
+  `case ObjectAdded():` shadows it, since case patterns test top to bottom.
+- **`AmpioClient(..., refresh_interval=...)`** (#80) - opts into a periodic
+  `refresh()` while the connection is up; `None` (the default) leaves the
+  cadence to the consumer. Each cycle re-publishes the initial-discovery
+  requests, so Designer additions and evictions surface as `ObjectAdded` /
+  `ObjectRemoved` without a reconnect. An offline tick skips silently, and
+  `stop()` cancels the task.
+- **`docs/lan-discovery.md`** (#85) - what a live mDNS and DHCP/ARP probe found
+  on the M-SERV's LAN presence: no service type or TXT record is Ampio-specific
+  (a co-located Matter process shares the address but carries only generic
+  Matter TXT data), so a Home Assistant manifest `zeroconf` matcher has nothing
+  reliable to match; the DHCP-matcher facts (the Raspberry Pi OUI, shared by
+  every Pi on the LAN, and the hostname) and why the config flow's unique id
+  comes from probing the broker (`test_connection()`, `AmpioServerInfo.key`)
   instead.
 
 ## 0.30.0
 
-The per-output location. Designer's "Lokalizacja" dropdown writes a
-location pointer into the same CAN-resident description record as the
-Matter device type tag, and the object catalogue never mirrors it -
-reading it back needs the same `device_api` tree the Matter tag also
-lives on. `resolve_locations()` sweeps that tree and joins each object
-to its entry, so `AmpioObject.location` carries the Designer location
-name and `matter_device_type` gains a second, more current source.
+The per-output location. Designer's "Lokalizacja" dropdown writes a location
+pointer into the same CAN-resident description record as the Matter device type
+tag, and the object catalogue never mirrors it - reading it back needs the same
+`device_api` tree the Matter tag also lives on. `resolve_locations()` sweeps
+that tree and joins each object to its entry, so `AmpioObject.location` carries
+the Designer location name and `matter_device_type` gains a second, more current
+source.
 
 ### Added
 
-- **`AmpioObject.location`** (#25) - the Designer per-output location
-  name, resolved by `AmpioClient.resolve_locations()`. None until a
-  resolve has run, and for objects it could not match.
-- **`AmpioObject.leaf_out_no`** - the last `leafId` segment, parsed as
-  an int; the join key that pairs an object with its CAN description
-  entry. None for an empty, malformed, or non-numeric segment.
-- **`AmpioClient.resolve_locations()`** (#25, #110) - sweeps every
-  catalogued module over the admin-only `device_api` tree, joins each
-  object to its description entry through `(descType, leaf_out_no)`,
-  and folds the result into the store: `AmpioObject.location` and a
-  refined `matter_device_type` follow, each change dispatched as
-  `ObjectUpdated`. A module that never answers is skipped rather than
-  failing the whole sweep, so the returned map can be partial. Raises
-  `RuntimeError` naming the tier on a non-admin account.
-- **`AmpioClient.fetch_locations()`** restored (#25) - the
-  `{location_id: name}` table behind Designer's "Lokalizacja" dropdown,
-  admin tier only. Removed in 0.19.0 pending the per-output pointer's
-  route; `resolve_locations()` is that route.
+- **`AmpioObject.location`** (#25) - the Designer per-output location name,
+  resolved by `AmpioClient.resolve_locations()`. None until a resolve has run,
+  and for objects it could not match.
+- **`AmpioObject.leaf_out_no`** - the last `leafId` segment, parsed as an int;
+  the join key that pairs an object with its CAN description entry. None for an
+  empty, malformed, or non-numeric segment.
+- **`AmpioClient.resolve_locations()`** (#25, #110) - sweeps every catalogued
+  module over the admin-only `device_api` tree, joins each object to its
+  description entry through `(descType, leaf_out_no)`, and folds the result into
+  the store: `AmpioObject.location` and a refined `matter_device_type` follow,
+  each change dispatched as `ObjectUpdated`. A module that never answers is
+  skipped rather than failing the whole sweep, so the returned map can be
+  partial. Raises `RuntimeError` naming the tier on a non-admin account.
+- **`AmpioClient.fetch_locations()`** restored (#25) - the `{location_id: name}`
+  table behind Designer's "Lokalizacja" dropdown, admin tier only. Removed in
+  0.19.0 pending the per-output pointer's route; `resolve_locations()` is that
+  route.
 
 ### Changed
 
-- **`matter_device_type` is refined from the CAN description record
-  during a resolve** (#110). The object catalogue's `type` column
-  mirror lags the CAN record - an output tagged 256 on the CAN record
-  can carry an empty `type` column - so `resolve_locations()` reads
-  the record directly and updates the field. A record without a tag
-  leaves the column's value standing; the CAN record only ever adds
-  information, never clears it.
-- **`_fetch` raises `RuntimeError` naming the tier for a non-served
-  endpoint**, rather than the `KeyError` a missing dict key produced.
+- **`matter_device_type` is refined from the CAN description record during a
+  resolve** (#110). The object catalogue's `type` column mirror lags the CAN
+  record - an output tagged 256 on the CAN record can carry an empty `type`
+  column - so `resolve_locations()` reads the record directly and updates the
+  field. A record without a tag leaves the column's value standing; the CAN
+  record only ever adds information, never clears it.
+- **`_fetch` raises `RuntimeError` naming the tier for a non-served endpoint**,
+  rather than the `KeyError` a missing dict key produced.
 
 ## 0.29.0
 
-The review release. A clean-slate review of the whole codebase produced
-nine verified findings and an API-surface map; this release closes the
-findings, folds three diagnostics fragments into one method, and cuts
-the API surface nothing uses, ahead of the freeze discussion in #86.
+The review release. A clean-slate review of the whole codebase produced nine
+verified findings and an API-surface map; this release closes the findings,
+folds three diagnostics fragments into one method, and cuts the API surface
+nothing uses, ahead of the freeze discussion in #86.
 
 ### Added
 
-- **`diagnostics_snapshot()`** (#84) - one credential-free dict for bug
-  reports and a consumer diagnostics platform: account tier,
-  availability, auth-failure reason, server info, connection counters,
-  SUBACK rejections, override-mac collisions, and each endpoint's
-  verbatim last reply.
-- **Override-mac collision detection.** The raw routing tables are keyed
-  by mac, so two modules sharing an override mac cannot have their raw
-  edges and diagnostics attributed reliably. The store now warns once per
-  change of the colliding set and surfaces it as `mac_collisions`.
+- **`diagnostics_snapshot()`** (#84) - one credential-free dict for bug reports
+  and a consumer diagnostics platform: account tier, availability, auth-failure
+  reason, server info, connection counters, SUBACK rejections, override-mac
+  collisions, and each endpoint's verbatim last reply.
+- **Override-mac collision detection.** The raw routing tables are keyed by mac,
+  so two modules sharing an override mac cannot have their raw edges and
+  diagnostics attributed reliably. The store now warns once per change of the
+  colliding set and surfaces it as `mac_collisions`.
 
 ### Fixed
 
-- **The freshness rule no longer compares clocks across domains.** An
-  undated live push stamps the local clock while snapshot seeds carry the
-  M-SERV's `on` clock; comparing the two let RTC skew replace a fresh
-  live value with a stale snapshot seed, or let a buffered push lose to
-  an older `stan_json` seed. The snapshot request is now the ordering
-  boundary: a live value received after the latest request outranks every
-  seed, one received before it loses to the seed that request produced,
-  and only server stamps are compared numerically. `refresh()` resets the
-  boundary, which keeps the reconnect resync working.
-- **`subscribe(of=())` raises `ValueError`** instead of registering a
-  listener no event can ever match.
-- **`rgbw` rejects values below `INT32_MIN`.** The signed wraparound ran
-  before the range check, so values with no 32-bit encoding decoded to a
-  color.
+- **The freshness rule no longer compares clocks across domains.** An undated
+  live push stamps the local clock while snapshot seeds carry the M-SERV's `on`
+  clock; comparing the two let RTC skew replace a fresh live value with a stale
+  snapshot seed, or let a buffered push lose to an older `stan_json` seed. The
+  snapshot request is now the ordering boundary: a live value received after the
+  latest request outranks every seed, one received before it loses to the seed
+  that request produced, and only server stamps are compared numerically.
+  `refresh()` resets the boundary, which keeps the reconnect resync working.
+- **`subscribe(of=())` raises `ValueError`** instead of registering a listener
+  no event can ever match.
+- **`rgbw` rejects values below `INT32_MIN`.** The signed wraparound ran before
+  the range check, so values with no 32-bit encoding decoded to a color.
 - **Plain-text per-object state payloads are stripped**, matching the raw
   channel form, so a trailing newline cannot flip `is_on`.
-- **`reconnect_interval` must be positive.** Zero hot-spun the reconnect
-  loop against a down broker.
-- **`fetch_scenes()` returns a fresh list per caller.** Concurrent
-  callers shared one mutable list.
-- **Clearing `raw_proven` dispatches `ObjectUpdated`** with the final
-  state; the flip back to per-object updates was silent.
-- **A fetch over a store-gated endpoint fails loudly.** Its reply channel
-  used to resolve waiters with a bare `True`; `_fetch` now rejects the
-  name, and store-gated replies only latch discovery.
+- **`reconnect_interval` must be positive.** Zero hot-spun the reconnect loop
+  against a down broker.
+- **`fetch_scenes()` returns a fresh list per caller.** Concurrent callers
+  shared one mutable list.
+- **Clearing `raw_proven` dispatches `ObjectUpdated`** with the final state; the
+  flip back to per-object updates was silent.
+- **A fetch over a store-gated endpoint fails loudly.** Its reply channel used
+  to resolve waiters with a bare `True`; `_fetch` now rejects the name, and
+  store-gated replies only latch discovery.
 
 ### Removed
 
-- **`client.stats`, `client.last_payloads`, `client.auth_failure`, and
-  the `ConnectionStats` export** - all folded into
-  `diagnostics_snapshot()`. The auth reason still arrives through the
-  `AuthFailed` event.
-- **`AmpioObject.is_sensor` / `is_input` / `is_output` /
-  `is_thermostat`** - both consumers narrow with
-  `isinstance(obj.kind, XKind)`; the properties were a second spelling of
-  the same fact.
+- **`client.stats`, `client.last_payloads`, `client.auth_failure`, and the
+  `ConnectionStats` export** - all folded into `diagnostics_snapshot()`. The
+  auth reason still arrives through the `AuthFailed` event.
+- **`AmpioObject.is_sensor` / `is_input` / `is_output` / `is_thermostat`** -
+  both consumers narrow with `isinstance(obj.kind, XKind)`; the properties were
+  a second spelling of the same fact.
 - **The three-class `subscribe` overload.** Beyond two classes, type the
-  listener as `Callable[[ClientEvent], None]`; the two-class arity forms
-  stay because mypy still joins tuple members up to the TypeVar bound.
+  listener as `Callable[[ClientEvent], None]`; the two-class arity forms stay
+  because mypy still joins tuple members up to the TypeVar bound.
 
 ### Changed
 
-- **Docstrings and comments trimmed to contracts and wire facts** across
-  the source; the correctness arguments and history narration are gone.
-- **The router accepts only the wire's `b/4F` frame-type spelling.** MQTT
-  topic filters are case-sensitive, so the `b/4F` subscription can never
-  deliver a lowercase variant.
+- **Docstrings and comments trimmed to contracts and wire facts** across the
+  source; the correctness arguments and history narration are gone.
+- **The router accepts only the wire's `b/4F` frame-type spelling.** MQTT topic
+  filters are case-sensitive, so the `b/4F` subscription can never deliver a
+  lowercase variant.
 
 ## 0.28.0
 
 The mode write, typed. Exercising `setHeatingMode` live overturned the
-documented one-way constraint: all four claimed letters write and echo,
-so a climate entity can offer full mode control and the wrapper for it
-is now wire-proven end to end.
+documented one-way constraint: all four claimed letters write and echo, so a
+climate entity can offer full mode control and the wrapper for it is now
+wire-proven end to end.
 
 ### Added
 
-- **`set_heating_mode()` and the `HEATING_MODES` vocabulary** - a typed
-  wrapper for `setHeatingMode`, validating the letter against the
-  live-proven `A,S,M,H` set (`ValueError` on anything else;
-  `command()` stays the escape hatch for experimenting). The echo
-  carries the letter back through `ThermostatState.mode`. Live-verified
-  with a confirmed `S -> M -> S` round trip on a real regulator.
+- **`set_heating_mode()` and the `HEATING_MODES` vocabulary** - a typed wrapper
+  for `setHeatingMode`, validating the letter against the live-proven `A,S,M,H`
+  set (`ValueError` on anything else; `command()` stays the escape hatch for
+  experimenting). The echo carries the letter back through
+  `ThermostatState.mode`. Live-verified with a confirmed `S -> M -> S` round
+  trip on a real regulator.
 
 ### Changed
 
-- **The mode vocabulary docs no longer grade the letters.** A live
-  round trip drove every claimed letter through `setHeatingMode`
-  (`S -> A -> H -> M -> S`), each echoed in the state push; the earlier
-  observation that `S` was silently ignored does not reproduce on the
-  baseline server. `docs/protocol.md` and the `ThermostatState`
-  docstring now state the proven, symmetric vocabulary.
+- **The mode vocabulary docs no longer grade the letters.** A live round trip
+  drove every claimed letter through `setHeatingMode` (`S -> A -> H -> M -> S`),
+  each echoed in the state push; the earlier observation that `S` was silently
+  ignored does not reproduce on the baseline server. `docs/protocol.md` and the
+  `ThermostatState` docstring now state the proven, symmetric vocabulary.
 
 ## 0.27.0
 
-The climate readback. A regulator pushes its full picture - measured and
-target temperature, mode, cooling - and the library kept only the running
-flag, leaving a climate consumer to parse the push itself. The readback
-is now a typed value object on the object model.
+The climate readback. A regulator pushes its full picture - measured and target
+temperature, mode, cooling - and the library kept only the running flag, leaving
+a climate consumer to parse the push itself. The readback is now a typed value
+object on the object model.
 
 ### Added
 
-- **`AmpioObject.thermostat`: the reg climate readback** (#73).
-  A frozen `ThermostatState` with `measured_temperature`,
-  `target_temperature`, `mode`, and `cooling`, parsed from the rich
-  state shape only `reg` objects push (every field a string on the
-  wire). Populated from both the live push and the `stan_json` seed;
-  a later report without the shape keeps the last readback, exactly as
-  `tilt_position` does, and a dated snapshot that moves only the
-  readback still dispatches `ObjectUpdated` - a climate consumer must
-  see the temperature tick. The mode letter passes through verbatim:
-  of the spec's `A,S,M,H`, `S` and `M` are live-proven by an observed
-  transition, `A` was observed in a live snapshot, and `H` remains
-  spec-only. Live-verified on a real regulator: discovery seeds the
-  readback on the restricted tier, and a confirmed `set_temperature`
-  echo carries the new target through it.
+- **`AmpioObject.thermostat`: the reg climate readback** (#73). A frozen
+  `ThermostatState` with `measured_temperature`, `target_temperature`, `mode`,
+  and `cooling`, parsed from the rich state shape only `reg` objects push (every
+  field a string on the wire). Populated from both the live push and the
+  `stan_json` seed; a later report without the shape keeps the last readback,
+  exactly as `tilt_position` does, and a dated snapshot that moves only the
+  readback still dispatches `ObjectUpdated` - a climate consumer must see the
+  temperature tick. The mode letter passes through verbatim: of the spec's
+  `A,S,M,H`, `S` and `M` are live-proven by an observed transition, `A` was
+  observed in a live snapshot, and `H` remains spec-only. Live-verified on a
+  real regulator: discovery seeds the readback on the restricted tier, and a
+  confirmed `set_temperature` echo carries the new target through it.
 
 ## 0.26.1
 
-A one-paragraph release: the delivery-context guarantee consumers were
-already relying on is now written down and pinned. No behavior changed.
+A one-paragraph release: the delivery-context guarantee consumers were already
+relying on is now written down and pinned. No behavior changed.
 
 ### Added
 
-- **The `subscribe()` docstring states the delivery-context guarantee**
-  (#81). Listeners are invoked synchronously on the asyncio event loop
-  that ran `start()`, never from another thread - the library owns no
-  threads. Home Assistant's callback model depends on exactly this, and
-  the docstring is where a core reviewer looks for it. A transport-driven
-  test pins the contract: a scripted broker message and the connect-time
-  availability event both reach a listener on the start loop's main
-  thread.
+- **The `subscribe()` docstring states the delivery-context guarantee** (#81).
+  Listeners are invoked synchronously on the asyncio event loop that ran
+  `start()`, never from another thread - the library owns no threads. Home
+  Assistant's callback model depends on exactly this, and the docstring is where
+  a core reviewer looks for it. A transport-driven test pins the contract: a
+  scripted broker message and the connect-time availability event both reach a
+  listener on the start loop's main thread.
 
 ## 0.26.0
 
-One filter for the fan-out question. A consumer with one listener per
-object - the Home Assistant integration's exact shape - paid a full
-listener walk on every object update, because `subscribe` narrowed by
-event class alone. `object_id` moves that narrowing into the client,
-where it costs one dict lookup instead.
+One filter for the fan-out question. A consumer with one listener per object -
+the Home Assistant integration's exact shape - paid a full listener walk on
+every object update, because `subscribe` narrowed by event class alone.
+`object_id` moves that narrowing into the client, where it costs one dict lookup
+instead.
 
 ### Added
 
 - **`subscribe(..., object_id=)` for O(1) per-object dispatch** (#99).
-  ID-filtered listeners live in per-object buckets keyed by
-  `event.object.id`; an object-bearing event walks the class-filtered
-  registry and then only its own id's bucket. Verified against a live
-  broker: 5000 per-object listeners cost 0.43 ms of callback walk per
-  update through class filters and 0.001 ms through `object_id`, flat
-  as the count grows. The filter applies only to the classes that
-  carry `.object` (`ObjectUpdated`, `ObjectRemoved`, alone or as a
-  tuple); any other `of` - or none - raises `ValueError` at
-  registration time, and the overloads reject it statically the same
-  way. Unsubscribe keeps its contract on the new path: it removes
-  exactly its own registration, stays idempotent, and the last
-  removal for an id drops the bucket, so entity churn cannot grow the
-  index. Each listener still sees its events in production order.
+  ID-filtered listeners live in per-object buckets keyed by `event.object.id`;
+  an object-bearing event walks the class-filtered registry and then only its
+  own id's bucket. Verified against a live broker: 5000 per-object listeners
+  cost 0.43 ms of callback walk per update through class filters and 0.001 ms
+  through `object_id`, flat as the count grows. The filter applies only to the
+  classes that carry `.object` (`ObjectUpdated`, `ObjectRemoved`, alone or as a
+  tuple); any other `of` - or none - raises `ValueError` at registration time,
+  and the overloads reject it statically the same way. Unsubscribe keeps its
+  contract on the new path: it removes exactly its own registration, stays
+  idempotent, and the last removal for an id drops the bucket, so entity churn
+  cannot grow the index. Each listener still sees its events in production
+  order.
 
 ## 0.25.0
 
-One column for the light question. The object catalogue's `type` column
-carries the Matter device type ID that the Designer "Description in
-device" tag assigns to an output. It is the one wire signal that
-separates a relay driving a light from one driving a plug or a pump.
-The library parses it and hands it to consumers unchanged.
+One column for the light question. The object catalogue's `type` column carries
+the Matter device type ID that the Designer "Description in device" tag assigns
+to an output. It is the one wire signal that separates a relay driving a light
+from one driving a plug or a pump. The library parses it and hands it to
+consumers unchanged.
 
 ### Added
 
 - **`AmpioObject.matter_device_type`** (#97). Both object catalogues
-  (`config/devicesDetails` and the app-sync `data/devices`) carry a
-  `type` column with the Matter device type ID as a decimal string
-  (`"256"` = 0x0100 On/Off Light). Designer mirrors it from the
-  module-resident description record when the installer tags an output.
-  The column parses into `ObjectMetadata.matter_device_type` and rides
-  the catalogue merge onto `AmpioObject`. Untagged rows (empty or null)
-  read `None`. Classification is unchanged: `kind` still derives from
-  `typ_komponentu` alone, and a consumer maps the tag to a platform
-  itself. The vocabulary and the storage path are documented in
-  `docs/identity.md`.
+  (`config/devicesDetails` and the app-sync `data/devices`) carry a `type`
+  column with the Matter device type ID as a decimal string (`"256"` = 0x0100
+  On/Off Light). Designer mirrors it from the module-resident description record
+  when the installer tags an output. The column parses into
+  `ObjectMetadata.matter_device_type` and rides the catalogue merge onto
+  `AmpioObject`. Untagged rows (empty or null) read `None`. Classification is
+  unchanged: `kind` still derives from `typ_komponentu` alone, and a consumer
+  maps the tag to a platform itself. The vocabulary and the storage path are
+  documented in `docs/identity.md`.
 
 ## 0.24.0
 
-A consumer-driven batch raised by the Home Assistant integration work
-and landed one issue at a time, each verified at runtime against a
-broker before merge. Commands gain an opt-in confirmation that awaits
-the state echo, objects resolve to their mac-validated module row
-through one library-owned rule, the derived model fields can no longer
-disagree with their inputs, and the tuple `subscribe` overload types
-precisely under both strict mypy and Pyright.
+A consumer-driven batch raised by the Home Assistant integration work and landed
+one issue at a time, each verified at runtime against a broker before merge.
+Commands gain an opt-in confirmation that awaits the state echo, objects resolve
+to their mac-validated module row through one library-owned rule, the derived
+model fields can no longer disagree with their inputs, and the tuple `subscribe`
+overload types precisely under both strict mypy and Pyright.
 
 ### Added
 
-- **Opt-in command confirmation awaiting the state echo** (#67). The
-  `/api` surface has no reply topic, so the only observable confirmation
-  is the object's next state push. `command()` and every typed object
-  command (`turn_on`, `set_value`, `set_color`, the cover and thermostat
-  methods) take `confirm=<seconds>`: the waiter arms before the publish,
-  the call returns the echoing `ObjectUpdated` snapshot, and expiry
-  raises the retryable `AmpioTimeoutError`. A timeout is how every
-  silent drop surfaces - an ignored verb, an out-of-grant object on the
-  standard tier, or a command whose effect changed nothing - so a
-  consumer can report real success and failure instead of assuming
-  state. The default stays fire-and-forget. On the admin tier the raw
-  edge satisfies the wait for bridged inputs, whose per-object echo the
-  store drops.
-- **`module_for(obj)`: the mac-validated object-to-module resolver**
-  (#93). Joins `device_id` to the module list and returns the row only
-  when its effective bus mac agrees with the object's leaf-derived
-  `module_mac`, so the volatile DB join can never pair an object with a
-  replaced module's stale row - the identity rule every consumer
-  previously re-encoded by hand. The join keys the lookup rather than
-  the mac because override macs may collide across rows. None on the
-  restricted tier, which never receives the module catalogue.
+- **Opt-in command confirmation awaiting the state echo** (#67). The `/api`
+  surface has no reply topic, so the only observable confirmation is the
+  object's next state push. `command()` and every typed object command
+  (`turn_on`, `set_value`, `set_color`, the cover and thermostat methods) take
+  `confirm=<seconds>`: the waiter arms before the publish, the call returns the
+  echoing `ObjectUpdated` snapshot, and expiry raises the retryable
+  `AmpioTimeoutError`. A timeout is how every silent drop surfaces - an ignored
+  verb, an out-of-grant object on the standard tier, or a command whose effect
+  changed nothing - so a consumer can report real success and failure instead of
+  assuming state. The default stays fire-and-forget. On the admin tier the raw
+  edge satisfies the wait for bridged inputs, whose per-object echo the store
+  drops.
+- **`module_for(obj)`: the mac-validated object-to-module resolver** (#93).
+  Joins `device_id` to the module list and returns the row only when its
+  effective bus mac agrees with the object's leaf-derived `module_mac`, so the
+  volatile DB join can never pair an object with a replaced module's stale row -
+  the identity rule every consumer previously re-encoded by hand. The join keys
+  the lookup rather than the mac because override macs may collide across rows.
+  None on the restricted tier, which never receives the module catalogue.
 
 ### Changed
 
 - **The tuple `of=` overload of `subscribe()` is generic** (#92).
   `subscribe(handler, of=(A, B))` types the listener as
-  `Callable[[A | B], None]`, so a precisely typed handler registers once
-  instead of once per event class - and the dispatch loop scans one
-  registration where it scanned several. Two- and three-class tuples get
-  the precise union under both strict mypy and Pyright (whose generic
-  solvers each need their own overload spelling); longer tuples keep the
-  `ClientEvent`-wide listener type.
-- **`AmpioObject.kind` and `AmpioModule.model` are derived fields**
-  (#94). Both are computed from their inputs (`typ_komponentu` +
-  `interpretacja`, `type`) on every construction, `dataclasses.replace`
-  included, and can no longer be passed - so a consumer-seeded fixture
-  cannot hold a `kind` that disagrees with its metadata, a state the
-  real store never produces, and the derivation rules live in the model
-  alone. Breaking for code that passed either field: drop the argument,
-  the value is now always right. `kind` is also non-optional now - an
-  object with unknown or absent metadata reads as the generic value-only
-  sensor, which is what the store already published for such rows.
+  `Callable[[A | B], None]`, so a precisely typed handler registers once instead
+  of once per event class - and the dispatch loop scans one registration where
+  it scanned several. Two- and three-class tuples get the precise union under
+  both strict mypy and Pyright (whose generic solvers each need their own
+  overload spelling); longer tuples keep the `ClientEvent`-wide listener type.
+- **`AmpioObject.kind` and `AmpioModule.model` are derived fields** (#94). Both
+  are computed from their inputs (`typ_komponentu` + `interpretacja`, `type`) on
+  every construction, `dataclasses.replace` included, and can no longer be
+  passed - so a consumer-seeded fixture cannot hold a `kind` that disagrees with
+  its metadata, a state the real store never produces, and the derivation rules
+  live in the model alone. Breaking for code that passed either field: drop the
+  argument, the value is now always right. `kind` is also non-optional now - an
+  object with unknown or absent metadata reads as the generic value-only sensor,
+  which is what the store already published for such rows.
 
 ## 0.23.0
 
 A second review round executed task by task like 0.22, with every
-runtime-verifiable defect reproduced against a broker before its fix and
-the contract re-verified after. Five lifecycle and state bugs are fixed,
-message routing is tier-scoped, and more mechanisms that guarded cases
-the wire never produces are gone under the beta posture.
+runtime-verifiable defect reproduced against a broker before its fix and the
+contract re-verified after. Five lifecycle and state bugs are fixed, message
+routing is tier-scoped, and more mechanisms that guarded cases the wire never
+produces are gone under the beta posture.
 
 ### Fixed
 
-- **`test_connection` no longer returns an identity-less info reply.** A
-  reply without the server mac is unparseable like any other corrupt
-  shape and raises the retryable `AmpioTimeoutError`, so a returned
-  `AmpioServerInfo` always carries the populated `key` a config flow
-  needs for its unique id. `AmpioServerInfo.mac` is now a required int
-  and `key` is always a string. An identity-less reply arriving before
-  the identified one can also no longer pre-seat the version and
-  suppress the below-baseline warning.
-- **The unsubscribe returned by `subscribe()` is idempotent.** A second
-  call used to raise `ValueError`, and with the same listener registered
-  twice the repeat call removed the other registration. Removal is now
-  by registration identity, so each unsubscribe drops exactly its own.
-- **`start()`/`stop()` interleavings are safe.** Overlapping `start()`
-  calls serialize instead of tearing down each other's session - the
-  first caller's connect-timeout cleanup could kill the session the
-  second had just opened and return success on a dead connection - and
-  `stop()` during an in-flight `start()` aborts the connect promptly
-  (the aborted `start()` raises `AmpioConnectionError`) instead of
-  letting it wait out its full timeout.
-- **A live push for an id no catalogue established creates nothing.** It
-  used to create a generic-sensor object that the next catalogue reply
-  evicted: `ObjectUpdated` then `ObjectRemoved` churn for an object no
-  catalogue ever listed, recreated on the next push. The push now waits
-  in a per-id buffer and surfaces with the catalogue row, replayed under
-  the same dated-supersedes rule the snapshot uses, and a complete reply
-  prunes buffered pushes for ids it does not list.
-- **`ConnectionStats.started_at` and `reconnect_count` cover the current
-  run.** A deliberate stop/start restarts them, so a diagnostics blob no
-  longer reads a consumer-initiated restart as a flapping connection;
-  `last_error` and `last_message_at` keep rolling across runs.
+- **`test_connection` no longer returns an identity-less info reply.** A reply
+  without the server mac is unparseable like any other corrupt shape and raises
+  the retryable `AmpioTimeoutError`, so a returned `AmpioServerInfo` always
+  carries the populated `key` a config flow needs for its unique id.
+  `AmpioServerInfo.mac` is now a required int and `key` is always a string. An
+  identity-less reply arriving before the identified one can also no longer
+  pre-seat the version and suppress the below-baseline warning.
+- **The unsubscribe returned by `subscribe()` is idempotent.** A second call
+  used to raise `ValueError`, and with the same listener registered twice the
+  repeat call removed the other registration. Removal is now by registration
+  identity, so each unsubscribe drops exactly its own.
+- **`start()`/`stop()` interleavings are safe.** Overlapping `start()` calls
+  serialize instead of tearing down each other's session - the first caller's
+  connect-timeout cleanup could kill the session the second had just opened and
+  return success on a dead connection - and `stop()` during an in-flight
+  `start()` aborts the connect promptly (the aborted `start()` raises
+  `AmpioConnectionError`) instead of letting it wait out its full timeout.
+- **A live push for an id no catalogue established creates nothing.** It used to
+  create a generic-sensor object that the next catalogue reply evicted:
+  `ObjectUpdated` then `ObjectRemoved` churn for an object no catalogue ever
+  listed, recreated on the next push. The push now waits in a per-id buffer and
+  surfaces with the catalogue row, replayed under the same dated-supersedes rule
+  the snapshot uses, and a complete reply prunes buffered pushes for ids it does
+  not list.
+- **`ConnectionStats.started_at` and `reconnect_count` cover the current run.**
+  A deliberate stop/start restarts them, so a diagnostics blob no longer reads a
+  consumer-initiated restart as a flapping connection; `last_error` and
+  `last_message_at` keep rolling across runs.
 
 ### Changed
 
-- **Message routing is tier-scoped and owned by the dispatcher.** The
-  router covers exactly the endpoints the account tier is served - the
-  same set that shapes the subscriptions, reply channels, and
-  initial-discovery list - so a reply topic outside the tier's set is
-  unroutable and the store consumes typed messages with no tier
-  knowledge of its own.
-- **Pure request/response replies are parsed exactly once.** The
-  dispatcher runs the endpoint's own parser and fetch futures resolve
-  with the parsed value; `Endpoint.parses` set to None marks a
-  handler-gated endpoint, and a store handler table that disagrees with
-  the endpoint table fails at construction instead of surfacing as a
-  silent discovery hang.
-- **An empty catalogue reply evicts like any other.** It is a complete
-  reply listing nothing - a full grant revocation empties the app-sync
-  view - and the refusal guard protected a store the wire could never
-  empty.
-- **`zeroconf` moved to the optional `discovery` extra.** `import
-ampio_mqtt` works without it; touching `discover` /
-  `DiscoveryResult` without the extra raises an `ImportError` naming
-  `ampio-mqtt[discovery]`. Home Assistant provides `zeroconf` itself,
-  so the integration needs no extra.
-- **One home per contract in the prose.** Wire mechanics live under
-  `docs/`, API contracts on the docstrings, each pointing at the other;
-  the classification truth tables are pointers to the code tables, and
-  the cross-class event-ordering guarantee lives on the
-  `ampio_mqtt.events` module docstring.
+- **Message routing is tier-scoped and owned by the dispatcher.** The router
+  covers exactly the endpoints the account tier is served - the same set that
+  shapes the subscriptions, reply channels, and initial-discovery list - so a
+  reply topic outside the tier's set is unroutable and the store consumes typed
+  messages with no tier knowledge of its own.
+- **Pure request/response replies are parsed exactly once.** The dispatcher runs
+  the endpoint's own parser and fetch futures resolve with the parsed value;
+  `Endpoint.parses` set to None marks a handler-gated endpoint, and a store
+  handler table that disagrees with the endpoint table fails at construction
+  instead of surfacing as a silent discovery hang.
+- **An empty catalogue reply evicts like any other.** It is a complete reply
+  listing nothing - a full grant revocation empties the app-sync view - and the
+  refusal guard protected a store the wire could never empty.
+- **`zeroconf` moved to the optional `discovery` extra.** `import ampio_mqtt`
+  works without it; touching `discover` / `DiscoveryResult` without the extra
+  raises an `ImportError` naming `ampio-mqtt[discovery]`. Home Assistant
+  provides `zeroconf` itself, so the integration needs no extra.
+- **One home per contract in the prose.** Wire mechanics live under `docs/`, API
+  contracts on the docstrings, each pointing at the other; the classification
+  truth tables are pointers to the code tables, and the cross-class
+  event-ordering guarantee lives on the `ampio_mqtt.events` module docstring.
 
 ### Removed
 
-- The remaining guards for never-observed wire shapes: the empty-reply
-  eviction refusals (see Changed), the connection teardown's admittedly
-  unreachable exception arm, and the type check on the vendored
-  `_devtypes.json` that ships inside the wheel.
+- The remaining guards for never-observed wire shapes: the empty-reply eviction
+  refusals (see Changed), the connection teardown's admittedly unreachable
+  exception arm, and the type check on the vendored `_devtypes.json` that ships
+  inside the wheel.
 
 ## 0.22.0
 
-A whole-codebase review executed task by task, with every claim and its
-fix verified at runtime against the live baseline install. Three
-correctness bugs are fixed, the mechanisms that guarded cases the wire
-never produces are gone, and the public API was reshaped on merit alone
-under the beta posture.
+A whole-codebase review executed task by task, with every claim and its fix
+verified at runtime against the live baseline install. Three correctness bugs
+are fixed, the mechanisms that guarded cases the wire never produces are gone,
+and the public API was reshaped on merit alone under the beta posture.
 
 ### Fixed
 
 - **A corrupt info reply can no longer take the server identity away.**
-  `parse_server_info` returns None for a payload without the `Results`
-  shape, the store refuses to let a parse failure or an identity-less
-  reply replace a held identity, and the spurious below-baseline
-  warning that fired off the wiped version is gone. A True
-  `wait_for_initial_discovery()` keeps implying a populated
-  `server_info.key` on every later read. `test_connection` maps an
-  unparseable reply to the same retryable `AmpioTimeoutError` as
-  silence, and the info string fields are coerced so a numeric wire
-  value cannot crash the baseline comparison.
-- **The states snapshot no longer creates phantom objects.** Only the
-  catalogues decide which objects exist; a snapshot row for an id no
-  catalogue established used to plant an invisible placeholder that the
-  next catalogue reply evicted, dispatching `ObjectRemoved` for an
-  object no consumer was ever told about. Snapshot values now wait in a
-  per-id buffer (the shape `params_devices` already used), so reply
-  order still never decides whether an object starts with its state,
-  and snapshot-before-catalogue discovery dispatches one
+  `parse_server_info` returns None for a payload without the `Results` shape,
+  the store refuses to let a parse failure or an identity-less reply replace a
+  held identity, and the spurious below-baseline warning that fired off the
+  wiped version is gone. A True `wait_for_initial_discovery()` keeps implying a
+  populated `server_info.key` on every later read. `test_connection` maps an
+  unparseable reply to the same retryable `AmpioTimeoutError` as silence, and
+  the info string fields are coerced so a numeric wire value cannot crash the
+  baseline comparison.
+- **The states snapshot no longer creates phantom objects.** Only the catalogues
+  decide which objects exist; a snapshot row for an id no catalogue established
+  used to plant an invisible placeholder that the next catalogue reply evicted,
+  dispatching `ObjectRemoved` for an object no consumer was ever told about.
+  Snapshot values now wait in a per-id buffer (the shape `params_devices`
+  already used), so reply order still never decides whether an object starts
+  with its state, and snapshot-before-catalogue discovery dispatches one
   `ObjectUpdated` carrying metadata and value together instead of first
   announcing a nameless placeholder.
-- **`fetch_scenes` stays inside its error contract for malformed
-  rows.** A scene row with a non-list `Infos` used to escape as a bare
-  `TypeError`; malformed row fields now degrade (empty `object_ids`,
-  an empty name for a non-string `sceneName`) because the scene itself
-  is real and runnable.
+- **`fetch_scenes` stays inside its error contract for malformed rows.** A scene
+  row with a non-list `Infos` used to escape as a bare `TypeError`; malformed
+  row fields now degrade (empty `object_ids`, an empty name for a non-string
+  `sceneName`) because the scene itself is real and runnable.
 
 ### Changed
 
 - **`AmpioClient(host, username, password=None, *, port=1883, ...)`.**
-  `username` is required and positional - the old signature typed it
-  optional and rejected its absence only at runtime - and `port` is
-  keyword-only. `test_connection(host, username, password, *,
-port=1883, ...)` follows the same shape.
+  `username` is required and positional - the old signature typed it optional
+  and rejected its absence only at runtime - and `port` is keyword-only.
+  `test_connection(host, username, password, *, port=1883, ...)` follows the
+  same shape.
 - **`discover()` returns `DiscoveryResult | None`** with a non-optional
-  `address`. The result was provably always empty-or-single and the
-  address never None, so the list shape and the Optional field only
-  forced an unpacking dance on every consumer.
-- **`mserv_id` is now `mserv`**, returning the M-SERV's own
-  `AmpioModule` row, or None on ambiguity and on the restricted tier.
-  The only known use of the id was reading the row for the hub device
-  name. (#89)
-- **`AmpioServerInfo.access_tier` returns `AccessTier | None`.** None
-  replaces the removed `UNKNOWN` member for a reply carrying no
-  `userId`, which no baseline server produces.
+  `address`. The result was provably always empty-or-single and the address
+  never None, so the list shape and the Optional field only forced an unpacking
+  dance on every consumer.
+- **`mserv_id` is now `mserv`**, returning the M-SERV's own `AmpioModule` row,
+  or None on ambiguity and on the restricted tier. The only known use of the id
+  was reading the row for the hub device name. (#89)
+- **`AmpioServerInfo.access_tier` returns `AccessTier | None`.** None replaces
+  the removed `UNKNOWN` member for a reply carrying no `userId`, which no
+  baseline server produces.
 
 ### Added
 
-- **`AmpioObject.is_server_owned`** - True when `leafId` embeds the
-  M-SERV's override mac, so server-owned objects anchor to the hub
-  device identically on both account tiers and the mac rule lives in
-  the library instead of in every consumer. `docs/identity.md` carries
-  the device-grouping guidance. (#89)
+- **`AmpioObject.is_server_owned`** - True when `leafId` embeds the M-SERV's
+  override mac, so server-owned objects anchor to the hub device identically on
+  both account tiers and the mac rule lives in the library instead of in every
+  consumer. `docs/identity.md` carries the device-grouping guidance. (#89)
 
 ### Removed
 
-- **The colliding-mac subsystem.** The live baseline install reports
-  zero duplicate macs across all modules and no consumer read the
-  surface; the machinery guarded a case the wire does not produce.
-- **`Capability`, `AmpioModule.capabilities`, and
-  `module_capabilities`.** The consumer branches on none of it;
-  `module_model` and the internal hub detection behind `mserv` stay,
-  and a flag returns when a consumer concretely needs it.
+- **The colliding-mac subsystem.** The live baseline install reports zero
+  duplicate macs across all modules and no consumer read the surface; the
+  machinery guarded a case the wire does not produce.
+- **`Capability`, `AmpioModule.capabilities`, and `module_capabilities`.** The
+  consumer branches on none of it; `module_model` and the internal hub detection
+  behind `mserv` stay, and a flag returns when a consumer concretely needs it.
 
 ### Internal
 
-- Each pure request/response endpoint's fetch gate is its own reply
-  parser, the endpoint table and the parsers live in one protocol
-  module (`AccessTier` moved to `ampio_mqtt.models`; the package-root
-  import is unchanged), and the reply channels are tier-scoped.
-  Verified behavior-preserving by the unit suite, the runtime contract
-  scripts, and a live two-tier comparison.
-- The test suite gained transport realism (the fake broker's message
-  stream behaves like aiomqtt's), mutation-proofed expectations, and
-  boundary and immutability coverage for the contracts the integration
-  leans on.
+- Each pure request/response endpoint's fetch gate is its own reply parser, the
+  endpoint table and the parsers live in one protocol module (`AccessTier` moved
+  to `ampio_mqtt.models`; the package-root import is unchanged), and the reply
+  channels are tier-scoped. Verified behavior-preserving by the unit suite, the
+  runtime contract scripts, and a live two-tier comparison.
+- The test suite gained transport realism (the fake broker's message stream
+  behaves like aiomqtt's), mutation-proofed expectations, and boundary and
+  immutability coverage for the contracts the integration leans on.
 
 ## 0.21.0
 
-The M-SERV ignores the whole `turnOn` / `turnOff` / `switch` verb family
-for `rgbw` objects - no effect, no reply, from either state
-(live-verified on the baseline install; every other output type answers
-all three). The library now encodes that fact instead of overpromising
-it away.
+The M-SERV ignores the whole `turnOn` / `turnOff` / `switch` verb family for
+`rgbw` objects - no effect, no reply, from either state (live-verified on the
+baseline install; every other output type answers all three). The library now
+encodes that fact instead of overpromising it away.
 
 ### Added
 
-- **`AmpioServerInfo.key`** - the canonical scoping string for
-  per-server registries (the decimal form of `mac`, matching what
-  consumers already derived by hand), and a hardened contract behind
-  it: an info reply without a server mac no longer completes initial
-  discovery, so a True `start()` / `wait_for_initial_discovery()` now
-  guarantees `server_info` is populated with a non-None `mac` and
-  `key`. No baseline server answers without an identity; one that does
-  leaves discovery incomplete with a warning naming why. (#78)
+- **`AmpioServerInfo.key`** - the canonical scoping string for per-server
+  registries (the decimal form of `mac`, matching what consumers already derived
+  by hand), and a hardened contract behind it: an info reply without a server
+  mac no longer completes initial discovery, so a True `start()` /
+  `wait_for_initial_discovery()` now guarantees `server_info` is populated with
+  a non-None `mac` and `key`. No baseline server answers without an identity;
+  one that does leaves discovery incomplete with a warning naming why. (#78)
 - **The kind-key vocabulary is exported** - `SENSOR_KIND_KEYS`,
-  `INPUT_KIND_KEYS`, `OUTPUT_KIND_KEYS`, `THERMOSTAT_KIND_KEYS`,
-  derived from the classification tables at import time, plus
-  `OPEN_SENSOR_KEY_PREFIXES` for the two `interpretacja`-embedding
-  families that cannot be enumerated. A consumer CI-asserts every key
-  is mapped or deliberately excluded, so a library upgrade that adds a
-  kind fails a test instead of silently dropping entities. (#83)
-- **`AmpioObject.rgbw` and `AmpioObject.position`** - typed state
-  accessors, so consumers never parse `value` or do bit math. `rgbw`
-  decodes the packed color word (`R | G<<8 | B<<16 | W<<24`,
-  live-verified against the module's raw channel echo; the signed
-  32-bit form the Matter bridge emits decodes identically) and
-  `position` reads the cover travel percent, the counterpart of
-  `tilt_position`. Both are gated on the object's kind - a dimmer's
-  level never masquerades as a color, a relay's state never as a
-  position. (#82)
-- **`AmpioObject.module_mac`** - the owning module's replacement-stable
-  bus mac, parsed from the `leafId` second segment. Identical on both
-  discovery surfaces, so a restricted account - which never receives
-  the module catalogue - can still group entities by physical module,
-  and a later switch to an administrator account only adds metadata.
-  Live-verified: every parseable object in the reference catalogue
-  matches `AmpioModule.mac`, including the M-SERV, whose override
-  diverges from its factory id. Parsed strictly - any unexpected shape
-  reads as None, like the empty `leafId` of system objects. (#77)
+  `INPUT_KIND_KEYS`, `OUTPUT_KIND_KEYS`, `THERMOSTAT_KIND_KEYS`, derived from
+  the classification tables at import time, plus `OPEN_SENSOR_KEY_PREFIXES` for
+  the two `interpretacja`-embedding families that cannot be enumerated. A
+  consumer CI-asserts every key is mapped or deliberately excluded, so a library
+  upgrade that adds a kind fails a test instead of silently dropping entities.
+  (#83)
+- **`AmpioObject.rgbw` and `AmpioObject.position`** - typed state accessors, so
+  consumers never parse `value` or do bit math. `rgbw` decodes the packed color
+  word (`R | G<<8 | B<<16 | W<<24`, live-verified against the module's raw
+  channel echo; the signed 32-bit form the Matter bridge emits decodes
+  identically) and `position` reads the cover travel percent, the counterpart of
+  `tilt_position`. Both are gated on the object's kind - a dimmer's level never
+  masquerades as a color, a relay's state never as a position. (#82)
+- **`AmpioObject.module_mac`** - the owning module's replacement-stable bus mac,
+  parsed from the `leafId` second segment. Identical on both discovery surfaces,
+  so a restricted account - which never receives the module catalogue - can
+  still group entities by physical module, and a later switch to an
+  administrator account only adds metadata. Live-verified: every parseable
+  object in the reference catalogue matches `AmpioModule.mac`, including the
+  M-SERV, whose override diverges from its factory id. Parsed strictly - any
+  unexpected shape reads as None, like the empty `leafId` of system objects.
+  (#77)
 
 ### Changed
 
-- **Bridged inputs are raw-owned, and the clock domains are gone.** The
-  raw `f`/`i` tree turned out to be retained: the broker holds every
-  channel's last value and replays the complete input state on each
-  subscribe, making the raw path self-resyncing across reconnects. A
-  raw-proven object now ignores its per-object echo entirely and is
-  skipped by the bulk snapshot; on a first connect the snapshot seeds
-  initial values and raw ownership begins with the first raw message.
-  With the echo-anchoring gone, `AmpioObject.updated_at_clock` is
-  removed: every dated report on the baseline wire carries the
-  M-SERV's own clock, so `updated_at` is simply the report's `on`
-  timestamp, or the receive time for the undated raw tree.
-- **`classify`, `module_model`, and `module_capabilities` left the
-  top-level API.** All three are pre-digested by the models -
-  `obj.kind`, `module.model`, `module.capabilities` - and the kind-key
-  vocabulary exports cover the exhaustiveness-testing case; they stay
-  importable from their submodules.
-- **The account tier is the authenticated username.** The broker
-  verifies the login at CONNACK and the app cannot create another
-  `admin`, so `username == "admin"` decides the tier at construction:
-  `AmpioClient.access_tier` is a constant, `UNKNOWN` leaves the client
-  (it survives only on `AmpioServerInfo.access_tier`, the wire's own
-  confirmation for config flows), the subscription set and discovery
-  requests are tier-shaped from the first connect (four requests either
-  way, no request-everything round), the discovery wait is one gather,
-  and the store's eviction rule reads the username instead of the info
-  reply. A standard client never subscribes to the raw tree, so every
-  SUBACK rejection is a genuine fault again and warns - no rejection
-  reaches a correctly configured install's log on either tier.
-- **A message-processing bug costs one message, not the connection.**
-  The client guards each inbound message: a payload whose processing
-  raises is dropped with a logged traceback (once per topic; repeats at
-  debug) while the connection stays up. Previously any such exception
-  took the terminal `ConnectionDied` path, so a retained poison payload
-  would kill the client seconds after every restart. Bugs in the
-  connection loop itself remain terminal.
-- **The read surface is immutable.** `AmpioObject`, `AmpioModule`,
-  `AmpioScene`, and `AmpioServerInfo` are frozen dataclasses, and
-  `client.objects` / `client.modules` return read-only views (typed
-  `Mapping`). Consumer code can no longer corrupt the store through the
-  documented read API - a deleted entry used to dangle the raw-channel
-  index and kill the connection on the next raw edge - and events carry
-  the same immutable instances, so the snapshot guarantee from 0.20.0
-  holds by construction instead of by per-event copying.
-- **`OutputKind.switchable`** (default `True`, `False` for `rgbw`) says
-  whether an object answers the switch-verb family, so a consumer picks
-  its wiring from the kind instead of discovering a silent no-op.
-- **`turn_on()` and `toggle()` raise `ValueError`** for a known
-  non-switchable output rather than publishing a command the M-SERV
-  silently drops. Turning a color light on means choosing a color, which
-  is the consumer's call via `set_color()`.
+- **Bridged inputs are raw-owned, and the clock domains are gone.** The raw
+  `f`/`i` tree turned out to be retained: the broker holds every channel's last
+  value and replays the complete input state on each subscribe, making the raw
+  path self-resyncing across reconnects. A raw-proven object now ignores its
+  per-object echo entirely and is skipped by the bulk snapshot; on a first
+  connect the snapshot seeds initial values and raw ownership begins with the
+  first raw message. With the echo-anchoring gone,
+  `AmpioObject.updated_at_clock` is removed: every dated report on the baseline
+  wire carries the M-SERV's own clock, so `updated_at` is simply the report's
+  `on` timestamp, or the receive time for the undated raw tree.
+- **`classify`, `module_model`, and `module_capabilities` left the top-level
+  API.** All three are pre-digested by the models - `obj.kind`, `module.model`,
+  `module.capabilities` - and the kind-key vocabulary exports cover the
+  exhaustiveness-testing case; they stay importable from their submodules.
+- **The account tier is the authenticated username.** The broker verifies the
+  login at CONNACK and the app cannot create another `admin`, so
+  `username == "admin"` decides the tier at construction:
+  `AmpioClient.access_tier` is a constant, `UNKNOWN` leaves the client (it
+  survives only on `AmpioServerInfo.access_tier`, the wire's own confirmation
+  for config flows), the subscription set and discovery requests are tier-shaped
+  from the first connect (four requests either way, no request-everything
+  round), the discovery wait is one gather, and the store's eviction rule reads
+  the username instead of the info reply. A standard client never subscribes to
+  the raw tree, so every SUBACK rejection is a genuine fault again and warns -
+  no rejection reaches a correctly configured install's log on either tier.
+- **A message-processing bug costs one message, not the connection.** The client
+  guards each inbound message: a payload whose processing raises is dropped with
+  a logged traceback (once per topic; repeats at debug) while the connection
+  stays up. Previously any such exception took the terminal `ConnectionDied`
+  path, so a retained poison payload would kill the client seconds after every
+  restart. Bugs in the connection loop itself remain terminal.
+- **The read surface is immutable.** `AmpioObject`, `AmpioModule`, `AmpioScene`,
+  and `AmpioServerInfo` are frozen dataclasses, and `client.objects` /
+  `client.modules` return read-only views (typed `Mapping`). Consumer code can
+  no longer corrupt the store through the documented read API - a deleted entry
+  used to dangle the raw-channel index and kill the connection on the next raw
+  edge - and events carry the same immutable instances, so the snapshot
+  guarantee from 0.20.0 holds by construction instead of by per-event copying.
+- **`OutputKind.switchable`** (default `True`, `False` for `rgbw`) says whether
+  an object answers the switch-verb family, so a consumer picks its wiring from
+  the kind instead of discovering a silent no-op.
+- **`turn_on()` and `toggle()` raise `ValueError`** for a known non-switchable
+  output rather than publishing a command the M-SERV silently drops. Turning a
+  color light on means choosing a color, which is the consumer's call via
+  `set_color()`.
 
 ### Fixed
 
-- **A fetch's `timeout` bounds the whole call.** `fetch_rooms` /
-  `fetch_scenes` published their requests before starting the timeout
-  window, and each publish awaits its PUBACK under the connection's own
-  5 s deadline - so a broker slow to acknowledge could stretch a
-  `timeout=5.0` rooms fetch to ~15 s. The publishes now sit inside the
-  window, making the documented contract true.
+- **A fetch's `timeout` bounds the whole call.** `fetch_rooms` / `fetch_scenes`
+  published their requests before starting the timeout window, and each publish
+  awaits its PUBACK under the connection's own 5 s deadline - so a broker slow
+  to acknowledge could stretch a `timeout=5.0` rooms fetch to ~15 s. The
+  publishes now sit inside the window, making the documented contract true.
 - **`username` is required.** `AmpioClient` and `test_connection` raise
-  `ValueError` without one instead of silently subscribing to the
-  degenerate `ampio/fromDB//...` namespace no M-SERV serves, where the
-  failure surfaced minutes later as discovery that never completes.
-  Also: a server timestamp of `0` now lands in the server clock domain
-  instead of being restamped with the local clock (`on` is epoch
-  milliseconds; zero is a value, not absence).
-- **A name cleared server-side now clears in the store.** The metadata
-  merge kept an object's old name when a catalogue row arrived without
-  one, so a Designer rename-to-empty stuck forever. Live evidence
-  showed the guard protected nothing: empty names are a normal wire
-  state (unnamed objects), and the two discovery surfaces never
-  disagree on names. `name` now mirrors the catalogue unconditionally,
-  like every other metadata field.
-- **`turn_off()` works on rgbw objects.** A known color output that does
-  not answer `turnOff` is turned off with `setColors 0/0/0/0` - off is
-  unambiguous, so the library routes it. An object whose metadata has
-  not arrived yet still gets the plain verb.
+  `ValueError` without one instead of silently subscribing to the degenerate
+  `ampio/fromDB//...` namespace no M-SERV serves, where the failure surfaced
+  minutes later as discovery that never completes. Also: a server timestamp of
+  `0` now lands in the server clock domain instead of being restamped with the
+  local clock (`on` is epoch milliseconds; zero is a value, not absence).
+- **A name cleared server-side now clears in the store.** The metadata merge
+  kept an object's old name when a catalogue row arrived without one, so a
+  Designer rename-to-empty stuck forever. Live evidence showed the guard
+  protected nothing: empty names are a normal wire state (unnamed objects), and
+  the two discovery surfaces never disagree on names. `name` now mirrors the
+  catalogue unconditionally, like every other metadata field.
+- **`turn_off()` works on rgbw objects.** A known color output that does not
+  answer `turnOff` is turned off with `setColors 0/0/0/0` - off is unambiguous,
+  so the library routes it. An object whose metadata has not arrived yet still
+  gets the plain verb.
 
 ## 0.20.0
 
-A cleanup release from a third clean-slate review, with every
-behavioural claim reproduced at runtime against a local broker harness
-before the fix and re-verified after it. The correctness fixes stop a
-repeated `start()` from leaking a second connection loop, freeze
-dispatched events into snapshots, and make the module list dispatch
-news the way the object catalogue always has. Contracts tighten:
-`module_capabilities()` always returns a set, `refresh()` is tier-aware
-in both directions, and the router refuses state topics outside the
-account's namespace. Internally the store threads its `Applied` result
-through handlers instead of mutating instance state, the below-baseline
-warning has one home, and the design stories that had grown three or
-four tellings each were consolidated to one home with pointers.
+A cleanup release from a third clean-slate review, with every behavioural claim
+reproduced at runtime against a local broker harness before the fix and
+re-verified after it. The correctness fixes stop a repeated `start()` from
+leaking a second connection loop, freeze dispatched events into snapshots, and
+make the module list dispatch news the way the object catalogue always has.
+Contracts tighten: `module_capabilities()` always returns a set, `refresh()` is
+tier-aware in both directions, and the router refuses state topics outside the
+account's namespace. Internally the store threads its `Applied` result through
+handlers instead of mutating instance state, the below-baseline warning has one
+home, and the design stories that had grown three or four tellings each were
+consolidated to one home with pointers.
 
 ### Changed
 
-- **Events are snapshots.** `ObjectUpdated` and `ModuleUpdated` carry
-  the state as the change was applied instead of a live reference into
-  the store, so a listener that defers processing still sees what the
-  event announced. Read current state from `AmpioClient.objects` /
-  `modules` when that is what you want; identity comparisons between an
-  event's payload and the store no longer hold.
-- **`ModuleUpdated` reports catalogue news.** A module the list adds or
-  changes (a rename, a version bump) now dispatches the event,
-  symmetric with the object catalogue; previously only the diagnostics
-  broadcast did. It still never fires on a standard account, since both
-  sources are administrator-only.
-- **`module_capabilities()` always returns a `frozenset`.** An unknown
-  type code reads as empty instead of `None`; `module_model()`
-  returning `None` is the unknown-type signal. `AmpioModule.capabilities`
-  could never carry the old distinction anyway - the one call site
-  flattened it.
-- **`refresh()` skips the other tier's catalogue pair.** Once the tier
-  is known, an administrator account stops re-requesting the app-sync
-  `data` pair on every reconnect (it only repeats what the `config`
-  catalogue carries), exactly as a restricted account already skipped
-  the `config` pair. First discovery, before the tier is known, still
-  requests everything.
-- The router drops per-object state topics outside the connecting
-  account's namespace. The subscriptions already scoped delivery, but
-  the topic shape is the router's to own, not the subscription list's.
-- The ruff gate extends from the default rule set to import order,
-  pyupgrade, bugbear, simplifications, ruff's own checks, and the
-  asyncio rules, with `ASYNC109` excluded because timeout parameters
-  are this library's deliberate public API shape.
+- **Events are snapshots.** `ObjectUpdated` and `ModuleUpdated` carry the state
+  as the change was applied instead of a live reference into the store, so a
+  listener that defers processing still sees what the event announced. Read
+  current state from `AmpioClient.objects` / `modules` when that is what you
+  want; identity comparisons between an event's payload and the store no longer
+  hold.
+- **`ModuleUpdated` reports catalogue news.** A module the list adds or changes
+  (a rename, a version bump) now dispatches the event, symmetric with the object
+  catalogue; previously only the diagnostics broadcast did. It still never fires
+  on a standard account, since both sources are administrator-only.
+- **`module_capabilities()` always returns a `frozenset`.** An unknown type code
+  reads as empty instead of `None`; `module_model()` returning `None` is the
+  unknown-type signal. `AmpioModule.capabilities` could never carry the old
+  distinction anyway - the one call site flattened it.
+- **`refresh()` skips the other tier's catalogue pair.** Once the tier is known,
+  an administrator account stops re-requesting the app-sync `data` pair on every
+  reconnect (it only repeats what the `config` catalogue carries), exactly as a
+  restricted account already skipped the `config` pair. First discovery, before
+  the tier is known, still requests everything.
+- The router drops per-object state topics outside the connecting account's
+  namespace. The subscriptions already scoped delivery, but the topic shape is
+  the router's to own, not the subscription list's.
+- The ruff gate extends from the default rule set to import order, pyupgrade,
+  bugbear, simplifications, ruff's own checks, and the asyncio rules, with
+  `ASYNC109` excluded because timeout parameters are this library's deliberate
+  public API shape.
 
 ### Fixed
 
-- A `start()` on a running client closes the previous session before
-  opening the new one. The second call used to leak a parallel
-  connection loop that fought the first over the shared MQTT client id -
-  reproduced against a real broker as tens of availability flaps per
-  minute - and `stop()` reaped only one of them.
+- A `start()` on a running client closes the previous session before opening the
+  new one. The second call used to leak a parallel connection loop that fought
+  the first over the shared MQTT client id - reproduced against a real broker as
+  tens of availability flaps per minute - and `stop()` reaped only one of them.
 
 ## 0.19.0
 
-A restructuring release from a second clean-sheet review. Event delivery,
-topic classification, endpoint reply correlation, and per-object
-bookkeeping each get one home: a typed event stream with a terminal
-crash signal, a protocol-layer router, a reply channel per endpoint
-row, and facts carried on the object itself. Every publish is
-acknowledged by the broker at QoS 1 and every failure surfaces as the
-library's own error types. The cover and regulator surfaces grew
-`stop_cover()`, `set_temperature()`, and the `reg`/`bit8`
-classifications, each confirmed on a live install before shipping. The
-test suite runs through an injectable transport seam with a shared kit,
-marginal API was removed, and the docs now treat verified-on-the-baseline
-as the default, with open claims carrying their tracking issue.
+A restructuring release from a second clean-sheet review. Event delivery, topic
+classification, endpoint reply correlation, and per-object bookkeeping each get
+one home: a typed event stream with a terminal crash signal, a protocol-layer
+router, a reply channel per endpoint row, and facts carried on the object
+itself. Every publish is acknowledged by the broker at QoS 1 and every failure
+surfaces as the library's own error types. The cover and regulator surfaces grew
+`stop_cover()`, `set_temperature()`, and the `reg`/`bit8` classifications, each
+confirmed on a live install before shipping. The test suite runs through an
+injectable transport seam with a shared kit, marginal API was removed, and the
+docs now treat verified-on-the-baseline as the default, with open claims
+carrying their tracking issue.
 
 ### Added
 
-- `reg` and `bit8` classify (#61): `reg` as the new `ThermostatKind`
-  (with `AmpioObject.is_thermostat`) - a thermostat is genuinely none of
-  the sensor/input/output kinds - and `bit8` as a numeric measurement
-  like its `bit32` sibling. `set_temperature()` drives the regulator's
-  setpoint, guarding the bool and non-finite traps; the mode verb stays
-  unwrapped deliberately, since `setHeatingMode` is one-way over MQTT
-  (`M` works, `S` back is silently ignored) and a one-way toggle is a
-  broken control. Surfacing the regulator's rich state
-  (measureTemp/setTemperature/mode/cooling) is #73.
-- `stop_cover()`: halts a cover wherever it is, on either axis (#62).
-  Confirmed on a tilt-capable blind: mid-travel the position freezes at
-  the halt point and the commanded target is never reached, a slat
-  rotation is caught mid-turn the same way, a stop during the pre-travel
-  slat phase also cancels the pending move, and a stop on a stationary
-  cover is a silent no-op. This is what lets a consumer offer Home
-  Assistant's cover stop button.
-- A transport seam: `AmpioClient` and `test_connection` accept a
-  keyword-only `mqtt_client_factory` (a zero-argument callable returning
-  the MQTT session object for one connect attempt), defaulting to the real
-  aiomqtt client exactly as before. The suite now injects an
-  instance-based fake broker through it instead of patching aiomqtt and
-  poking `client._connection._client` - the old pattern manufactured a
-  session state production code cannot produce (never opened, unavailable,
-  yet publishing successfully) and forced the broker fake into class-level
-  state with an autouse reset. The private `_feed_message` test hook is
-  gone from the client, and a shared `tests/conftest.py` replaces eight
+- `reg` and `bit8` classify (#61): `reg` as the new `ThermostatKind` (with
+  `AmpioObject.is_thermostat`) - a thermostat is genuinely none of the
+  sensor/input/output kinds - and `bit8` as a numeric measurement like its
+  `bit32` sibling. `set_temperature()` drives the regulator's setpoint, guarding
+  the bool and non-finite traps; the mode verb stays unwrapped deliberately,
+  since `setHeatingMode` is one-way over MQTT (`M` works, `S` back is silently
+  ignored) and a one-way toggle is a broken control. Surfacing the regulator's
+  rich state (measureTemp/setTemperature/mode/cooling) is #73.
+- `stop_cover()`: halts a cover wherever it is, on either axis (#62). Confirmed
+  on a tilt-capable blind: mid-travel the position freezes at the halt point and
+  the commanded target is never reached, a slat rotation is caught mid-turn the
+  same way, a stop during the pre-travel slat phase also cancels the pending
+  move, and a stop on a stationary cover is a silent no-op. This is what lets a
+  consumer offer Home Assistant's cover stop button.
+- A transport seam: `AmpioClient` and `test_connection` accept a keyword-only
+  `mqtt_client_factory` (a zero-argument callable returning the MQTT session
+  object for one connect attempt), defaulting to the real aiomqtt client exactly
+  as before. The suite now injects an instance-based fake broker through it
+  instead of patching aiomqtt and poking `client._connection._client` - the old
+  pattern manufactured a session state production code cannot produce (never
+  opened, unavailable, yet publishing successfully) and forced the broker fake
+  into class-level state with an autouse reset. The private `_feed_message` test
+  hook is gone from the client, and a shared `tests/conftest.py` replaces eight
   per-file fake classes and seven copies of the shared constants.
 
 ### Removed
 
-- `fetch_locations()`, its parser, its endpoint row (one less subscription
-  per connect), and its tests. The method returned only the id-to-name
-  table behind Designer's "Lokalizacja" dropdown while the per-output
-  pointer that would make it resolvable is not reachable over MQTT; it
-  returns with the #25 RPC route once that pointer is.
-- The `sensors` property (asymmetric - no inputs/outputs twins ever
-  existed - and consumers filter on `kind`) and the generic `request()`
-  escape hatch (undocumented, `KeyError` on unknown names, and covered
-  better by `refresh()`, the `fetch_*` methods, and the probe tool).
-- Dead branches: the unreachable `or []` in `fetch_scenes` is now an
-  assert naming the parsed-gate invariant, and the payload decoder's
-  `str`/`None` handling is gone - aiomqtt 2.5 (the pyproject floor)
-  guarantees `bytes`.
+- `fetch_locations()`, its parser, its endpoint row (one less subscription per
+  connect), and its tests. The method returned only the id-to-name table behind
+  Designer's "Lokalizacja" dropdown while the per-output pointer that would make
+  it resolvable is not reachable over MQTT; it returns with the #25 RPC route
+  once that pointer is.
+- The `sensors` property (asymmetric - no inputs/outputs twins ever existed -
+  and consumers filter on `kind`) and the generic `request()` escape hatch
+  (undocumented, `KeyError` on unknown names, and covered better by `refresh()`,
+  the `fetch_*` methods, and the probe tool).
+- Dead branches: the unreachable `or []` in `fetch_scenes` is now an assert
+  naming the parsed-gate invariant, and the payload decoder's `str`/`None`
+  handling is gone - aiomqtt 2.5 (the pyproject floor) guarantees `bytes`.
 
 ### Changed
 
-- `refresh()` skips the admin-only `config` requests once the info reply
-  has identified a RESTRICTED account - the M-SERV never answers them for
-  that tier and the login's admin bit cannot change mid-session. An
-  UNKNOWN tier still requests everything, which is what makes first
-  discovery work.
-- The package version is single-sourced: hatchling reads it from
-  `__version__`, so a release bumps one line.
-- The duplicated below-baseline warning (validation path and store info
-  handler) collapsed into one `_protocol` helper; both call sites keep
-  their behavior and their tests.
-- The test suite was deduplicated and strengthened (net -213 lines, 439 to
-  443 tests): sixteen tests proving behaviors twice across layers were
-  deleted against verified twins or moved to the store level, the pure
-  model tests moved to their own module, and nine behaviors previously
-  untested gained coverage - the below-baseline warning on the
-  validation path, `auth_failure` clearing on a fresh `start()`, the
-  UNKNOWN-tier discovery fallback, concurrent same-endpoint fetches
-  sharing one reply, backoff growth/cap/jitter bounds, the exact
-  initial-request set at QoS 1, the last uncovered parser branches
-  (`_protocol` now at 100%), and the client-level `colliding_macs` read.
-  Three tests asserting a weaker exception type than the source raises
-  were tightened, and the M-SERV-resolution test was renamed to match
-  the capability-based rule it actually exercises.
+- `refresh()` skips the admin-only `config` requests once the info reply has
+  identified a RESTRICTED account - the M-SERV never answers them for that tier
+  and the login's admin bit cannot change mid-session. An UNKNOWN tier still
+  requests everything, which is what makes first discovery work.
+- The package version is single-sourced: hatchling reads it from `__version__`,
+  so a release bumps one line.
+- The duplicated below-baseline warning (validation path and store info handler)
+  collapsed into one `_protocol` helper; both call sites keep their behavior and
+  their tests.
+- The test suite was deduplicated and strengthened (net -213 lines, 439 to 443
+  tests): sixteen tests proving behaviors twice across layers were deleted
+  against verified twins or moved to the store level, the pure model tests moved
+  to their own module, and nine behaviors previously untested gained coverage -
+  the below-baseline warning on the validation path, `auth_failure` clearing on
+  a fresh `start()`, the UNKNOWN-tier discovery fallback, concurrent
+  same-endpoint fetches sharing one reply, backoff growth/cap/jitter bounds, the
+  exact initial-request set at QoS 1, the last uncovered parser branches
+  (`_protocol` now at 100%), and the client-level `colliding_macs` read. Three
+  tests asserting a weaker exception type than the source raises were tightened,
+  and the M-SERV-resolution test was renamed to match the capability-based rule
+  it actually exercises.
 - One typed event stream replaces the seven `add_*_listener` registrations.
   `subscribe(listener, of=...)` delivers frozen event dataclasses -
   `ObjectUpdated`, `ObjectRemoved`, `ModuleUpdated`, `ModuleRemoved`,
-  `BusEvent`, `AvailabilityChanged`, `AuthFailed`, `ConnectionDied` - in
-  the order they were produced, with `of` narrowing to one class (typing
-  the callback parameter precisely) or a tuple. The tier-gating knowledge
-  from the old registration docstrings now lives on the event classes in
-  `ampio_mqtt.events`; ordering across kinds is a real guarantee
-  (availability drops precede the terminal events, removals follow the
-  updates of the reply that caused them); a raising listener is still
-  logged and isolated. `AmpioEvent` is absorbed into `BusEvent` - the
-  event class is the model.
-- The per-object clock domain and raw-proven flag moved from store-side
-  dicts onto `AmpioObject` itself as documented public fields
-  (`updated_at_clock`, `raw_proven`), making `updated_at` self-describing
-  and eviction structurally leak-free: the old shape required every
-  removal site to pop three side structures in lockstep, and one
-  forgotten line silently froze a re-added object's state updates
-  (demonstrated at the store level before the change). `AmpioState` is
-  deleted - a three-field wrapper with a single construction site and 27
-  reach-throughs, forwarded twice on the way to the consumer - and the
-  store owns `objects`/`modules`/`server_info` directly.
+  `BusEvent`, `AvailabilityChanged`, `AuthFailed`, `ConnectionDied` - in the
+  order they were produced, with `of` narrowing to one class (typing the
+  callback parameter precisely) or a tuple. The tier-gating knowledge from the
+  old registration docstrings now lives on the event classes in
+  `ampio_mqtt.events`; ordering across kinds is a real guarantee (availability
+  drops precede the terminal events, removals follow the updates of the reply
+  that caused them); a raising listener is still logged and isolated.
+  `AmpioEvent` is absorbed into `BusEvent` - the event class is the model.
+- The per-object clock domain and raw-proven flag moved from store-side dicts
+  onto `AmpioObject` itself as documented public fields (`updated_at_clock`,
+  `raw_proven`), making `updated_at` self-describing and eviction structurally
+  leak-free: the old shape required every removal site to pop three side
+  structures in lockstep, and one forgotten line silently froze a re-added
+  object's state updates (demonstrated at the store level before the change).
+  `AmpioState` is deleted - a three-field wrapper with a single construction
+  site and 27 reach-throughs, forwarded twice on the way to the consumer - and
+  the store owns `objects`/`modules`/`server_info` directly.
 - Topic classification has one home: a protocol-layer `Router` turns each
   inbound message into a typed message (`EndpointReply`, `StateUpdate`,
-  `RawChannelEdge`, `DiagnosticsReport`, `BusEvent`) exactly once, and the
-  store pattern-matches on the result instead of substring-filtering topics
-  and re-validating them in every parser. The dispatcher's loose pre-filters
-  and the parsers' duplicate shape guards - several of which a coverage run
-  proved unreachable behind the pre-filter - are gone, `parse_state_message`
-  / `parse_raw_channel_topic` / `parse_diagnostics_mac` / `parse_event`
-  dissolve into the router, and the store finally matches its own "pure
-  state" docstring. Behavior verified byte-identical against the scripted
-  broker and live against the M-SERV on all four push surfaces.
+  `RawChannelEdge`, `DiagnosticsReport`, `BusEvent`) exactly once, and the store
+  pattern-matches on the result instead of substring-filtering topics and
+  re-validating them in every parser. The dispatcher's loose pre-filters and the
+  parsers' duplicate shape guards - several of which a coverage run proved
+  unreachable behind the pre-filter - are gone, `parse_state_message` /
+  `parse_raw_channel_topic` / `parse_diagnostics_mac` / `parse_event` dissolve
+  into the router, and the store finally matches its own "pure state" docstring.
+  Behavior verified byte-identical against the scripted broker and live against
+  the M-SERV on all four push surfaces.
 - Endpoint reply correlation is consolidated into one per-endpoint channel
-  (discovery latch, verbatim last payload, fetch waiters together), so
-  adding an endpoint is one row in the endpoint table and no new client
-  plumbing. Behavior is unchanged - verified byte-identical against a
-  scripted broker across discovery latching, concurrent fetches,
-  malformed-reply timeouts, stale-waiter cleanup, and reconnect. One
-  visible nuance: `last_payloads` now returns a fresh snapshot dict per
-  access rather than a live internal dict.
-- A crash in the connection loop is now reported instead of silent. An
-  exception the loop does not recognize as transport or credential failure
-  is terminal (nothing retries): after a successful `start()` it dispatches
-  `ConnectionDied` with the availability drop preceding it and the reason
-  in `stats.last_error`; during `start()` it makes `start()` raise
-  `AmpioConnectionError` promptly. Previously the runner task died holding
-  its exception, `stats.last_error` stayed empty, and the dead loop was
-  indistinguishable from an outage under retry (verified against a live
-  broker: an injected store bug froze the client forever while the broker
-  stayed healthy).
+  (discovery latch, verbatim last payload, fetch waiters together), so adding an
+  endpoint is one row in the endpoint table and no new client plumbing. Behavior
+  is unchanged - verified byte-identical against a scripted broker across
+  discovery latching, concurrent fetches, malformed-reply timeouts, stale-waiter
+  cleanup, and reconnect. One visible nuance: `last_payloads` now returns a
+  fresh snapshot dict per access rather than a live internal dict.
+- A crash in the connection loop is now reported instead of silent. An exception
+  the loop does not recognize as transport or credential failure is terminal
+  (nothing retries): after a successful `start()` it dispatches `ConnectionDied`
+  with the availability drop preceding it and the reason in `stats.last_error`;
+  during `start()` it makes `start()` raise `AmpioConnectionError` promptly.
+  Previously the runner task died holding its exception, `stats.last_error`
+  stayed empty, and the dead loop was indistinguishable from an outage under
+  retry (verified against a live broker: an injected store bug froze the client
+  forever while the broker stayed healthy).
 
 - Every publish now goes out at QoS 1, so an awaited publish completes on the
-  broker's PUBACK: a returned `command()` (or scene/event publish, or
-  discovery request) means the broker accepted it, where QoS 0 meant only
-  that the payload left the socket (#68). This hardens the client-to-broker
-  hop; it is not device-level confirmation - the M-SERV still applies
-  commands asynchronously, and #67 tracks the opt-in state-echo API for
-  that. Discovery requests are included deliberately: they share the one
-  publish path, their replies already surface loss through timeouts, and
-  the broker ack costs one packet.
-- `start()` now returns the discovery outcome it always awaited: True when
-  the initial discovery cycle completed within `discovery_timeout`, False
-  when the timeout elapsed first. The result was previously discarded, so
-  a `start()`-only caller could not tell whether `objects`/`server_info`
-  were populated without a second call to `wait_for_initial_discovery()`.
-  A False still leaves the connection up with discovery continuing
-  opportunistically.
+  broker's PUBACK: a returned `command()` (or scene/event publish, or discovery
+  request) means the broker accepted it, where QoS 0 meant only that the payload
+  left the socket (#68). This hardens the client-to-broker hop; it is not
+  device-level confirmation - the M-SERV still applies commands asynchronously,
+  and #67 tracks the opt-in state-echo API for that. Discovery requests are
+  included deliberately: they share the one publish path, their replies already
+  surface loss through timeouts, and the broker ack costs one packet.
+- `start()` now returns the discovery outcome it always awaited: True when the
+  initial discovery cycle completed within `discovery_timeout`, False when the
+  timeout elapsed first. The result was previously discarded, so a
+  `start()`-only caller could not tell whether `objects`/`server_info` were
+  populated without a second call to `wait_for_initial_discovery()`. A False
+  still leaves the connection up with discovery continuing opportunistically.
 
 ### Fixed
 
 - The typed command helpers now reject `bool` arguments with a `ValueError`.
   `bool` is an int subclass, so `set_value(oid, True)` previously passed
-  validation and published the literal `setValue/True` - a malformed
-  command the M-SERV silently drops (live-verified), leaving no error, no
-  effect, and nothing in any log. A caller passing `True` wants `turn_on()`
-  or an explicit level, and now hears so at call time.
+  validation and published the literal `setValue/True` - a malformed command the
+  M-SERV silently drops (live-verified), leaving no error, no effect, and
+  nothing in any log. A caller passing `True` wants `turn_on()` or an explicit
+  level, and now hears so at call time.
 - A scene row without the `active` column now parses as enabled, matching
-  `AmpioScene`'s declared default; it previously parsed as disabled, so a
-  server that ever dropped the column would have silently deactivated the
-  whole catalogue. The baseline server always sends the column
-  (live-verified), so this covers shape drift only.
-- Publish-path failures no longer leak `aiomqtt.MqttError` through the
-  public API. `command()`, the typed command helpers, `send_event()`, the
-  scene commands, and the `fetch_*` request publishes now raise
-  `AmpioConnectionError` on a transport failure (the aiomqtt original
-  preserved as `__cause__`) and `AmpioTimeoutError` when the broker accepts
-  the session but the PUBACK does not arrive within 5 s - so an
-  `except AmpioError` handler finally covers every failure a call can
-  produce, and consumers never import aiomqtt. The PUBACK deadline is owned
-  by the library because aiomqtt reports its own timeout as a bare
-  `MqttError` distinguishable only by message text; a local deadline keeps
-  the retryable-vs-transport classification structural. The connection
-  loop treats the wrapped form like any transport drop, so a publish
-  failure inside the on-connect refresh recycles the session instead of
-  killing the reconnect loop.
+  `AmpioScene`'s declared default; it previously parsed as disabled, so a server
+  that ever dropped the column would have silently deactivated the whole
+  catalogue. The baseline server always sends the column (live-verified), so
+  this covers shape drift only.
+- Publish-path failures no longer leak `aiomqtt.MqttError` through the public
+  API. `command()`, the typed command helpers, `send_event()`, the scene
+  commands, and the `fetch_*` request publishes now raise `AmpioConnectionError`
+  on a transport failure (the aiomqtt original preserved as `__cause__`) and
+  `AmpioTimeoutError` when the broker accepts the session but the PUBACK does
+  not arrive within 5 s - so an `except AmpioError` handler finally covers every
+  failure a call can produce, and consumers never import aiomqtt. The PUBACK
+  deadline is owned by the library because aiomqtt reports its own timeout as a
+  bare `MqttError` distinguishable only by message text; a local deadline keeps
+  the retryable-vs-transport classification structural. The connection loop
+  treats the wrapped form like any transport drop, so a publish failure inside
+  the on-connect refresh recycles the session instead of killing the reconnect
+  loop.
 
 ## 0.18.0
 
-A debt-payoff release from a clean-sheet review of the whole library,
-with every fix reproduced and re-verified at runtime - locally against a
-scripted broker and, where it mattered, against a live M-SERV. The
-correctness fixes close a concurrent-fetch race, a clock-skew path that
-let stale snapshots overwrite fresh input edges, and the store never
-forgetting deleted objects. The broker conversation gets structured:
-auth failures classify by reason code, subscriptions go out as one QoS 1
-SUBSCRIBE whose SUBACK verdicts are read (#65), and both dependency
-floors now reflect reality. Internal layout is reshuffled so each
-concern has one home.
+A debt-payoff release from a clean-sheet review of the whole library, with every
+fix reproduced and re-verified at runtime - locally against a scripted broker
+and, where it mattered, against a live M-SERV. The correctness fixes close a
+concurrent-fetch race, a clock-skew path that let stale snapshots overwrite
+fresh input edges, and the store never forgetting deleted objects. The broker
+conversation gets structured: auth failures classify by reason code,
+subscriptions go out as one QoS 1 SUBSCRIBE whose SUBACK verdicts are read
+(#65), and both dependency floors now reflect reality. Internal layout is
+reshuffled so each concern has one home.
 
 ### Added
 
 - `AmpioClient.add_object_removal_listener()` and
-  `add_module_removal_listener()`: callbacks fired once per object/module
-  the authoritative catalogue stopped listing, with the removed item's
-  final state, after the store has dropped it. The signal for a consumer
-  to remove the entity or device it built.
+  `add_module_removal_listener()`: callbacks fired once per object/module the
+  authoritative catalogue stopped listing, with the removed item's final state,
+  after the store has dropped it. The signal for a consumer to remove the entity
+  or device it built.
 
 ### Changed
 
-- Every subscription now asks for QoS 1, both in the connection loop and in
-  the config-flow probe. The M-SERV publishes everything at QoS 1 (verified
-  against a live install: live pushes and retained replies alike), but the
-  previous QoS 0 subscriptions let the broker downgrade its delivery leg to
-  at-most-once, and per-object state topics are not retained, so a state
-  push lost in transit stayed lost until the next change. At QoS 1 the
-  broker redelivers unacknowledged messages, keeping the at-least-once
-  guarantee the server already provides (#65). Sessions stay clean, so this
-  protects delivery only while the connection is up. Messages missed while
-  disconnected are still recovered by the reconnect refresh.
+- Every subscription now asks for QoS 1, both in the connection loop and in the
+  config-flow probe. The M-SERV publishes everything at QoS 1 (verified against
+  a live install: live pushes and retained replies alike), but the previous QoS
+  0 subscriptions let the broker downgrade its delivery leg to at-most-once, and
+  per-object state topics are not retained, so a state push lost in transit
+  stayed lost until the next change. At QoS 1 the broker redelivers
+  unacknowledged messages, keeping the at-least-once guarantee the server
+  already provides (#65). Sessions stay clean, so this protects delivery only
+  while the connection is up. Messages missed while disconnected are still
+  recovered by the reconnect refresh.
 - Auth-failure detection now reads the structured MQTT reason code
-  (`MqttCodeError.rc`, 134 "bad user name or password" / 135 "not
-  authorized") instead of substring-matching the error text, and walks the
-  exception cause chain so a rejection that surfaces mid-iteration (a bare
-  `MqttError` carrying the coded disconnect as `__cause__`) is classified
-  too - a path the text markers could never see. Both misclassification
-  directions close: a transport error whose text happened to contain a
-  marker no longer kills the reconnect loop for good, and an auth rejection
-  no longer depends on aiomqtt's message formatting. The aiomqtt floor
-  rises from `>=2.0.0` to `>=2.5`: 2.2.0 is where aiomqtt adopted paho's
-  VERSION2 callbacks (which normalize CONNACK rejections to the v5 codes on
-  every wire protocol - older versions surface plain-int 3.1.1 codes the
-  check would miss), and 2.5.0 fixes `__aexit__` exception handling and the
-  payload type contract.
+  (`MqttCodeError.rc`, 134 "bad user name or password" / 135 "not authorized")
+  instead of substring-matching the error text, and walks the exception cause
+  chain so a rejection that surfaces mid-iteration (a bare `MqttError` carrying
+  the coded disconnect as `__cause__`) is classified too - a path the text
+  markers could never see. Both misclassification directions close: a transport
+  error whose text happened to contain a marker no longer kills the reconnect
+  loop for good, and an auth rejection no longer depends on aiomqtt's message
+  formatting. The aiomqtt floor rises from `>=2.0.0` to `>=2.5`: 2.2.0 is where
+  aiomqtt adopted paho's VERSION2 callbacks (which normalize CONNACK rejections
+  to the v5 codes on every wire protocol - older versions surface plain-int
+  3.1.1 codes the check would miss), and 2.5.0 fixes `__aexit__` exception
+  handling and the payload type contract.
 
-- Internal layout: `const.py` split into `endpoints.py` (endpoint table,
-  topics, command payloads, `AccessTier`, server baseline) and
-  `classification.py` (the kind types, `TYPE_PROFILES`, `classify`);
-  `rooms.py` folded into `_protocol` as `parse_rooms()`, joined by
-  `parse_locations()`, so every payload parser lives in one module and
-  the fetch helpers are publish-await-parse three-liners. The public
-  package surface (`ampio_mqtt` top-level exports) is unchanged; imports
-  of the removed module paths break, per the 0.x policy.
+- Internal layout: `const.py` split into `endpoints.py` (endpoint table, topics,
+  command payloads, `AccessTier`, server baseline) and `classification.py` (the
+  kind types, `TYPE_PROFILES`, `classify`); `rooms.py` folded into `_protocol`
+  as `parse_rooms()`, joined by `parse_locations()`, so every payload parser
+  lives in one module and the fetch helpers are publish-await-parse
+  three-liners. The public package surface (`ampio_mqtt` top-level exports) is
+  unchanged; imports of the removed module paths break, per the 0.x policy.
 
-- All subscriptions go out in one SUBSCRIBE packet per (re)connect instead
-  of fifteen sequential round trips, and the SUBACK verdicts are read
-  instead of discarded: a filter the broker rejects logs a warning naming
-  the topic and reason code and lands in the new
-  `ConnectionStats.subscribe_failures` (topic to code, replaced on every
-  connect), while the connection stays up - a standard account being
-  denied the admin-only raw tree is expected and already degrades to the
-  per-object path. Previously a rejected topic produced a "successful"
-  connection that was silently deaf on it. Live-verified against the
-  baseline server: a standard account receives reason code 128 for all
-  four `ampio/from/...` filters (the Ampio broker rejects unauthorized
-  filters in the SUBACK even over MQTT 3.1.1, where stock mosquitto
-  grants silently), so `subscribe_failures` doubles as per-connect
-  confirmation of the account's raw-tree access.
+- All subscriptions go out in one SUBSCRIBE packet per (re)connect instead of
+  fifteen sequential round trips, and the SUBACK verdicts are read instead of
+  discarded: a filter the broker rejects logs a warning naming the topic and
+  reason code and lands in the new `ConnectionStats.subscribe_failures` (topic
+  to code, replaced on every connect), while the connection stays up - a
+  standard account being denied the admin-only raw tree is expected and already
+  degrades to the per-object path. Previously a rejected topic produced a
+  "successful" connection that was silently deaf on it. Live-verified against
+  the baseline server: a standard account receives reason code 128 for all four
+  `ampio/from/...` filters (the Ampio broker rejects unauthorized filters in the
+  SUBACK even over MQTT 3.1.1, where stock mosquitto grants silently), so
+  `subscribe_failures` doubles as per-connect confirmation of the account's
+  raw-tree access.
 
-- `AmpioModule.last_seen` is now one clock: the local receive time of the
-  last live message evidencing the module (a state push or raw edge for one
-  of its objects, or its own diagnostics broadcast). It previously
-  preferred the server's `on` date and fell back to the local clock, so on
-  an M-SERV with a skewed RTC it could read hours off, and snapshot seeds
-  could stamp it with dates for modules that had not actually spoken.
-  Snapshot and catalogue seeds no longer touch it - they replay DB state
-  that may be arbitrarily old, which says nothing about whether the module
-  is alive - so it stays `None` until the first live message after
-  `start()`.
+- `AmpioModule.last_seen` is now one clock: the local receive time of the last
+  live message evidencing the module (a state push or raw edge for one of its
+  objects, or its own diagnostics broadcast). It previously preferred the
+  server's `on` date and fell back to the local clock, so on an M-SERV with a
+  skewed RTC it could read hours off, and snapshot seeds could stamp it with
+  dates for modules that had not actually spoken. Snapshot and catalogue seeds
+  no longer touch it - they replay DB state that may be arbitrarily old, which
+  says nothing about whether the module is alive - so it stays `None` until the
+  first live message after `start()`.
 
 ### Fixed
 
 - Objects and modules deleted in Designer (or revoked from a restricted
-  account's grant) are now evicted when the next catalogue reply stops
-  listing them, instead of surviving as zombies until process restart.
-  Eviction authority follows completeness: the admin `config` catalogue
-  and module list always evict (the M-SERV serves them to administrators
-  only, so their arrival is the proof), while the app-sync `data/devices`
-  catalogue evicts only on the restricted tier, where the grant bounds
-  everything the store could hold. An empty reply against a populated
-  store never evicts - it logs a warning instead, so a server hiccup can
-  not tell a consumer to drop every entity it has. Evicted objects also
-  release their raw-channel routing, params, and clock bookkeeping.
-  Eviction lands on the next catalogue reply, whichever event triggers it:
-  the refresh a reconnect issues, or an explicit `refresh()` (live-verified
-  that a Designer module deletion can commit without restarting the M-SERV,
-  where only a fresh catalogue request notices). How the baseline server
-  deletes, observed live: a module deletion hard-removes the row from
+  account's grant) are now evicted when the next catalogue reply stops listing
+  them, instead of surviving as zombies until process restart. Eviction
+  authority follows completeness: the admin `config` catalogue and module list
+  always evict (the M-SERV serves them to administrators only, so their arrival
+  is the proof), while the app-sync `data/devices` catalogue evicts only on the
+  restricted tier, where the grant bounds everything the store could hold. An
+  empty reply against a populated store never evicts - it logs a warning
+  instead, so a server hiccup can not tell a consumer to drop every entity it
+  has. Evicted objects also release their raw-channel routing, params, and clock
+  bookkeeping. Eviction lands on the next catalogue reply, whichever event
+  triggers it: the refresh a reconnect issues, or an explicit `refresh()`
+  (live-verified that a Designer module deletion can commit without restarting
+  the M-SERV, where only a fresh catalogue request notices). How the baseline
+  server deletes, observed live: a module deletion hard-removes the row from
   `devices` (evicted), but object deletions soft-delete on the `config`
-  catalogue - the row stays with the `params` hidden bit set, flipping
-  `visible` to False through the normal metadata merge - while
-  hard-removing from the app-sync surfaces (so the restricted tier does
-  evict). An admin-tier consumer therefore drops deleted objects via the
-  `visible` filter, and eviction covers whatever hard-removes rows.
-- A bulk-snapshot value can no longer regress a fresh raw-channel edge on
-  an M-SERV whose clock disagrees with the local one. `updated_at` used to
-  mix two clocks - the server's `on` date on snapshot and push paths, the
-  local receive time on the undated raw path - and supersession compared
-  them directly, so with the server clock ahead a reconnect snapshot
-  carrying the pre-edge value could overwrite a fresh input edge
-  (reproduced live: a 2-hour skew flipped a just-raised flag back off).
-  The store now tracks which clock stamped each object and never compares
-  across them: a server-dated report is rejected while an object is
-  local-anchored, and the per-object echo that follows every raw edge by
-  ~150 ms - dropped as a notification, as before - now donates its server
-  `on` date to re-anchor the object, so post-outage resync keeps working
-  through same-clock comparisons that cancel any RTC skew. A dated report
-  now also beats an undated seeded value.
-- The on-demand fetches (`fetch_rooms()`, `fetch_scenes()`,
-  `fetch_locations()`) now correlate each caller with its reply through a
-  per-call future instead of clearing shared latches and reading a shared
-  payload dict back. Two defects close. Concurrent fetches no longer race:
-  a second caller entering between a reply landing and the first caller's
-  wakeup used to pop the first caller's payloads, handing it a silently
-  empty result (reproduced live: two concurrent `fetch_rooms()` returned
-  `{}` for one caller and the real map for the other). And a reply that
-  does not parse no longer completes a fetch: the endpoints without a
-  state-mutating handler previously latched on any payload, so a corrupt
-  reply made `fetch_rooms()` return `{}` immediately; it now ends in the
-  same retryable `AmpioTimeoutError` as no reply at all. `last_payloads`
-  is append-only as a side effect - entries no longer vanish transiently
-  while a fetch is in flight, and an unparseable reply is retained
-  verbatim for diagnostics.
+  catalogue - the row stays with the `params` hidden bit set, flipping `visible`
+  to False through the normal metadata merge - while hard-removing from the
+  app-sync surfaces (so the restricted tier does evict). An admin-tier consumer
+  therefore drops deleted objects via the `visible` filter, and eviction covers
+  whatever hard-removes rows.
+- A bulk-snapshot value can no longer regress a fresh raw-channel edge on an
+  M-SERV whose clock disagrees with the local one. `updated_at` used to mix two
+  clocks - the server's `on` date on snapshot and push paths, the local receive
+  time on the undated raw path - and supersession compared them directly, so
+  with the server clock ahead a reconnect snapshot carrying the pre-edge value
+  could overwrite a fresh input edge (reproduced live: a 2-hour skew flipped a
+  just-raised flag back off). The store now tracks which clock stamped each
+  object and never compares across them: a server-dated report is rejected while
+  an object is local-anchored, and the per-object echo that follows every raw
+  edge by ~150 ms - dropped as a notification, as before - now donates its
+  server `on` date to re-anchor the object, so post-outage resync keeps working
+  through same-clock comparisons that cancel any RTC skew. A dated report now
+  also beats an undated seeded value.
+- The on-demand fetches (`fetch_rooms()`, `fetch_scenes()`, `fetch_locations()`)
+  now correlate each caller with its reply through a per-call future instead of
+  clearing shared latches and reading a shared payload dict back. Two defects
+  close. Concurrent fetches no longer race: a second caller entering between a
+  reply landing and the first caller's wakeup used to pop the first caller's
+  payloads, handing it a silently empty result (reproduced live: two concurrent
+  `fetch_rooms()` returned `{}` for one caller and the real map for the other).
+  And a reply that does not parse no longer completes a fetch: the endpoints
+  without a state-mutating handler previously latched on any payload, so a
+  corrupt reply made `fetch_rooms()` return `{}` immediately; it now ends in the
+  same retryable `AmpioTimeoutError` as no reply at all. `last_payloads` is
+  append-only as a side effect - entries no longer vanish transiently while a
+  fetch is in flight, and an unparseable reply is retained verbatim for
+  diagnostics.
 - Raised the `zeroconf` floor from `>=0.131` to `>=0.142`. The
   `AddressResolverIPv4` class that `discover()` is built on was added in
   python-zeroconf 0.142.0, so the declared range admitted versions on which
-  importing the library raises `ImportError`. The gap was masked wherever
-  pip resolved the latest zeroconf, but any environment pinning inside
+  importing the library raises `ImportError`. The gap was masked wherever pip
+  resolved the latest zeroconf, but any environment pinning inside
   `[0.131, 0.142)` (Home Assistant 2025.1 ships 0.136.2) satisfied the old
   constraint and then failed at import.
 
 ## 0.17.0
 
 Addresses feedback from the Home Assistant integration: the numeric half of
-value interpretation (#57), module mac collisions being kept silently
-(#58), a deliberate `stop()` being reported like an outage (#56), and the
-account tier being unknowable at validation time (#59).
+value interpretation (#57), module mac collisions being kept silently (#58), a
+deliberate `stop()` being reported like an outage (#56), and the account tier
+being unknowable at validation time (#59).
 
 ### Added
 
-- `AmpioObject.numeric_value`: the reading as a float, or `None` when
-  `value` is missing, unparseable, or non-finite. A bare `float()` accepts
-  `"nan"`, `"inf"` and overflowing forms like `"1e999"`, which a sensor
-  reading should never produce, so the guard lives here with the rest of the
-  protocol-value interpretation. Reported from the Home Assistant
-  integration, where a `nan` state push made the entity write raise and
-  froze the entity at its previous value (#57).
+- `AmpioObject.numeric_value`: the reading as a float, or `None` when `value` is
+  missing, unparseable, or non-finite. A bare `float()` accepts `"nan"`, `"inf"`
+  and overflowing forms like `"1e999"`, which a sensor reading should never
+  produce, so the guard lives here with the rest of the protocol-value
+  interpretation. Reported from the Home Assistant integration, where a `nan`
+  state push made the entity write raise and froze the entity at its previous
+  value (#57).
 - `AmpioClient.colliding_macs`: the effective bus macs the devices catalogue
-  reports on more than one module, plus a warning naming the affected
-  modules when a collision appears (one that resolves clears the set
-  silently). Nothing on the wire enforces mac
-  uniqueness, and a consumer keying devices on `AmpioModule.mac` - the
-  recommended replacement-stable module key - would otherwise silently
-  merge two modules into one (#58).
+  reports on more than one module, plus a warning naming the affected modules
+  when a collision appears (one that resolves clears the set silently). Nothing
+  on the wire enforces mac uniqueness, and a consumer keying devices on
+  `AmpioModule.mac` - the recommended replacement-stable module key - would
+  otherwise silently merge two modules into one (#58).
 - `AmpioServerInfo.user_id` and `AmpioServerInfo.access_tier`: the asking
-  account's id from the info reply (`-1` for the reserved `admin` login,
-  the users-table row id for an app-created user) and the tier derived
-  from it. Since `test_connection` returns this object, a config flow now
-  learns the tier at validation time and can reject a restricted account
-  up front instead of failing at setup when `mserv_id` turns out to be
-  None (#59).
+  account's id from the info reply (`-1` for the reserved `admin` login, the
+  users-table row id for an app-created user) and the tier derived from it.
+  Since `test_connection` returns this object, a config flow now learns the tier
+  at validation time and can reject a restricted account up front instead of
+  failing at setup when `mserv_id` turns out to be None (#59).
 
 ### Changed
 
 - A colliding mac no longer routes raw-channel input events or diagnostics
   broadcasts: the sender is unknowable, and last-writer-wins attribution
   silently corrupted an arbitrary module's supply voltage, temperature, and
-  input state. Affected inputs still update through the per-object state
-  path, exactly as they do on the standard account tier (#58).
-- A consumer-initiated `stop()` no longer invokes the availability
-  listeners: the drop it causes is not news to the consumer, and reporting
-  it made every orderly shutdown look like a lost connection. Outages and
-  the fatal auth-failure stop keep reporting False, and `available` still
-  reads False after a stop (#56).
-- `AmpioClient.access_tier` is now read off the info reply's account id
-  instead of inferred from which discovery surface answered, so it is
-  exact the moment the info reply arrives. `wait_for_initial_discovery`
-  waits linearly for the tier's own catalogue pair and drops the
-  `admin_grace` parameter along with the surface race - config-surface
-  silence no longer needs a grace window to be conclusive (#59). A server
-  whose info reply carries no `userId` reads as `UNKNOWN` and completes
-  discovery via the `data` pair, which answers for every account.
-- A supported-versions baseline replaces open-ended compatibility with
-  older M-SERV firmware. The library is developed and live-tested against
-  `serverVersion` 1865 (`serverRevision` 409, `mqttVersion` 5.133.11); the
-  info handler and `test_connection` log a warning when the server
-  self-reports a lower or missing `serverVersion`, and the version-hedged
-  code paths are gone: the MQTT 3.1.1 auth markers (the baseline broker
-  speaks MQTT 5) and the tolerance for an info reply without the `Results`
-  wrapper.
+  input state. Affected inputs still update through the per-object state path,
+  exactly as they do on the standard account tier (#58).
+- A consumer-initiated `stop()` no longer invokes the availability listeners:
+  the drop it causes is not news to the consumer, and reporting it made every
+  orderly shutdown look like a lost connection. Outages and the fatal
+  auth-failure stop keep reporting False, and `available` still reads False
+  after a stop (#56).
+- `AmpioClient.access_tier` is now read off the info reply's account id instead
+  of inferred from which discovery surface answered, so it is exact the moment
+  the info reply arrives. `wait_for_initial_discovery` waits linearly for the
+  tier's own catalogue pair and drops the `admin_grace` parameter along with the
+  surface race - config-surface silence no longer needs a grace window to be
+  conclusive (#59). A server whose info reply carries no `userId` reads as
+  `UNKNOWN` and completes discovery via the `data` pair, which answers for every
+  account.
+- A supported-versions baseline replaces open-ended compatibility with older
+  M-SERV firmware. The library is developed and live-tested against
+  `serverVersion` 1865 (`serverRevision` 409, `mqttVersion` 5.133.11); the info
+  handler and `test_connection` log a warning when the server self-reports a
+  lower or missing `serverVersion`, and the version-hedged code paths are gone:
+  the MQTT 3.1.1 auth markers (the baseline broker speaks MQTT 5) and the
+  tolerance for an info reply without the `Results` wrapper.
 
 ## 0.16.0
 
 Surfaces two failure modes a consumer could not previously see: a credential
 rejection after startup (#53) and a server-info request that times out (#54).
-Both were reported from the Home Assistant integration, where the first
-blocks a reauthentication flow and the second produced a misleading "check
-account permissions" message for what is in practice always a slow broker.
+Both were reported from the Home Assistant integration, where the first blocks a
+reauthentication flow and the second produced a misleading "check account
+permissions" message for what is in practice always a slow broker.
 
 ### Added
 
-- `AmpioTimeoutError`, raised when the broker is reachable but an expected
-  reply never arrives. It subclasses `AmpioConnectionError`, so handlers that
-  treat every connection problem alike keep working.
-- `AmpioClient.add_auth_failure_listener(listener)`: invoked with the
-  broker's reason string when a reconnect attempt is rejected as unauthorized
-  after `start()` has succeeded. By the time it fires the availability
-  listeners have reported False and the connection loop has stopped for good,
-  so it is the signal to drive reauthentication. A rejection during `start()`
-  still raises `AmpioAuthError` there and does not invoke the listener.
+- `AmpioTimeoutError`, raised when the broker is reachable but an expected reply
+  never arrives. It subclasses `AmpioConnectionError`, so handlers that treat
+  every connection problem alike keep working.
+- `AmpioClient.add_auth_failure_listener(listener)`: invoked with the broker's
+  reason string when a reconnect attempt is rejected as unauthorized after
+  `start()` has succeeded. By the time it fires the availability listeners have
+  reported False and the connection loop has stopped for good, so it is the
+  signal to drive reauthentication. A rejection during `start()` still raises
+  `AmpioAuthError` there and does not invoke the listener.
 - `AmpioClient.auth_failure`: the rejection reason once the loop has stopped
   because the broker rejected the credentials, `None` otherwise (including
   through outages the client is still retrying).
@@ -1161,13 +1073,13 @@ account permissions" message for what is in practice always a slow broker.
 ### Changed
 
 - `AmpioClient.test_connection` raises `AmpioTimeoutError` when no info reply
-  arrives within `info_timeout` instead of returning an empty
-  `AmpioServerInfo`. A reply that arrives without identity fields is still
-  returned as-is; live checks show every account tier gets full identity, so
-  a missing reply had been the only source of empty results in practice.
-- The on-demand fetches (`fetch_rooms`, `fetch_scenes`, `fetch_locations`)
-  raise `AmpioTimeoutError` rather than the bare `AmpioConnectionError` when
-  a reply does not arrive in time.
+  arrives within `info_timeout` instead of returning an empty `AmpioServerInfo`.
+  A reply that arrives without identity fields is still returned as-is; live
+  checks show every account tier gets full identity, so a missing reply had been
+  the only source of empty results in practice.
+- The on-demand fetches (`fetch_rooms`, `fetch_scenes`, `fetch_locations`) raise
+  `AmpioTimeoutError` rather than the bare `AmpioConnectionError` when a reply
+  does not arrive in time.
 
 ## 0.15.0
 
@@ -1177,20 +1089,19 @@ rooms, scenes and events as before.
 
 ### Changed
 
-- `_connection.py` owns the MQTT session: the aiomqtt client, the subscribe
-  set, reconnect with backoff, auth detection and availability. It knows
-  nothing about what the messages mean.
+- `_connection.py` owns the MQTT session: the aiomqtt client, the subscribe set,
+  reconnect with backoff, auth detection and availability. It knows nothing
+  about what the messages mean.
 - `_store.py` owns state: `AmpioStore.apply(topic, payload)` folds one message
   into the object, module and server state and returns an `Applied` describing
   what it touched - which endpoint replied, whether the payload parsed, and
-  which objects, modules and events changed. No sockets, no tasks, no
-  listeners, so every protocol behaviour is reachable from a plain function
-  call.
+  which objects, modules and events changed. No sockets, no tasks, no listeners,
+  so every protocol behaviour is reachable from a plain function call.
 - `client.py` keeps the public API and joins the two, turning what the store
   reports into listener callbacks and discovery latches.
 
-The client drops from 1120 lines to 688. "Which objects changed" is now a
-return value rather than something reconstructed from callbacks, and
+The client drops from 1120 lines to 688. "Which objects changed" is now a return
+value rather than something reconstructed from callbacks, and
 `tests/test_store.py` exercises the protocol without a broker or an event loop.
 
 ## 0.14.0
@@ -1203,8 +1114,8 @@ gets smaller and the catalogue path stops doing the same work twice.
 - `classify()` returns one `ObjectKind` (`SensorKind | InputKind | OutputKind`)
   instead of a 3-tuple, and `AmpioObject.kind` holds it. A component type is a
   measurement, a boolean input, or something controllable, never two, so the
-  three kinds are alternatives - the old shape could represent combinations
-  that cannot occur, and three tests existed only to assert they never did.
+  three kinds are alternatives - the old shape could represent combinations that
+  cannot occur, and three tests existed only to assert they never did.
   `is_sensor` / `is_input` / `is_output` / `supports_tilt` are now `isinstance`
   checks over the one field.
 - The two catalogue handlers are one. Both discovery surfaces carry the same
@@ -1222,8 +1133,8 @@ gets smaller and the catalogue path stops doing the same work twice.
 ### Removed
 
 - `AmpioObject.group_ids` and the `powiazane` parser. The column is empty on
-  every observed firmware and the code said as much - room membership comes
-  from `fetch_rooms()`. `visible` loses the clause it fed.
+  every observed firmware and the code said as much - room membership comes from
+  `fetch_rooms()`. `visible` loses the clause it fed.
 - `AmpioObject.matter_exposed`. Informational only, filtered on by nothing, and
   read by nothing; the bit stays documented in `docs/identity.md`.
 - `AmpioState` from the public exports - the client's `objects` / `modules` /
@@ -1233,10 +1144,10 @@ gets smaller and the catalogue path stops doing the same work twice.
 
 ## 0.13.0
 
-Keeps the connection alive through the things that used to end it silently.
-Each fix below is a way the runner task could die, after which nothing
-reconnected, every entity froze at its last value, and `stop()` re-raised the
-failure so a consumer could not even tear the client down.
+Keeps the connection alive through the things that used to end it silently. Each
+fix below is a way the runner task could die, after which nothing reconnected,
+every entity froze at its last value, and `stop()` re-raised the failure so a
+consumer could not even tear the client down.
 
 ### Fixed
 
@@ -1250,8 +1161,8 @@ failure so a consumer could not even tear the client down.
   frame validates its bytes - that one arrives off the CAN bus.
 - `stop()` logs whatever the connection loop died of rather than re-raising it,
   so a consumer can always shut down, and it is safe to call twice.
-- `start()` clears the connected latch, so restarting a stopped client waits
-  for a real connection instead of returning immediately while offline.
+- `start()` clears the connected latch, so restarting a stopped client waits for
+  a real connection instead of returning immediately while offline.
 - The reconnect backoff clamps its exponent. Attempts are unbounded and the
   float overflowed after ~1024 of them, killing the retry loop during a long
   outage.
@@ -1304,9 +1215,9 @@ closing #21.
 - `AmpioClient.fetch_scenes() -> list[AmpioScene]` - the scene catalogue, with
   each scene's name, enabled flag, parent, and the objects its actions touch.
 - `AmpioClient.run_scene()`, `turn_scene_off()`, and `undo_scene()`. The M-SERV
-  replays the scene's own actions, so a consumer never sends them itself.
-  `undo` restores the objects to the state they held before the scene ran,
-  which is distinct from `off` driving them to zero - both verified live.
+  replays the scene's own actions, so a consumer never sends them itself. `undo`
+  restores the objects to the state they held before the scene ran, which is
+  distinct from `off` driving them to zero - both verified live.
 - `AmpioScene`, exported from the package.
 
 ### Notes
@@ -1327,8 +1238,8 @@ diagnostics view in a consumer.
   temperature is reported only by the modules that measure it and stays None
   elsewhere. Each frame also refreshes `last_seen`, so a module with no objects
   of its own still shows liveness.
-- `AmpioClient.add_module_listener()` - fires when a module's own report
-  updates it, mirroring `add_object_listener()`.
+- `AmpioClient.add_module_listener()` - fires when a module's own report updates
+  it, mirroring `add_object_listener()`.
 
 ### Notes
 
@@ -1349,8 +1260,8 @@ made in 0.8.0.
   `classify()` now returns `(sensor_kind, input_kind, output_kind)` and covers
   `przekaznik`, `led`, `rgbw`, `roleta`, `roleta_procenty`, and
   `roleta_lamelki`. Each kind flags the verbs the object answers (dimmable,
-  color, cover, position, tilt). `roleta_lamelki` previously fell through to
-  the generic value sensor, so a slats blind surfaced as a text sensor.
+  color, cover, position, tilt). `roleta_lamelki` previously fell through to the
+  generic value sensor, so a slats blind surfaced as a text sensor.
 - `AmpioObject.tilt_position` from the `lammel` state field, which only
   tilt-capable covers emit. It is also a runtime signal that an object has
   slats, independent of `typ_komponentu`.
@@ -1362,10 +1273,10 @@ made in 0.8.0.
 
 - **Corrected: commands are grant-scoped.** 0.8.0 documented the opposite, from
   a test against an object that turned out to be inside the account's grant.
-  Re-verified against two non-granted objects of different types: the command
-  is dropped with no effect, while the same command from an administrator
-  succeeds. A dedicated standard account is a real privilege boundary for
-  writes as well as reads, so the README caveat is withdrawn.
+  Re-verified against two non-granted objects of different types: the command is
+  dropped with no effect, while the same command from an administrator succeeds.
+  A dedicated standard account is a real privilege boundary for writes as well
+  as reads, so the README caveat is withdrawn.
 
 ## 0.8.0
 
@@ -1380,19 +1291,18 @@ account tiers can command, so this completes the standard-user path.
   write. Any verb the M-SERV accepts works through it.
 - Typed helpers for the verbs verified against live hardware: `turn_on`,
   `turn_off`, `toggle`, `set_value` (with an optional `pulse_ms` auto-revert),
-  `set_color` (RGBW), `open_cover`, `close_cover`, `set_cover_position` (with
-  an optional lamella angle).
+  `set_color` (RGBW), `open_cover`, `close_cover`, `set_cover_position` (with an
+  optional lamella angle).
 - `tools/set_object.py` - command one object and watch the resulting state.
-- Command documentation in `docs/protocol.md`: the verb table, which entries
-  are live-verified, and the CAN-tree alternative in `docs/untapped-surfaces.md`.
+- Command documentation in `docs/protocol.md`: the verb table, which entries are
+  live-verified, and the CAN-tree alternative in `docs/untapped-surfaces.md`.
 
 ### Notes
 
 - **Commands are not grant-scoped.** The per-user grant filters reads only; a
   non-admin account can command any object in the installation, including ones
   absent from its catalogue. Verified live. The README states this where the
-  account tiers are described - it is the main caveat of the standard-user
-  path.
+  account tiers are described - it is the main caveat of the standard-user path.
 - `setValue`'s second argument is an auto-revert timer in 10 ms units (a timed
   pulse), not a transition/fade time. `set_value(..., pulse_ms=...)` takes
   milliseconds and converts.
@@ -1406,53 +1316,51 @@ account tiers can command, so this completes the standard-user path.
 No library changes. The 0.7.0 tag never reached PyPI: its snapshot of the
 release workflow pinned a publish action whose bundled twine rejects the
 `Metadata-Version: 2.5` that current hatchling emits, and the tag is
-deletion-protected, so the 0.7.0 content ships as 0.7.1 with the fixed
-workflow.
+deletion-protected, so the 0.7.0 content ships as 0.7.1 with the fixed workflow.
 
 ## 0.7.0
 
 Makes non-admin accounts first-class. The M-SERV gates the `config` discovery
 surface and the raw `ampio/from/#` channel tree on the account's administrator
 bit; a standard user, whatever its app permissions, is served the app-sync
-`data` surface instead, filtered to the objects the administrator granted it
-in the app. The library now discovers through whichever surface answers,
-reports which one did, and recommends a unique-id scheme that is identical on
-both tiers. All wire behaviour was verified against a live M-SERV with an
+`data` surface instead, filtered to the objects the administrator granted it in
+the app. The library now discovers through whichever surface answers, reports
+which one did, and recommends a unique-id scheme that is identical on both
+tiers. All wire behaviour was verified against a live M-SERV with an
 administrator account and a fully-permissioned standard account side by side.
 
 ### Added
 
 - `data_devices` / `params_devices` endpoints: the app-sync object catalogue
   (`data/devices` - the `devicesDetails` row shape minus `params` and
-  `stan_json`, grant-filtered per account) and the full-catalogue `params`
-  table (`data/params_devices` - not grant-filtered, which is what lets a
-  standard account apply the hidden-flag visibility rule). Both join the
+  `stan_json`, grant-filtered per account) and the full-catalogue `params` table
+  (`data/params_devices` - not grant-filtered, which is what lets a standard
+  account apply the hidden-flag visibility rule). Both join the
   initial-discovery set; on the admin tier they merge additively and never
   degrade the richer `devicesDetails` reply.
 - `AmpioClient.access_tier` (`AccessTier.ADMIN` / `RESTRICTED` / `UNKNOWN`),
   detected from which surface answered. Settled by the time
-  `wait_for_initial_discovery()` returns True; it can upgrade
-  RESTRICTED -> ADMIN if a slow `config` reply lands later and never
-  downgrades.
+  `wait_for_initial_discovery()` returns True; it can upgrade RESTRICTED ->
+  ADMIN if a slow `config` reply lands later and never downgrades.
 - `AmpioObject.stable_key` (`leaf_<leaf_id>`) - the recommended
-  replacement-stable per-object unique id, identical on both tiers. The
-  decision record, including why it replaces the module-mac composite, is in
+  replacement-stable per-object unique id, identical on both tiers. The decision
+  record, including why it replaces the module-mac composite, is in
   [docs/identity.md](docs/identity.md).
 
 ### Changed
 
-- `wait_for_initial_discovery()` completes on the states snapshot and info
-  plus either catalogue pair (`config` `devicesDetails`+`devices`, or `data`
+- `wait_for_initial_discovery()` completes on the states snapshot and info plus
+  either catalogue pair (`config` `devicesDetails`+`devices`, or `data`
   `devices`+`params_devices`) rather than requiring the `config` pair, so
   standard accounts now finish discovery instead of timing out. A new
-  `admin_grace` parameter (default 2.0 s, spent from the same `timeout`
-  budget) keeps waiting briefly for the `config` pair after the `data` pair
-  completes, so `access_tier` is settled on return.
-- README account requirements rewritten for the two tiers. The old text
-  claimed a restricted account gets no server identity and no discovery;
-  live verification shows it gets the full grant-filtered object catalogue,
-  rooms, visibility flags, and `data/info` identity, and lacks the module
-  list and the raw input topics.
+  `admin_grace` parameter (default 2.0 s, spent from the same `timeout` budget)
+  keeps waiting briefly for the `config` pair after the `data` pair completes,
+  so `access_tier` is settled on return.
+- README account requirements rewritten for the two tiers. The old text claimed
+  a restricted account gets no server identity and no discovery; live
+  verification shows it gets the full grant-filtered object catalogue, rooms,
+  visibility flags, and `data/info` identity, and lacks the module list and the
+  raw input topics.
 
 ## 0.6.0
 
@@ -1470,8 +1378,8 @@ reverse-engineered from the M-SERV's own Matter bridge; see
   replacement-stable, set on phantom/stub rows and user-hidden objects.
 - `AmpioObject.matter_exposed` (`params` bit 37) - the per-object Matter opt-in,
   informational only (never used for filtering).
-- `docs/identity.md` - the reverse-engineered M-SERV Matter bridge: its
-  `params` gate, `type`/`leafId` classification table, and gaps.
+- `docs/identity.md` - the reverse-engineered M-SERV Matter bridge: its `params`
+  gate, `type`/`leafId` classification table, and gaps.
 
 ### Changed
 
@@ -1483,13 +1391,12 @@ reverse-engineered from the M-SERV's own Matter bridge; see
 
 A structural simplification with no behaviour change on the wire. The
 request/response endpoints, formerly described in four parallel places
-(per-endpoint topic builders, the subscribe block, the dispatch if/elif
-chain, and a fan of per-endpoint events plus `last_*_payload` fields), are
-now one `Endpoint` table that the client derives all four from. Object
-classification, formerly five overlapping `typ_komponentu` sets plus two
-`classify_*` functions, is now one `TYPE_PROFILES` table and one `classify()`.
-Public API changes below are breaking - per the beta posture above, 0.x bumps
-break freely.
+(per-endpoint topic builders, the subscribe block, the dispatch if/elif chain,
+and a fan of per-endpoint events plus `last_*_payload` fields), are now one
+`Endpoint` table that the client derives all four from. Object classification,
+formerly five overlapping `typ_komponentu` sets plus two `classify_*` functions,
+is now one `TYPE_PROFILES` table and one `classify()`. Public API changes below
+are breaking - per the beta posture above, 0.x bumps break freely.
 
 ### Changed
 
@@ -1498,9 +1405,9 @@ break freely.
   returning both classifications in one pass. `SensorKind` / `InputKind` are
   unchanged.
 - The six `AmpioClient.last_*_payload` properties are replaced by one
-  `AmpioClient.last_payloads: dict[str, str]` keyed by endpoint name
-  (`details`, `devices`, `states`, `info`, `groups`, `group_devices`,
-  `locations`). The states snapshot is now retained too.
+  `AmpioClient.last_payloads: dict[str, str]` keyed by endpoint name (`details`,
+  `devices`, `states`, `info`, `groups`, `group_devices`, `locations`). The
+  states snapshot is now retained too.
 - The four `request_details()` / `request_devices()` / `request_states()` /
   `request_info()` methods are replaced by `refresh()` (re-request the full
   initial-discovery set) and the general `request(name)`.
@@ -1518,14 +1425,13 @@ payload, or classification result.
 ### Added
 
 - `AmpioClient.wait_for_initial_discovery(*, timeout=8.0) -> bool` - an
-  explicit, opt-in way to block until the initial discovery cycle has
-  populated `modules`, `objects`, and `server_info` (the four messages
-  devicesDetails, devices, the states snapshot, and info). Returns `True`
-  when all four have arrived, `False` if `timeout` elapses first. It never
-  raises on timeout: restricted accounts may never receive the full set, in
-  which case discovery continues opportunistically. The signals latch on
-  first completion, so the call is reconnect-safe and returns immediately
-  once discovery has happened.
+  explicit, opt-in way to block until the initial discovery cycle has populated
+  `modules`, `objects`, and `server_info` (the four messages devicesDetails,
+  devices, the states snapshot, and info). Returns `True` when all four have
+  arrived, `False` if `timeout` elapses first. It never raises on timeout:
+  restricted accounts may never receive the full set, in which case discovery
+  continues opportunistically. The signals latch on first completion, so the
+  call is reconnect-safe and returns immediately once discovery has happened.
 
 ### Changed
 
@@ -1536,10 +1442,10 @@ payload, or classification result.
 
 ### Why
 
-A consumer that must read `modules`/`objects`/`server_info` before building
-on top of the client (e.g. resolving `mserv_id` to pre-register the M-SERV
-device, so other modules' `via_device` parents resolve) previously relied on
-an undocumented side effect: that `start()` happens to block until discovery
+A consumer that must read `modules`/`objects`/`server_info` before building on
+top of the client (e.g. resolving `mserv_id` to pre-register the M-SERV device,
+so other modules' `via_device` parents resolve) previously relied on an
+undocumented side effect: that `start()` happens to block until discovery
 completes. The library itself does not need that guarantee - its accessors
 degrade gracefully when nothing is known. Exposing the wait as its own method
 lets that consumer depend on the contract explicitly, and frees `start()` to
@@ -1549,29 +1455,28 @@ return earlier in a future revision without silently breaking the ordering.
 
 ### Added
 
-- `AmpioClient.fetch_locations() -> dict[int, str]` returning the
-  Designer "Location" marker name table: the integer id -> human label
-  the per-output dropdown in Designer is populated from (e.g.
-  `{1: "Salon", 2: "Kuchnia", ...}`). Triggered by publishing
-  `locations` on `ampio/control/<user>/config`; the broker replies on
-  `ampio/fromDB/<user>/config/locations` with `{"List":[{"id",
-"opis_menu"}]}`. The new topic is subscribed to on connect; the
-  retained payload is exposed as `AmpioClient.last_locations_payload`
-  alongside the other `last_*_payload` attributes.
-- `LOCATIONS_REQUEST_PAYLOAD` constant and `locations_response_topic`
-  topic helper.
+- `AmpioClient.fetch_locations() -> dict[int, str]` returning the Designer
+  "Location" marker name table: the integer id -> human label the per-output
+  dropdown in Designer is populated from (e.g.
+  `{1: "Salon", 2: "Kuchnia", ...}`). Triggered by publishing `locations` on
+  `ampio/control/<user>/config`; the broker replies on
+  `ampio/fromDB/<user>/config/locations` with `{"List":[{"id", "opis_menu"}]}`.
+  The new topic is subscribed to on connect; the retained payload is exposed as
+  `AmpioClient.last_locations_payload` alongside the other `last_*_payload`
+  attributes.
+- `LOCATIONS_REQUEST_PAYLOAD` constant and `locations_response_topic` topic
+  helper.
 
 ### Why
 
-The location is a per-output, user-editable string the integrator sets
-in the Designer's "Location" column. The _name table_ (id -> label)
-flows over MQTT and is what this method returns. The _per-output integer
-pointer into that table_ lives on the module's CAN-resident description
-table and is not published on any MQTT topic; resolving it would require
-either an RPC bridge or a CAN sniff and is intentionally out of scope
-here. Consumers that learn the per-output id by another route can use
-this table to resolve it to a label; consumers that don't still get a
-useful diagnostics blob (which locations does this M-SERV define?).
+The location is a per-output, user-editable string the integrator sets in the
+Designer's "Location" column. The _name table_ (id -> label) flows over MQTT and
+is what this method returns. The _per-output integer pointer into that table_
+lives on the module's CAN-resident description table and is not published on any
+MQTT topic; resolving it would require either an RPC bridge or a CAN sniff and
+is intentionally out of scope here. Consumers that learn the per-output id by
+another route can use this table to resolve it to a label; consumers that don't
+still get a useful diagnostics blob (which locations does this M-SERV define?).
 
 ### Notes
 
@@ -1585,77 +1490,73 @@ useful diagnostics blob (which locations does this M-SERV define?).
   `last_info_payload`, `last_groups_payload`, `last_group_devices_payload`
   - the verbatim decoded MQTT payload as the broker sent it, retained per
     discovery topic so a downstream tester report can include the actual JSON
-    the M-SERV emitted (instead of forcing the consumer to re-derive it).
-    Pure passthrough, no parsing, no copies; replaces the previous private
+    the M-SERV emitted (instead of forcing the consumer to re-derive it). Pure
+    passthrough, no parsing, no copies; replaces the previous private
     `_groups_payload` / `_group_devices_payload` attributes.
-- `ConnectionStats` dataclass exposed as `client.stats`:
-  `reconnect_count` (bumped on every successful `__aenter__` after the
-  first), `last_error` (text of the most recent `aiomqtt.MqttError`),
-  `started_at` (epoch seconds of the first successful connect),
-  `last_message_at` (epoch seconds of the most recent dispatched message).
-  Also exported from `ampio_mqtt`.
+- `ConnectionStats` dataclass exposed as `client.stats`: `reconnect_count`
+  (bumped on every successful `__aenter__` after the first), `last_error` (text
+  of the most recent `aiomqtt.MqttError`), `started_at` (epoch seconds of the
+  first successful connect), `last_message_at` (epoch seconds of the most recent
+  dispatched message). Also exported from `ampio_mqtt`.
 
 ### Why
 
-Surfaces what a downstream HA integration needs for a tester-facing
-debug snapshot: the raw discovery JSON for repro-from-bug-report
-workflows, and connection liveness counters so a "works intermittently"
-report can be cross-checked against the actual reconnect count.
+Surfaces what a downstream HA integration needs for a tester-facing debug
+snapshot: the raw discovery JSON for repro-from-bug-report workflows, and
+connection liveness counters so a "works intermittently" report can be
+cross-checked against the actual reconnect count.
 
 ### Notes
 
-- Additive; no breaking changes for consumers that used only the public
-  API surface of 0.1.0. The two private payload attributes are renamed,
-  which is fine in 0.x.x.
+- Additive; no breaking changes for consumers that used only the public API
+  surface of 0.1.0. The two private payload attributes are renamed, which is
+  fine in 0.x.x.
 - Coverage stays at 98%, mypy `--strict` clean, ruff clean.
 
 ## 0.1.0
 
-Initial beta cut consolidating the development surface into a single
-beta entry. Capabilities the library exposes today:
+Initial beta cut consolidating the development surface into a single beta entry.
+Capabilities the library exposes today:
 
-- Async `AmpioClient` over the M-SERV MQTT broker with username/password
-  auth, capped-exponential reconnect with jitter, and a graceful
-  `start()` / `stop()` lifecycle.
-- Discovery of physical modules and their logical DB objects from the
-  M-SERV (`devices`, `devicesDetails`, `data/states`, `data/info`), with
-  per-object live state pushed through `add_object_listener`.
-- Low-latency raw-channel-to-object bridge for `state/i/<ch>` and
-  `state/f/<ch>` so button-press / flag events land ahead of the
-  per-object echo.
-- `classify_object(typ, interpretacja) -> SensorKind | None` for the
-  sensor side (temperature, humidity, pressure, illuminance, loudness,
-  IAQ, CO2, generic linear inputs) and `classify_input(...) -> InputKind |
-None` for the boolean/binary-sensor side (`flaga`, `detekcja`,
-  `symulacja`).
-- Per-module `Capability` flag set populated from the upstream Ampio
-  devtypes catalogue (vendored as `_devtypes.json`): digital / analog /
-  temperature inputs, env sensors, digital / roller / RGBW / IR outputs,
-  plus role hints (UI panel, bridge, hub, alarm, AV).
-- `AmpioObject.funkcja` (physical channel index), `is_sensor`,
-  `is_input`, `is_on` (boolean interpretation of `value`).
-- `AmpioObject.leaf_id` (the `leafId` token the M-SERV emits for every
-  real object and leaves empty for ghost rows + system objects),
-  `is_system` (typ in `SYSTEM_TYPES` = `{symulacja, detekcja}`), and
-  `visible` = `bool(leaf_id) or bool(group_ids) or is_system`. The
-  predicate consumers should use as their discovery filter so ghost rows
-  the user no longer sees in Designer aren't surfaced.
-- `AmpioClient.fetch_rooms()` returning `{object_id: room_name}` over MQTT
-  from the `data/groups` + `data/group_devices` join; suitable for an HA
-  integration to forward as `DeviceInfo.suggested_area` at first import.
-- M-SERV identification (CAN mac, mac_global, firmware versions, local
-  IP, device id) via `AmpioServerInfo`.
+- Async `AmpioClient` over the M-SERV MQTT broker with username/password auth,
+  capped-exponential reconnect with jitter, and a graceful `start()` / `stop()`
+  lifecycle.
+- Discovery of physical modules and their logical DB objects from the M-SERV
+  (`devices`, `devicesDetails`, `data/states`, `data/info`), with per-object
+  live state pushed through `add_object_listener`.
+- Low-latency raw-channel-to-object bridge for `state/i/<ch>` and `state/f/<ch>`
+  so button-press / flag events land ahead of the per-object echo.
+- `classify_object(typ, interpretacja) -> SensorKind | None` for the sensor side
+  (temperature, humidity, pressure, illuminance, loudness, IAQ, CO2, generic
+  linear inputs) and `classify_input(...) -> InputKind | None` for the
+  boolean/binary-sensor side (`flaga`, `detekcja`, `symulacja`).
+- Per-module `Capability` flag set populated from the upstream Ampio devtypes
+  catalogue (vendored as `_devtypes.json`): digital / analog / temperature
+  inputs, env sensors, digital / roller / RGBW / IR outputs, plus role hints (UI
+  panel, bridge, hub, alarm, AV).
+- `AmpioObject.funkcja` (physical channel index), `is_sensor`, `is_input`,
+  `is_on` (boolean interpretation of `value`).
+- `AmpioObject.leaf_id` (the `leafId` token the M-SERV emits for every real
+  object and leaves empty for ghost rows + system objects), `is_system` (typ in
+  `SYSTEM_TYPES` = `{symulacja, detekcja}`), and `visible` =
+  `bool(leaf_id) or bool(group_ids) or is_system`. The predicate consumers
+  should use as their discovery filter so ghost rows the user no longer sees in
+  Designer aren't surfaced.
+- `AmpioClient.fetch_rooms()` returning `{object_id: room_name}` over MQTT from
+  the `data/groups` + `data/group_devices` join; suitable for an HA integration
+  to forward as `DeviceInfo.suggested_area` at first import.
+- M-SERV identification (CAN mac, mac_global, firmware versions, local IP,
+  device id) via `AmpioServerInfo`.
 - Best-effort LAN discovery via `discover()` with optional shared
   `AsyncZeroconf`.
 
 ### Notes
 
-- This is the first publicly visible 0.x.x release. The 1.x.x line on
-  PyPI is being yanked and replaced by this stream.
-- The strict-unique stable per-object key (the still-open half of #15)
-  remains unresolved: `leaf_id` is not unique either - the same physical
-  signal exposed as multiple Designer objects shares a `leafId`. Track
-  via #15 if that ever becomes blocking; today the composite
-  `{module.mac, typ_komponentu, funkcja}` plus the visibility filter is
-  empirically collision-free for the sensor entities the HA integration
-  surfaces.
+- This is the first publicly visible 0.x.x release. The 1.x.x line on PyPI is
+  being yanked and replaced by this stream.
+- The strict-unique stable per-object key (the still-open half of #15) remains
+  unresolved: `leaf_id` is not unique either - the same physical signal exposed
+  as multiple Designer objects shares a `leafId`. Track via #15 if that ever
+  becomes blocking; today the composite `{module.mac, typ_komponentu, funkcja}`
+  plus the visibility filter is empirically collision-free for the sensor
+  entities the HA integration surfaces.

@@ -1,64 +1,123 @@
 # Designer Location (AmpioObject.location) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers-extended-cc:subagent-driven-development (recommended) or superpowers-extended-cc:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> superpowers-extended-cc:subagent-driven-development (recommended) or
+> superpowers-extended-cc:executing-plans to implement this plan task-by-task.
+> Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship 0.30.0: `AmpioObject.location` resolved from the per-output Designer location, via the `device_api` get_data surface, with the locations name table restored and `matter_device_type` refined from the same record.
+**Goal:** Ship 0.30.0: `AmpioObject.location` resolved from the per-output
+Designer location, via the `device_api` get_data surface, with the locations
+name table restored and `matter_device_type` refined from the same record.
 
-**Architecture:** A new admin-only request/reply pair (`device_api/to/<machex>/get_data` -> `device_api/from/<MACHEX>/info`) delivers each module's CAN-resident description record. A pure join in `_protocol.py` maps objects to entries through `(descType, out-no)`. The store keeps the resolved table and re-applies it on every catalogue merge, exactly as it keeps `params_devices`.
+**Architecture:** A new admin-only request/reply pair
+(`device_api/to/<machex>/get_data` -> `device_api/from/<MACHEX>/info`) delivers
+each module's CAN-resident description record. A pure join in `_protocol.py`
+maps objects to entries through `(descType, out-no)`. The store keeps the
+resolved table and re-applies it on every catalogue merge, exactly as it keeps
+`params_devices`.
 
-**Tech Stack:** Python 3.13, asyncio, aiomqtt (existing floor), pytest + the FakeBroker kit in `tests/conftest.py`, the `.verify-harness/` local mosquitto fixtures.
+**Tech Stack:** Python 3.13, asyncio, aiomqtt (existing floor), pytest + the
+FakeBroker kit in `tests/conftest.py`, the `.verify-harness/` local mosquitto
+fixtures.
 
-**Spec:** Issue [#25](https://github.com/pszypowicz/ampio-mqtt/issues/25) (retitled; its 2026-08-25 comment holds the corrected wire contract), issue [#110](https://github.com/pszypowicz/ampio-mqtt/issues/110), and the "Wire contract" section below.
+**Spec:** Issue [#25](https://github.com/pszypowicz/ampio-mqtt/issues/25)
+(retitled; its 2026-08-25 comment holds the corrected wire contract), issue
+[#110](https://github.com/pszypowicz/ampio-mqtt/issues/110), and the "Wire
+contract" section below.
 
 ## Global Constraints
 
 - **Wire contract** (live-proven 2026-08-25, two protocol-23 modules):
-  - Request: publish empty payload to `device_api/to/<machex>/get_data`, mac in lowercase hex.
-  - Reply: JSON on `device_api/from/<MACHEX>/info` (mac in UPPERCASE hex - parse the topic segment with `int(x, 16)`, never compare strings). Key field: `descriptions`, base64.
-  - Blob: repeated little-endian frames `[len:2][descType:2][outNo:2][outLoc:2][outType:2][utf8 desc]`. `len` counts the whole frame. `len < 10` ends the walk.
-  - `outLoc` points into the locations name table: request keyword `locations` on `ampio/control/admin/config`, reply `{"List":[{"id", "opis_menu", "opis_rozwiniety"}]}` on `ampio/fromDB/admin/config/locations`. `outLoc` 0 = unassigned.
-  - `outType` is the Matter device type (256 = 0x0100). 0 = untagged. The CAN value is authoritative; the DB `type` column mirror lags it (#110).
-  - descType enum (Designer bundle): DEVICE_NAME=1, OW=3, FLAG_BIN=6, FLAG_U8=7, FLAG_I16=8, INPUTS=10, OUTPUTS=12, IN_U8=14, MLED=15, OUT_OC_U8=16, MRT=17, SCREEN_NO=20, FLAG_BIN_SIMPLE=22, SatelZone=23, SatelInput=24, SatelOutput=25, ROLLER=26.
-  - The whole `device_api` tree is admin-only. The restricted account gets silence on subscribe and request.
-  - Proven join pairs: `przekaznik` -> descType 12 (OUTPUTS), `roleta_procenty` -> descType 26 (ROLLER); out-no = the last `leafId` segment. Task 1 proves or refutes more pairs; **only proven pairs ship** (`DESC_TYPE_BY_KIND`).
-- **Proven-or-out:** wire behavior lands only with live proof. No speculative descType pairs, no defensive branches for shapes never observed.
+  - Request: publish empty payload to `device_api/to/<machex>/get_data`, mac in
+    lowercase hex.
+  - Reply: JSON on `device_api/from/<MACHEX>/info` (mac in UPPERCASE hex - parse
+    the topic segment with `int(x, 16)`, never compare strings). Key field:
+    `descriptions`, base64.
+  - Blob: repeated little-endian frames
+    `[len:2][descType:2][outNo:2][outLoc:2][outType:2][utf8 desc]`. `len` counts
+    the whole frame. `len < 10` ends the walk.
+  - `outLoc` points into the locations name table: request keyword `locations`
+    on `ampio/control/admin/config`, reply
+    `{"List":[{"id", "opis_menu", "opis_rozwiniety"}]}` on
+    `ampio/fromDB/admin/config/locations`. `outLoc` 0 = unassigned.
+  - `outType` is the Matter device type (256 = 0x0100). 0 = untagged. The CAN
+    value is authoritative; the DB `type` column mirror lags it (#110).
+  - descType enum (Designer bundle): DEVICE_NAME=1, OW=3, FLAG_BIN=6, FLAG_U8=7,
+    FLAG_I16=8, INPUTS=10, OUTPUTS=12, IN_U8=14, MLED=15, OUT_OC_U8=16, MRT=17,
+    SCREEN_NO=20, FLAG_BIN_SIMPLE=22, SatelZone=23, SatelInput=24,
+    SatelOutput=25, ROLLER=26.
+  - The whole `device_api` tree is admin-only. The restricted account gets
+    silence on subscribe and request.
+  - Proven join pairs: `przekaznik` -> descType 12 (OUTPUTS), `roleta_procenty`
+    -> descType 26 (ROLLER); out-no = the last `leafId` segment. Task 1 proves
+    or refutes more pairs; **only proven pairs ship** (`DESC_TYPE_BY_KIND`).
+- **Proven-or-out:** wire behavior lands only with live proof. No speculative
+  descType pairs, no defensive branches for shapes never observed.
 - No new runtime dependencies. `base64`/`binascii` are stdlib.
-- CI bars: `pytest --cov=src/ampio_mqtt --cov-branch --cov-fail-under=95`, `ruff check src tests tools`, `ruff format --check`. Every task leaves all three green.
-- Comment style: durable invariants only - no session references, no "changed from X", no coverage numbers (repo CLAUDE conventions).
-- Public artifacts (commits, PR): no host names, no room names, no device names, no macs from the live install. `cb89`-style macs stay in tests/fixtures only as synthetic values.
+- CI bars: `pytest --cov=src/ampio_mqtt --cov-branch --cov-fail-under=95`,
+  `ruff check src tests tools`, `ruff format --check`. Every task leaves all
+  three green.
+- Comment style: durable invariants only - no session references, no "changed
+  from X", no coverage numbers (repo CLAUDE conventions).
+- Public artifacts (commits, PR): no host names, no room names, no device names,
+  no macs from the live install. `cb89`-style macs stay in tests/fixtures only
+  as synthetic values.
 
 **User decisions (already made):**
 
-- The API freeze (#86) happens AFTER the merge to Home Assistant core, not before - shipping new surface in 0.30.0 is sanctioned (user, 2026-08-26).
-- No new tracking issue: #25 is the tracker (retitled), #110 rides along in the same release.
+- The API freeze (#86) happens AFTER the merge to Home Assistant core, not
+  before - shipping new surface in 0.30.0 is sanctioned (user, 2026-08-26).
+- No new tracking issue: #25 is the tracker (retitled), #110 rides along in the
+  same release.
 - Branch `0.30-designer-location`; the release is the next minor, 0.30.0.
-- Approved API surface: `AmpioObject.location: str | None`, restored `AmpioClient.fetch_locations()`, new admin-only `AmpioClient.resolve_locations()` sweep; `matter_device_type` refined from CAN `outType` (never cleared by it).
-- Consumer contract (HA integration, later): "Designer location wins, app room as fallback" - the library ships the location value; the precedence rule lives in the consumer.
+- Approved API surface: `AmpioObject.location: str | None`, restored
+  `AmpioClient.fetch_locations()`, new admin-only
+  `AmpioClient.resolve_locations()` sweep; `matter_device_type` refined from CAN
+  `outType` (never cleared by it).
+- Consumer contract (HA integration, later): "Designer location wins, app room
+  as fallback" - the library ships the location value; the precedence rule lives
+  in the consumer.
 
 ---
 
 ### Task 1: Prove the join rule live across the full catalogue
 
-**Goal:** Prove, on the real install, which `typ_komponentu` -> descType pairs hold and that the last `leafId` segment (not `funkcja`) is the out-no join key, across all modules - the result fixes `DESC_TYPE_BY_KIND` for Task 3.
+**Goal:** Prove, on the real install, which `typ_komponentu` -> descType pairs
+hold and that the last `leafId` segment (not `funkcja`) is the out-no join key,
+across all modules - the result fixes `DESC_TYPE_BY_KIND` for Task 3.
 
-**USER-ORDERED GATE - NON-SKIPPABLE.** This task was requested by the user in the current conversation. It MUST NOT be closed by walking around it, by declaring it "verified inline", or by substituting a cheaper check. Close only after every item in `acceptanceCriteria` has been re-validated independently, with output captured.
+**USER-ORDERED GATE - NON-SKIPPABLE.** This task was requested by the user in
+the current conversation. It MUST NOT be closed by walking around it, by
+declaring it "verified inline", or by substituting a cheaper check. Close only
+after every item in `acceptanceCriteria` has been re-validated independently,
+with output captured.
 
 **Files:**
 
-- Create: `docs/superpowers/plans/2026-08-26-join-proof-results.md` (the captured evidence)
+- Create: `docs/superpowers/plans/2026-08-26-join-proof-results.md` (the
+  captured evidence)
 
 **Acceptance Criteria:**
 
-- [ ] The probe ran against the live broker with the admin account and captured replies from >= 30 of the 39 modules (offline modules are tolerated and listed).
-- [ ] For every object with a non-empty `leafId` on an answering module, the report states whether `(candidate descType, last leafId segment)` matched an entry, and whether `funkcja` would have matched instead.
-- [ ] A results file records: the winning out-no key, the proven `typ_komponentu -> descType` table with match counts, and the kinds left unproven.
-- [ ] Read access only: the probe publishes only `get_data`, `devicesDetails`, `devices`, and `locations` requests. No `/api/set`, no writes.
+- [ ] The probe ran against the live broker with the admin account and captured
+      replies from >= 30 of the 39 modules (offline modules are tolerated and
+      listed).
+- [ ] For every object with a non-empty `leafId` on an answering module, the
+      report states whether `(candidate descType, last leafId segment)` matched
+      an entry, and whether `funkcja` would have matched instead.
+- [ ] A results file records: the winning out-no key, the proven
+      `typ_komponentu -> descType` table with match counts, and the kinds left
+      unproven.
+- [ ] Read access only: the probe publishes only `get_data`, `devicesDetails`,
+      `devices`, and `locations` requests. No `/api/set`, no writes.
 
-**Verify:** `uv run --with aiomqtt python /tmp/join_proof.py` -> a per-kind table with match ratios, committed into the results file.
+**Verify:** `uv run --with aiomqtt python /tmp/join_proof.py` -> a per-kind
+table with match ratios, committed into the results file.
 
 **Steps:**
 
-- [ ] **Step 1: Write the probe script to `/tmp/join_proof.py`** (one-off; not committed)
+- [ ] **Step 1: Write the probe script to `/tmp/join_proof.py`** (one-off; not
+      committed)
 
 ```python
 """Join-rule proof: get_data every module, join objects to description entries.
@@ -160,14 +219,23 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-- [ ] **Step 2: Run it with the admin env** (load the env file line by line; never `source` it, never echo the password)
+- [ ] **Step 2: Run it with the admin env** (load the env file line by line;
+      never `source` it, never echo the password)
 
-Run: `while IFS='=' read -r k v; do export "$k=$v"; done < ~/.config/ampio-mqtt/admin.env && uv run --with aiomqtt python /tmp/join_proof.py`
-Expected: an answered-modules line and one row per `typ_komponentu`. A kind is PROVEN for descType D when its leaf-key hits land on exactly one descType and cover a clear majority of `total` (missing hits must be explainable as modules that never got a description written).
+Run:
+`while IFS='=' read -r k v; do export "$k=$v"; done < ~/.config/ampio-mqtt/admin.env && uv run --with aiomqtt python /tmp/join_proof.py`
+Expected: an answered-modules line and one row per `typ_komponentu`. A kind is
+PROVEN for descType D when its leaf-key hits land on exactly one descType and
+cover a clear majority of `total` (missing hits must be explainable as modules
+that never got a description written).
 
 - [ ] **Step 3: Record the results file**
 
-Write `docs/superpowers/plans/2026-08-26-join-proof-results.md` with: the answered/silent counts, the winning out-no key (leaf segment vs `funkcja`, with the hit counts), the proven pairs table (`typ_komponentu` | descType | hits/total), the unproven kinds, and the decision line "DESC_TYPE_BY_KIND ships exactly these pairs: ...". Do not include room names, device names, or the host.
+Write `docs/superpowers/plans/2026-08-26-join-proof-results.md` with: the
+answered/silent counts, the winning out-no key (leaf segment vs `funkcja`, with
+the hit counts), the proven pairs table (`typ_komponentu` | descType |
+hits/total), the unproven kinds, and the decision line "DESC_TYPE_BY_KIND ships
+exactly these pairs: ...". Do not include room names, device names, or the host.
 
 - [ ] **Step 4: Commit**
 
@@ -180,22 +248,29 @@ git commit -m "Prove the description join rule on the live catalogue (#25)"
 
 ### Task 2: Restore the locations name table (fetch_locations)
 
-**Goal:** `AmpioClient.fetch_locations()` returns `{location_id: name}` again, as an admin-only on-demand endpoint, and `_fetch` rejects a non-served endpoint with a clear error.
+**Goal:** `AmpioClient.fetch_locations()` returns `{location_id: name}` again,
+as an admin-only on-demand endpoint, and `_fetch` rejects a non-served endpoint
+with a clear error.
 
 **Files:**
 
-- Modify: `src/ampio_mqtt/_protocol.py` (add `parse_locations`, add the `locations` endpoint row)
+- Modify: `src/ampio_mqtt/_protocol.py` (add `parse_locations`, add the
+  `locations` endpoint row)
 - Modify: `src/ampio_mqtt/client.py` (add `fetch_locations`, guard `_fetch`)
 - Create: `tests/test_locations.py`
 
 **Acceptance Criteria:**
 
-- [ ] `parse_locations` returns `{id: opis_menu}`, skips malformed rows, returns None for a non-List payload.
-- [ ] `fetch_locations()` publishes `locations` to `ampio/control/admin/config` and returns the parsed reply from `ampio/fromDB/admin/config/locations`.
-- [ ] On the restricted tier, `fetch_locations()` raises `RuntimeError` naming the tier - not `KeyError`.
+- [ ] `parse_locations` returns `{id: opis_menu}`, skips malformed rows, returns
+      None for a non-List payload.
+- [ ] `fetch_locations()` publishes `locations` to `ampio/control/admin/config`
+      and returns the parsed reply from `ampio/fromDB/admin/config/locations`.
+- [ ] On the restricted tier, `fetch_locations()` raises `RuntimeError` naming
+      the tier - not `KeyError`.
 - [ ] Coverage stays >= 95%, ruff clean.
 
-**Verify:** `uv run pytest tests/test_locations.py -q` -> all pass; `uv run pytest -q` -> all pass.
+**Verify:** `uv run pytest tests/test_locations.py -q` -> all pass;
+`uv run pytest -q` -> all pass.
 
 **Steps:**
 
@@ -279,8 +354,8 @@ async def test_fetch_locations_raises_on_restricted_tier() -> None:
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `uv run pytest tests/test_locations.py -q`
-Expected: FAIL - `parse_locations` does not exist.
+Run: `uv run pytest tests/test_locations.py -q` Expected: FAIL -
+`parse_locations` does not exist.
 
 - [ ] **Step 3: Add the parser and the endpoint row** (`_protocol.py`)
 
@@ -325,9 +400,11 @@ Append to `ENDPOINTS` (after the `scenes` row):
     ),
 ```
 
-- [ ] **Step 4: Add `fetch_locations` and the `_fetch` tier guard** (`client.py`)
+- [ ] **Step 4: Add `fetch_locations` and the `_fetch` tier guard**
+      (`client.py`)
 
-In `_fetch`, extend the pre-flight loop (the guard runs before the `parses` check):
+In `_fetch`, extend the pre-flight loop (the guard runs before the `parses`
+check):
 
 ```python
         for name in names:
@@ -363,7 +440,8 @@ Add the method next to `fetch_scenes`:
 
 - [ ] **Step 5: Run the suite**
 
-Run: `uv run pytest -q && uv run ruff check src tests tools && uv run ruff format --check src tests tools`
+Run:
+`uv run pytest -q && uv run ruff check src tests tools && uv run ruff format --check src tests tools`
 Expected: PASS, clean.
 
 - [ ] **Step 6: Commit**
@@ -377,7 +455,9 @@ git commit -m "Restore the Designer locations name table as an admin endpoint (#
 
 ### Task 3: Descriptions wire layer (parsers, router, topics)
 
-**Goal:** `_protocol.py` decodes a `device_api/from/<MAC>/info` reply into typed `OutputDescription` entries and routes it; the topic helpers and the proven `DESC_TYPE_BY_KIND` constants exist.
+**Goal:** `_protocol.py` decodes a `device_api/from/<MAC>/info` reply into typed
+`OutputDescription` entries and routes it; the topic helpers and the proven
+`DESC_TYPE_BY_KIND` constants exist.
 
 **Files:**
 
@@ -386,10 +466,15 @@ git commit -m "Restore the Designer locations name table as an admin endpoint (#
 
 **Acceptance Criteria:**
 
-- [ ] `parse_descriptions_blob` decodes the little-endian frames and stops on a short or overrunning length.
-- [ ] `parse_device_info` returns `()` for a record without `descriptions`, None for non-JSON or bad base64.
-- [ ] The router turns `device_api/from/CB89/info` into `DeviceDescriptions(mac=0xCB89, entries=...)`, case-insensitively, and returns None for an unparseable payload.
-- [ ] `DESC_TYPE_BY_KIND` contains exactly the pairs Task 1 proved (at minimum `przekaznik: 12` and `roleta_procenty: 26`, both already live-proven).
+- [ ] `parse_descriptions_blob` decodes the little-endian frames and stops on a
+      short or overrunning length.
+- [ ] `parse_device_info` returns `()` for a record without `descriptions`, None
+      for non-JSON or bad base64.
+- [ ] The router turns `device_api/from/CB89/info` into
+      `DeviceDescriptions(mac=0xCB89, entries=...)`, case-insensitively, and
+      returns None for an unparseable payload.
+- [ ] `DESC_TYPE_BY_KIND` contains exactly the pairs Task 1 proved (at minimum
+      `przekaznik: 12` and `roleta_procenty: 26`, both already live-proven).
 - [ ] Coverage >= 95%, ruff clean.
 
 **Verify:** `uv run pytest tests/test_descriptions.py -q` -> all pass.
@@ -479,12 +564,13 @@ def test_request_topic_uses_lowercase_hex() -> None:
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `uv run pytest tests/test_descriptions.py -q`
-Expected: FAIL - imports missing.
+Run: `uv run pytest tests/test_descriptions.py -q` Expected: FAIL - imports
+missing.
 
 - [ ] **Step 3: Implement in `_protocol.py`**
 
-Add `import base64` and `import binascii` to the module imports. Add the dataclass and parsers next to the other parsers:
+Add `import base64` and `import binascii` to the module imports. Add the
+dataclass and parsers next to the other parsers:
 
 ```python
 @dataclass(slots=True, frozen=True)
@@ -575,7 +661,8 @@ DESC_TYPE_BY_KIND: dict[str, int] = {
 }
 ```
 
-Add the inbound type next to `DiagnosticsReport`, extend the `Inbound` union, and route it in `Router.route` (insert before the `ampio/from` branch):
+Add the inbound type next to `DiagnosticsReport`, extend the `Inbound` union,
+and route it in `Router.route` (insert before the `ampio/from` branch):
 
 ```python
 @dataclass(slots=True, frozen=True)
@@ -612,11 +699,14 @@ Inbound = (
             return None if entries is None else DeviceDescriptions(mac=mac, entries=entries)
 ```
 
-- [ ] **Step 4: Extend `DESC_TYPE_BY_KIND` with the Task 1 proven pairs** (read `2026-08-26-join-proof-results.md`; add exactly those pairs, each with the enum-name comment)
+- [ ] **Step 4: Extend `DESC_TYPE_BY_KIND` with the Task 1 proven pairs** (read
+      `2026-08-26-join-proof-results.md`; add exactly those pairs, each with the
+      enum-name comment)
 
 - [ ] **Step 5: Run the suite**
 
-Run: `uv run pytest -q && uv run ruff check src tests tools && uv run ruff format --check src tests tools`
+Run:
+`uv run pytest -q && uv run ruff check src tests tools && uv run ruff format --check src tests tools`
 Expected: PASS, clean.
 
 - [ ] **Step 6: Commit**
@@ -630,7 +720,8 @@ git commit -m "Decode and route the device_api description record (#25)"
 
 ### Task 4: AmpioObject.location field and leaf out-no
 
-**Goal:** `AmpioObject` carries `location: str | None` and exposes `leaf_out_no` parsed from the last `leafId` segment.
+**Goal:** `AmpioObject` carries `location: str | None` and exposes `leaf_out_no`
+parsed from the last `leafId` segment.
 
 **Files:**
 
@@ -639,9 +730,12 @@ git commit -m "Decode and route the device_api description record (#25)"
 
 **Acceptance Criteria:**
 
-- [ ] `AmpioObject(id=1).location is None`; the field survives `dataclasses.replace` of other fields.
-- [ ] `leaf_out_no` returns the last segment as int (`0_cb89_257_2_7` -> 7), None for an empty or malformed `leaf_id` and for a non-numeric segment.
-- [ ] `module_mac` behavior is unchanged by the regex edit (existing tests stay green).
+- [ ] `AmpioObject(id=1).location is None`; the field survives
+      `dataclasses.replace` of other fields.
+- [ ] `leaf_out_no` returns the last segment as int (`0_cb89_257_2_7` -> 7),
+      None for an empty or malformed `leaf_id` and for a non-numeric segment.
+- [ ] `module_mac` behavior is unchanged by the regex edit (existing tests stay
+      green).
 
 **Verify:** `uv run pytest tests/test_models.py -q` -> all pass.
 
@@ -664,16 +758,18 @@ def test_leaf_out_no_parses_last_segment() -> None:
     assert AmpioObject(id=1, leaf_id="junk").leaf_out_no is None
 ```
 
-(Use the module's existing imports; add `from dataclasses import replace` if absent.)
+(Use the module's existing imports; add `from dataclasses import replace` if
+absent.)
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `uv run pytest tests/test_models.py -q`
-Expected: FAIL - unexpected keyword `location`.
+Run: `uv run pytest tests/test_models.py -q` Expected: FAIL - unexpected keyword
+`location`.
 
 - [ ] **Step 3: Implement** (`models.py`)
 
-Extend the regex (second capture group; the mac group and `module_mac` stay as they are):
+Extend the regex (second capture group; the mac group and `module_mac` stay as
+they are):
 
 ```python
 _LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_[^_]+_[^_]+_([^_]+)")
@@ -712,7 +808,8 @@ Add the property next to `module_mac`:
 
 - [ ] **Step 4: Run the suite**
 
-Run: `uv run pytest -q && uv run ruff check src tests tools && uv run ruff format --check src tests tools`
+Run:
+`uv run pytest -q && uv run ruff check src tests tools && uv run ruff format --check src tests tools`
 Expected: PASS, clean.
 
 - [ ] **Step 5: Commit**
@@ -726,7 +823,9 @@ git commit -m "Add AmpioObject.location and the leaf out-no join key (#25)"
 
 ### Task 5: The pure join (resolve_designer)
 
-**Goal:** A pure `_protocol.resolve_designer()` maps objects to `DesignerResolution(location, matter_device_type)` through `(descType, out-no)`, skipping colliding macs and unproven kinds.
+**Goal:** A pure `_protocol.resolve_designer()` maps objects to
+`DesignerResolution(location, matter_device_type)` through `(descType, out-no)`,
+skipping colliding macs and unproven kinds.
 
 **Files:**
 
@@ -735,15 +834,19 @@ git commit -m "Add AmpioObject.location and the leaf out-no join key (#25)"
 
 **Acceptance Criteria:**
 
-- [ ] A relay on mac 0xCB89 with `leaf_id` ending `_0` joins the `(12, 0)` entry; `out_loc` resolves through the names map; `out_loc` 0 yields `location=None`; `out_type` 0 yields `matter_device_type=None`.
-- [ ] Objects with an unproven kind, an empty `leaf_id`, an unanswered module, or a colliding mac produce no resolution.
+- [ ] A relay on mac 0xCB89 with `leaf_id` ending `_0` joins the `(12, 0)`
+      entry; `out_loc` resolves through the names map; `out_loc` 0 yields
+      `location=None`; `out_type` 0 yields `matter_device_type=None`.
+- [ ] Objects with an unproven kind, an empty `leaf_id`, an unanswered module,
+      or a colliding mac produce no resolution.
 - [ ] Coverage >= 95%, ruff clean.
 
 **Verify:** `uv run pytest tests/test_descriptions.py -q` -> all pass.
 
 **Steps:**
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/test_descriptions.py`)
+- [ ] **Step 1: Write the failing tests** (append to
+      `tests/test_descriptions.py`)
 
 ```python
 from ampio_mqtt._protocol import DesignerResolution, resolve_designer
@@ -790,10 +893,11 @@ def test_resolve_designer_skips_colliding_macs() -> None:
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `uv run pytest tests/test_descriptions.py -q`
-Expected: FAIL - `resolve_designer` does not exist.
+Run: `uv run pytest tests/test_descriptions.py -q` Expected: FAIL -
+`resolve_designer` does not exist.
 
-- [ ] **Step 3: Implement** (`_protocol.py`; add `Mapping` to the `collections.abc` import and `AmpioObject` to the models import)
+- [ ] **Step 3: Implement** (`_protocol.py`; add `Mapping` to the
+      `collections.abc` import and `AmpioObject` to the models import)
 
 ```python
 @dataclass(slots=True, frozen=True)
@@ -843,7 +947,8 @@ def resolve_designer(
 
 - [ ] **Step 4: Run the suite**
 
-Run: `uv run pytest -q && uv run ruff check src tests tools && uv run ruff format --check src tests tools`
+Run:
+`uv run pytest -q && uv run ruff check src tests tools && uv run ruff format --check src tests tools`
 Expected: PASS, clean.
 
 - [ ] **Step 5: Commit**
@@ -857,7 +962,9 @@ git commit -m "Join objects to their description entries (#25)"
 
 ### Task 6: Store merge (apply_designer_metadata)
 
-**Goal:** The store holds the resolved table, updates known objects (with events), and re-applies it on every catalogue merge, so a refresh never wipes `location`.
+**Goal:** The store holds the resolved table, updates known objects (with
+events), and re-applies it on every catalogue merge, so a refresh never wipes
+`location`.
 
 **Files:**
 
@@ -866,15 +973,22 @@ git commit -m "Join objects to their description entries (#25)"
 
 **Acceptance Criteria:**
 
-- [ ] `apply_designer_metadata` sets `location` and refines `matter_device_type`; a CAN value never clears a DB value (`matter_device_type=None` in a resolution leaves the column value standing).
-- [ ] Only real changes emit `ObjectUpdated` - re-applying the same table emits nothing.
-- [ ] After eviction and re-creation through a catalogue reply, the object regains its `location` from the held table.
+- [ ] `apply_designer_metadata` sets `location` and refines
+      `matter_device_type`; a CAN value never clears a DB value
+      (`matter_device_type=None` in a resolution leaves the column value
+      standing).
+- [ ] Only real changes emit `ObjectUpdated` - re-applying the same table emits
+      nothing.
+- [ ] After eviction and re-creation through a catalogue reply, the object
+      regains its `location` from the held table.
 
 **Verify:** `uv run pytest tests/test_store.py -q` -> all pass.
 
 **Steps:**
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/test_store.py`; follow the file's existing helpers for building catalogue payloads and reading `Applied.events`)
+- [ ] **Step 1: Write the failing tests** (append to `tests/test_store.py`;
+      follow the file's existing helpers for building catalogue payloads and
+      reading `Applied.events`)
 
 ```python
 def test_apply_designer_metadata_sets_location_and_refines_type() -> None:
@@ -917,12 +1031,14 @@ def test_catalogue_merge_reapplies_the_designer_table() -> None:
     assert store.objects[64].matter_device_type == 256
 ```
 
-Write `_seed_catalogue` as a small local helper that feeds a `devicesDetails` `EndpointReply` through `store.apply` (mirror how the file's existing tests do it), and import `DesignerResolution` from `ampio_mqtt._protocol`.
+Write `_seed_catalogue` as a small local helper that feeds a `devicesDetails`
+`EndpointReply` through `store.apply` (mirror how the file's existing tests do
+it), and import `DesignerResolution` from `ampio_mqtt._protocol`.
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `uv run pytest tests/test_store.py -q`
-Expected: FAIL - `apply_designer_metadata` does not exist.
+Run: `uv run pytest tests/test_store.py -q` Expected: FAIL -
+`apply_designer_metadata` does not exist.
 
 - [ ] **Step 3: Implement** (`_store.py`)
 
@@ -983,7 +1099,8 @@ In `_merge_metadata`, right after the `params` fallback block:
 
 - [ ] **Step 4: Run the suite**
 
-Run: `uv run pytest -q && uv run ruff check src tests tools && uv run ruff format --check src tests tools`
+Run:
+`uv run pytest -q && uv run ruff check src tests tools && uv run ruff format --check src tests tools`
 Expected: PASS, clean.
 
 - [ ] **Step 5: Commit**
@@ -997,7 +1114,9 @@ git commit -m "Hold and re-apply the resolved designer table in the store (#25, 
 
 ### Task 7: Client resolve_locations (subscription, correlation, sweep)
 
-**Goal:** `AmpioClient.resolve_locations()` sweeps every catalogued module over get_data, joins the replies, merges them through the store, dispatches the events, and returns `{object_id: location_name}`.
+**Goal:** `AmpioClient.resolve_locations()` sweeps every catalogued module over
+get_data, joins the replies, merges them through the store, dispatches the
+events, and returns `{object_id: location_name}`.
 
 **Files:**
 
@@ -1006,9 +1125,13 @@ git commit -m "Hold and re-apply the resolved designer table in the store (#25, 
 
 **Acceptance Criteria:**
 
-- [ ] The admin client subscribes `device_api/from/+/info`; the restricted client does not.
-- [ ] `resolve_locations()` publishes one `device_api/to/<machex>/get_data` per catalogued module mac and returns the joined map; `AmpioObject.location` reads the value afterwards; an `ObjectUpdated` fired for the change.
-- [ ] A module that never answers within the timeout is skipped - the call still returns what resolved, and raises nothing for the silence.
+- [ ] The admin client subscribes `device_api/from/+/info`; the restricted
+      client does not.
+- [ ] `resolve_locations()` publishes one `device_api/to/<machex>/get_data` per
+      catalogued module mac and returns the joined map; `AmpioObject.location`
+      reads the value afterwards; an `ObjectUpdated` fired for the change.
+- [ ] A module that never answers within the timeout is skipped - the call still
+      returns what resolved, and raises nothing for the silence.
 - [ ] On the restricted tier the call raises `RuntimeError` naming the tier.
 - [ ] Coverage >= 95%, ruff clean.
 
@@ -1016,7 +1139,8 @@ git commit -m "Hold and re-apply the resolved designer table in the store (#25, 
 
 **Steps:**
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/test_descriptions.py`)
+- [ ] **Step 1: Write the failing tests** (append to
+      `tests/test_descriptions.py`)
 
 ```python
 import asyncio
@@ -1135,8 +1259,8 @@ async def test_resolve_locations_raises_on_restricted_tier() -> None:
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `uv run pytest tests/test_descriptions.py -q`
-Expected: FAIL - no subscription, no method.
+Run: `uv run pytest tests/test_descriptions.py -q` Expected: FAIL - no
+subscription, no method.
 
 - [ ] **Step 3: Implement** (`client.py`)
 
@@ -1162,7 +1286,8 @@ In `__init__`, next to `_poisoned_topics`:
         ] = {}
 ```
 
-In `_handle_message`, after the `EndpointReply` pure-parse branch and before `store.apply`:
+In `_handle_message`, after the `EndpointReply` pure-parse branch and before
+`store.apply`:
 
 ```python
             if isinstance(msg, _protocol.DeviceDescriptions):
@@ -1251,7 +1376,8 @@ The method, next to `fetch_locations`:
 
 - [ ] **Step 4: Run the suite**
 
-Run: `uv run pytest -q && uv run ruff check src tests tools && uv run ruff format --check src tests tools`
+Run:
+`uv run pytest -q && uv run ruff check src tests tools && uv run ruff format --check src tests tools`
 Expected: PASS, clean.
 
 - [ ] **Step 5: Commit**
@@ -1265,9 +1391,14 @@ git commit -m "Sweep the device_api records and resolve object locations (#25)"
 
 ### Task 8: Harness claim and live verification
 
-**Goal:** A credential-free harness claim proves the end-to-end path against the fake M-SERV, and one live run against the real broker confirms the known values.
+**Goal:** A credential-free harness claim proves the end-to-end path against the
+fake M-SERV, and one live run against the real broker confirms the known values.
 
-**USER-ORDERED GATE - NON-SKIPPABLE.** This task was requested by the user in the current conversation. It MUST NOT be closed by walking around it, by declaring it "verified inline", or by substituting a cheaper check. Close only after every item in `acceptanceCriteria` has been re-validated independently, with output captured.
+**USER-ORDERED GATE - NON-SKIPPABLE.** This task was requested by the user in
+the current conversation. It MUST NOT be closed by walking around it, by
+declaring it "verified inline", or by substituting a cheaper check. Close only
+after every item in `acceptanceCriteria` has been re-validated independently,
+with output captured.
 
 **Files:**
 
@@ -1276,18 +1407,43 @@ git commit -m "Sweep the device_api records and resolve object locations (#25)"
 
 **Acceptance Criteria:**
 
-- [ ] The fake M-SERV answers `locations` on the config surface and `get_data` on `device_api/to/#` (reply on `device_api/from/<MAC>/info` with an uppercase-hex mac), and the claim asserts: `resolve_locations()` returns the expected map, `objects[...].location` reads it, `matter_device_type` was refined, and the restricted client raises `RuntimeError`.
-- [ ] The claim run output is captured in the task close (`uv run --with . python .verify-harness/claim18_designer_location.py` against the local mosquitto, per `.verify-harness` conventions).
-- [ ] One live run against the real broker (admin env) captured: `resolve_locations()` output includes the relay object documented in the join-proof results with its known location name, and that object's `matter_device_type` reads 256 while its DB `type` column is empty (the #110 divergence, observed through the library).
-- [ ] The live run wrote nothing: only `get_data`, discovery, and `locations` requests were published.
+- [ ] The fake M-SERV answers `locations` on the config surface and `get_data`
+      on `device_api/to/#` (reply on `device_api/from/<MAC>/info` with an
+      uppercase-hex mac), and the claim asserts: `resolve_locations()` returns
+      the expected map, `objects[...].location` reads it, `matter_device_type`
+      was refined, and the restricted client raises `RuntimeError`.
+- [ ] The claim run output is captured in the task close
+      (`uv run --with . python .verify-harness/claim18_designer_location.py`
+      against the local mosquitto, per `.verify-harness` conventions).
+- [ ] One live run against the real broker (admin env) captured:
+      `resolve_locations()` output includes the relay object documented in the
+      join-proof results with its known location name, and that object's
+      `matter_device_type` reads 256 while its DB `type` column is empty (the
+      #110 divergence, observed through the library).
+- [ ] The live run wrote nothing: only `get_data`, discovery, and `locations`
+      requests were published.
 
-**Verify:** `uv run --with . python .verify-harness/claim18_designer_location.py` -> prints the expected admin map and the restricted `RuntimeError`; then the live one-off run's captured output.
+**Verify:**
+`uv run --with . python .verify-harness/claim18_designer_location.py` -> prints
+the expected admin map and the restricted `RuntimeError`; then the live one-off
+run's captured output.
 
 **Steps:**
 
-- [ ] **Step 1: Extend `fixtures.py`.** Give `OB5` a `leafId` of `0_cb89_257_2_0` and `typ_komponentu` `przekaznik` if it lacks them; make sure that the admin `devices` reply carries a module row with `mac` 52105 (0xCB89). Add to `response_table` (admin user only): `(f"ampio/control/{user}/config", "locations")` -> `(f"ampio/fromDB/{user}/config/locations", rows({"id": 14, "opis_menu": "Potter"}))`. In `fake_mserv`, also subscribe `device_api/to/#` and answer any `device_api/to/<machex>/get_data` with a JSON `{"descriptions": <base64 frame (12, 0, 14, 256, "L")>}` on `device_api/from/<MACHEX>/info` (uppercase hex). Build the frame with the same byte layout as `tests/test_descriptions.py`'s `frame()` helper.
+- [ ] **Step 1: Extend `fixtures.py`.** Give `OB5` a `leafId` of
+      `0_cb89_257_2_0` and `typ_komponentu` `przekaznik` if it lacks them; make
+      sure that the admin `devices` reply carries a module row with `mac` 52105
+      (0xCB89). Add to `response_table` (admin user only):
+      `(f"ampio/control/{user}/config", "locations")` ->
+      `(f"ampio/fromDB/{user}/config/locations", rows({"id": 14, "opis_menu": "Potter"}))`.
+      In `fake_mserv`, also subscribe `device_api/to/#` and answer any
+      `device_api/to/<machex>/get_data` with a JSON
+      `{"descriptions": <base64 frame (12, 0, 14, 256, "L")>}` on
+      `device_api/from/<MACHEX>/info` (uppercase hex). Build the frame with the
+      same byte layout as `tests/test_descriptions.py`'s `frame()` helper.
 
-- [ ] **Step 2: Write `claim18_designer_location.py`** following `claim17_matter_device_type.py`'s shape:
+- [ ] **Step 2: Write `claim18_designer_location.py`** following
+      `claim17_matter_device_type.py`'s shape:
 
 ```python
 """Contract (#25): resolve_locations() populates AmpioObject.location.
@@ -1342,11 +1498,18 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-Adapt the object id and fixture names to what `fixtures.py` actually defines - the claim must run green against the extended fake, with mosquitto started per the `.verify-harness` recipe.
+Adapt the object id and fixture names to what `fixtures.py` actually defines -
+the claim must run green against the extended fake, with mosquitto started per
+the `.verify-harness` recipe.
 
 - [ ] **Step 3: Run the claim and capture the output.**
 
-- [ ] **Step 4: Live verification** (admin env; read-only). Run a one-off script that starts `AmpioClient` against the real broker, awaits discovery, calls `resolve_locations(timeout=15.0)`, and prints: the size of the returned map, the entry for the join-proof relay object, and that object's `matter_device_type`. Capture the output. Restore nothing - nothing was written.
+- [ ] **Step 4: Live verification** (admin env; read-only). Run a one-off script
+      that starts `AmpioClient` against the real broker, awaits discovery, calls
+      `resolve_locations(timeout=15.0)`, and prints: the size of the returned
+      map, the entry for the join-proof relay object, and that object's
+      `matter_device_type`. Capture the output. Restore nothing - nothing was
+      written.
 
 - [ ] **Step 5: Commit**
 
@@ -1359,26 +1522,44 @@ git commit -m "Harness claim for resolve_locations (#25)"
 
 ### Task 9: Docs, CHANGELOG, version 0.30.0
 
-**Goal:** The docs carry the new wire contract, the CHANGELOG describes 0.30.0, and the version is bumped.
+**Goal:** The docs carry the new wire contract, the CHANGELOG describes 0.30.0,
+and the version is bumped.
 
 **Files:**
 
-- Modify: `docs/identity.md`, `docs/protocol.md`, `docs/discovery-flow.md`, `docs/untapped-surfaces.md`, `CHANGELOG.md`, `src/ampio_mqtt/__init__.py`
+- Modify: `docs/identity.md`, `docs/protocol.md`, `docs/discovery-flow.md`,
+  `docs/untapped-surfaces.md`, `CHANGELOG.md`, `src/ampio_mqtt/__init__.py`
 
 **Acceptance Criteria:**
 
-- [ ] `docs/identity.md` gains "The Designer location (per-output `outLoc`)": the get_data pair, the frame layout, the descType enum table, the join rule (`leaf_out_no` + `DESC_TYPE_BY_KIND`), the dead DB `lokalizacja` column, and the tier gate. The Matter-tag section notes that the CAN record is authoritative and the DB mirror lags (#110), and that `resolve_locations()` refines the field.
-- [ ] `docs/untapped-surfaces.md`: the #25 row now reads as shipped (or is removed); the table stays consistent.
-- [ ] `CHANGELOG.md` gains a `## 0.30.0` section: Added (`AmpioObject.location`, `resolve_locations()`, restored `fetch_locations()`, `leaf_out_no`), Changed (`matter_device_type` refined from the CAN record; `_fetch` tier guard), with issue references #25 and #110.
+- [ ] `docs/identity.md` gains "The Designer location (per-output `outLoc`)":
+      the get_data pair, the frame layout, the descType enum table, the join
+      rule (`leaf_out_no` + `DESC_TYPE_BY_KIND`), the dead DB `lokalizacja`
+      column, and the tier gate. The Matter-tag section notes that the CAN
+      record is authoritative and the DB mirror lags (#110), and that
+      `resolve_locations()` refines the field.
+- [ ] `docs/untapped-surfaces.md`: the #25 row now reads as shipped (or is
+      removed); the table stays consistent.
+- [ ] `CHANGELOG.md` gains a `## 0.30.0` section: Added (`AmpioObject.location`,
+      `resolve_locations()`, restored `fetch_locations()`, `leaf_out_no`),
+      Changed (`matter_device_type` refined from the CAN record; `_fetch` tier
+      guard), with issue references #25 and #110.
 - [ ] `__version__ = "0.30.0"`.
 - [ ] `uv run pytest -q`, `ruff check`, `ruff format --check` all green.
 
-**Verify:** `uv run pytest -q && uv run ruff check src tests tools && uv run ruff format --check src tests tools` -> green; `grep '__version__' src/ampio_mqtt/__init__.py` -> `0.30.0`.
+**Verify:**
+`uv run pytest -q && uv run ruff check src tests tools && uv run ruff format --check src tests tools`
+-> green; `grep '__version__' src/ampio_mqtt/__init__.py` -> `0.30.0`.
 
 **Steps:**
 
-- [ ] **Step 1: Write the identity.md section** (place it after the Matter-tag section; carry the wire contract from this plan's Global Constraints verbatim where applicable, minus the install-specific numbers).
-- [ ] **Step 2: Update protocol.md** (document the `device_api` get_data pair and the `locations` endpoint row next to the other request/reply surfaces) **and discovery-flow.md** (name `resolve_locations()` in the on-demand list).
+- [ ] **Step 1: Write the identity.md section** (place it after the Matter-tag
+      section; carry the wire contract from this plan's Global Constraints
+      verbatim where applicable, minus the install-specific numbers).
+- [ ] **Step 2: Update protocol.md** (document the `device_api` get_data pair
+      and the `locations` endpoint row next to the other request/reply surfaces)
+      **and discovery-flow.md** (name `resolve_locations()` in the on-demand
+      list).
 - [ ] **Step 3: Update untapped-surfaces.md** (drop or rewrite the #25 row).
 - [ ] **Step 4: CHANGELOG + version bump.**
 - [ ] **Step 5: Run the full suite and commit**
@@ -1392,6 +1573,11 @@ git commit -m "0.30.0: resolve per-output Designer locations (#25, #110)"
 
 ## Self-review notes
 
-- Type names are consistent across tasks: `OutputDescription`, `DeviceDescriptions`, `DesignerResolution`, `DESC_TYPE_BY_KIND`, `device_api_request_topic`, `leaf_out_no`, `apply_designer_metadata`, `resolve_locations`, `fetch_locations`.
-- Task 3 depends on Task 1 (constants); Tasks 5-7 depend on 3 and 4; Task 6 precedes 7; Task 8 needs 7; Task 9 closes.
-- The release itself (tag, PyPI approval, GitHub Release) is out of scope here - the release-process conventions handle it after review.
+- Type names are consistent across tasks: `OutputDescription`,
+  `DeviceDescriptions`, `DesignerResolution`, `DESC_TYPE_BY_KIND`,
+  `device_api_request_topic`, `leaf_out_no`, `apply_designer_metadata`,
+  `resolve_locations`, `fetch_locations`.
+- Task 3 depends on Task 1 (constants); Tasks 5-7 depend on 3 and 4; Task 6
+  precedes 7; Task 8 needs 7; Task 9 closes.
+- The release itself (tag, PyPI approval, GitHub Release) is out of scope here -
+  the release-process conventions handle it after review.

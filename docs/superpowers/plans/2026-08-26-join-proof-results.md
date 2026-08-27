@@ -23,17 +23,17 @@ majority, `funkcja` does worse or ties only on a tiny sample:
 | led             | OUT_OC_U8 2/2 (100%)       | 0/2 (0%)                                                               | leaf wins outright                            |
 | rgbw            | descType 34, 4/4 (100%)    | 1/4 (25%)                                                              | leaf wins                                     |
 
-`funkcja` never beats the leaf key and in several kinds it clearly
-under-matches (led, rgbw, roleta_procenty) or over-matches into noise
-(przekaznik, and the ambiguous kinds below). The last `leafId` segment is the
-out-no join key; `funkcja` is not.
+`funkcja` never beats the leaf key and in several kinds it clearly under-matches
+(led, rgbw, roleta_procenty) or over-matches into noise (przekaznik, and the
+ambiguous kinds below). The last `leafId` segment is the out-no join key;
+`funkcja` is not.
 
 ## Proven pairs
 
 A kind counts as PROVEN when its leaf-key hits land on exactly one descType
-whose hit rate exceeds 50% of `total`, with every other descType staying
-below that bar (misses explainable as modules that never had a description
-written for that output).
+whose hit rate exceeds 50% of `total`, with every other descType staying below
+that bar (misses explainable as modules that never had a description written for
+that output).
 
 | typ_komponentu  | descType       | hits/total | notes                                                                                 |
 | --------------- | -------------- | ---------- | ------------------------------------------------------------------------------------- |
@@ -46,8 +46,8 @@ written for that output).
 ## Unproven kinds
 
 None of these land on a single dominant descType - each has two or more
-descTypes simultaneously clearing the 50% bar, so the join is ambiguous and
-not shipped:
+descTypes simultaneously clearing the 50% bar, so the join is ambiguous and not
+shipped:
 
 | typ_komponentu | total | leaf-key hits by descType                                 | why unproven                                                            |
 | -------------- | ----- | --------------------------------------------------------- | ----------------------------------------------------------------------- |
@@ -59,4 +59,5 @@ not shipped:
 
 ## Decision
 
-DESC_TYPE_BY_KIND ships exactly these pairs: przekaznik -> 12, roleta_procenty -> 26, roleta_lamelki -> 26, led -> 16, rgbw -> 34.
+DESC_TYPE_BY_KIND ships exactly these pairs: przekaznik -> 12, roleta_procenty
+-> 26, roleta_lamelki -> 26, led -> 16, rgbw -> 34.
