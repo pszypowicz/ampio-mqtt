@@ -72,6 +72,5 @@ the store held nothing for that id in between.
 
 Events dispatch synchronously on the loop that ran `start()`. Most arrive from
 the connection task's message handling. An explicit call such as
-`resolve_locations()` dispatches from the caller's own task instead. Either way
-it is the same loop, so a listener gets the same ordering guarantees on both
-paths.
+`resolve_records()` dispatches from the caller's own task instead. Either way it
+is the same loop, so a listener gets the same ordering guarantees on both paths.

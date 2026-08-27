@@ -12,6 +12,45 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.36.0
+
+One field, one fact (#133). The record sweep no longer mutates the shared
+catalogue fields, so a consumer can build identical entities on both account
+tiers at any time, sweep or no sweep. Everything the CAN description record
+proves now lives in a nested, explicitly admin-guarded `record` bundle, and the
+record's own description string surfaces for the first time.
+
+### Breaking
+
+- **`AmpioObject.location` and `AmpioModule.location` removed** - the facts
+  moved to `record.location` on both classes.
+- **`resolve_locations()` renamed to `resolve_records()`** - it returns
+  `{object_id: DesignerRecord}` now, the full bundle instead of the location
+  names alone.
+- **The sweep never touches `matter_device_type`** - the field is the catalogue
+  `type` column, identical on both tiers; the record's authoritative tag is
+  `record.matter_device_type`. Consumers that relied on the in-place refinement
+  read the record field instead.
+- **A sweep entry replaces the whole bundle** - the old refine-never-clear rule
+  for the Matter tag is gone; what the module answered is what the bundle holds,
+  None fields included.
+
+### Added
+
+- **`AmpioObject.record`** (`DesignerRecord`) - `location`,
+  `matter_device_type`, and `name` from the object's CAN description entry.
+  `None` on the restricted tier and before a sweep.
+- **`AmpioModule.record`** (`ModuleRecord`) - the DEVICE_NAME entry:
+  module-level `location` and the CAN-resident module `name`.
+- **Record names** - the per-output and per-module `desc` strings were parsed
+  and discarded before; they now surface as `record.name`.
+
+### Fixed
+
+- **Held object records survive catalogue re-seeds across partial sweeps** - the
+  held table accumulates per joined object instead of being replaced wholesale
+  per sweep, so a refresh no longer drops what an earlier partial sweep proved.
+
 ## 0.35.0
 
 The Designer read-only checkbox becomes a readable fact (#130). A live probe on
