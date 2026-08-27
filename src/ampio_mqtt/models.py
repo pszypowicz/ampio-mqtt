@@ -146,6 +146,14 @@ class AmpioObject:
     # consumer's choice. docs/identity.md holds the vocabulary and the
     # storage path.
     matter_device_type: int | None = None
+    # Designer's per-object time (the `czas` column), in milliseconds - the
+    # wire unit is 10 ms ticks. The app reads it as the default pulse length
+    # for a press; the M-SERV never applies it server-side, so a caller
+    # honors it by passing it to `AmpioClient.set_value(pulse_ms=...)`.
+    # 0 when not configured. Served on both tiers: `devicesDetails` carries
+    # the column, and `data/params_devices` supplies it unfiltered where the
+    # app-sync catalogue omits it.
+    pulse_ms: int = 0
     # The object's description-record entry, admin sweep only; None on
     # the restricted tier and before a sweep covers the object.
     record: DesignerRecord | None = None

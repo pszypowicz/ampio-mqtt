@@ -1314,6 +1314,31 @@ def test_params_table_after_catalogue_updates_objects_and_notifies() -> None:
     assert 999 not in store.objects
 
 
+def test_details_row_czas_lands_as_pulse_ms() -> None:
+    store = _store()
+    _apply(store, DETAILS_TOPIC, details({"id": 41, "czas": 500}))
+    assert store.objects[41].pulse_ms == 5000
+
+
+def test_params_table_supplies_pulse_ms_when_catalogue_lacks_the_column() -> None:
+    store = _store()
+    _apply(store, PARAMS_DEVICES_TOPIC, devices({"id": 24, "params": 1, "czas": 500}))
+    _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1")))
+    assert store.objects[24].pulse_ms == 5000
+
+
+def test_params_table_after_catalogue_updates_pulse_ms_and_notifies() -> None:
+    store = _store()
+    _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1")))
+    assert store.objects[24].pulse_ms == 0
+
+    applied = _apply(
+        store, PARAMS_DEVICES_TOPIC, devices({"id": 24, "params": 1, "czas": 500})
+    )
+    assert store.objects[24].pulse_ms == 5000
+    assert _updated(applied) == [store.objects[24]]
+
+
 # --- cover tilt state ------------------------------------------------------
 
 

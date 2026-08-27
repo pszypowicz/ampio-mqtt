@@ -12,6 +12,27 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.39.0
+
+Designer's per-object "time" surfaces as `AmpioObject.pulse_ms` (#141). The
+value pairs with the timed write the client has carried since 0.8.0:
+`set_value(pulse_ms=...)` is the only path that pulses, because the M-SERV never
+applies the configured time server-side.
+
+### Added
+
+- **`AmpioObject.pulse_ms`** - Designer's `czas` column in milliseconds (the
+  wire unit is 10 ms ticks), 0 when not configured. Live probes pinned the
+  semantics: a plain `turnOn` or `setValue` latches the object even when the
+  time is configured, and an explicit time argument is authoritative in both
+  directions - the configured value neither stretches nor caps it. The timed
+  form works on every switchable output type probed (relay, flag, dimmer),
+  independent of the bell marker, so the field is the app's default pulse
+  length: pass it to `set_value(pulse_ms=...)` to honor it. Served on both
+  tiers - `devicesDetails` carries the column, and the unfiltered
+  `data/params_devices` supplies it where the app-sync catalogue omits it. The
+  full semantics live in [`docs/identity.md`](docs/identity.md).
+
 ## 0.38.0
 
 Designer's "Bell object" checkbox surfaces as `AmpioObject.bell` (#139). The
