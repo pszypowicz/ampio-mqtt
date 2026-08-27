@@ -25,11 +25,14 @@ from ._protocol import (
     RAW_DIAGNOSTICS_WILDCARD,
     RAW_EVENT_WILDCARD,
     RAW_INPUT_WILDCARDS,
+    RAW_OUTPUT_WILDCARD,
     Endpoint,
     command_payload,
     command_topic,
     event_payload,
     ob_state_wildcard,
+    raw_output_payload,
+    raw_write_topic,
     request_topic,
     response_topic,
     scene_payload,
@@ -215,6 +218,7 @@ class AmpioClient:
             # client never asks, so a SUBACK rejection is always a fault.
             topics += [
                 *RAW_INPUT_WILDCARDS,
+                RAW_OUTPUT_WILDCARD,
                 RAW_DIAGNOSTICS_WILDCARD,
                 RAW_EVENT_WILDCARD,
                 _protocol.DEVICE_API_INFO_WILDCARD,
@@ -920,9 +924,30 @@ class AmpioClient:
         ``AmpioTimeoutError`` when it fails to acknowledge in time; never an
         aiomqtt exception type.
         """
-        payload = command_payload(object_id, verb, args).encode()
+        return await self._publish_command(
+            command_topic(self._username),
+            command_payload(object_id, verb, args).encode(),
+            object_id,
+            repr(verb),
+            confirm,
+        )
+
+    async def _publish_command(
+        self,
+        topic: str,
+        payload: bytes,
+        object_id: int,
+        action: str,
+        confirm: float | None,
+    ) -> AmpioObject | None:
+        """Publish one object write, optionally awaiting the state echo.
+
+        The confirm semantics documented on :meth:`command` live here;
+        both the `/api` surface and the raw CAN write topic share them,
+        since neither has a reply topic of its own.
+        """
         if confirm is None:
-            await self._connection.publish(command_topic(self._username), payload)
+            await self._connection.publish(topic, payload)
             return None
         future: asyncio.Future[AmpioObject] = asyncio.get_running_loop().create_future()
 
@@ -935,16 +960,61 @@ class AmpioClient:
             # The publish sits inside the window so `confirm` bounds the
             # whole call, exactly as `_fetch` bounds its own publishes.
             async with asyncio.timeout(confirm):
-                await self._connection.publish(command_topic(self._username), payload)
+                await self._connection.publish(topic, payload)
                 return await future
         except TimeoutError as err:
             raise AmpioTimeoutError(
                 f"No state echo for object {object_id} within {confirm}s - "
-                f"the M-SERV ignored {verb!r}, the object is outside this "
+                f"the M-SERV ignored {action}, the object is outside this "
                 "account's grant, or the command changed nothing"
             ) from err
         finally:
             unsubscribe()
+
+    def _raw_output_address(self, object_id: int) -> tuple[int, int] | None:
+        """The (module mac, frame channel) of a binary output the admin
+        session drives over the raw CAN write topic, or None.
+
+        Admin-tier `przekaznik` objects on CAN modules, addressed by their
+        own leaf: mac from ``leaf_id`` (the replacement-stable override)
+        and the 0-based :pyattr:`AmpioObject.leaf_out_no` channel. The
+        M-SERV's own virtual outputs stay on `/api` - they live in its DB,
+        not on the CAN bus. The restricted tier always returns None: the
+        raw write tree is admin-only, so `/api` is all that tier has -
+        which a panel output ignores (docs/protocol.md, "Panel outputs").
+        """
+        if self._tier is not AccessTier.ADMIN:
+            return None
+        obj = self._store.objects.get(object_id)
+        if obj is None or obj.typ_komponentu != "przekaznik" or obj.is_server_owned:
+            return None
+        mac = obj.module_mac
+        channel = obj.leaf_out_no
+        if mac is None or channel is None:
+            return None
+        return mac, channel
+
+    async def _raw_output(
+        self,
+        object_id: int,
+        address: tuple[int, int],
+        value: int,
+        confirm: float | None,
+    ) -> AmpioObject | None:
+        """Drive a binary output over the raw CAN write topic.
+
+        The one write that reaches a panel's status LEDs, and equivalent
+        to the `/api` switch verbs on relay outputs (docs/protocol.md,
+        "Panel outputs"); admin-only, like the raw tree it echoes on.
+        """
+        mac, channel = address
+        return await self._publish_command(
+            raw_write_topic(mac),
+            raw_output_payload(value, channel).encode(),
+            object_id,
+            "the raw output write",
+            confirm,
+        )
 
     async def turn_on(
         self, object_id: int, *, confirm: float | None = None
@@ -954,10 +1024,17 @@ class AmpioClient:
         Raises ``ValueError`` for an output whose kind says the switch verbs
         do not apply (``rgbw``): turning a color light on means choosing a
         color - the consumer's call, via :meth:`set_color` (the rgbw
-        replay pattern in docs/protocol.md). ``confirm`` awaits the state
-        echo exactly as :meth:`command` documents.
+        replay pattern in docs/protocol.md). On the admin tier a binary
+        output on a CAN module is driven over the raw CAN write topic
+        instead - the one write that also reaches a panel's status LEDs,
+        which ignore `/api` on every tier (docs/protocol.md, "Panel
+        outputs"). ``confirm`` awaits the state echo exactly as
+        :meth:`command` documents.
         """
         self._check_switchable(object_id, "turnOn")
+        address = self._raw_output_address(object_id)
+        if address is not None:
+            return await self._raw_output(object_id, address, 255, confirm)
         return await self.command(object_id, "turnOn", confirm=confirm)
 
     async def turn_off(
@@ -967,13 +1044,17 @@ class AmpioClient:
 
         A color output that does not answer the switch verbs (``rgbw``) is
         turned off with ``setColors 0/0/0/0`` instead - off is unambiguous,
-        so the library routes it. An object whose kind is not yet known gets
-        the plain verb. ``confirm`` awaits the state echo exactly as
-        :meth:`command` documents.
+        so the library routes it. An admin session's binary outputs ride
+        the raw CAN write topic, exactly as :meth:`turn_on` documents. An
+        object whose kind is not yet known gets the plain verb. ``confirm``
+        awaits the state echo exactly as :meth:`command` documents.
         """
         kind = self._output_kind(object_id)
         if kind is not None and not kind.switchable and kind.color:
             return await self.set_color(object_id, 0, 0, 0, 0, confirm=confirm)
+        address = self._raw_output_address(object_id)
+        if address is not None:
+            return await self._raw_output(object_id, address, 0, confirm)
         return await self.command(object_id, "turnOff", confirm=confirm)
 
     async def toggle(
@@ -982,10 +1063,19 @@ class AmpioClient:
         """Invert an object's current on/off state.
 
         Raises ``ValueError`` for an output whose kind says the switch verbs
-        do not apply (``rgbw``), exactly as :meth:`turn_on` does. ``confirm``
-        awaits the state echo exactly as :meth:`command` documents.
+        do not apply (``rgbw``), exactly as :meth:`turn_on` does. The raw
+        write path binary outputs ride on the admin tier has no invert
+        command, so the library inverts the state it holds - an object
+        with no value yet reads off and turns on. ``confirm`` awaits the
+        state echo exactly as :meth:`command` documents.
         """
         self._check_switchable(object_id, "switch")
+        address = self._raw_output_address(object_id)
+        if address is not None:
+            obj = self._store.objects[object_id]
+            return await self._raw_output(
+                object_id, address, 0 if obj.is_on else 255, confirm
+            )
         return await self.command(object_id, "switch", confirm=confirm)
 
     def _output_kind(self, object_id: int) -> OutputKind | None:
@@ -1018,12 +1108,20 @@ class AmpioClient:
         With ``pulse_ms`` the M-SERV reverts the object to its previous state
         after that many milliseconds - a timed pulse, not a fade. The wire unit
         is 10 ms, so the value is rounded down to the nearest 10 ms; a gate
-        pulse of 500 ms is ``pulse_ms=500``. ``confirm`` awaits the state
-        echo exactly as :meth:`command` documents - for a pulse that is the
-        set edge, not the later revert.
+        pulse of 500 ms is ``pulse_ms=500``. A pulse always rides `/api` -
+        the raw write frame has no timed form - so a panel output, which
+        ignores `/api`, cannot pulse; ``confirm`` is what surfaces that
+        (docs/protocol.md, "Panel outputs"). Otherwise an admin session's
+        binary outputs ride the raw CAN write topic, exactly as
+        :meth:`turn_on` documents. ``confirm`` awaits the state echo as
+        :meth:`command` documents - for a pulse that is the set edge, not
+        the later revert.
         """
         _check_range("value", value, 0, 255)
         if pulse_ms is None:
+            address = self._raw_output_address(object_id)
+            if address is not None:
+                return await self._raw_output(object_id, address, value, confirm)
             return await self.command(object_id, "setValue", value, confirm=confirm)
         _check_range("pulse_ms", pulse_ms, 0, 655350)
         return await self.command(

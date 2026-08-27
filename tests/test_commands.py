@@ -532,3 +532,184 @@ async def test_confirm_on_the_admin_tier_resolves_on_the_raw_edge() -> None:
         assert (obj.id, obj.value) == (10, "255")
     finally:
         await client.stop()
+
+
+# --- panel outputs (the raw CAN write path) --------------------------------
+
+ADMIN_API_TOPIC = f"ampio/control/{ADMIN_USER}/api"
+PANEL_RAW_TOPIC = "ampio/to/cafe/raw"
+
+
+async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
+    """Admin client whose catalogue holds a panel LED (90) and a relay (91)."""
+    broker = FakeBroker()
+    client = AmpioClient(
+        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
+    )
+    await client.start(timeout=2.0, discovery_timeout=0.01)
+    feed(
+        client,
+        ADMIN_DEVICES_TOPIC,
+        devices(
+            {"id": 7, "mac": 0xCAFE, "typ_urzadzenia": 11, "nazwa_urzadzenia": "p"},
+            {"id": 8, "mac": 0xB0B0, "typ_urzadzenia": 4, "nazwa_urzadzenia": "r"},
+        ),
+    )
+    feed(
+        client,
+        ADMIN_DETAILS_TOPIC,
+        details(
+            {
+                "id": 90,
+                "id_urzadzenia": 7,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 2,
+                "funkcja": 2,
+                "leafId": "0_cafe_257_2_1",
+                "opis_menu": "LED",
+            },
+            {
+                "id": 91,
+                "id_urzadzenia": 8,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 1,
+                "funkcja": 1,
+                "leafId": "0_b0b0_257_2_0",
+                "opis_menu": "Relay",
+            },
+        ),
+    )
+    broker.published.clear()
+    broker.published_qos.clear()
+    return client, broker
+
+
+async def test_panel_output_switch_verbs_ride_the_raw_frame() -> None:
+    """The frame channel is the 0-based leaf_out_no, one below funkcja."""
+    client, broker = await _admin_with_panel_output()
+    try:
+        await client.turn_on(90)
+        await client.turn_off(90)
+        await client.set_value(90, 128)
+        assert broker.published == [
+            (PANEL_RAW_TOPIC, b"30f9ff01"),
+            (PANEL_RAW_TOPIC, b"30f90001"),
+            (PANEL_RAW_TOPIC, b"30f98001"),
+        ]
+        assert broker.published_qos == [1, 1, 1]
+    finally:
+        await client.stop()
+
+
+async def test_panel_output_toggle_inverts_the_held_state() -> None:
+    client, broker = await _admin_with_panel_output()
+    try:
+        await client.toggle(90)  # no value yet -> reads off -> turns on
+        feed(client, "ampio/from/CAFE/state/o/2", "1")
+        await client.toggle(90)
+        assert broker.published == [
+            (PANEL_RAW_TOPIC, b"30f9ff01"),
+            (PANEL_RAW_TOPIC, b"30f90001"),
+        ]
+    finally:
+        await client.stop()
+
+
+async def test_pulse_always_rides_api() -> None:
+    """The raw frame has no timed form, so a pulse keeps the /api path -
+    which a panel output ignores; confirm= is what surfaces that."""
+    client, broker = await _admin_with_panel_output()
+    try:
+        await client.set_value(90, 255, pulse_ms=500)
+        assert broker.published == [(ADMIN_API_TOPIC, b"/api/set/90/setValue/255/50")]
+    finally:
+        await client.stop()
+
+
+async def test_relay_output_rides_the_raw_frame_on_admin_too() -> None:
+    """Dumb routing: every CAN-module przekaznik uses the raw frame on the
+    admin tier - the frame is the generic output write, proven on relays."""
+    client, broker = await _admin_with_panel_output()
+    try:
+        await client.turn_on(91)
+        assert broker.published == [("ampio/to/b0b0/raw", b"30f9ff00")]
+    finally:
+        await client.stop()
+
+
+async def test_server_owned_output_keeps_the_api_path() -> None:
+    """The M-SERV's own virtual outputs live in its DB, not on the CAN
+    bus - /api stays their surface on every tier."""
+    client, broker = await _admin_with_panel_output()
+    try:
+        feed(
+            client,
+            ADMIN_DETAILS_TOPIC,
+            details(
+                {
+                    "id": 92,
+                    "id_urzadzenia": 1,
+                    "typ_komponentu": "przekaznik",
+                    "interpretacja": 1,
+                    "funkcja": 1,
+                    "leafId": "0_1_257_2_0",
+                    "opis_menu": "Virtual",
+                }
+            ),
+        )
+        broker.published.clear()
+        await client.turn_on(92)
+        assert broker.published == [(ADMIN_API_TOPIC, b"/api/set/92/turnOn")]
+    finally:
+        await client.stop()
+
+
+async def test_restricted_tier_keeps_the_api_path_for_panel_objects(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """The raw write tree is admin-only, so the restricted tier publishes
+    the /api form - which the M-SERV drops for a panel output, surfaced
+    by confirm=. Documented as an Ampio limitation in protocol.md."""
+    client, broker = connected
+    feed(
+        client,
+        DATA_DEVICES_TOPIC,
+        details(
+            {
+                "id": 90,
+                "id_urzadzenia": 7,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 2,
+                "funkcja": 2,
+                "leafId": "0_cafe_257_2_1",
+                "opis_menu": "LED",
+            }
+        ),
+    )
+    await client.turn_on(90)
+    assert broker.published == [(API_TOPIC, b"/api/set/90/turnOn")]
+
+
+async def test_panel_output_confirm_resolves_on_the_raw_edge() -> None:
+    client, _broker = await _admin_with_panel_output()
+    try:
+        task = asyncio.create_task(client.turn_on(90, confirm=1.0))
+        await asyncio.sleep(0)
+        feed(client, "ampio/from/CAFE/state/o/2", "1")
+        obj = await task
+        assert obj is not None
+        assert (obj.id, obj.value) == (90, "1")
+    finally:
+        await client.stop()
+
+
+async def test_admin_subscribes_the_o_wildcard_and_restricted_does_not(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    admin_client, admin_broker = await _admin_with_panel_output()
+    try:
+        assert "ampio/from/+/state/o/+" in admin_broker.subscribed
+    finally:
+        await admin_client.stop()
+    _, restricted_broker = connected
+    assert "ampio/from/+/state/o/+" not in restricted_broker.subscribed

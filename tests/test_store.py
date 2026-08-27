@@ -1750,3 +1750,59 @@ def test_bare_row_creation_still_dispatches_added() -> None:
     store = AmpioStore()
     applied = _seed_catalogue(store, {"id": 9})
     assert [type(e) for e in applied.events] == [ObjectAdded]
+
+
+# --- raw-channel output bridge (classic panel status LEDs) -----------------
+
+
+_RELAY_MODULE = {"id": 8, "mac": 0xB0B0, "typ_urzadzenia": 4, "nazwa_urzadzenia": "r"}
+
+
+def _przekaznik_row(oid: int, funkcja: int, dev: int, leaf: str) -> dict:
+    return {
+        "id": oid,
+        "id_urzadzenia": dev,
+        "typ_komponentu": "przekaznik",
+        "interpretacja": funkcja,
+        "funkcja": funkcja,
+        "leafId": leaf,
+        "opis_menu": "Out",
+    }
+
+
+def test_panel_output_o_channel_routes_to_its_object() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_przekaznik_row(90, 2, 7, "0_cafe_257_2_1")))
+
+    applied = _apply(store, "ampio/from/CAFE/state/o/2", "1")
+
+    obj = store.objects[90]
+    assert obj.value == "1" and obj.is_on is True and obj.raw_proven is True
+    assert _updated(applied) == [obj]
+
+
+def test_o_channel_of_a_relay_module_is_bridged_too() -> None:
+    """The o bridge covers every przekaznik uniformly - a relay's outputs
+    share the channel shape, so they gain the same raw-first path."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_RELAY_MODULE))
+    _apply(store, DETAILS_TOPIC, details(_przekaznik_row(91, 1, 8, "0_b0b0_257_2_0")))
+
+    applied = _apply(store, "ampio/from/B0B0/state/o/1", "1")
+
+    obj = store.objects[91]
+    assert obj.value == "1" and obj.raw_proven is True
+    assert _updated(applied) == [obj]
+
+
+def test_panel_output_per_object_echo_is_dropped_once_raw_proven() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_przekaznik_row(90, 2, 7, "0_cafe_257_2_1")))
+    _apply(store, "ampio/from/CAFE/state/o/2", "1")
+
+    applied = _apply(store, f"ampio/fromDB/{USER}/ob/90/state", '{"state": "255"}')
+
+    assert store.objects[90].value == "1"
+    assert _updated(applied) == []

@@ -828,6 +828,32 @@ def scene_payload(scene_id: int, verb: str) -> str:
 KEEP_POSITION = 101
 
 
+# --- Raw CAN writes --------------------------------------------------------
+#
+# The admin-only `ampio/to/<machex>/raw` topic broadcasts a raw CAN frame
+# from the M-SERV. Frame `[0x30, 0xF9, value, channel]` sets a module's
+# output: 0x30 is the generic output-write function (the Designer SPA maps
+# every output leaf to it) and 0xF9 the set-u8 command. It is the ONLY
+# write that reaches a classic panel's binary outputs (status LEDs) - the
+# `/api` verbs and the per-channel `o/<ch>/cmd` form are silently dropped
+# for those, while a relay module answers all three. docs/protocol.md
+# ("Panel outputs") carries the live evidence.
+
+
+def raw_write_topic(mac: int) -> str:
+    """The raw CAN write topic for one module, mac in lowercase hex."""
+    return f"ampio/to/{mac:x}/raw"
+
+
+def raw_output_payload(value: int, channel: int) -> str:
+    """The set-output frame as the wire's ASCII hex form.
+
+    ``channel`` is the 0-based output index - :pyattr:`AmpioObject.leaf_out_no`,
+    one below the 1-based raw state channel.
+    """
+    return f"30f9{value:02x}{channel:02x}"
+
+
 def request_topic(ep: Endpoint, user: str) -> str:
     """Control topic an endpoint's request keyword is published to."""
     return f"ampio/control/{user}/{ep.req_surface}"
@@ -847,6 +873,11 @@ def ob_state_wildcard(user: str) -> str:
 # admin-only. docs/raw-channel-bridge.md is the home for why only the two
 # on-change input prefixes are subscribed and the high-rate ones are not.
 RAW_INPUT_WILDCARDS = ("ampio/from/+/state/f/+", "ampio/from/+/state/i/+")
+
+# Binary output channels, bridged for `przekaznik` objects. A touch
+# panel's status LEDs have no other retained surface, and every module's
+# binary outputs share the channel shape (docs/raw-channel-bridge.md).
+RAW_OUTPUT_WILDCARD = "ampio/from/+/state/o/+"
 
 # Per-module diagnostics broadcasts (CAN supply voltage, own temperature).
 RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
