@@ -183,6 +183,18 @@ def test_resolve_designer_reads_empty_desc_as_none() -> None:
     }
 
 
+def test_resolve_designer_reads_clear_sentinels_as_none() -> None:
+    """A cleared Designer entry (outLoc 16383, desc ".") reads all-None,
+    even when the names table carries the sentinel id."""
+    objects = {
+        64: AmpioObject(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
+    }
+    by_mac = {0xCB89: _entries((12, 0, 16383, 0, "."))}
+    assert resolve_designer(objects, by_mac, {16383: "Bogus"}, frozenset()) == {
+        64: DesignerRecord(location=None, matter_device_type=None, name=None)
+    }
+
+
 def test_resolve_module_records_reads_the_device_name_entry() -> None:
     by_mac = {
         0xCB89: _entries((1, 0, 14, 0, "Modul"), (12, 0, 19, 256, "Lampa")),
@@ -194,6 +206,13 @@ def test_resolve_module_records_reads_the_device_name_entry() -> None:
         0xCB89: ModuleRecord(location="Rozdzielnia", name="Modul"),
         0xBEEF: ModuleRecord(),
         0xCAFE: ModuleRecord(location=None, name="M"),
+    }
+
+
+def test_resolve_module_records_reads_clear_sentinels_as_none() -> None:
+    by_mac = {0xCB89: _entries((1, 0, 16383, 0, "."))}
+    assert resolve_module_records(by_mac, {16383: "Bogus"}, frozenset()) == {
+        0xCB89: ModuleRecord(location=None, name=None)
     }
 
 

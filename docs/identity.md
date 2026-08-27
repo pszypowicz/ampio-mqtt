@@ -305,6 +305,11 @@ The blob decodes into repeated little-endian frames:
 10-byte header ends the walk, and so does a frame that runs past the end of the
 blob. The remainder is unreadable either way.
 
+A cleared entry stays in the record. Designer rewrites the frame in place with
+`outLoc` 16383, `outType` 0, and the placeholder description `.`. The frame
+count never changes, live-proven on the reference install. The library reads all
+three sentinel values as absent.
+
 `descType` is the description class the frame belongs to (the Designer web
 bundle's enum):
 

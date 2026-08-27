@@ -12,6 +12,21 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.36.1
+
+A cleared Designer entry never leaves the CAN record (#135). A live probe showed
+that a clear rewrites the frame in place with sentinel values: `outLoc` 16383,
+`outType` 0, and the placeholder description `.`. The absent-entry state #135
+assumed does not occur on the Designer path, so the keep-previous-record rule
+stands. The record parsers now read the sentinels as absent values.
+
+### Fixed
+
+- **`record.name` no longer surfaces the `.` placeholder** - a cleared
+  description reads None on both the object and the module side.
+- **`outLoc` 16383 reads unassigned by rule** - previously it read as unassigned
+  only through a names-table miss.
+
 ## 0.36.0
 
 One field, one fact (#133). The record sweep no longer mutates the shared
