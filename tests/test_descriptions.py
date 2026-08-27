@@ -17,10 +17,15 @@ from conftest import (
     feed,
 )
 
-from ampio_mqtt import AmpioClient, ModuleUpdated, ObjectUpdated
+from ampio_mqtt import (
+    AmpioClient,
+    DesignerRecord,
+    ModuleRecord,
+    ModuleUpdated,
+    ObjectUpdated,
+)
 from ampio_mqtt._protocol import (
     ENDPOINTS,
-    DesignerResolution,
     DeviceDescriptions,
     OutputDescription,
     Router,
@@ -28,7 +33,7 @@ from ampio_mqtt._protocol import (
     parse_descriptions_blob,
     parse_device_info,
     resolve_designer,
-    resolve_module_locations,
+    resolve_module_records,
 )
 from ampio_mqtt.models import AmpioObject
 
@@ -144,8 +149,8 @@ def test_resolve_designer_joins_location_and_type() -> None:
     }
     resolved = resolve_designer(objects, by_mac, {14: "Potter"}, frozenset())
     assert resolved == {
-        64: DesignerResolution(location="Potter", matter_device_type=256),
-        48: DesignerResolution(location=None, matter_device_type=None),
+        64: DesignerRecord(location="Potter", matter_device_type=256, name="Lampa"),
+        48: DesignerRecord(location=None, matter_device_type=None, name="Roleta"),
     }
 
 
@@ -168,24 +173,34 @@ def test_resolve_designer_skips_colliding_macs() -> None:
     assert resolve_designer(objects, by_mac, {14: "P"}, frozenset({0xCB89})) == {}
 
 
-def test_resolve_module_locations_reads_the_device_name_entry() -> None:
+def test_resolve_designer_reads_empty_desc_as_none() -> None:
+    objects = {
+        64: AmpioObject(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
+    }
+    by_mac = {0xCB89: _entries((12, 0, 0, 0, ""))}
+    assert resolve_designer(objects, by_mac, {}, frozenset()) == {
+        64: DesignerRecord(location=None, matter_device_type=None, name=None)
+    }
+
+
+def test_resolve_module_records_reads_the_device_name_entry() -> None:
     by_mac = {
         0xCB89: _entries((1, 0, 14, 0, "Modul"), (12, 0, 19, 256, "Lampa")),
         0xBEEF: _entries((12, 0, 19, 256, "L")),  # no DEVICE_NAME entry
         0xCAFE: _entries((1, 0, 0, 0, "M")),  # DEVICE_NAME with outLoc 0
     }
     names = {14: "Rozdzielnia", 19: "Salon"}
-    assert resolve_module_locations(by_mac, names, frozenset()) == {
-        0xCB89: "Rozdzielnia",
-        0xBEEF: None,
-        0xCAFE: None,
+    assert resolve_module_records(by_mac, names, frozenset()) == {
+        0xCB89: ModuleRecord(location="Rozdzielnia", name="Modul"),
+        0xBEEF: ModuleRecord(),
+        0xCAFE: ModuleRecord(location=None, name="M"),
     }
 
 
-def test_resolve_module_locations_skips_colliding_macs() -> None:
+def test_resolve_module_records_skips_colliding_macs() -> None:
     by_mac = {0xCB89: _entries((1, 0, 14, 0, "M"))}
     names = {14: "Rozdzielnia"}
-    assert resolve_module_locations(by_mac, names, frozenset({0xCB89})) == {}
+    assert resolve_module_records(by_mac, names, frozenset({0xCB89})) == {}
 
 
 async def _admin_client_with_catalogue() -> tuple[AmpioClient, FakeBroker]:
@@ -245,7 +260,7 @@ async def test_admin_subscribes_the_device_api_wildcard() -> None:
         await restricted.stop()
 
 
-async def test_resolve_locations_sweeps_joins_and_merges() -> None:
+async def test_resolve_records_sweeps_joins_and_merges() -> None:
     client, broker = await _admin_client_with_catalogue()
     try:
         events: list[ObjectUpdated] = []
@@ -275,21 +290,27 @@ async def test_resolve_locations_sweeps_joins_and_merges() -> None:
             )
         )
         try:
-            result = await client.resolve_locations(timeout=1.0)
+            result = await client.resolve_records(timeout=1.0)
         finally:
             await delivery
-        assert result == {64: "Potter"}
-        assert client.objects[64].location == "Potter"
-        assert client.objects[64].matter_device_type == 256
+        assert result == {
+            64: DesignerRecord(location="Potter", matter_device_type=256, name="L")
+        }
+        assert client.objects[64].record == DesignerRecord(
+            location="Potter", matter_device_type=256, name="L"
+        )
+        assert client.objects[64].matter_device_type is None
         assert ("device_api/to/cb89/get_data", b"") in broker.published
-        assert [e.object.location for e in events] == ["Potter"]
-        assert client.modules[16].location == "Rozdzielnia"
-        assert [m.module.location for m in module_events] == ["Rozdzielnia"]
+        assert [e.object.record.location for e in events] == ["Potter"]
+        assert client.modules[16].record == ModuleRecord(
+            location="Rozdzielnia", name="Modul"
+        )
+        assert [m.module.record.location for m in module_events] == ["Rozdzielnia"]
     finally:
         await client.stop()
 
 
-async def test_resolve_locations_tolerates_silent_modules() -> None:
+async def test_resolve_records_tolerates_silent_modules() -> None:
     client, broker = await _admin_client_with_catalogue()
     try:
         feed(
@@ -309,20 +330,22 @@ async def test_resolve_locations_tolerates_silent_modules() -> None:
             )
         )
         try:
-            result = await client.resolve_locations(timeout=0.2)
+            result = await client.resolve_records(timeout=0.2)
         finally:
             await delivery
-        assert result == {64: "Potter"}
+        assert result == {
+            64: DesignerRecord(location="Potter", matter_device_type=256, name="L")
+        }
     finally:
         await client.stop()
 
 
-async def test_resolve_locations_raises_on_restricted_tier() -> None:
+async def test_resolve_records_raises_on_restricted_tier() -> None:
     broker = FakeBroker()
     client = AmpioClient("host", username="u", mqtt_client_factory=broker.factory)
     await client.start(timeout=2.0, discovery_timeout=0.01)
     try:
         with pytest.raises(RuntimeError, match="admin"):
-            await client.resolve_locations(timeout=0.1)
+            await client.resolve_records(timeout=0.1)
     finally:
         await client.stop()

@@ -9,6 +9,7 @@ import pytest
 from ampio_mqtt import AmpioModule, AmpioObject, AmpioServerInfo
 from ampio_mqtt.classification import ThermostatKind, classify
 from ampio_mqtt.device_types import module_model
+from ampio_mqtt.models import DesignerRecord, ModuleRecord
 
 
 @pytest.mark.parametrize(
@@ -262,10 +263,9 @@ def test_position_reads_none_off_the_position_axis() -> None:
     assert _cover("55", typ="roleta_lamelki").position == 55
 
 
-def test_location_defaults_to_none_and_survives_replace() -> None:
-    obj = AmpioObject(id=1, location="Potter")
-    assert AmpioObject(id=1).location is None
-    assert replace(obj, value="1").location == "Potter"
+def test_record_survives_replace() -> None:
+    obj = AmpioObject(id=1, record=DesignerRecord(location="Potter"))
+    assert replace(obj, value="1").record == DesignerRecord(location="Potter")
 
 
 def test_leaf_out_no_parses_last_segment() -> None:
@@ -274,3 +274,15 @@ def test_leaf_out_no_parses_last_segment() -> None:
     assert AmpioObject(id=1, leaf_id="").leaf_out_no is None
     assert AmpioObject(id=1, leaf_id="0_cb89_257_2_x").leaf_out_no is None
     assert AmpioObject(id=1, leaf_id="junk").leaf_out_no is None
+
+
+def test_record_bundles_default_to_none() -> None:
+    assert AmpioObject(id=1).record is None
+    assert AmpioModule(id=1).record is None
+
+
+def test_record_bundle_fields_default_to_none() -> None:
+    assert DesignerRecord() == DesignerRecord(
+        location=None, matter_device_type=None, name=None
+    )
+    assert ModuleRecord() == ModuleRecord(location=None, name=None)

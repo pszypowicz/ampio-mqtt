@@ -39,6 +39,8 @@ from .models import (
     AmpioObject,
     AmpioScene,
     AmpioServerInfo,
+    DesignerRecord,
+    ModuleRecord,
     ThermostatState,
 )
 
@@ -64,8 +66,10 @@ __all__ = [
     "BusEvent",
     "ClientEvent",
     "ConnectionDied",
+    "DesignerRecord",
     "DiscoveryResult",
     "InputKind",
+    "ModuleRecord",
     "ModuleRemoved",
     "ModuleUpdated",
     "ObjectAdded",
@@ -79,7 +83,7 @@ __all__ = [
     "discover",
 ]
 
-__version__ = "0.35.0"
+__version__ = "0.36.0"
 
 
 def __getattr__(name: str) -> object:

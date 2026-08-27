@@ -53,7 +53,7 @@ The reply's `descriptions` field carries, base64-encoded, the per-output entries
 behind both the Matter device type tag and the Designer "Lokalizacja" location
 pointer. The frame layout, the descType enum, and the join rule that resolves an
 object to its entry are in [`identity.md`](identity.md). The tree is admin-only,
-exactly like the raw tree. `AmpioClient.resolve_locations()` drives this pair. A
+exactly like the raw tree. `AmpioClient.resolve_records()` drives this pair. A
 consumer never calls it directly.
 
 Each account namespace also carries a retained

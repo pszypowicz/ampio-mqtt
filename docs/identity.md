@@ -245,7 +245,8 @@ over `device_api/to/<macHex>/descriptions_wr` (base64 frames of
 `[len:2][descType:2][outNo:2][outLoc:2][outType:2][utf8 desc]`, little-endian).
 It also mirrors `outType` into the object row's `type` column on both
 catalogues, as a decimal string (`"256"` = 0x0100). The library parses that
-mirror into `AmpioObject.matter_device_type`.
+mirror into `AmpioObject.matter_device_type`. That field is a pure catalogue
+fact. The sweep never changes it.
 
 Assignment and exposure are two independent facts. `type` is the device-type
 assignment. `params` bit 37 is the Matter-bridge exposure opt-in, and a row can
@@ -269,9 +270,11 @@ web bundle embeds it:
 The CAN-resident description record is authoritative for the tag. The `type`
 column mirror lags it. An output tagged 256 (0x0100) on the CAN record can still
 show an empty `type` column, live-observed on the reference install.
-`AmpioClient.resolve_locations()` reads the CAN record directly and refines
-`AmpioObject.matter_device_type` from it. A record's tag overrides the column
-value, and a record without one leaves the column value standing.
+`AmpioClient.resolve_records()` reads the CAN record into `AmpioObject.record`:
+the tag lands in `record.matter_device_type`, the location pointer in
+`record.location`, and the entry's own description string in `record.name`. The
+column mirror stays in `matter_device_type`, identical on both tiers. The two
+fields are separate facts. The consumer picks which one to trust.
 
 ## The Designer location (per-output `outLoc`)
 
@@ -326,18 +329,19 @@ bundle's enum):
 | 26    | ROLLER                                                               |
 | 34    | (the RGBW output class - no symbolic name recovered from the bundle) |
 
-### The module-level location (`AmpioModule.location`)
+### The module-level record (`AmpioModule.record`)
 
 The record's one DEVICE_NAME frame (descType 1) describes the module itself. Its
 `desc` is the module name, and its `outLoc` is the module-level "Lokalizacja" -
-where the module is mounted, not where its loads are. `resolve_locations()`
-reads it from the same reply and sets `AmpioModule.location`, with a
-`ModuleUpdated` dispatch on change. A record without the frame, or with `outLoc`
-0, reads unassigned (None). The module answered, so None is authoritative. A
-module the sweep did not cover keeps its previous value, exactly like the
-per-object side. On the reference install the installer tagged wall devices this
-way (an M-SENS and three M-DOT panels carry room names) and left the cabinet
-modules untagged.
+where the module is mounted, not where its loads are. `resolve_records()` reads
+it from the same reply and sets `AmpioModule.record`, with a `ModuleUpdated`
+dispatch on change. `record.location` is the mounting location and `record.name`
+the CAN-resident module name. A record without the frame, or with `outLoc` 0,
+reads unassigned (None). The module answered, so None is authoritative. A module
+the sweep did not cover keeps its previous value, exactly like the per-object
+side. On the reference install the installer tagged wall devices this way (an
+M-SENS and three M-DOT panels carry room names) and left the cabinet modules
+untagged.
 
 ### The join rule
 
@@ -358,5 +362,5 @@ ambiguous, not merely unproven by sample size.
 
 The whole `device_api` tree is admin-only, exactly like the raw tree. A
 restricted account gets silence on both the subscribe and the request.
-`AmpioClient.resolve_locations()` raises `RuntimeError` with the tier in the
+`AmpioClient.resolve_records()` raises `RuntimeError` with the tier in the
 message, instead of a hang on a reply that never comes.

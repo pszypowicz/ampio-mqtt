@@ -71,6 +71,37 @@ class ThermostatState:
 
 
 @dataclass(slots=True, frozen=True)
+class DesignerRecord:
+    """One object's entry of its module's CAN description record.
+
+    Admin-guarded: only :meth:`AmpioClient.resolve_records` fills it, and
+    only the admin tier can run that sweep, so ``AmpioObject.record`` is
+    None on the restricted tier and before a sweep covers the object. A
+    None field inside means the entry carries no value: an unassigned
+    location, an untagged type, an empty description. docs/identity.md
+    holds the wire shape, docs/account-tiers.md the tier rule.
+    """
+
+    location: str | None = None
+    matter_device_type: int | None = None
+    name: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class ModuleRecord:
+    """The DEVICE_NAME entry of a module's CAN description record.
+
+    Admin-guarded, exactly as :class:`DesignerRecord` is. ``location`` is
+    the module-level "Lokalizacja" (where the box is mounted, not where
+    its loads are) and ``name`` the CAN-resident module name; either can
+    differ from the admin catalogue row.
+    """
+
+    location: str | None = None
+    name: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class AmpioObject:
     """A logical Ampio object (DB object) and its latest state.
 
@@ -100,17 +131,16 @@ class AmpioObject:
     # Defaults to 0 so a payload without the column reads "nothing hidden".
     params: int = 0
     # Matter device type ID from the Designer "Description in device" tag
-    # (`type` column; "256" = 0x0100 On/Off Light). None when untagged. When
-    # set it is installer intent - the signal that a relay drives a light
-    # rather than a plug - and consumers map it to a platform themselves;
-    # `kind` stays derived from `typ_komponentu` alone. docs/identity.md
-    # holds the vocabulary and the storage path.
+    # (`type` column; "256" = 0x0100 On/Off Light). None when untagged. A
+    # pure catalogue fact, served identically to both tiers and never
+    # mutated after the seed; the record's own (fresher, admin-only) tag
+    # is `record.matter_device_type`, and which one wins is the
+    # consumer's choice. docs/identity.md holds the vocabulary and the
+    # storage path.
     matter_device_type: int | None = None
-    # Designer per-output location name (the "Lokalizacja" dropdown),
-    # resolved from the module's CAN-resident description record by
-    # `AmpioClient.resolve_locations()` - admin tier only. None until a
-    # resolve ran, and for objects it could not match. docs/identity.md.
-    location: str | None = None
+    # The object's description-record entry, admin sweep only; None on
+    # the restricted tier and before a sweep covers the object.
+    record: DesignerRecord | None = None
     # What this object is. Derived - never passed: computed from
     # `typ_komponentu` and `interpretacja` on every construction,
     # `dataclasses.replace` included, so no instance can hold a kind that
@@ -351,12 +381,9 @@ class AmpioModule:
     mounting: Mounting | None = field(init=False)
     sw_version: int | None = None  # wersja_softu
     hw_version: int | None = None  # wersja_pcb
-    # Designer module-level location (the "Lokalizacja" set on the module
-    # itself - where the box is mounted, not where its loads are), read
-    # from the DEVICE_NAME entry of the module's CAN description record by
-    # :meth:`AmpioClient.resolve_locations` - admin tier only. None until
-    # a sweep covers the module, or when the installer never set one.
-    location: str | None = None
+    # The module's DEVICE_NAME record entry, admin sweep only; None
+    # until a sweep covers the module.
+    record: ModuleRecord | None = None
     # Local epoch seconds when this process last received live evidence of
     # the module: a state push or raw edge for one of its objects, or its own
     # diagnostics broadcast. One clock only - snapshot and catalogue seeds do

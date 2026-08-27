@@ -97,10 +97,11 @@ when - and whether - to call them:
 - **`fetch_scenes()`** - the scene catalogue, driven with `run_scene()` /
   `turn_scene_off()` / `undo_scene()`. Same rationale: a consumer that surfaces
   no scenes never pays for the fetch.
-- **`resolve_locations()`** - sweeps every catalogued module over the
-  `device_api` tree and folds the per-output Designer location into
-  `AmpioObject.location` (admin tier only, see [`identity.md`](identity.md)). A
-  consumer that does not surface per-object locations never pays for the sweep.
+- **`resolve_records()`** - sweeps every catalogued module over the `device_api`
+  tree and folds the per-output Designer record into `AmpioObject.record` (admin
+  tier only, see [`identity.md`](identity.md)). The per-module record folds into
+  `AmpioModule.record`. A consumer that does not surface per-object records
+  never pays for the sweep.
 
 ## Finding the M-SERV on the LAN
 

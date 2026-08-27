@@ -21,23 +21,23 @@ an account whose tier will not support what the consumer needs. One example is
 
 ## What each tier gets
 
-| Capability                                                                                       | Administrator | Standard user                         |
-| ------------------------------------------------------------------------------------------------ | ------------- | ------------------------------------- |
-| Object catalogue with full metadata                                                              | all objects   | objects granted in the app            |
-| `params` bitfields (visibility, hidden flag)                                                     | yes           | yes (the table is not grant-filtered) |
-| Per-object live state                                                                            | all objects   | granted objects                       |
-| Rooms (`fetch_rooms`)                                                                            | yes           | yes                                   |
-| Server identity (`server_info`)                                                                  | yes           | yes                                   |
-| Scenes (`fetch_scenes`, scene commands)                                                          | yes           | yes                                   |
-| `resources` / `icons` tables (`data` surface)                                                    | yes           | yes                                   |
-| `logging` config table (`data` surface)                                                          | yes           | yes (the table is not grant-filtered) |
-| md5 change-detection tree                                                                        | yes           | yes                                   |
-| Commands                                                                                         | all objects   | granted objects                       |
-| Designer per-output location (the `device_api` tree, `resolve_locations()`, `fetch_locations()`) | yes           | no                                    |
-| **Module list** (`modules`, `mserv`)                                                             | yes           | **no**                                |
-| **Raw channel tree** (`ampio/from/#`)                                                            | yes           | **no**                                |
-| **Module diagnostics** (voltage, temperature)                                                    | yes           | **no**                                |
-| **CAN write tree** (`ampio/to/#`)                                                                | yes           | **no**                                |
+| Capability                                                                                   | Administrator | Standard user                         |
+| -------------------------------------------------------------------------------------------- | ------------- | ------------------------------------- |
+| Object catalogue with full metadata                                                          | all objects   | objects granted in the app            |
+| `params` bitfields (visibility, hidden flag)                                                 | yes           | yes (the table is not grant-filtered) |
+| Per-object live state                                                                        | all objects   | granted objects                       |
+| Rooms (`fetch_rooms`)                                                                        | yes           | yes                                   |
+| Server identity (`server_info`)                                                              | yes           | yes                                   |
+| Scenes (`fetch_scenes`, scene commands)                                                      | yes           | yes                                   |
+| `resources` / `icons` tables (`data` surface)                                                | yes           | yes                                   |
+| `logging` config table (`data` surface)                                                      | yes           | yes (the table is not grant-filtered) |
+| md5 change-detection tree                                                                    | yes           | yes                                   |
+| Commands                                                                                     | all objects   | granted objects                       |
+| Designer per-output record (the `device_api` tree, `resolve_records()`, `fetch_locations()`) | yes           | no                                    |
+| **Module list** (`modules`, `mserv`)                                                         | yes           | **no**                                |
+| **Raw channel tree** (`ampio/from/#`)                                                        | yes           | **no**                                |
+| **Module diagnostics** (voltage, temperature)                                                | yes           | **no**                                |
+| **CAN write tree** (`ampio/to/#`)                                                            | yes           | **no**                                |
 
 The SUBACK enforces the raw-tree denial. A standard account's subscription to
 the `ampio/from/...` filters comes back with reason code 128, even over MQTT
@@ -66,6 +66,31 @@ rights in the app limit who can raise an event. The logic bound to an event runs
 with full authority. A dedicated standard account is thus a real boundary for
 direct object control only, and not against anything reachable through Ampio's
 own event logic. The gating detail is in [`protocol.md`](protocol.md).
+
+## How the model marks the tiers
+
+The model separates facts by source. A plain field holds a fact both tiers
+receive, and nothing changes it after the catalogue seed. Facts from the CAN
+description record live in the nested `record` bundle: `AmpioObject.record` and
+`AmpioModule.record`. The nesting is the marker. Everything under `.record`
+needs the admin tier, and the bundle stays `None` on a standard account. The
+library adds no precedence helper. When the two sources disagree, the consumer
+picks.
+
+The admin-fed fields, the nested bundles included:
+
+| Field                                        | Why it is admin-only                  |
+| -------------------------------------------- | ------------------------------------- |
+| `AmpioObject.record`, `AmpioModule.record`   | filled by the `device_api` sweep only |
+| `AmpioObject.raw_proven`                     | proven by the raw channel tree        |
+| `AmpioModule.supply_voltage`, `.temperature` | module diagnostics broadcasts         |
+| every `AmpioModule` row                      | the module list itself is admin-only  |
+
+The model state is deterministic per tier. The tier is fixed at client
+construction, the store starts empty, and nothing persists to disk. A restricted
+client refuses `resolve_records()` before any wire traffic, so no admin fact can
+appear on that tier. If a consumer persists admin facts and later runs
+restricted, that carry is the consumer's own choice.
 
 ## The latency difference is on reads only
 
@@ -118,5 +143,5 @@ Prefer an administrator account when the install needs:
   status LEDs, and the device classes `/api` cannot express (CCT, DALI, display
   text). See [`protocol.md`](protocol.md) and
   [`untapped-surfaces.md`](untapped-surfaces.md).
-- **Per-object Designer locations** for area assignment - `resolve_locations()`
-  and `fetch_locations()` answer no other account.
+- **Per-object Designer records** for area assignment - `resolve_records()` and
+  `fetch_locations()` answer no other account.

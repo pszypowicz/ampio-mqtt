@@ -37,6 +37,8 @@ from .models import (
     AmpioObject,
     AmpioScene,
     AmpioServerInfo,
+    DesignerRecord,
+    ModuleRecord,
     ThermostatState,
 )
 
@@ -417,33 +419,25 @@ def parse_device_info(payload: str) -> tuple[OutputDescription, ...] | None:
     return parse_descriptions_blob(blob)
 
 
-@dataclass(slots=True, frozen=True)
-class DesignerResolution:
-    """What one object's CAN description entry proves."""
-
-    location: str | None
-    matter_device_type: int | None
-
-
 def resolve_designer(
     objects: Mapping[int, AmpioObject],
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
     location_names: Mapping[int, str],
     colliding_macs: frozenset[int],
-) -> dict[int, DesignerResolution]:
+) -> dict[int, DesignerRecord]:
     """Join each object to its module's description entry.
 
     The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], leaf_out_no)`` within
     the module record of ``module_mac``. Objects on a colliding mac are
     skipped - the reply cannot be attributed to one module. ``out_loc`` 0
     reads unassigned and ``out_type`` 0 untagged, so neither produces a
-    value.
+    value. An empty ``desc`` reads as None, like the other two fields.
     """
     entries_by_key = {
         mac: {(e.desc_type, e.out_no): e for e in entries}
         for mac, entries in descriptions_by_mac.items()
     }
-    out: dict[int, DesignerResolution] = {}
+    out: dict[int, DesignerRecord] = {}
     for obj in objects.values():
         desc_type = DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "")
         mac = obj.module_mac
@@ -455,9 +449,10 @@ def resolve_designer(
         entry = entries_by_key.get(mac, {}).get((desc_type, out_no))
         if entry is None:
             continue
-        out[obj.id] = DesignerResolution(
+        out[obj.id] = DesignerRecord(
             location=location_names.get(entry.out_loc) if entry.out_loc else None,
             matter_device_type=entry.out_type or None,
+            name=entry.desc or None,
         )
     return out
 
@@ -467,28 +462,30 @@ def resolve_designer(
 DEVICE_NAME_DESC_TYPE = 1
 
 
-def resolve_module_locations(
+def resolve_module_records(
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
     location_names: Mapping[int, str],
     colliding_macs: frozenset[int],
-) -> dict[int, str | None]:
-    """The module-level location of every answering module, by mac.
+) -> dict[int, ModuleRecord]:
+    """The DEVICE_NAME record entry of every answering module, by mac.
 
-    Reads the DEVICE_NAME entry of each record. A record without the
-    entry, with ``out_loc`` 0, or with a pointer the names table lacks
-    reads unassigned - the module answered, so None is authoritative.
-    Colliding macs are skipped: the reply cannot be attributed.
+    A record without the entry reads an empty bundle - the module
+    answered, so the emptiness is authoritative. ``out_loc`` 0 and an
+    empty ``desc`` read None. Colliding macs are skipped: the reply
+    cannot be attributed.
     """
-    out: dict[int, str | None] = {}
+    out: dict[int, ModuleRecord] = {}
     for mac, entries in descriptions_by_mac.items():
         if mac in colliding_macs:
             continue
         entry = next((e for e in entries if e.desc_type == DEVICE_NAME_DESC_TYPE), None)
-        out[mac] = (
-            location_names.get(entry.out_loc)
-            if entry is not None and entry.out_loc
-            else None
-        )
+        if entry is None:
+            out[mac] = ModuleRecord()
+        else:
+            out[mac] = ModuleRecord(
+                location=(location_names.get(entry.out_loc) if entry.out_loc else None),
+                name=entry.desc or None,
+            )
     return out
 
 
@@ -766,7 +763,7 @@ ENDPOINTS: tuple[Endpoint, ...] = (
     Endpoint("scenes", "data", "scenes", "data", "scenes", parses=parse_scenes),
     # The Designer "Lokalizacja" name table. On-demand; the per-output
     # pointer that resolves through it rides the device_api record
-    # (resolve_locations()).
+    # (resolve_records()).
     Endpoint(
         "locations",
         "config",
