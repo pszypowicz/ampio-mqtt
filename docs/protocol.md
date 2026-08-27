@@ -321,6 +321,16 @@ OpenAPI spec. It works on:
   config transfer is `[dst, 0xFB|0xFC, blockLo, blockHi, ...]`. The Designer
   also sends raw CAN frames to `hw/out` (first byte the send-with-id opcode,
   then `0x80|len`, a 32-bit CAN id, and the data).
+- Flag writes carry their own function, `0x16`. An `/api` flag write makes the
+  M-SERV emit six `hw/out` frames to the module that owns the flag, parts 0 to 5
+  of `[0x16, part, b, b]`. The parts reassemble to a header, a 32-bit flag mask,
+  and one value byte (`FF` on, `00` off). The mask bit is the 0-based flag
+  index, one below the 1-based raw `f` channel, the same rule outputs follow
+  (see Panel outputs). A verbatim replay of those frames drives the flag, but
+  only through `hw/out`, because `ampio/to/<machex>/raw` and `rawf` drop
+  function `0x16` while they accept `0x30`. The replay is also slower than
+  `/api`, with six publishes against one and a median state echo of 68 ms
+  against 40 ms. The library therefore keeps `/api` for flags.
 - Raw feeds: `fc` / `fcocb`, `ampio/from/+/raw`, and the same `ampio/from` state
   tree this library consumes.
 
