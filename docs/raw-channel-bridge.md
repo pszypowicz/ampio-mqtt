@@ -116,7 +116,7 @@ without a temperature sensor (relays, panels) report voltage only.
 ## The full retained prefix inventory
 
 Passive retained sweeps of `ampio/from/+/state/#` on the baseline
-install show more prefixes than the bridge consumes (#102). The full
+install show more prefixes than the bridge consumes. The full
 observed set, with the module classes that publish each:
 
 | Prefix          | Publishes on               | Meaning                                                                                                                                                       |
@@ -132,7 +132,7 @@ observed set, with the module classes that publish each:
 | `au32`          | alarm bridge (M-CON) only  | 32-bit channels of the bridged alarm system (`bit32` objects).                                                                                                 |
 | `bi`, `bo`      | alarm bridge (M-CON) only  | The bridged alarm system's binary inputs and outputs (zone table, 128 channels each on the observed install).                                                  |
 | `armed`, `alarm`| alarm bridge (M-CON) only  | Alarm partition states - the pair behind `satel_alarm` objects.                                                                                                |
-| `rs`            | M-SERV only                | Heating-zone setpoint in °C (`ampio/from/1/state/rs/<zone>`), the raw mirror of the `reg` object's target (#101).                                              |
+| `rs`            | M-SERV only                | Heating-zone setpoint in °C (`ampio/from/1/state/rs/<zone>`), the raw mirror of the `reg` object's target.                                              |
 
 Two companion claims from a third-party integration stay unverified:
 `rsdn/<n>` (day/night setpoints) and `rm/<n>` (operating mode,

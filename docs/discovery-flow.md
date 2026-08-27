@@ -70,7 +70,7 @@ Every catalogue reply also evicts what it stopped listing, fired as
 deletion-tool differences live on the event docstrings and in
 [`identity.md`](identity.md). Since catalogues are request/response, a
 server-side deletion is noticed at the next reply (the refresh a
-reconnect issues, an explicit `refresh()`, or a `refresh_interval`
+reconnect problems, an explicit `refresh()`, or a `refresh_interval`
 tick), so a consumer that wants prompt removals refreshes on its own
 schedule, calls `refresh()` directly, or sets `refresh_interval`
 instead of rolling its own timer. An empty reply is a complete reply
