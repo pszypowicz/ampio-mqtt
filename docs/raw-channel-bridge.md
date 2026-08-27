@@ -55,14 +55,18 @@ plus the store's `_apply_raw_channel`.
 ```
 ampio/from/+/state/f/+   # flags  ("flaga")
 ampio/from/+/state/i/+   # digital inputs  ("detekcja", "wej")
+ampio/from/+/state/o/+   # binary outputs ("przekaznik")
 ampio/from/+/b/4F        # per-module diagnostics broadcast
 ampio/from/+/event       # bus events
 ```
 
-The two channel wildcards are bridged to the owning `AmpioObject` so
-listeners see the same push as for any other update. The event
-wildcard feeds `BusEvent` subscribers - a different surface with its
-own semantics, described in [`protocol.md`](protocol.md).
+The channel wildcards are bridged to the owning `AmpioObject` so
+listeners see the same push as for any other update. The `o` prefix
+covers every `przekaznik` uniformly: a touch panel's per-field status
+LEDs have no other retained surface, and a relay's outputs share the
+channel shape, so both gain the raw-first path. The event wildcard
+feeds `BusEvent` subscribers - a different surface with its own
+semantics, described in [`protocol.md`](protocol.md).
 
 The whole tree is administrator-only (the broker rejects the filters
 for any other account in the SUBACK with reason code 128), and only
@@ -106,7 +110,7 @@ without a temperature sensor (relays, panels) report voltage only.
 | `a` (analog input)     | Already arrives on the per-object topic with full precision and the right state-class metadata. The raw form would force a re-classify per push.                                                          |
 | `t` (temperature)      | Same reasoning - per-object form is sufficient.                                                                                                                                                           |
 | `rgbw` (RGBW output)   | Output side. Latency is not the win it is for inputs, and the per-object form carries the user-friendly desc.                                                                                             |
-| `o` (other)            | Catch-all; payload shape varies by module.                                                                                                                                                                |
+| `o` (non-przekaznik)   | Subscribed, but indexed for `przekaznik` objects alone (see above). Channels of other output classes drop at the lookup.                                                                                  |
 | `symulacja` raw prefix | Classified as an input but the wire prefix is not yet confirmed. The object still updates through the per-object topic; tracked as a forward-work item in [`untapped-surfaces.md`](untapped-surfaces.md). |
 
 ## Routing key

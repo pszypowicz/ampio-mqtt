@@ -183,6 +183,48 @@ slats end wherever the travel leaves them: closed (`lammel` 0) after a
 downward move, open (100) after an upward one. Pass an explicit
 `lamella` in the same command to land on a chosen angle instead.
 
+## Panel outputs
+
+The M-DOT touch panels expose one binary output per touch field - the
+status LED beside it. These outputs are unreachable through every
+documented command form: the `/api` verbs (`turnOn`, `setValue`,
+`switch`) and the per-channel `ampio/to/<MAC>/o/<ch>/cmd` topic are all
+silently dropped for them, with a DB object present or not, while a
+relay module answers the identical commands. The Designer SPA does not
+use `/api` for these leaves either. This is an Ampio limitation: a
+standard account holds no surface that reaches a panel output at all.
+
+The write that works is the raw CAN frame the SPA itself sends,
+captured live and replicated from a plain client:
+
+```
+ampio/to/<machex>/raw      30f9<value:2><channel:2>     (ASCII hex)
+```
+
+`0x30` is the generic output-write function (the SPA's leaf command
+table maps every output leaf to it), `0xF9` the set-u8 command, and
+`channel` the 0-based output index - `AmpioObject.leaf_out_no`, one
+below the 1-based raw state channel. The topic is admin-only like the
+rest of the `ampio/to` tree. The raw `state/o/<ch+1>` echo follows in
+~30-50 ms and the per-object push in ~150 ms, so `confirm=` works
+unchanged. The frame is proven on panel LEDs and relay outputs alike.
+
+The library's routing is deliberately dumb: on the admin tier every
+`przekaznik` on a CAN module rides this frame, addressed purely by its
+own leaf (mac and 0-based channel), with no module-type table to
+maintain. Two writes stay on `/api`: the M-SERV's own virtual outputs
+(they live in the server's DB, not on the CAN bus) and every
+`pulse_ms` write (the raw frame has no timed form - so a panel output
+cannot pulse, and `confirm=` is what surfaces that). The restricted
+tier always publishes the `/api` form, which a panel output ignores.
+
+A module condition bound to the LED overrides such writes eventually,
+not preventively: a live write to a condition-bound LED took effect
+and was re-asserted by the panel ~9 s later with the bound source
+unchanged. Durable external control therefore needs the LED left out
+of Designer logic, with its app object created in Designer - the same
+recipe as any other output object.
+
 ## Bus events
 
 Events are logical signals numbered 1-65535 that Ampio's own logic raises

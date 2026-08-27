@@ -27,6 +27,8 @@ from ampio_mqtt._protocol import (
     parse_server_info,
     parse_stan_json,
     parse_states_snapshot,
+    raw_output_payload,
+    raw_write_topic,
     server_below_baseline,
     to_int,
 )
@@ -549,3 +551,17 @@ def test_diagnostics_three_element_frame_has_no_temperature() -> None:
     assert isinstance(report, DiagnosticsReport)
     assert report.diagnostics.supply_voltage == 12.2
     assert report.diagnostics.temperature is None
+
+
+# --- raw write builders ---------------------------------------------------
+
+
+def test_raw_write_topic_is_lowercase_hex() -> None:
+    assert raw_write_topic(0xCAFE) == "ampio/to/cafe/raw"
+    assert raw_write_topic(1) == "ampio/to/1/raw"
+
+
+def test_raw_output_payload_encodes_value_and_channel() -> None:
+    assert raw_output_payload(255, 1) == "30f9ff01"
+    assert raw_output_payload(0, 0) == "30f90000"
+    assert raw_output_payload(128, 23) == "30f98017"

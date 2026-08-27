@@ -14,6 +14,47 @@ cut while the HA integration was taking shape; it has been retired in
 favour of the explicit beta posture above and is no longer the supported
 upgrade path.
 
+## 0.33.0
+
+Touch-panel status LEDs become first-class outputs (#119, part of #60).
+The M-DOT panels expose one binary output per touch field - the status
+LED - but those outputs ignore the whole `/api` command surface and the
+per-channel `ampio/to/<mac>/o/<ch>/cmd` form, an Ampio limitation that
+leaves a standard account no path to them at all. The write that works
+is the raw CAN frame the Designer SPA itself sends, captured and
+replicated live on a baseline install, on a panel LED and a relay
+output alike.
+
+### Changed
+
+- **Admin binary-output writes ride the raw CAN frame** - on the admin
+  tier `turn_on()`, `turn_off()`, `toggle()`, and `set_value()` publish
+  `30f9<value><channel>` to `ampio/to/<machex>/raw` for every
+  `przekaznik` on a CAN module, addressed purely by the object's own
+  leaf (mac plus the 0-based `AmpioObject.leaf_out_no`) - deliberately
+  dumb routing, with no module-type table to maintain. `confirm=`
+  works unchanged: the raw `state/o` edge echoes in ~30-50 ms and the
+  per-object push in ~150 ms. Two writes stay on `/api`: the M-SERV's
+  own virtual outputs (DB residents, not CAN modules) and every
+  `pulse_ms` write (the raw frame has no timed form - a panel output
+  therefore cannot pulse, surfaced by `confirm=`). `toggle()` on the
+  raw path inverts the state the store holds. The restricted tier
+  keeps the `/api` form everywhere, which a panel output silently
+  ignores. Writes to a condition-bound LED apply and are then
+  re-asserted by the module's own logic within seconds - durable
+  control needs an output left out of Designer logic
+  (docs/protocol.md, "Panel outputs").
+
+### Added
+
+- **`o` raw-channel bridge** (#119) - the admin session now subscribes
+  `ampio/from/+/state/o/+` and bridges binary-output channels to their
+  `przekaznik` objects, exactly as the `f`/`i` input bridge works:
+  retained resync, raw-first latency, `raw_proven` ownership. A
+  panel's LEDs gain their only state surface; a relay's outputs gain
+  the same raw-first path, so their value reads the raw `"1"`/`"0"`
+  form once an edge arrives - the form `is_on` already documents.
+
 ## 0.32.0
 
 The device-metadata batch behind the HA topology contract pinned on
