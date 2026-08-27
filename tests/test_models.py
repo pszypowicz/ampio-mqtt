@@ -94,6 +94,22 @@ def test_params_flags(params: int, hidden: bool) -> None:
     assert obj.hidden is hidden
 
 
+@pytest.mark.parametrize(
+    ("params", "read_only"),
+    [
+        (0, False),  # absent -> writable
+        (1, False),  # the live writable-flag shape
+        (64, True),  # bit 6 -> Designer read-only checkbox
+        (65, True),  # bit 0 + bit 6 (the live read-only-flag shape)
+        (16, False),  # hidden is not a writability signal
+        ((1 << 37) | 64, True),  # Matter opt-in does not clear it
+    ],
+)
+def test_read_only_reads_params_bit_6(params: int, read_only: bool) -> None:
+    obj = AmpioObject(id=1, params=params)
+    assert obj.read_only is read_only
+
+
 def test_hidden_overrides_leaf_id_visibility() -> None:
     """Bit 4 (hidden) drops an object even when its leaf_id would show it.
 

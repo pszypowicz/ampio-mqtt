@@ -29,11 +29,15 @@ class AccessTier(Enum):
     RESTRICTED = "restricted"  # an app-created user: app-sync view only
 
 
-# Bit flags inside the `params` integer (`obiekty.params`); the semantics
-# match the M-SERV's own Matter bridge (docs/identity.md). Bit 4 is the
-# hidden/stub marker (see `AmpioObject.hidden`); bit 37 is the per-object
-# Matter opt-in, not a visibility signal, and nothing here reads it.
+# Bit flags inside the `params` integer (`obiekty.params`); the names come
+# from the Designer web bundle's own enum, and the semantics of the bits
+# read here are corroborated by the M-SERV's Matter bridge and by live
+# probing (docs/identity.md). Bit 4 is the hidden/stub marker (see
+# `AmpioObject.hidden`); bit 6 is the Designer read-only checkbox (see
+# `AmpioObject.read_only`); bit 37 is the per-object Matter opt-in, not a
+# visibility signal, and nothing here reads it.
 _HIDDEN_FLAG = 1 << 4
+_READ_ONLY_FLAG = 1 << 6
 
 # The `leafId` shape: `0_<macHex>_<F2>_<F3>_<F4>`, the same structure the
 # M-SERV's own Matter bridge parses (docs/identity.md). Only the mac
@@ -237,6 +241,19 @@ class AmpioObject:
         duplicate a real Designer channel. See docs/identity.md.
         """
         return bool(self.params & _HIDDEN_FLAG)
+
+    @property
+    def read_only(self) -> bool:
+        """Whether Designer marks this object read-only (``params`` bit 6).
+
+        The M-SERV enforces the marker itself, on every account tier: an
+        ``/api`` write to a read-only object is dropped before it reaches
+        the CAN bus, with no echo and no error. Reads are unaffected. The
+        checkbox can change at any time, so a consumer keeps the object's
+        platform and rejects writes while this is True, rather than
+        re-registering the entity. See docs/identity.md.
+        """
+        return bool(self.params & _READ_ONLY_FLAG)
 
     @property
     def stable_key(self) -> str | None:

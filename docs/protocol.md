@@ -92,17 +92,24 @@ granted-object positive control from the same account confirmed that its command
 path works. The account's namespace likewise carries state only for granted
 objects, including ones it just commanded.
 
+**Designer's read-only checkbox drops writes the same way.** An object with
+`params` bit 6 set (`AmpioObject.read_only`) accepts no `/api` write on any
+tier, admin included. The M-SERV emits no CAN frames for it, so the drop is
+server-side and silent. Reads are unaffected. The marker and its consumer
+contract are in [`identity.md`](identity.md).
+
 **The state echo is the only confirmation.** The library's `confirm=` option on
 `command()` and the typed wrappers arms a waiter before the publish. The waiter
 resolves on the next `ObjectUpdated` for the object. That is the per-object echo
 on both tiers, or the earlier raw edge on the admin tier. The raw edge's arrival
 suppresses the per-object copy. The echo is an observation and nothing stronger.
 A concurrent change from another source satisfies it. A timeout is how every
-silent drop surfaces: an ignored verb, an out-of-grant object, or a command that
-changed nothing and thus pushed nothing. Latency bounds the timeout choice. Most
-verbs echo in under ~200 ms on the per-object path, and `arm`/`disarm` take ~1
-s, so `confirm=2.0` covers the measured surface. Scene commands and `setEvent`
-fan out beyond a single object and offer no per-object echo.
+silent drop surfaces: an ignored verb, an out-of-grant object, a read-only
+object, or a command that changed nothing and thus pushed nothing. Latency
+bounds the timeout choice. Most verbs echo in under ~200 ms on the per-object
+path, and `arm`/`disarm` take ~1 s, so `confirm=2.0` covers the measured
+surface. Scene commands and `setEvent` fan out beyond a single object and offer
+no per-object echo.
 
 The `ampio/to/<mac>/...` CAN tree is the other write path (documented in Ampio's
 own MQTT API note, with per-channel `cmd` topics and a `raw` hex channel that
