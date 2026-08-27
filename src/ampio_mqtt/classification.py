@@ -54,13 +54,23 @@ BinarySensorDeviceClass = Literal["motion"]
 
 @dataclass(frozen=True, slots=True)
 class InputKind:
-    """Neutral description of a binary / flag-shaped input object."""
+    """Neutral description of a binary / flag-shaped input object.
+
+    ``switchable`` carries the same claim it does on `OutputKind`, so a
+    consumer can partition writable inputs from read-only ones with one
+    predicate across both classes.
+    """
 
     key: str
     name: str
     # HA binary_sensor device class, or None for a generic boolean where the
     # consumer decides how to model it (binary_sensor vs switch).
     device_class: BinarySensorDeviceClass | None = None
+    # The `turnOn` / `turnOff` / `switch` verb family, over `/api`. True only
+    # for `flaga`. A `wej` is a physical input the module scans for itself:
+    # the M-SERV drops all three verbs for it on both account tiers, with no
+    # effect and no reply. `detekcja` and `symulacja` have never been driven.
+    switchable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,7 +194,9 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     ),
     "reg": TypeProfile(ThermostatKind("thermostat", "Thermostat")),
     "bit8": TypeProfile(_Selector.NUMERIC),
-    "flaga": TypeProfile(InputKind("flaga", "Flag", None), channel_prefix="f"),
+    "flaga": TypeProfile(
+        InputKind("flaga", "Flag", None, switchable=True), channel_prefix="f"
+    ),
     # The per-channel physical-input object (a wall button wired to a module
     # terminal). Same 255/0 payload as flags on the per-object topic; the
     # raw mirror rides the digital-input prefix (#117).

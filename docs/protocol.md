@@ -113,9 +113,9 @@ described below.
 
 | Verb                               | Args                        | Notes                                                                                                                                                                                                                                                                                                                                              |
 | ---------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `turnOn`                           | -                           | Full on (255). `rgbw` objects ignore it (no effect, no reply) - see `setColors`.                                                                                                                                                                                                                                                                   |
-| `turnOff`                          | -                           | Off. `rgbw` objects ignore it (no effect, no reply) - turn those off with `setColors 0/0/0/0`.                                                                                                                                                                                                                                                     |
-| `switch`                           | -                           | Inverts the current state. `rgbw` objects ignore it (no effect, no reply).                                                                                                                                                                                                                                                                         |
+| `turnOn`                           | -                           | Full on (255). Flags answer it too. `rgbw` objects ignore it (no effect, no reply) - see `setColors`.                                                                                                                                                                                                                                              |
+| `turnOff`                          | -                           | Off. Flags answer it too. `rgbw` objects ignore it (no effect, no reply) - turn those off with `setColors 0/0/0/0`.                                                                                                                                                                                                                                |
+| `switch`                           | -                           | Inverts the current state. Flags answer it too. `rgbw` objects ignore it (no effect, no reply).                                                                                                                                                                                                                                                    |
 | `open`                             | -                           | Cover to 100.                                                                                                                                                                                                                                                                                                                                      |
 | `close`                            | -                           | Cover to 0.                                                                                                                                                                                                                                                                                                                                        |
 | `stop`                             | -                           | Halts a cover on either axis. Mid-travel, the position stream freezes at the halt point, and the commanded target is never reached. A slat rotation caught mid-turn freezes at an intermediate angle the same way. During the pre-travel slat phase it also cancels the pending move. Stationary, it is a silent no-op. Exposed as `stop_cover()`. |
@@ -147,6 +147,24 @@ M-SERV accepts. State echoes report the unsigned form. A consumer that wants
 "on" for an `rgbw` object must follow the same pattern. Remember the last
 non-zero state value (the packed color, decoded as `AmpioObject.rgbw`), and
 replay it with `setColors`.
+
+**Flags answer the switch verbs. Physical inputs do not.** The switch family
+reaches more than outputs. A `flaga` object answers `turnOn`, `turnOff`, and
+`switch` over `/api`. This works on the admin tier and on the restricted tier. A
+consumer can therefore model a writable flag as a switch entity. The library
+reports this as `InputKind.switchable`.
+
+A `wej` object is a physical input, and the module scans that hardware itself.
+The M-SERV drops all three switch verbs for a `wej`. There is no effect and no
+reply, on either account tier. `setValue` behaves the same way. A consumer must
+treat a `wej` as read-only.
+
+Do not aim the raw output frame at a flag channel or at an input channel. The
+frame drives the binary output that carries that channel number, which is a
+different device on the same module. Each leaf class numbers its channels in its
+own space. A module reports the size of each space in the `supportedFunctions`
+census of its `device_api` record. One observed module carries a physical input
+at channel 0 and an unrelated relay at channel 0.
 
 Scenes are driven by their own payloads on the same topic. The payload addresses
 the scene, not an object:

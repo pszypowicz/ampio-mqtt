@@ -15,9 +15,10 @@ The tables themselves live in
 are not repeated here. `TYPE_PROFILES` is one row per known `typ_komponentu`:
 its kind, its raw-bridge channel prefix, and its system flag.
 `_LIN_WEJ_BY_INTERP` maps a `lin_wej` object's `interpretacja` to its
-measurement. The `OutputKind` flags say which command verbs an output answers. A
-type absent from `TYPE_PROFILES` (or an `interpretacja` absent from the analog
-map) still surfaces, as the generic value sensor or the `analog_<n>` fallback.
+measurement. The `OutputKind` flags say which command verbs an output answers,
+and `InputKind.switchable` says the same for an input. A type absent from
+`TYPE_PROFILES` (or an `interpretacja` absent from the analog map) still
+surfaces, as the generic value sensor or the `analog_<n>` fallback.
 
 ## Wire notes the tables cannot carry
 
@@ -29,6 +30,11 @@ map) still surfaces, as the generic value sensor or the `analog_<n>` fallback.
 - `wej` is the per-channel physical-input object the Designer creates for a
   wired button. Its per-object payload is 255 pressed / 0 released. Its
   `interpretacja` mirrors `funkcja` (the channel number), so it refines nothing.
+  It is read-only: the M-SERV drops every write verb for it on both account
+  tiers, so `switchable` is False.
+- `flaga` is the one input that answers the `turnOn`/`turnOff`/`switch` family,
+  over `/api` on both account tiers, so `switchable` is True. A consumer can
+  model a writable flag as a switch. See [`protocol.md`](protocol.md).
 - `roleta_lamelki` is what the Ampio app writes when a cover's type is set to
   "blinds - slats". The same cover reads back as `roleta_procenty` while it is
   set to "blinds - percentage". Only the slats variant reports a `lammel` angle
