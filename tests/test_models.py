@@ -9,6 +9,7 @@ import pytest
 from ampio_mqtt import AmpioModule, AmpioObject, AmpioServerInfo
 from ampio_mqtt.classification import ThermostatKind, classify
 from ampio_mqtt.device_types import module_model
+from ampio_mqtt.models import DesignerRecord, ModuleRecord
 
 
 @pytest.mark.parametrize(
@@ -274,3 +275,15 @@ def test_leaf_out_no_parses_last_segment() -> None:
     assert AmpioObject(id=1, leaf_id="").leaf_out_no is None
     assert AmpioObject(id=1, leaf_id="0_cb89_257_2_x").leaf_out_no is None
     assert AmpioObject(id=1, leaf_id="junk").leaf_out_no is None
+
+
+def test_record_bundles_default_to_none() -> None:
+    assert AmpioObject(id=1).record is None
+    assert AmpioModule(id=1).record is None
+
+
+def test_record_bundle_fields_default_to_none() -> None:
+    assert DesignerRecord() == DesignerRecord(
+        location=None, matter_device_type=None, name=None
+    )
+    assert ModuleRecord() == ModuleRecord(location=None, name=None)
