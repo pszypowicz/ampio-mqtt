@@ -15,6 +15,7 @@ from ampio_mqtt import (
 )
 from ampio_mqtt._protocol import (
     ENDPOINTS,
+    REDACTED,
     DiagnosticsReport,
     EndpointReply,
     RawChannelEdge,
@@ -29,6 +30,7 @@ from ampio_mqtt._protocol import (
     parse_states_snapshot,
     raw_output_payload,
     raw_write_topic,
+    redact_info_payload,
     server_below_baseline,
     to_int,
 )
@@ -237,6 +239,66 @@ def test_parse_server_info_bad_payload_returns_none() -> None:
     # which is what keeps `AmpioServerInfo.key` populated by construction.
     assert parse_server_info(json.dumps({"Results": {}})) is None
     assert parse_server_info(json.dumps({"Results": {"serverVersion": "1865"}})) is None
+
+
+def test_redact_info_payload_keeps_only_safelisted_values() -> None:
+    """Every value outside the safe-key set is masked with the key kept,
+    so the retained copy shows the reply's shape without the private data."""
+    payload = json.dumps(
+        {
+            "Status": 0,
+            "Results": {
+                "mac": 1234,
+                "userId": -1,
+                "serverVersion": "1865",
+                "serverRevision": "409",
+                "mqttVersion": "5",
+                "city": "Example Street 1, Springfield",
+                "lat": "52.1000",
+                "lon": "21.0000",
+                "cloudInfo": {"host": "cloud.example", "port": 8883},
+                "local_ip": "192.168.1.10",
+                "device_id": "hw-0042",
+                "publicKey": "PEMPEMPEM",
+            },
+        }
+    )
+    redacted = redact_info_payload(payload)
+    data = json.loads(redacted)
+    results = data["Results"]
+    assert results["mac"] == 1234
+    assert results["userId"] == -1
+    assert results["serverVersion"] == "1865"
+    assert results["serverRevision"] == "409"
+    assert results["mqttVersion"] == "5"
+    assert data["Status"] == 0
+    private = ("city", "lat", "lon", "cloudInfo", "local_ip", "device_id", "publicKey")
+    for key in private:
+        assert results[key] == REDACTED
+    assert "Springfield" not in redacted
+    assert "52.1000" not in redacted
+
+
+def test_redact_info_payload_masks_unknown_top_level_values() -> None:
+    """A top-level key outside the safe set is masked too: the allowlist
+    covers fields a future firmware adds anywhere in the envelope."""
+    payload = json.dumps({"Results": {"mac": 1}, "debugDump": {"ip": "10.0.0.1"}})
+    data = json.loads(redact_info_payload(payload))
+    assert data["debugDump"] == REDACTED
+    assert data["Results"] == {"mac": 1}
+
+
+def test_redact_info_payload_withholds_unparseable_replies() -> None:
+    """A reply without the parseable envelope is withheld outright: a
+    truncated JSON string can carry the private fields in clear text."""
+    for payload in (
+        "not json",
+        json.dumps([1, 2]),
+        json.dumps({"mac": 1}),
+        json.dumps({"Results": "text"}),
+        '{"Results": {"city": "Example Str',
+    ):
+        assert redact_info_payload(payload) == REDACTED
 
 
 def test_parse_server_info_coerces_numeric_version_fields() -> None:

@@ -80,11 +80,17 @@ _ObjEventT2 = TypeVar("_ObjEventT2", bound=ObjectUpdated | ObjectRemoved)
 _ListenerEntry = tuple[Callable[[Any], None], tuple[type[ClientEvent], ...] | None]
 
 
+def _retained(endpoint: _protocol.Endpoint, payload: str) -> str:
+    """The form of a reply kept for diagnostics: the endpoint's redacted
+    rewrite when it defines one, else the verbatim payload."""
+    return payload if endpoint.redacts is None else endpoint.redacts(payload)
+
+
 class _ReplyChannel:
     """One endpoint's reply tracking.
 
     ``received`` latches on the first parsed reply and never clears;
-    ``last_payload`` keeps the verbatim payload for diagnostics;
+    ``last_payload`` keeps the retained payload for diagnostics;
     ``waiters`` are fetch futures awaiting the next parsed reply.
     """
 
@@ -111,7 +117,7 @@ class _ReplyChannel:
 
     def record(self, payload: str, parsed_ok: bool) -> None:
         """Record a store-gated reply: latch discovery when it parsed and
-        keep the verbatim payload either way. These endpoints produce no
+        keep the payload either way. These endpoints produce no
         fetchable value, so no waiter is resolved - ``_fetch`` rejects
         their names outright."""
         self.last_payload = payload
@@ -249,7 +255,9 @@ class AmpioClient:
                 parsed = msg.endpoint.parses(payload)
                 if parsed is None:
                     _LOGGER.warning("Could not parse Ampio %s reply", msg.endpoint.name)
-                self._channels[msg.endpoint.name].deliver(payload, parsed)
+                self._channels[msg.endpoint.name].deliver(
+                    _retained(msg.endpoint, payload), parsed
+                )
                 return
             if isinstance(msg, _protocol.DeviceDescriptions):
                 for future in self._descriptions_waiters.pop(msg.mac, []):
@@ -257,7 +265,9 @@ class AmpioClient:
                 return
             applied = self._store.apply(msg)
             if isinstance(msg, _protocol.EndpointReply):
-                self._channels[msg.endpoint.name].record(payload, applied.parsed)
+                self._channels[msg.endpoint.name].record(
+                    _retained(msg.endpoint, payload), applied.parsed
+                )
         except Exception:
             if topic in self._poisoned_topics:
                 _LOGGER.debug("Dropped another failing Ampio message on %s", topic)
@@ -409,7 +419,12 @@ class AmpioClient:
           rows, on which raw traffic cannot be attributed reliably.
         - ``last_payloads``: each endpoint's verbatim last reply, absent
           until one lands. A payload that failed to parse is retained
-          too - the bad bytes are what the report needs.
+          too - the bad bytes are what the report needs. The one
+          exception is the ``info`` entry: its reply carries private
+          fields (street address, coordinates, cloud endpoint) that a
+          consumer's key-based redaction cannot reach inside a string,
+          so it is retained with every non-safelisted value masked, and
+          an unparseable info reply is withheld outright.
         """
         server_info = self._store.server_info
         return {

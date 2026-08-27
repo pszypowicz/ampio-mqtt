@@ -550,6 +550,48 @@ def parse_server_info(payload: str) -> AmpioServerInfo | None:
     )
 
 
+# The mask Home Assistant's diagnostics redaction writes, reused so a
+# redacted snapshot reads uniformly in a bug report.
+REDACTED = "**REDACTED**"
+
+# The info-reply keys whose values survive into the diagnostics copy. The
+# retained payload is one string a consumer's key-based redactor cannot
+# reach into, so every other value - the known private fields and any a
+# future firmware adds - is masked at the source (#137).
+_INFO_SAFE_KEYS = frozenset(
+    {"Status", "mac", "userId", "serverVersion", "serverRevision", "mqttVersion"}
+)
+
+
+def redact_info_payload(payload: str) -> str:
+    """The server-info reply with every non-safelisted value masked.
+
+    Keys stay visible, so a report still shows the reply's shape. A reply
+    without the parseable envelope is withheld outright: a truncated JSON
+    string can carry the private fields in clear text.
+    """
+    try:
+        outer = json.loads(payload)
+    except (ValueError, TypeError):
+        return REDACTED
+    if not isinstance(outer, dict):
+        return REDACTED
+    results = outer.get("Results")
+    if not isinstance(results, dict):
+        return REDACTED
+    masked_results = {
+        key: value if key in _INFO_SAFE_KEYS else REDACTED
+        for key, value in results.items()
+    }
+    masked = {
+        key: masked_results
+        if key == "Results"
+        else (value if key in _INFO_SAFE_KEYS else REDACTED)
+        for key, value in outer.items()
+    }
+    return json.dumps(masked)
+
+
 def parse_states_snapshot(payload: str) -> list[SnapshotEntry] | None:
     """Parse a bulk `data/states` snapshot."""
     rows = list_rows(payload)
@@ -724,6 +766,11 @@ class Endpoint:
     # returns. None marks an endpoint whose reply mutates state - its
     # AmpioStore handler is the gate instead.
     parses: Callable[[str], object | None] | None = None
+    # Rewrites the reply before it is retained for diagnostics_snapshot().
+    # Set on an endpoint whose reply carries private fields: the retained
+    # copy is one string a consumer's key-based redactor cannot reach
+    # into. The store and the fetch parsers always read the raw reply.
+    redacts: Callable[[str], str] | None = None
 
 
 ENDPOINTS: tuple[Endpoint, ...] = (
@@ -746,7 +793,9 @@ ENDPOINTS: tuple[Endpoint, ...] = (
         tier=AccessTier.ADMIN,
     ),
     Endpoint("states", "states", "", "data", "states", initial=True),
-    Endpoint("info", "info", "", "data", "info", initial=True),
+    Endpoint(
+        "info", "info", "", "data", "info", initial=True, redacts=redact_info_payload
+    ),
     # App-sync object catalogue. Same wire keyword as the module list above but
     # on the `data` surface, and a different payload: DB objects (the
     # `devicesDetails` row shape minus `params`/`stan_json`), filtered to the
