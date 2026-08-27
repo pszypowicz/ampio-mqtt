@@ -3,7 +3,7 @@
 # markdown prose wrapping (.prettierrc sets proseWrap: always).
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.10
+    rev: v0.16.4
     hooks:
       - id: ruff-check
       - id: ruff-format
