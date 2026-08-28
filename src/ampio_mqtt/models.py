@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -55,8 +56,9 @@ _LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_([^_]+)_([^_]+)_([^_]+)")
 # The M-SERV's Designer override mac: its objects' leafId embeds this value
 # (not the factory mac_global), and its own module row reports it as
 # `AmpioModule.mac`. The one place the rule lives - consumers read
-# `AmpioObject.is_server_owned` instead of comparing macs themselves.
-_MSERV_MAC = 1
+# `AmpioObject.is_server_owned` instead of comparing macs themselves, and
+# the record sweep reads this name to skip the server's own row.
+MSERV_MAC = 1
 
 
 @dataclass(slots=True, frozen=True)
@@ -92,6 +94,23 @@ class DesignerRecord:
     location: str | None = None
     matter_device_type: int | None = None
     desc: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class RecordSweep:
+    """What one :meth:`AmpioClient.resolve_records` pass covered.
+
+    ``records`` is the join result. The two mac sets separate the case a
+    bare record map cannot: a module in ``answered_macs`` whose object
+    still reads ``record`` None carries no entry for that output, while a
+    module in ``silent_macs`` was never read and says nothing either way.
+    The M-SERV's own row is not a CAN module and is never requested, so
+    it appears in neither set.
+    """
+
+    records: Mapping[int, DesignerRecord]
+    answered_macs: frozenset[int]
+    silent_macs: frozenset[int]
 
 
 @dataclass(slots=True, frozen=True)
@@ -404,7 +423,7 @@ class AmpioObject:
         to its hub device without the module catalogue. False when
         ``leaf_id`` is empty.
         """
-        return self.module_mac == _MSERV_MAC
+        return self.module_mac == MSERV_MAC
 
     @property
     def visible(self) -> bool:

@@ -50,13 +50,14 @@ from .events import (
     ObjectUpdated,
 )
 from .models import (
+    MSERV_MAC,
     AccessTier,
     AmpioModule,
     AmpioObject,
     AmpioScene,
     AmpioServerInfo,
     ConnectionStats,
-    DesignerRecord,
+    RecordSweep,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -793,8 +794,8 @@ class AmpioClient:
         )
         return dict(cast("dict[int, str]", replies["locations"]))
 
-    async def resolve_records(self, timeout: float = 10.0) -> dict[int, DesignerRecord]:
-        """Sweep the CAN description records and return what resolved.
+    async def resolve_records(self, timeout: float = 10.0) -> RecordSweep:
+        """Sweep the CAN description records and return what the pass covered.
 
         Fetches the locations name table, asks each catalogued module
         for its CAN-resident description record over the ``device_api``
@@ -807,17 +808,20 @@ class AmpioClient:
         never touched: the record is the separate, admin-guarded fact
         (#133).
 
-        Returns ``{object_id: DesignerRecord}`` for what resolved. A
-        module that does not answer within ``timeout`` is skipped
-        without error - offline modules are normal - so the map can be
-        partial; call again for another sweep. An object absent from a
-        sweep keeps its previous ``record`` until a later sweep covers
-        it.
+        Returns a :class:`RecordSweep`. Its ``records`` map is
+        ``{object_id: DesignerRecord}`` for what resolved, and its two
+        mac sets say which modules answered - a caller that reads
+        ``record`` None needs them to tell an empty entry from an unread
+        module. An object absent from a sweep keeps its previous
+        ``record`` until a later sweep covers it.
 
-        The sweep waits out the full ``timeout`` whenever any module
-        stays silent, and the name table is fetched first on its own
-        ``timeout`` budget, so the call can take up to twice ``timeout``
-        end to end.
+        The M-SERV answers the requests one module at a time, so
+        ``timeout`` bounds the silence between replies, not the sweep.
+        Every request goes out first, and the sweep ends once no further
+        reply arrives for ``timeout`` seconds. The whole call therefore
+        runs as long as the M-SERV needs, plus the ``timeout`` budget the
+        name table is fetched on. A caller that must finish by a deadline
+        applies its own ceiling.
 
         Admin tier only: the ``device_api`` tree answers no other
         account, and the call raises ``RuntimeError`` for one. Requires
@@ -831,8 +835,15 @@ class AmpioClient:
                 "device_api tree answers no other account"
             )
         names = await self.fetch_locations(timeout=timeout)
+        # The M-SERV's own row is a catalogue module with a mac, but it is
+        # not a CAN module and never answers a get_data request. Asking
+        # would put it in `silent_macs` on every sweep.
         macs = sorted(
-            {mod.mac for mod in self._store.modules.values() if mod.mac is not None}
+            {
+                mod.mac
+                for mod in self._store.modules.values()
+                if mod.mac is not None and mod.mac != MSERV_MAC
+            }
         )
         loop = asyncio.get_running_loop()
         futures: dict[int, asyncio.Future[tuple[_protocol.OutputDescription, ...]]] = {}
@@ -841,17 +852,24 @@ class AmpioClient:
             futures[mac] = future
             self._descriptions_waiters.setdefault(mac, []).append(future)
         try:
-            # The publishes sit inside the window, as _fetch's do; the
-            # window elapsing is not an error - it bounds how long the
-            # sweep waits for stragglers.
-            async with asyncio.timeout(timeout):
-                for mac in macs:
-                    await self._connection.publish(
-                        _protocol.device_api_request_topic(mac), b""
-                    )
-                await asyncio.gather(*futures.values())
-        except TimeoutError:
-            pass
+            for mac in macs:
+                await self._connection.publish(
+                    _protocol.device_api_request_topic(mac), b""
+                )
+            pending: set[asyncio.Future[tuple[_protocol.OutputDescription, ...]]] = set(
+                futures.values()
+            )
+            while pending:
+                # One idle window per pass: a pass that completes nothing
+                # means the M-SERV stopped answering, and the rest of the
+                # modules are the offline ones. asyncio.wait leaves the
+                # unfinished futures pending, so nothing races the
+                # unregister below.
+                done, pending = await asyncio.wait(
+                    pending, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+                )
+                if not done:
+                    break
         finally:
             for mac, future in futures.items():
                 waiters = self._descriptions_waiters.get(mac)
@@ -864,6 +882,13 @@ class AmpioClient:
             for mac, future in futures.items()
             if future.done() and not future.cancelled()
         }
+        silent = frozenset(futures) - frozenset(by_mac)
+        if silent:
+            _LOGGER.warning(
+                "Ampio modules %s did not answer the description sweep; their "
+                "objects keep whatever record an earlier sweep resolved",
+                sorted(silent),
+            )
         resolved = _protocol.resolve_designer(
             self._store.objects, by_mac, names, self._store.colliding_macs
         )
@@ -873,7 +898,11 @@ class AmpioClient:
         )
         for event in (*applied.events, *module_applied.events):
             self._dispatch(event)
-        return dict(resolved)
+        return RecordSweep(
+            records=dict(resolved),
+            answered_macs=frozenset(by_mac),
+            silent_macs=silent,
+        )
 
     async def set_event(self, event_number: int) -> None:
         """Raise a bus event, running whatever Ampio logic is bound to it.

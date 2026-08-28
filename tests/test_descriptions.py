@@ -312,9 +312,11 @@ async def test_resolve_records_sweeps_joins_and_merges() -> None:
             result = await client.resolve_records(timeout=1.0)
         finally:
             await delivery
-        assert result == {
+        assert result.records == {
             64: DesignerRecord(location="Potter", matter_device_type=256, desc="L")
         }
+        assert result.answered_macs == frozenset({0xCB89})
+        assert result.silent_macs == frozenset()
         assert client.objects[64].record == DesignerRecord(
             location="Potter", matter_device_type=256, desc="L"
         )
@@ -352,9 +354,109 @@ async def test_resolve_records_tolerates_silent_modules() -> None:
             result = await client.resolve_records(timeout=0.2)
         finally:
             await delivery
-        assert result == {
+        assert result.records == {
             64: DesignerRecord(location="Potter", matter_device_type=256, desc="L")
         }
+        assert result.answered_macs == frozenset({0xCB89})
+        assert result.silent_macs == frozenset({0xBEEF})
+    finally:
+        await client.disconnect()
+
+
+async def test_resolve_records_restarts_the_window_on_every_reply() -> None:
+    """Both replies land although the sweep runs longer than `timeout`."""
+    client, broker = await _admin_client_with_catalogue()
+    try:
+        feed(
+            client,
+            ADMIN_DETAILS_TOPIC,
+            details(
+                {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"},
+                {"id": 65, "typ_komponentu": "przekaznik", "leafId": "0_beef_257_2_0"},
+            ),
+        )
+        feed(
+            client,
+            ADMIN_DEVICES_TOPIC,
+            devices({"id": 16, "mac": 0xCB89}, {"id": 17, "mac": 0xBEEF}),
+        )
+        payload = json.dumps(
+            {"descriptions": base64.b64encode(frame(12, 0, 14, 256, "L")).decode()}
+        )
+
+        async def deliver() -> None:
+            async with asyncio.timeout(3.0):
+                while (
+                    f"ampio/control/{ADMIN_USER}/config",
+                    b"locations",
+                ) not in broker.published:
+                    await asyncio.sleep(0)
+                feed(client, LOCATIONS_TOPIC, json.dumps({"List": []}))
+                while ("device_api/to/beef/get_data", b"") not in broker.published:
+                    await asyncio.sleep(0)
+                # Each gap is shorter than the window, their sum is longer:
+                # a whole-sweep budget would drop the second reply.
+                await asyncio.sleep(0.4)
+                feed(client, "device_api/from/CB89/info", payload)
+                await asyncio.sleep(0.4)
+                feed(client, "device_api/from/BEEF/info", payload)
+
+        delivery = asyncio.create_task(deliver())
+        try:
+            result = await client.resolve_records(timeout=0.6)
+        finally:
+            await delivery
+        assert result.answered_macs == frozenset({0xCB89, 0xBEEF})
+        assert result.silent_macs == frozenset()
+    finally:
+        await client.disconnect()
+
+
+async def test_resolve_records_counts_an_empty_record_as_answered() -> None:
+    client, broker = await _admin_client_with_catalogue()
+    try:
+        delivery = asyncio.create_task(
+            _deliver_causally(
+                client,
+                broker,
+                json.dumps({"List": []}),
+                [("device_api/from/CB89/info", json.dumps({"descriptions": ""}))],
+            )
+        )
+        try:
+            result = await client.resolve_records(timeout=0.2)
+        finally:
+            await delivery
+        assert result.records == {}
+        assert result.answered_macs == frozenset({0xCB89})
+        assert result.silent_macs == frozenset()
+        assert client.objects[64].record is None
+    finally:
+        await client.disconnect()
+
+
+async def test_resolve_records_never_asks_the_mserv_row() -> None:
+    client, broker = await _admin_client_with_catalogue()
+    try:
+        feed(
+            client,
+            ADMIN_DEVICES_TOPIC,
+            devices({"id": 16, "mac": 0xCB89}, {"id": 1, "mac": 1}),
+        )
+        delivery = asyncio.create_task(
+            _deliver_causally(
+                client,
+                broker,
+                json.dumps({"List": []}),
+                [("device_api/from/CB89/info", json.dumps({"descriptions": ""}))],
+            )
+        )
+        try:
+            result = await client.resolve_records(timeout=0.2)
+        finally:
+            await delivery
+        assert ("device_api/to/1/get_data", b"") not in broker.published
+        assert result.silent_macs == frozenset()
     finally:
         await client.disconnect()
 

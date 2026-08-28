@@ -12,6 +12,41 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.42.0
+
+`resolve_records()` lost the tail of every install it could not sweep inside one
+`timeout` (#149). The M-SERV answers the description requests one module at a
+time. On the reference install the mean gap between replies is 0.75 seconds, so
+the 10 second default covered about 13 modules of 39. Every module that answered
+later had its reply discarded, and its objects read `record` None exactly as a
+module with no record written does. The sweep now bounds the silence between
+replies rather than the whole pass, and it reports which modules answered.
+
+### Added
+
+- **`RecordSweep`** - what `resolve_records()` returns. `records` holds the
+  `{object_id: DesignerRecord}` map. `answered_macs` and `silent_macs` say which
+  modules the pass read. A bare record map folds two cases together: an object
+  reads `record` None because its module answered and wrote no entry, or because
+  its module was never read. The two sets separate them.
+
+### Changed
+
+- **`resolve_records()` returns a `RecordSweep`.** The call used to return the
+  record map directly. A caller that wants only the map reads `.records`.
+- **`timeout` is now the sweep's idle window.** The sweep publishes every
+  request, then ends once no further reply arrives for `timeout` seconds. It
+  used to end `timeout` seconds after it started, with whatever had answered by
+  then. The call therefore runs as long as the M-SERV needs, and the old
+  guarantee that it takes at most twice `timeout` no longer holds. A caller with
+  a deadline applies its own ceiling.
+- **The sweep no longer requests the M-SERV's own catalogue row.** That row
+  carries a mac but is not a CAN module. It answers no `get_data` request, so it
+  used to land in the silent set on every pass.
+- **`tools/dump.py` accepts `--request` more than once** and stamps each printed
+  message with the seconds elapsed since the first request. This is what made
+  the serial reply pattern visible.
+
 ## 0.41.0
 
 The public API named one concept several ways across classes, and a few names

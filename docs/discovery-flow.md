@@ -101,7 +101,10 @@ when - and whether - to call them:
   tree and folds the per-output Designer record into `AmpioObject.record` (admin
   tier only, see [`identity.md`](identity.md)). The per-module record folds into
   `AmpioModule.record`. A consumer that does not surface per-object records
-  never pays for the sweep.
+  never pays for the sweep. The M-SERV answers the sweep one module at a time,
+  at roughly one module per second on the reference install, so a sweep of 40
+  modules runs for about half a minute. The returned `RecordSweep` names the
+  modules that answered and the modules that stayed silent.
 
 ## Finding the M-SERV on the LAN
 
