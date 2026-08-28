@@ -317,13 +317,13 @@ class AmpioObject:
 
     @property
     def stable_key(self) -> str | None:
-        """Replacement-stable identity token (``leaf_<leaf_id>``), or None.
+        """The physical output this object drives (``leaf_<leaf_id>``), or None.
 
-        The recommended per-object unique id, identical on both access
-        tiers and unique among ``visible`` objects - filter on ``visible``
-        first, and scope per M-SERV with ``AmpioServerInfo.key``. None for
-        an empty ``leaf_id`` (system objects, ghost rows): a consumer
-        surfacing those needs its own fallback key. See docs/identity.md.
+        Identical on both access tiers. It is not an identity for the
+        object row. Several Designer views of one output share one
+        ``leafId``, so two objects can return the same key. The
+        per-object identity is :pyattr:`unique_key`. None for an empty
+        ``leaf_id`` (system objects, ghost rows). See docs/identity.md.
         """
         return f"leaf_{self.leaf_id}" if self.leaf_id else None
 
