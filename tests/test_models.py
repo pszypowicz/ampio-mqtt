@@ -17,7 +17,7 @@ from ampio_mqtt.models import DesignerRecord, ModuleRecord
     [(None, False), ("", False), ("0", False), ("1", True), ("255", True)],
 )
 def test_is_on_interpretation(value, expected) -> None:
-    assert AmpioObject(id=1, value=value).is_on is expected
+    assert AmpioObject(id=1, state=value).is_on is expected
 
 
 @pytest.mark.parametrize(
@@ -37,33 +37,45 @@ def test_is_on_interpretation(value, expected) -> None:
     ],
 )
 def test_numeric_value_interpretation(value, expected) -> None:
-    assert AmpioObject(id=1, value=value).numeric_value == expected
+    assert AmpioObject(id=1, state=value).numeric_value == expected
+
+
+def test_leaf_key_is_the_physical_output_token() -> None:
+    """leaf_key returns leaf_<leaf_id>."""
+    obj = AmpioObject(id=1, leaf_id="0_1f2e_257_2_5")
+    assert obj.leaf_key == "leaf_0_1f2e_257_2_5"
+
+
+def test_object_key_is_the_per_object_token() -> None:
+    """object_key returns obj_<id>."""
+    obj = AmpioObject(id=7)
+    assert obj.object_key == "obj_7"
 
 
 @pytest.mark.parametrize(
     ("leaf_id", "expected"),
     [("0_cb9b_74_0_1", "leaf_0_cb9b_74_0_1"), ("", None)],
 )
-def test_stable_key_from_leaf_id(leaf_id: str, expected: str | None) -> None:
-    assert AmpioObject(id=1, leaf_id=leaf_id).stable_key == expected
+def test_leaf_key_from_leaf_id(leaf_id: str, expected: str | None) -> None:
+    assert AmpioObject(id=1, leaf_id=leaf_id).leaf_key == expected
 
 
-def test_unique_key_is_the_object_id() -> None:
-    assert AmpioObject(id=150, leaf_id="0_be82_257_2_2").unique_key == "obj_150"
+def test_object_key_is_the_object_id() -> None:
+    assert AmpioObject(id=150, leaf_id="0_be82_257_2_2").object_key == "obj_150"
 
 
-def test_unique_key_separates_views_of_one_output() -> None:
+def test_object_key_separates_views_of_one_output() -> None:
     """Two Designer views of one output share a leaf but not an identity."""
     leaf = "0_be82_257_2_2"
     relay_view = AmpioObject(id=150, leaf_id=leaf)
     bell_view = AmpioObject(id=151, leaf_id=leaf)
-    assert relay_view.stable_key == bell_view.stable_key
-    assert relay_view.unique_key != bell_view.unique_key
+    assert relay_view.leaf_key == bell_view.leaf_key
+    assert relay_view.object_key != bell_view.object_key
 
 
-def test_unique_key_survives_an_empty_leaf_id() -> None:
+def test_object_key_survives_an_empty_leaf_id() -> None:
     """System objects and ghost rows carry no leaf, but do carry an id."""
-    assert AmpioObject(id=99, leaf_id="").unique_key == "obj_99"
+    assert AmpioObject(id=99, leaf_id="").object_key == "obj_99"
 
 
 @pytest.mark.parametrize(
@@ -191,10 +203,10 @@ def test_kind_cannot_be_passed() -> None:
 
 
 def test_module_model_derives_from_type() -> None:
-    module = AmpioModule(id=1, type=4)
+    module = AmpioModule(id=1, typ_urzadzenia=4)
     assert module.model == module_model(4)
     assert module.model is not None
-    assert replace(module, type=None).model is None
+    assert replace(module, typ_urzadzenia=None).model is None
     with pytest.raises(TypeError):
         AmpioModule(id=1, model="M-REL")  # type: ignore[call-arg]
 
@@ -202,7 +214,7 @@ def test_module_model_derives_from_type() -> None:
 def test_reg_classifies_as_thermostat_and_surfaces_the_running_flag() -> None:
     obj = AmpioObject(id=138, typ_komponentu="reg")
     assert isinstance(obj.kind, ThermostatKind)
-    assert replace(obj, value="1").is_on  # the surfaced value is the running flag
+    assert replace(obj, state="1").is_on  # the surfaced value is the running flag
 
 
 @pytest.mark.parametrize(
@@ -244,11 +256,11 @@ def test_is_server_owned_reads_the_mserv_override_mac(
 @pytest.mark.parametrize(("mac", "expected"), [(47846, "47846"), (1, "1")])
 def test_server_key_is_the_decimal_mac(mac: int, expected: str) -> None:
     """The canonical registry-scoping string; its format is a promise."""
-    assert AmpioServerInfo(mac=mac).key == expected
+    assert AmpioServerInfo(mac=mac).server_key == expected
 
 
 def _colored(value: str | None) -> AmpioObject:
-    return AmpioObject(id=1, typ_komponentu="rgbw", value=value)
+    return AmpioObject(id=1, typ_komponentu="rgbw", state=value)
 
 
 @pytest.mark.parametrize(
@@ -276,12 +288,12 @@ def test_rgbw_decodes_the_packed_state(
 
 def test_rgbw_reads_none_for_non_color_kinds() -> None:
     """A dimmer's 0-255 level must not masquerade as a color."""
-    dimmer = AmpioObject(id=1, typ_komponentu="led", value="255")
+    dimmer = AmpioObject(id=1, typ_komponentu="led", state="255")
     assert dimmer.rgbw is None
 
 
 def _cover(value: str | None, typ: str = "roleta_procenty") -> AmpioObject:
-    return AmpioObject(id=1, typ_komponentu=typ, value=value)
+    return AmpioObject(id=1, typ_komponentu=typ, state=value)
 
 
 @pytest.mark.parametrize(
@@ -303,15 +315,44 @@ def test_position_reads_none_off_the_position_axis() -> None:
 
 def test_record_survives_replace() -> None:
     obj = AmpioObject(id=1, record=DesignerRecord(location="Potter"))
-    assert replace(obj, value="1").record == DesignerRecord(location="Potter")
+    assert replace(obj, state="1").record == DesignerRecord(location="Potter")
 
 
-def test_leaf_out_no_parses_last_segment() -> None:
-    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_7").leaf_out_no == 7
-    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_0").leaf_out_no == 0
-    assert AmpioObject(id=1, leaf_id="").leaf_out_no is None
-    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_x").leaf_out_no is None
-    assert AmpioObject(id=1, leaf_id="junk").leaf_out_no is None
+def test_leaf_io_no_parses_last_segment() -> None:
+    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_7").leaf_io_no == 7
+    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_0").leaf_io_no == 0
+    assert AmpioObject(id=1, leaf_id="").leaf_io_no is None
+    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_x").leaf_io_no is None
+    assert AmpioObject(id=1, leaf_id="junk").leaf_io_no is None
+
+
+def test_sf_id_and_sub_sf_id_parse_the_middle_segments():
+    """sf_id and sub_sf_id read the third and fourth leaf_id segments."""
+    obj = AmpioObject(id=1, leaf_id="0_1f2e_257_2_5")
+    assert obj.sf_id == 257
+    assert obj.sub_sf_id == 2
+
+
+def test_sf_id_reads_none_for_a_malformed_leaf_id():
+    """A leaf_id that does not parse yields None on every segment."""
+    obj = AmpioObject(id=1, leaf_id="not-a-leaf")
+    assert obj.sf_id is None
+    assert obj.sub_sf_id is None
+    assert obj.leaf_io_no is None
+
+
+def test_sf_id_reads_none_for_an_empty_leaf_id():
+    """System objects and ghost rows carry an empty leaf_id."""
+    obj = AmpioObject(id=1, leaf_id="")
+    assert obj.sf_id is None
+    assert obj.sub_sf_id is None
+
+
+def test_sf_id_reads_none_when_the_segment_is_not_a_number():
+    """A non-numeric segment yields None rather than raising."""
+    obj = AmpioObject(id=1, leaf_id="0_1f2e_abc_2_5")
+    assert obj.sf_id is None
+    assert obj.sub_sf_id == 2
 
 
 def test_record_bundles_default_to_none() -> None:
@@ -321,6 +362,6 @@ def test_record_bundles_default_to_none() -> None:
 
 def test_record_bundle_fields_default_to_none() -> None:
     assert DesignerRecord() == DesignerRecord(
-        location=None, matter_device_type=None, name=None
+        location=None, matter_device_type=None, desc=None
     )
-    assert ModuleRecord() == ModuleRecord(location=None, name=None)
+    assert ModuleRecord() == ModuleRecord(location=None, desc=None)

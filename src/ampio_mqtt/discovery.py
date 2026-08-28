@@ -37,7 +37,7 @@ class DiscoveryResult:
     """A reachable Ampio M-SERV broker candidate.
 
     The candidate is a hint based on the mDNS hostname probe; confirm
-    identity with ``AmpioClient.test_connection`` once credentials are known.
+    identity with ``AmpioClient.check_connection`` once credentials are known.
     """
 
     host: str

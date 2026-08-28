@@ -89,7 +89,7 @@ def test_mserv_prefers_info_mac_cross_check() -> None:
         info(serverVersion="1", mac="47846"),
     )
     mserv = client.mserv
-    assert mserv is not None and mserv.id == 1 and mserv.name == "MSERV"
+    assert mserv is not None and mserv.id == 1 and mserv.nazwa_urzadzenia == "MSERV"
 
 
 # Type 10 is the M-SERV-s; type 0 is VIRTUAL. Both are hub types.
@@ -160,9 +160,9 @@ def test_module_for_returns_the_mac_agreeing_row() -> None:
 
 
 def test_module_for_rejects_a_mac_disagreement() -> None:
-    """device_id pointing at a row whose mac is not the object's leaf mac
-    is the stale-join shape a module replacement produces; None beats the
-    wrong module."""
+    """id_urzadzenia pointing at a row whose mac is not the object's leaf
+    mac is the stale-join shape a module replacement produces; None beats
+    the wrong module."""
     client = _admin_client()
     feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
     feed(client, ADMIN_DETAILS, details(_object_row(10, 7, "beef")))
@@ -192,7 +192,7 @@ def test_module_for_without_a_join_key() -> None:
         ADMIN_DETAILS,
         details(_object_row(10, None, "cafe"), _object_row(11, 99, "cafe")),
     )
-    # No device_id, and a device_id no row answers.
+    # No id_urzadzenia, and an id_urzadzenia no row answers.
     assert client.module_for(client.objects[10]) is None
     assert client.module_for(client.objects[11]) is None
 
@@ -209,7 +209,7 @@ def test_module_for_resolves_colliding_macs_by_the_join() -> None:
     feed(client, ADMIN_DETAILS, details(_object_row(10, 8, "cafe")))
     module = client.module_for(client.objects[10])
     assert module is not None
-    assert (module.id, module.name) == (8, "SECOND")
+    assert (module.id, module.nazwa_urzadzenia) == (8, "SECOND")
 
 
 def test_module_for_is_none_on_the_restricted_tier() -> None:
@@ -263,11 +263,11 @@ def test_read_surface_is_immutable() -> None:
     with pytest.raises(TypeError):
         del client.objects[41]  # type: ignore[attr-defined]
     with pytest.raises(dataclasses.FrozenInstanceError):
-        client.objects[41].name = "TAMPERED"  # type: ignore[misc]
+        client.objects[41].opis_menu = "TAMPERED"  # type: ignore[misc]
     with pytest.raises(TypeError):
         client.modules[99] = client.modules[7]  # type: ignore[index]
     with pytest.raises(dataclasses.FrozenInstanceError):
-        client.modules[7].name = "TAMPERED"  # type: ignore[misc]
+        client.modules[7].nazwa_urzadzenia = "TAMPERED"  # type: ignore[misc]
 
 
 def test_mserv_none_when_ambiguous_and_no_info() -> None:
@@ -319,7 +319,7 @@ def test_state_updates_object_and_notifies() -> None:
         b'{ "state": "22.5","desc": "22.5 C" , "on": 1779555459594} ',
     )
     obj = client.objects[41]
-    assert obj.value == "22.5"
+    assert obj.state == "22.5"
     assert received == [obj]
 
 
@@ -519,7 +519,7 @@ def test_subscribe_object_id_listener_exception_is_isolated() -> None:
     assert seen == [41]
 
 
-async def test_start_times_out_without_auth_error() -> None:
+async def test_connect_times_out_without_auth_error() -> None:
     """A connection that simply never comes up still raises AmpioConnectionError."""
     broker = FakeBroker()
     broker.enter_delay = 10.0
@@ -531,7 +531,7 @@ async def test_start_times_out_without_auth_error() -> None:
         mqtt_client_factory=broker.factory,
     )
     with pytest.raises(AmpioConnectionError):
-        await client.start(timeout=0.1, discovery_timeout=0.05)
+        await client.connect(timeout=0.1, discovery_timeout=0.05)
 
 
 def test_last_payloads_retained_for_each_handler() -> None:
@@ -658,14 +658,14 @@ async def test_reconnect_count_increments_on_reconnect() -> None:
             broker.stream_error = None
 
     client.subscribe(_recover, of=AvailabilityChanged)
-    await client.start(timeout=2.0, discovery_timeout=0.05)
+    await client.connect(timeout=2.0, discovery_timeout=0.05)
     try:
         # Wait for the second connection to land (reconnect_count incremented).
         async with asyncio.timeout(2.0):
             while client.diagnostics_snapshot()["connection"]["reconnect_count"] < 1:
                 await asyncio.sleep(0.01)
     finally:
-        await client.stop()
+        await client.disconnect()
 
     assert client.diagnostics_snapshot()["connection"]["reconnect_count"] == 1
     assert client.diagnostics_snapshot()["connection"]["started_at"] is not None
@@ -689,7 +689,7 @@ async def test_discovery_stays_incomplete_without_server_identity(
     feed(client, DETAILS_TOPIC, details())
     feed(client, DEVICES_TOPIC, devices())
     assert await client.wait_for_initial_discovery(timeout=1.0) is True
-    assert client.server_info.key == "555"
+    assert client.server_info.server_key == "555"
 
 
 @pytest.mark.parametrize("username", [None, ""])
@@ -700,7 +700,7 @@ async def test_username_is_required(username: str | None) -> None:
     with pytest.raises(ValueError):
         AmpioClient("host", username=username)
     with pytest.raises(ValueError):
-        await AmpioClient.test_connection("host", username, None)
+        await AmpioClient.check_connection("host", username, None)
 
 
 async def test_refresh_resets_the_snapshot_boundary() -> None:
@@ -708,20 +708,20 @@ async def test_refresh_resets_the_snapshot_boundary() -> None:
     can correct a value that carries only a local receive stamp."""
     broker = FakeBroker()
     client = make_client(broker)
-    await client.start(timeout=1.0, discovery_timeout=0.01)
+    await client.connect(timeout=1.0, discovery_timeout=0.01)
     try:
         feed(client, DATA_DEVICES_TOPIC, details({"id": 10}))
         feed(client, f"ampio/fromDB/{USER}/ob/10/state", '{"state":"live"}')
         stan = json.dumps({"state": "0", "on": 1786700900000})
         snapshot = json.dumps({"List": [{"id": 10, "stan_json": stan}]})
         feed(client, STATES_TOPIC, snapshot)
-        assert client.objects[10].value == "live"
+        assert client.objects[10].state == "live"
 
         await client.refresh()
         feed(client, STATES_TOPIC, snapshot)
-        assert client.objects[10].value == "0"
+        assert client.objects[10].state == "0"
     finally:
-        await client.stop()
+        await client.disconnect()
 
 
 def test_subscribe_rejects_an_empty_of_tuple() -> None:

@@ -1,6 +1,6 @@
 """Async MQTT client for the Ampio DB-object protocol.
 
-See ``docs/discovery-flow.md`` for the ``start()`` lifecycle and what
+See ``docs/discovery-flow.md`` for the ``connect()`` lifecycle and what
 runs automatically vs on demand.
 """
 
@@ -339,7 +339,7 @@ class AmpioClient:
 
         Guaranteed non-None once :meth:`wait_for_initial_discovery` has
         returned True; every held info carries a populated
-        :pyattr:`AmpioServerInfo.key` by construction.
+        :pyattr:`AmpioServerInfo.server_key` by construction.
         """
         return self._store.server_info
 
@@ -359,7 +359,9 @@ class AmpioClient:
             for mod in self._store.modules.values():
                 if info.mac in (mod.mac_global, mod.mac):
                     return mod
-        candidates = [mod for mod in self._store.modules.values() if is_hub(mod.type)]
+        candidates = [
+            mod for mod in self._store.modules.values() if is_hub(mod.typ_urzadzenia)
+        ]
         if len(candidates) == 1:
             return candidates[0]
         return None
@@ -367,7 +369,7 @@ class AmpioClient:
     def module_for(self, obj: AmpioObject) -> AmpioModule | None:
         """The catalogue row of the module that owns ``obj``, mac-validated.
 
-        Joins ``obj.device_id`` to the module list, gated on the row's
+        Joins ``obj.id_urzadzenia`` to the module list, gated on the row's
         mac agreeing with the object's leaf-derived
         :pyattr:`AmpioObject.module_mac` - DB ids are volatile across a
         module replacement while the leaf mac is the stable identity
@@ -376,9 +378,9 @@ class AmpioClient:
         the module catalogue; tier-independent grouping reads
         ``module_mac`` directly.
         """
-        if obj.device_id is None:
+        if obj.id_urzadzenia is None:
             return None
-        module = self._store.modules.get(obj.device_id)
+        module = self._store.modules.get(obj.id_urzadzenia)
         if module is None or module.mac is None or module.mac != obj.module_mac:
             return None
         return module
@@ -393,7 +395,7 @@ class AmpioClient:
         """The account tier, decided by the authenticated username at
         construction - see :class:`AccessTier`. Before any client exists,
         a config flow reads :pyattr:`AmpioServerInfo.access_tier` from a
-        :meth:`test_connection` result instead."""
+        :meth:`check_connection` result instead."""
         return self._tier
 
     def diagnostics_snapshot(self) -> dict[str, Any]:
@@ -410,7 +412,7 @@ class AmpioClient:
           (:class:`AmpioServerInfo` excludes the private fields by
           construction), or None before discovery.
         - ``connection``: the run's liveness counters. ``started_at`` and
-          ``reconnect_count`` cover the current ``start()`` run, so a
+          ``reconnect_count`` cover the current ``connect()`` run, so a
           deliberate restart never reads as a flapping connection;
           ``last_error`` and ``last_message_at`` roll across runs.
           ``subscribe_failures`` maps each topic the broker rejected in
@@ -524,7 +526,7 @@ class AmpioClient:
             client.subscribe(on_gone, of=(ObjectRemoved, ModuleRemoved))
 
         Listeners are invoked synchronously on the asyncio event loop
-        that ran :meth:`start`, never from another thread, so a listener
+        that ran :meth:`connect`, never from another thread, so a listener
         can touch loop-bound state directly (#81).
 
         ``object_id`` narrows further, to one object's events. ID-filtered
@@ -580,7 +582,7 @@ class AmpioClient:
         return _unsubscribe
 
     @staticmethod
-    async def test_connection(
+    async def check_connection(
         host: str,
         username: str,
         password: str | None,
@@ -596,8 +598,8 @@ class AmpioClient:
         no parseable info reply arrives within ``info_timeout``, and
         ``AmpioConnectionError`` on any other connection failure. A
         returned info always has a populated
-        :pyattr:`AmpioServerInfo.key` for the config flow's unique id,
-        and its ``access_tier`` tells the flow what the account will be
+        :pyattr:`AmpioServerInfo.server_key` for the config flow's unique
+        id, and its ``access_tier`` tells the flow what the account will be
         served before any client exists.
         """
         if not username:
@@ -630,14 +632,14 @@ class AmpioClient:
         _protocol.warn_if_below_baseline(parsed.server_version)
         return parsed
 
-    async def start(
+    async def connect(
         self, *, timeout: float = 15.0, discovery_timeout: float = 8.0
     ) -> bool:
-        """Start the connection, wait for connect and initial discovery.
+        """Connect, wait for the connection and the initial discovery.
 
         After connecting, waits up to `discovery_timeout` for the initial
         discovery cycle - see :meth:`wait_for_initial_discovery` for what
-        completes it per tier. Calling ``start()`` on a running client
+        completes it per tier. Calling ``connect()`` on a running client
         closes the previous session first and starts over.
 
         Returns True when discovery completed in time and False when
@@ -668,8 +670,9 @@ class AmpioClient:
 
         A True guarantees ``objects`` and ``server_info`` (and, on the
         admin tier, ``modules``) are populated, with
-        :pyattr:`AmpioServerInfo.key` a string by construction. It never
-        raises on timeout - discovery continues and this returns False.
+        :pyattr:`AmpioServerInfo.server_key` a string by construction. It
+        never raises on timeout - discovery continues and this returns
+        False.
         Safe to call repeatedly and after reconnects: the signals latch
         on first completion, so this then returns immediately.
         """
@@ -685,8 +688,8 @@ class AmpioClient:
             return False
         return True
 
-    async def stop(self) -> None:
-        """Stop the connection.
+    async def disconnect(self) -> None:
+        """Close the connection.
 
         Safe to call at any point, including when the connection loop has
         already failed: whatever it died of is logged rather than raised, so a
@@ -725,7 +728,7 @@ class AmpioClient:
     async def refresh(self) -> None:
         """Re-request the tier's initial-discovery set.
 
-        ``start()`` issues this once on every (re)connect; call it to force
+        ``connect()`` issues this once on every (re)connect; call it to force
         a fresh discovery cycle without reconnecting. The call also resets
         the store's live-value protection, so the requested snapshot can
         correct values that only carry a local receive stamp.
@@ -743,7 +746,7 @@ class AmpioClient:
         assigned to multiple groups map to the first room encountered (Home
         Assistant allows one area per device).
 
-        Requires ``start()`` to have completed. Raises ``AmpioConnectionError``
+        Requires ``connect()`` to have completed. Raises ``AmpioConnectionError``
         if the broker is not connected and ``AmpioTimeoutError`` if either
         response does not arrive within ``timeout``.
         """
@@ -757,7 +760,7 @@ class AmpioClient:
     async def fetch_scenes(self, timeout: float = 5.0) -> list[AmpioScene]:
         """Return the scene catalogue defined in the Ampio app.
 
-        Requires ``start()`` to have completed. Raises ``AmpioConnectionError``
+        Requires ``connect()`` to have completed. Raises ``AmpioConnectionError``
         if the broker is not connected and ``AmpioTimeoutError`` if the
         response does not arrive within ``timeout``.
         """
@@ -778,7 +781,7 @@ class AmpioClient:
         ``config`` surface never answers a restricted account, and the call
         raises ``RuntimeError`` for one.
 
-        Requires ``start()`` to have completed. Raises
+        Requires ``connect()`` to have completed. Raises
         ``AmpioConnectionError`` if the broker is not connected and
         ``AmpioTimeoutError`` if the response does not arrive within
         ``timeout``.
@@ -800,8 +803,9 @@ class AmpioClient:
         None fields included - with :class:`ObjectUpdated` dispatched on
         change. The same reply's DEVICE_NAME entry folds into
         :pyattr:`AmpioModule.record` with :class:`ModuleUpdated` (#114).
-        The catalogue facts (``matter_device_type``, ``name``) are never
-        touched: the record is the separate, admin-guarded fact (#133).
+        The catalogue facts (``matter_device_type``, ``opis_menu``) are
+        never touched: the record is the separate, admin-guarded fact
+        (#133).
 
         Returns ``{object_id: DesignerRecord}`` for what resolved. A
         module that does not answer within ``timeout`` is skipped
@@ -817,7 +821,7 @@ class AmpioClient:
 
         Admin tier only: the ``device_api`` tree answers no other
         account, and the call raises ``RuntimeError`` for one. Requires
-        ``start()`` to have completed. Raises ``AmpioConnectionError``
+        ``connect()`` to have completed. Raises ``AmpioConnectionError``
         if the broker is not connected and ``AmpioTimeoutError`` if the
         name table itself does not arrive.
         """
@@ -871,7 +875,7 @@ class AmpioClient:
             self._dispatch(event)
         return dict(resolved)
 
-    async def send_event(self, event_number: int) -> None:
+    async def set_event(self, event_number: int) -> None:
         """Raise a bus event, running whatever Ampio logic is bound to it.
 
         Works on both account tiers and is bounded by nothing - see the
@@ -886,7 +890,7 @@ class AmpioClient:
         """Apply a scene's actions."""
         await self._scene_command(scene_id, "run")
 
-    async def turn_scene_off(self, scene_id: int) -> None:
+    async def off_scene(self, scene_id: int) -> None:
         """Turn off the objects a scene drives."""
         await self._scene_command(scene_id, "off")
 
@@ -926,7 +930,7 @@ class AmpioClient:
         command that changed nothing). Most verbs echo in under ~200 ms
         and `arm`/`disarm` take ~1 s (docs/protocol.md), so
         ``confirm=2.0`` covers the measured surface. The waiter is armed
-        before the publish. Scene commands and :meth:`send_event` fan out
+        before the publish. Scene commands and :meth:`set_event` fan out
         beyond a single object and offer no per-object echo.
 
         Raises ``AmpioConnectionError`` when the broker is unreachable and
@@ -986,7 +990,7 @@ class AmpioClient:
 
         Admin-tier `przekaznik` objects on CAN modules, addressed by their
         own leaf: mac from ``leaf_id`` (the replacement-stable override)
-        and the 0-based :pyattr:`AmpioObject.leaf_out_no` channel. The
+        and the 0-based :pyattr:`AmpioObject.leaf_io_no` channel. The
         M-SERV's own virtual outputs stay on `/api` - they live in its DB,
         not on the CAN bus. The restricted tier always returns None: the
         raw write tree is admin-only, so `/api` is all that tier has -
@@ -998,7 +1002,7 @@ class AmpioClient:
         if obj is None or obj.typ_komponentu != "przekaznik" or obj.is_server_owned:
             return None
         mac = obj.module_mac
-        channel = obj.leaf_out_no
+        channel = obj.leaf_io_no
         if mac is None or channel is None:
             return None
         return mac, channel
@@ -1037,7 +1041,7 @@ class AmpioClient:
 
         Raises ``ValueError`` for an output whose kind says the switch verbs
         do not apply (``rgbw``): turning a color light on means choosing a
-        color - the consumer's call, via :meth:`set_color` (the rgbw
+        color - the consumer's call, via :meth:`set_colors` (the rgbw
         replay pattern in docs/protocol.md). On the admin tier a binary
         output on a CAN module is driven over the raw CAN write topic
         instead - the one write that also reaches a panel's status LEDs,
@@ -1070,13 +1074,13 @@ class AmpioClient:
         """
         kind = self._output_kind(object_id)
         if kind is not None and not kind.switchable and kind.color:
-            return await self.set_color(object_id, 0, 0, 0, 0, confirm=confirm)
+            return await self.set_colors(object_id, 0, 0, 0, 0, confirm=confirm)
         address = self._raw_output_address(object_id)
         if address is not None:
             return await self._raw_output(object_id, address, 0, confirm)
         return await self.command(object_id, "turnOff", confirm=confirm)
 
-    async def toggle(
+    async def switch(
         self, object_id: int, *, confirm: float | None = None
     ) -> AmpioObject | None:
         """Invert an object's current on/off state.
@@ -1114,7 +1118,7 @@ class AmpioClient:
         if kind is not None and not kind.switchable:
             raise ValueError(
                 f"object {object_id} ({kind.key}) does not answer {verb}; "
-                "drive it with set_color()"
+                "drive it with set_colors()"
             )
 
     async def set_value(
@@ -1194,7 +1198,7 @@ class AmpioClient:
             )
         return await self.command(object_id, "setHeatingMode", mode, confirm=confirm)
 
-    async def set_color(
+    async def set_colors(
         self,
         object_id: int,
         red: int,
@@ -1220,7 +1224,7 @@ class AmpioClient:
             object_id, "setColors", red, green, blue, white, confirm=confirm
         )
 
-    async def open_cover(
+    async def open(
         self, object_id: int, *, confirm: float | None = None
     ) -> AmpioObject | None:
         """Drive a cover to fully open (position 100).
@@ -1230,7 +1234,7 @@ class AmpioClient:
         """
         return await self.command(object_id, "open", confirm=confirm)
 
-    async def close_cover(
+    async def close(
         self, object_id: int, *, confirm: float | None = None
     ) -> AmpioObject | None:
         """Drive a cover to fully closed (position 0).
@@ -1240,7 +1244,7 @@ class AmpioClient:
         """
         return await self.command(object_id, "close", confirm=confirm)
 
-    async def stop_cover(
+    async def stop(
         self, object_id: int, *, confirm: float | None = None
     ) -> AmpioObject | None:
         """Halt a cover wherever it is, on either axis - a stationary cover
@@ -1249,7 +1253,7 @@ class AmpioClient:
         echo exactly as :meth:`command` documents."""
         return await self.command(object_id, "stop", confirm=confirm)
 
-    async def set_cover_position(
+    async def set_roller_pos(
         self,
         object_id: int,
         position: int,
@@ -1278,7 +1282,7 @@ class AmpioClient:
             confirm=confirm,
         )
 
-    async def set_cover_tilt(
+    async def set_roller_lamella(
         self, object_id: int, lamella: int, *, confirm: float | None = None
     ) -> AmpioObject | None:
         """Set a blind's slat angle percent, leaving its position alone.

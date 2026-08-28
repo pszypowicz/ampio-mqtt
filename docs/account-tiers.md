@@ -15,9 +15,9 @@ name IS the administrator. The library decides everything on it at construction:
 requests are tier-shaped from the first connect. The `info` reply's account id
 is the wire's own confirmation (`-1` for the admin pseudo-user, the users-table
 row id for an app user). `AmpioServerInfo.access_tier` carries it, and
-`test_connection()` reports it at validation time. A config flow can then reject
-an account whose tier will not support what the consumer needs. One example is
-`modules`/`mserv`, which the standard tier never receives.
+`check_connection()` reports it at validation time. A config flow can then
+reject an account whose tier will not support what the consumer needs. One
+example is `modules`/`mserv`, which the standard tier never receives.
 
 ## What each tier gets
 
@@ -82,7 +82,7 @@ The admin-fed fields, the nested bundles included:
 | Field                                        | Why it is admin-only                  |
 | -------------------------------------------- | ------------------------------------- |
 | `AmpioObject.record`, `AmpioModule.record`   | filled by the `device_api` sweep only |
-| `AmpioObject.raw_proven`                     | proven by the raw channel tree        |
+| `AmpioObject.raw_owned`                      | proven by the raw channel tree        |
 | `AmpioModule.supply_voltage`, `.temperature` | module diagnostics broadcasts         |
 | every `AmpioModule` row                      | the module list itself is admin-only  |
 

@@ -75,20 +75,20 @@ async def send(client: AmpioClient, a: argparse.Namespace) -> None:
     elif a.off:
         await client.turn_off(oid)
     elif a.toggle:
-        await client.toggle(oid)
+        await client.switch(oid)
     elif a.open:
-        await client.open_cover(oid)
+        await client.open(oid)
     elif a.close:
-        await client.close_cover(oid)
+        await client.close(oid)
     elif a.value is not None:
         await client.set_value(oid, a.value, pulse_ms=a.pulse_ms)
     elif a.position is not None:
-        await client.set_cover_position(oid, a.position, lamella=a.lamella)
+        await client.set_roller_pos(oid, a.position, lamella=a.lamella)
     elif a.color is not None:
         channels = [int(part) for part in a.color.split(",")]
         if len(channels) != 4:
             raise SystemExit("--color needs four comma-separated values: R,G,B,W")
-        await client.set_color(oid, *channels)
+        await client.set_colors(oid, *channels)
     else:
         await client.command(oid, a.verb, *a.arg)
 
@@ -98,15 +98,15 @@ async def run(a: argparse.Namespace) -> int:
 
     def on_object(obj: AmpioObject) -> None:
         if obj.id == a.object_id:
-            print(f"  state  ob/{obj.id} = {obj.value}")
+            print(f"  state  ob/{obj.id} = {obj.state}")
 
     client.subscribe(lambda e: on_object(e.object), of=ObjectUpdated)
-    await client.start()
+    await client.connect()
     print(f"Connected as {a.username!r} (tier: {client.access_tier.value})")
 
     obj = client.objects.get(a.object_id)
     print(
-        f"before: ob/{a.object_id} = {obj.value if obj else '<not in this account view>'}"
+        f"before: ob/{a.object_id} = {obj.state if obj else '<not in this account view>'}"
     )
 
     await send(client, a)
@@ -115,9 +115,9 @@ async def run(a: argparse.Namespace) -> int:
 
     obj = client.objects.get(a.object_id)
     print(
-        f"after:  ob/{a.object_id} = {obj.value if obj else '<not in this account view>'}"
+        f"after:  ob/{a.object_id} = {obj.state if obj else '<not in this account view>'}"
     )
-    await client.stop()
+    await client.disconnect()
     return 0
 
 

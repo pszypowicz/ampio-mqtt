@@ -9,7 +9,7 @@ from conftest import API_TOPIC, USER, FakeBroker, details, feed
 from ampio_mqtt import (
     AmpioClient,
     AmpioConnectionError,
-    BusEvent,
+    BusEventRaised,
     ObjectAdded,
     ObjectUpdated,
 )
@@ -18,27 +18,27 @@ from ampio_mqtt import (
 def test_received_event_reaches_listeners() -> None:
     """The originator mac is the sending module's, hex-parsed off the topic."""
     client = AmpioClient("host", username=USER)
-    seen: list[BusEvent] = []
-    client.subscribe(seen.append, of=BusEvent)
+    seen: list[BusEventRaised] = []
+    client.subscribe(seen.append, of=BusEventRaised)
 
     feed(client, "ampio/from/D09A/event", b"42")
 
-    assert seen == [BusEvent(number=42, mac=0xD09A)]
+    assert seen == [BusEventRaised(event_number=42, mac=0xD09A)]
 
 
 def test_a_raw_channel_message_is_not_a_bus_event() -> None:
     client = AmpioClient("host", username=USER)
-    seen: list[BusEvent] = []
-    client.subscribe(seen.append, of=BusEvent)
+    seen: list[BusEventRaised] = []
+    client.subscribe(seen.append, of=BusEventRaised)
     feed(client, "ampio/from/1/state/f/2", b"189")
     assert seen == []
 
 
-async def test_send_event_builds_the_payload(
+async def test_set_event_builds_the_payload(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
-    await client.send_event(189)
+    await client.set_event(189)
     assert broker.published == [(API_TOPIC, b"/api/setEvent/189")]
 
 
@@ -48,20 +48,20 @@ async def test_event_number_range_is_checked(
 ) -> None:
     client, broker = connected
     with pytest.raises(ValueError):
-        await client.send_event(number)
+        await client.set_event(number)
     assert broker.published == []
 
 
-async def test_send_event_requires_a_connection() -> None:
+async def test_set_event_requires_a_connection() -> None:
     client = AmpioClient("host", username=USER)
     with pytest.raises(AmpioConnectionError):
-        await client.send_event(189)
+        await client.set_event(189)
 
 
 async def test_object_added_flows_through_both_filters() -> None:
     broker = FakeBroker()
     client = AmpioClient("host", username="u", mqtt_client_factory=broker.factory)
-    await client.start(timeout=2.0, discovery_timeout=0.01)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         updated: list[ObjectUpdated] = []
         added: list[ObjectAdded] = []
@@ -83,13 +83,13 @@ async def test_object_added_flows_through_both_filters() -> None:
         assert [type(e) for e in added] == [ObjectAdded]
         assert [type(e) for e in updated] == [ObjectAdded, ObjectUpdated]
     finally:
-        await client.stop()
+        await client.disconnect()
 
 
 async def test_object_added_object_id_filter() -> None:
     broker = FakeBroker()
     client = AmpioClient("host", username="u", mqtt_client_factory=broker.factory)
-    await client.start(timeout=2.0, discovery_timeout=0.01)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         events: list[ObjectAdded] = []
         client.subscribe(events.append, of=ObjectAdded, object_id=5)
@@ -103,7 +103,7 @@ async def test_object_added_object_id_filter() -> None:
         )
         assert [e.object.id for e in events] == [5]
     finally:
-        await client.stop()
+        await client.disconnect()
 
 
 async def test_reconnect_replay_does_not_redispatch_object_added() -> None:
@@ -111,7 +111,7 @@ async def test_reconnect_replay_does_not_redispatch_object_added() -> None:
     row must not re-fire `ObjectAdded` for it."""
     broker = FakeBroker()
     client = AmpioClient("host", username="u", mqtt_client_factory=broker.factory)
-    await client.start(timeout=2.0, discovery_timeout=0.01)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         feed(
             client,
@@ -140,4 +140,4 @@ async def test_reconnect_replay_does_not_redispatch_object_added() -> None:
         )
         assert [e.object.id for e in added] == [6]
     finally:
-        await client.stop()
+        await client.disconnect()

@@ -52,7 +52,7 @@ def test_parses_the_catalogue() -> None:
     scenes = parse_scenes(_PAYLOAD)
     assert scenes is not None
     first, second, third = scenes
-    assert (first.id, first.name, first.active) == (1, "Schody noc", True)
+    assert (first.id, first.scene_name, first.active) == (1, "Schody noc", True)
     assert first.parent_id is None  # -1 means top level
     assert first.object_ids == frozenset({50})
     assert (second.id, second.active, second.parent_id) == (7, False, 1)
@@ -83,17 +83,17 @@ def test_malformed_infos_degrades_to_empty_object_ids(infos: object) -> None:
     scenes = parse_scenes(payload)
     assert scenes is not None
     [scene] = scenes
-    assert (scene.id, scene.name) == (1, "Evening")
+    assert (scene.id, scene.scene_name) == (1, "Evening")
     assert scene.object_ids == frozenset()
 
 
 def test_non_string_scene_name_reads_empty() -> None:
-    """AmpioScene.name is typed str; a non-string wire value must not land
-    in it."""
+    """AmpioScene.scene_name is typed str; a non-string wire value must not
+    land in it."""
     payload = json.dumps({"List": [{"id": 1, "sceneName": 7}]})
     scenes = parse_scenes(payload)
     assert scenes is not None
-    assert scenes[0].name == ""
+    assert scenes[0].scene_name == ""
 
 
 async def test_fetch_scenes_survives_a_malformed_infos_row(
@@ -111,14 +111,14 @@ async def test_fetch_scenes_survives_a_malformed_infos_row(
     finally:
         await delivery
     [scene] = scenes
-    assert (scene.id, scene.name, scene.object_ids) == (1, "Evening", frozenset())
+    assert (scene.id, scene.scene_name, scene.object_ids) == (1, "Evening", frozenset())
 
 
 @pytest.mark.parametrize(
     ("call", "expected"),
     [
         (lambda c: c.run_scene(1), b"/api/run/scene/1"),
-        (lambda c: c.turn_scene_off(1), b"/api/off/scene/1"),
+        (lambda c: c.off_scene(1), b"/api/off/scene/1"),
         (lambda c: c.undo_scene(1), b"/api/undo/scene/1"),
     ],
 )
@@ -146,7 +146,7 @@ async def test_fetch_scenes_requests_and_parses_the_reply(
         scenes = await client.fetch_scenes(timeout=2)
     finally:
         await delivery
-    assert [s.name for s in scenes] == ["Schody noc", "Wyjście", "Bez kolumny"]
+    assert [s.scene_name for s in scenes] == ["Schody noc", "Wyjście", "Bez kolumny"]
     assert broker.published == [(f"ampio/control/{USER}/data", b"scenes")]
 
 

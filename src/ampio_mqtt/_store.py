@@ -17,7 +17,7 @@ from typing import Any
 from . import _protocol
 from .classification import input_channel_prefix
 from .events import (
-    BusEvent,
+    BusEventRaised,
     ModuleRemoved,
     ModuleUpdated,
     ObjectAdded,
@@ -191,7 +191,7 @@ class AmpioStore:
                 self._apply_raw_channel(edge, applied)
             case _protocol.DiagnosticsReport(mac=mac, diagnostics=diagnostics):
                 self._apply_diagnostics(mac, diagnostics, applied)
-            case BusEvent() as event:
+            case BusEventRaised() as event:
                 applied.events.append(event)
         return applied
 
@@ -297,10 +297,8 @@ class AmpioStore:
                 self._guarded.add(meta.id)
             if wins:
                 changed |= (
-                    updated.value != update.value
-                    or (
-                        update.tilt is not None and updated.tilt_position != update.tilt
-                    )
+                    updated.state != update.state
+                    or (update.lammel is not None and updated.lammel != update.lammel)
                     or (
                         update.thermostat is not None
                         and updated.thermostat != update.thermostat
@@ -308,11 +306,9 @@ class AmpioStore:
                 )
                 updated = replace(
                     updated,
-                    value=update.value,
-                    tilt_position=(
-                        update.tilt
-                        if update.tilt is not None
-                        else updated.tilt_position
+                    state=update.state,
+                    lammel=(
+                        update.lammel if update.lammel is not None else updated.lammel
                     ),
                     thermostat=(
                         update.thermostat
@@ -438,20 +434,20 @@ class AmpioStore:
         if obj is None:
             self._pending_state[update.id] = (update, time.time())
             return
-        if obj.raw_proven:
+        if obj.raw_owned:
             # The raw path owns this object: the per-object echo repeats
             # what the raw edge delivered ~150 ms earlier, so it is
             # dropped whole. It still counts as live evidence of the
             # module.
-            self._touch_module(obj.device_id)
+            self._touch_module(obj.id_urzadzenia)
             return
         stamp = (
             float(update.on_ms) / 1000.0 if update.on_ms is not None else time.time()
         )
         obj = replace(
             obj,
-            value=update.value,
-            tilt_position=update.tilt if update.tilt is not None else obj.tilt_position,
+            state=update.state,
+            lammel=update.lammel if update.lammel is not None else obj.lammel,
             thermostat=(
                 update.thermostat if update.thermostat is not None else obj.thermostat
             ),
@@ -464,7 +460,7 @@ class AmpioStore:
         else:
             self._local_stamped.discard(update.id)
             self._guarded.discard(update.id)
-        self._touch_module(obj.device_id)
+        self._touch_module(obj.id_urzadzenia)
         self._record(obj, applied)
 
     def _apply_raw_channel(
@@ -475,14 +471,14 @@ class AmpioStore:
             return  # channel has no exposed Designer object - ignore
         obj = replace(
             self.objects[oid],
-            raw_proven=True,
-            value=edge.value,
+            raw_owned=True,
+            state=edge.state,
             updated_at=time.time(),
         )
         self.objects[oid] = obj
         self._local_stamped.add(oid)
         self._guarded.add(oid)
-        self._touch_module(obj.device_id)
+        self._touch_module(obj.id_urzadzenia)
         self._record(obj, applied)
 
     def _apply_diagnostics(
@@ -513,27 +509,27 @@ class AmpioStore:
         still losing to the live push that can arrive first on a fresh
         connection. The bool reports whether the visible state changed; the
         returned instance can differ even when it did not (a newer timestamp
-        on the same value). A raw-proven object is skipped outright: its
+        on the same value). A raw-owned object is skipped outright: its
         resync is the broker's retained raw table, and a DB snapshot may be
         staler than that raw truth with no comparable clock to prove it.
         """
-        if obj.raw_proven:
+        if obj.raw_owned:
             return obj, False
         seed = _protocol.parse_stan_json(stan_json)
         if seed is None:
             return obj, False
         reported_at = None if seed.on_ms is None else float(seed.on_ms) / 1000.0
-        if seed.value is None or not self._supersedes(obj, reported_at):
+        if seed.state is None or not self._supersedes(obj, reported_at):
             return obj, False
         changed = (
-            obj.value != seed.value
-            or (seed.tilt is not None and obj.tilt_position != seed.tilt)
+            obj.state != seed.state
+            or (seed.lammel is not None and obj.lammel != seed.lammel)
             or (seed.thermostat is not None and obj.thermostat != seed.thermostat)
         )
         obj = replace(
             obj,
-            value=seed.value,
-            tilt_position=seed.tilt if seed.tilt is not None else obj.tilt_position,
+            state=seed.state,
+            lammel=seed.lammel if seed.lammel is not None else obj.lammel,
             thermostat=seed.thermostat
             if seed.thermostat is not None
             else obj.thermostat,
@@ -553,10 +549,10 @@ class AmpioStore:
         snapshot request is the ordering boundary: a live value received
         after the latest request (guarded) outranks every seed, and one
         received before it loses to the seed that request produced.
-        Raw-proven objects never reach this comparison: their snapshot
+        Raw-owned objects never reach this comparison: their snapshot
         rows are skipped before it.
         """
-        if obj.value is None:
+        if obj.state is None:
             return True
         if reported_at is None:
             return False
@@ -599,9 +595,9 @@ class AmpioStore:
             prefix = input_channel_prefix(obj.typ_komponentu)
             if prefix is None and obj.typ_komponentu == "przekaznik":
                 prefix = "o"
-            if prefix is None or obj.funkcja is None or obj.device_id is None:
+            if prefix is None or obj.funkcja is None or obj.id_urzadzenia is None:
                 continue
-            module = self.modules.get(obj.device_id)
+            module = self.modules.get(obj.id_urzadzenia)
             if module is None or module.mac is None:
                 continue
             index[(module.mac, prefix, obj.funkcja)] = obj.id
@@ -629,8 +625,8 @@ class AmpioStore:
         # flip is public state, so it dispatches like any other change.
         covered = set(index.values())
         for oid, obj in self.objects.items():
-            if obj.raw_proven and oid not in covered:
-                obj = replace(obj, raw_proven=False)
+            if obj.raw_owned and oid not in covered:
+                obj = replace(obj, raw_owned=False)
                 self.objects[oid] = obj
                 self._record(obj, applied)
 

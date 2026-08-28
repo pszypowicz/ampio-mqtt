@@ -49,7 +49,7 @@ async def test_fetch_locations_requests_and_parses() -> None:
     client = AmpioClient(
         "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
     )
-    await client.start(timeout=2.0, discovery_timeout=0.01)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
     broker.published.clear()
     try:
         delivery = deliver_later(
@@ -66,15 +66,15 @@ async def test_fetch_locations_requests_and_parses() -> None:
         assert result == {14: "Potter"}
         assert (f"ampio/control/{ADMIN_USER}/config", b"locations") in broker.published
     finally:
-        await client.stop()
+        await client.disconnect()
 
 
 async def test_fetch_locations_raises_on_restricted_tier() -> None:
     broker = FakeBroker()
     client = AmpioClient("host", username="u", mqtt_client_factory=broker.factory)
-    await client.start(timeout=2.0, discovery_timeout=0.01)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         with pytest.raises(RuntimeError, match="restricted"):
             await client.fetch_locations(timeout=0.1)
     finally:
-        await client.stop()
+        await client.disconnect()

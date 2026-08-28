@@ -248,17 +248,17 @@ SENSOR_KIND_KEYS, INPUT_KIND_KEYS, OUTPUT_KIND_KEYS, THERMOSTAT_KIND_KEYS = _kin
 # embedded (`analog_<n>` for a lin_wej measurement the map does not know,
 # `value_<n>` for the numeric bit8/bit32 channels), so they cannot be
 # enumerated. A consumer treats each prefix as one mapping decision.
-OPEN_SENSOR_KEY_PREFIXES: tuple[str, ...] = ("analog_", "value_")
+SENSOR_KIND_KEY_PREFIXES: tuple[str, ...] = ("analog_", "value_")
 
 
-def classify(typ: str | None, interpretacja: int | None) -> ObjectKind:
+def classify(typ_komponentu: str | None, interpretacja: int | None) -> ObjectKind:
     """Classify a DB object into the one kind it is.
 
-    ``typ`` is ``typ_komponentu``; ``interpretacja`` selects the lin_wej
-    measurement. A ``typ`` with no table entry (unknown, or no metadata yet)
-    is the generic value-only sensor, so such an object still surfaces.
+    ``interpretacja`` selects the lin_wej measurement. A ``typ_komponentu``
+    with no table entry (unknown, or no metadata yet) is the generic
+    value-only sensor, so such an object still surfaces.
     """
-    profile = TYPE_PROFILES.get(typ) if typ is not None else None
+    profile = TYPE_PROFILES.get(typ_komponentu) if typ_komponentu is not None else None
     if profile is None:
         return _GENERIC_SENSOR
     match profile.kind:
@@ -272,13 +272,14 @@ def classify(typ: str | None, interpretacja: int | None) -> ObjectKind:
             return kind
 
 
-def is_system_type(typ: str | None) -> bool:
-    """Whether ``typ`` is a system component the M-SERV always exposes."""
-    profile = TYPE_PROFILES.get(typ) if typ is not None else None
+def is_system_type(typ_komponentu: str | None) -> bool:
+    """Whether ``typ_komponentu`` is a system component the M-SERV always exposes."""
+    profile = TYPE_PROFILES.get(typ_komponentu) if typ_komponentu is not None else None
     return profile.system if profile is not None else False
 
 
-def input_channel_prefix(typ: str | None) -> str | None:
-    """Raw-channel bridge prefix for ``typ``, or None if it bridges no channel."""
-    profile = TYPE_PROFILES.get(typ) if typ is not None else None
+def input_channel_prefix(typ_komponentu: str | None) -> str | None:
+    """Raw-channel bridge prefix for ``typ_komponentu``, or None if it bridges
+    no channel."""
+    profile = TYPE_PROFILES.get(typ_komponentu) if typ_komponentu is not None else None
     return profile.channel_prefix if profile is not None else None

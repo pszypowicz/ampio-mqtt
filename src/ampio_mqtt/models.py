@@ -47,13 +47,10 @@ _BELL_FLAG = 1 << 15
 # else (slider layout, lamella step, ...), so it must not read as bell.
 _BELL_TYPES = frozenset({"przekaznik", "flaga"})
 
-# The `leafId` shape: `0_<macHex>_<sfId>_<subSfId>_<ioNo>`, the Designer's
-# own segment names and the same structure the M-SERV's Matter bridge
-# parses (docs/identity.md). Only the mac and `ioNo` are extracted. The
-# function ids classify a leaf, and the library classifies on
-# `typ_komponentu` instead. Strict on purpose - a half-parsed mac that is
-# wrong is worse than None.
-_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_[^_]+_[^_]+_([^_]+)")
+# The `leafId` shape: `0_<macHex>_<sfId>_<subSfId>_<ioNo>` - a leading
+# literal `0`, then the four fields the regex captures (docs/identity.md).
+# Strict on purpose - a half-parsed mac that is wrong is worse than None.
+_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_([^_]+)_([^_]+)_([^_]+)")
 
 # The M-SERV's Designer override mac: its objects' leafId embeds this value
 # (not the factory mac_global), and its own module row reports it as
@@ -72,8 +69,8 @@ class ThermostatState:
     vocabulary is in docs/protocol.md.
     """
 
-    measured_temperature: float | None
-    target_temperature: float | None
+    measure_temp: float | None
+    set_temperature: float | None
     # Mode letter, verbatim from the wire.
     mode: str | None
     # The push's cooling flag; `"0"` reads False, anything else True.
@@ -94,7 +91,7 @@ class DesignerRecord:
 
     location: str | None = None
     matter_device_type: int | None = None
-    name: str | None = None
+    desc: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -103,12 +100,12 @@ class ModuleRecord:
 
     Admin-guarded, exactly as :class:`DesignerRecord` is. ``location`` is
     the module-level "Lokalizacja" (where the box is mounted, not where
-    its loads are) and ``name`` the CAN-resident module name; either can
+    its loads are) and ``desc`` the CAN-resident module name; either can
     differ from the admin catalogue row.
     """
 
     location: str | None = None
-    name: str | None = None
+    desc: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -121,15 +118,15 @@ class AmpioObject:
     through the read surface.
     """
 
-    # The per-object identity source, exposed as `unique_key`. An object
+    # The per-object identity source, exposed as `object_key`. An object
     # delete is soft on the `config` catalogue, so the autoincrement never
-    # renumbers. `device_id` is the volatile one: it mirrors the module row,
-    # which is reassigned when a module is replaced.
+    # renumbers. `id_urzadzenia` is the volatile one: it mirrors the module
+    # row, which is reassigned when a module is replaced.
     # docs/identity.md is the home for the identity model.
     id: int
-    device_id: int | None = None  # id_urzadzenia (physical module)
+    id_urzadzenia: int | None = None  # physical module
     typ_komponentu: str | None = None
-    name: str | None = None
+    opis_menu: str | None = None
     interpretacja: int | None = None
     # Physical channel index within the module (obiekty.funkcja);
     # replacement-stable but NOT unique - objects can share one. Routes raw
@@ -137,7 +134,7 @@ class AmpioObject:
     funkcja: int | None = None
     # `leafId`, identical on both discovery surfaces. Empty for ghost rows
     # and system objects. Doubles as the visibility marker (`visible`) and
-    # the physical-output key (`stable_key`) - docs/identity.md.
+    # the physical-output key (`leaf_key`) - docs/identity.md.
     leaf_id: str = ""
     # `params` bitfield (Designer config flags; see `hidden`/`visible`).
     # Defaults to 0 so a payload without the column reads "nothing hidden".
@@ -166,8 +163,9 @@ class AmpioObject:
     # `dataclasses.replace` included, so no instance can hold a kind that
     # disagrees with its inputs (#94).
     kind: ObjectKind = field(init=False)
-    value: str | None = None
-    # Epoch seconds of the report `value` came from: the M-SERV's own `on`
+    # The state payload's `state` key, verbatim.
+    state: str | None = None
+    # Epoch seconds of the report `state` came from: the M-SERV's own `on`
     # timestamp when the report carried one, the local receive time for the
     # undated raw tree. Lets a later bulk snapshot be compared against what
     # is held instead of applied or dropped blind. None until any report
@@ -177,13 +175,12 @@ class AmpioObject:
     # observed): per-object echoes and snapshot rows are then skipped -
     # resync is the broker's retained raw table. Admin tier only; cleared
     # when the raw index stops covering the object. docs/raw-channel-bridge.md.
-    raw_proven: bool = False
-    # Slat angle percent, from the `lammel` state field. Only tilt-capable
-    # covers report it.
-    tilt_position: int | None = None
+    raw_owned: bool = False
+    # Slat angle percent. Only tilt-capable covers report it.
+    lammel: int | None = None
     # Climate readback, from the rich state shape only `reg` objects push.
     # None until a reg-shaped report arrives; a later report that lacks the
-    # shape keeps the last readback, like `tilt_position` does.
+    # shape keeps the last readback, like `lammel` does.
     thermostat: ThermostatState | None = None
 
     def __post_init__(self) -> None:
@@ -199,26 +196,26 @@ class AmpioObject:
 
     @property
     def is_on(self) -> bool:
-        """Boolean interpretation of `value`, meaningful for input objects.
+        """Boolean interpretation of `state`, meaningful for input objects.
 
-        Off when `value` is None/empty/`"0"`, on otherwise - so both the raw
+        Off when `state` is None/empty/`"0"`, on otherwise - so both the raw
         channel form (`"1"`) and the per-object form (`"255"`) read as on.
         """
-        return self.value not in (None, "", "0")
+        return self.state not in (None, "", "0")
 
     @property
     def numeric_value(self) -> float | None:
-        """Numeric interpretation of `value`, meaningful for sensor objects.
+        """Numeric interpretation of `state`, meaningful for sensor objects.
 
-        None when `value` is missing, not parseable as a number, or not
+        None when `state` is missing, not parseable as a number, or not
         finite - `float()` alone accepts forms like `"nan"`, `"inf"` and the
         overflowing `"1e999"`, which for a sensor reading are glitches rather
         than measurements.
         """
-        if self.value is None:
+        if self.state is None:
             return None
         try:
-            parsed = float(self.value)
+            parsed = float(self.state)
         except ValueError:
             return None
         return parsed if math.isfinite(parsed) else None
@@ -236,10 +233,10 @@ class AmpioObject:
         """
         if not (isinstance(self.kind, OutputKind) and self.kind.color):
             return None
-        if self.value is None:
+        if self.state is None:
             return None
         try:
-            packed = int(self.value)
+            packed = int(self.state)
         except ValueError:
             return None
         if not -(1 << 31) <= packed <= 0xFFFFFFFF:
@@ -259,14 +256,14 @@ class AmpioObject:
 
         Anything but a position-capable cover (`OutputKind.position`)
         reads None, as does a value outside 0-100. The slat axis is
-        :pyattr:`tilt_position`, exactly as `setRollerPos` splits them.
+        :pyattr:`lammel`, exactly as `setRollerPos` splits them.
         """
         if not (isinstance(self.kind, OutputKind) and self.kind.position):
             return None
-        if self.value is None:
+        if self.state is None:
             return None
         try:
-            pos = int(self.value)
+            pos = int(self.state)
         except ValueError:
             return None
         return pos if 0 <= pos <= 100 else None
@@ -320,27 +317,27 @@ class AmpioObject:
         return self.typ_komponentu in _BELL_TYPES and bool(self.params & _BELL_FLAG)
 
     @property
-    def stable_key(self) -> str | None:
+    def leaf_key(self) -> str | None:
         """The physical output this object drives (``leaf_<leaf_id>``), or None.
 
         Identical on both access tiers. It is not an identity for the
         object row. Several Designer views of one output share one
         ``leafId``, so two objects can return the same key. The
-        per-object identity is :pyattr:`unique_key`. None for an empty
+        per-object identity is :pyattr:`object_key`. None for an empty
         ``leaf_id`` (system objects, ghost rows). See docs/identity.md.
         """
         return f"leaf_{self.leaf_id}" if self.leaf_id else None
 
     @property
-    def unique_key(self) -> str:
+    def object_key(self) -> str:
         """Snapshot-unique identity token (``obj_<id>``).
 
         The recommended per-object unique id: unique among every object
         in one discovery snapshot, served on both account tiers, and
-        never None. Scope it per M-SERV with ``AmpioServerInfo.key``.
-        The physical output an object drives is :pyattr:`stable_key`,
-        which several Designer views of one output share by design.
-        See docs/identity.md.
+        never None. Scope it per M-SERV with
+        ``AmpioServerInfo.server_key``. The physical output an object
+        drives is :pyattr:`leaf_key`, which several Designer views of one
+        output share by design. See docs/identity.md.
         """
         return f"obj_{self.id}"
 
@@ -357,22 +354,46 @@ class AmpioObject:
         match = _LEAF_ID_RE.fullmatch(self.leaf_id)
         return int(match.group(1), 16) if match is not None else None
 
-    @property
-    def leaf_out_no(self) -> int | None:
-        """The output index within the module's description record.
-
-        Parsed from ``leaf_id``'s last segment - the join key that pairs
-        this object with its :class:`OutputDescription` entry
-        (docs/identity.md). None when ``leaf_id`` is empty, malformed,
-        or the segment is not a number.
-        """
+    def _leaf_segment(self, group: int) -> int | None:
+        """One numeric `leaf_id` segment, or None when it does not parse."""
         match = _LEAF_ID_RE.fullmatch(self.leaf_id)
         if match is None:
             return None
         try:
-            return int(match.group(2))
+            return int(match.group(group))
         except ValueError:
             return None
+
+    @property
+    def sf_id(self) -> int | None:
+        """The special-function id, the third ``leaf_id`` segment.
+
+        The Designer's own name for the per-leaf function class. None when
+        ``leaf_id`` is empty, malformed, or the segment is not a number.
+        See docs/identity.md.
+        """
+        return self._leaf_segment(2)
+
+    @property
+    def sub_sf_id(self) -> int | None:
+        """The sub-function id, the fourth ``leaf_id`` segment.
+
+        Its meaning is scoped to :pyattr:`sf_id`. None when ``leaf_id`` is
+        empty, malformed, or the segment is not a number. See
+        docs/identity.md.
+        """
+        return self._leaf_segment(3)
+
+    @property
+    def leaf_io_no(self) -> int | None:
+        """The I/O index within the module's description record.
+
+        The last ``leaf_id`` segment, and the join key that pairs this
+        object with its :class:`OutputDescription` entry. It covers inputs
+        as well as outputs. None when ``leaf_id`` is empty, malformed, or
+        the segment is not a number.
+        """
+        return self._leaf_segment(4)
 
     @property
     def is_server_owned(self) -> bool:
@@ -417,17 +438,19 @@ class AmpioModule:
     mac: int | None = None  # devices.mac (override / effective bus address)
     # Factory-burned hardware id; CHANGES when the unit is replaced.
     mac_global: int | None = None  # devices.mac_global (factory id)
-    name: str | None = None  # nazwa_urzadzenia (user-given module name)
-    type: int | None = None  # typ_urzadzenia
-    # Resolved model name for `type`. Derived - never passed: computed on
-    # every construction (#94), None when `type` is unknown or missing.
+    nazwa_urzadzenia: str | None = None  # user-given module name
+    typ_urzadzenia: int | None = None
+    # Resolved model name for `typ_urzadzenia`. Derived - never passed:
+    # computed on every construction (#94), None when `typ_urzadzenia` is
+    # unknown or missing.
     model: str | None = field(init=False)
-    # Curated mounting class for `type` ("cabinet" DIN rail / "wall" /
-    # "flush" in-box), derived exactly like `model` (#115). Decoration for
-    # device info only - never a topology input. None when unclassified.
+    # Curated mounting class for `typ_urzadzenia` ("cabinet" DIN rail /
+    # "wall" / "flush" in-box), derived exactly like `model` (#115).
+    # Decoration for device info only - never a topology input. None when
+    # unclassified.
     mounting: Mounting | None = field(init=False)
-    sw_version: int | None = None  # wersja_softu
-    hw_version: int | None = None  # wersja_pcb
+    wersja_softu: int | None = None
+    wersja_pcb: int | None = None
     # The module's DEVICE_NAME record entry, admin sweep only; None
     # until a sweep covers the module.
     record: ModuleRecord | None = None
@@ -435,7 +458,7 @@ class AmpioModule:
     # the module: a state push or raw edge for one of its objects, or its own
     # diagnostics broadcast. One clock only - snapshot and catalogue seeds do
     # not count, since they replay DB state that may be arbitrarily old. None
-    # until the first live message after start().
+    # until the first live message after connect().
     last_seen: float | None = None
     # Self-reported health from the module's `b/4F` broadcast. Both stay None
     # on a standard account, which is not served the raw tree, and
@@ -444,8 +467,8 @@ class AmpioModule:
     temperature: float | None = None  # °C
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "model", module_model(self.type))
-        object.__setattr__(self, "mounting", module_mounting(self.type))
+        object.__setattr__(self, "model", module_model(self.typ_urzadzenia))
+        object.__setattr__(self, "mounting", module_mounting(self.typ_urzadzenia))
 
 
 @dataclass(slots=True, frozen=True)
@@ -453,7 +476,7 @@ class AmpioScene:
     """A named multi-action preset defined in the Ampio app."""
 
     id: int
-    name: str
+    scene_name: str
     # The M-SERV's own enabled flag for the scene.
     active: bool = True
     # Parent scene when the install nests them; None for a top-level scene.
@@ -482,7 +505,7 @@ class AmpioServerInfo:
     device_id: str | None = None  # hardware identifier of the host
 
     @property
-    def key(self) -> str:
+    def server_key(self) -> str:
         """Canonical scoping key for this M-SERV, for consumer registries.
 
         The string to prefix per-server artifacts with - unique ids, device
@@ -498,7 +521,7 @@ class AmpioServerInfo:
         """Account tier per the account id in the info reply, or None.
 
         The wire's own confirmation for a config flow reading a
-        :meth:`AmpioClient.test_connection` result; a running client's
+        :meth:`AmpioClient.check_connection` result; a running client's
         operational tier comes from the authenticated username instead.
         The reserved ``admin`` login reports the pseudo-user id ``-1``;
         app-created users carry a positive row id and are always the
@@ -515,8 +538,8 @@ class ConnectionStats:
     """Internal liveness counters behind ``diagnostics_snapshot()``.
 
     Updated by the connection layer (`last_message_at` by the client).
-    `started_at` and `reconnect_count` cover the current ``start()`` run -
-    a deliberate stop/start restarts them, so a snapshot never reads a
+    `started_at` and `reconnect_count` cover the current ``connect()`` run -
+    a deliberate disconnect/connect restarts them, so a snapshot never reads a
     consumer-initiated restart as a flapping connection. `last_error` and
     `last_message_at` roll across runs.
     """

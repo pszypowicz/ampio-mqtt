@@ -6,8 +6,8 @@ import pytest
 
 from ampio_mqtt.classification import (
     INPUT_KIND_KEYS,
-    OPEN_SENSOR_KEY_PREFIXES,
     OUTPUT_KIND_KEYS,
+    SENSOR_KIND_KEY_PREFIXES,
     SENSOR_KIND_KEYS,
     THERMOSTAT_KIND_KEYS,
     TYPE_PROFILES,
@@ -251,5 +251,5 @@ def test_classify_never_leaves_the_exported_vocabulary() -> None:
             kind = classify(typ, interp)
             key = kind.key
             assert key in vocab[type(kind)] or key.startswith(
-                OPEN_SENSOR_KEY_PREFIXES
+                SENSOR_KIND_KEY_PREFIXES
             ), (typ, interp, key)

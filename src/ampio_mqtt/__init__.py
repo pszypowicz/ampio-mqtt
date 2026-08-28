@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 
 from .classification import (
     INPUT_KIND_KEYS,
-    OPEN_SENSOR_KEY_PREFIXES,
     OUTPUT_KIND_KEYS,
+    SENSOR_KIND_KEY_PREFIXES,
     SENSOR_KIND_KEYS,
     THERMOSTAT_KIND_KEYS,
     InputKind,
@@ -32,7 +32,7 @@ from .errors import (
 from .events import (
     AuthFailed,
     AvailabilityChanged,
-    BusEvent,
+    BusEventRaised,
     ClientEvent,
     ConnectionDied,
     ModuleRemoved,
@@ -55,9 +55,9 @@ from .models import (
 __all__ = [
     "HEATING_MODES",
     "INPUT_KIND_KEYS",
-    "OPEN_SENSOR_KEY_PREFIXES",
     "OUTPUT_KIND_KEYS",
     "SENSOR_KIND_KEYS",
+    "SENSOR_KIND_KEY_PREFIXES",
     "THERMOSTAT_KIND_KEYS",
     "AccessTier",
     "AmpioAuthError",
@@ -71,7 +71,7 @@ __all__ = [
     "AmpioTimeoutError",
     "AuthFailed",
     "AvailabilityChanged",
-    "BusEvent",
+    "BusEventRaised",
     "ClientEvent",
     "ConnectionDied",
     "DesignerRecord",
@@ -91,7 +91,7 @@ __all__ = [
     "discover",
 ]
 
-__version__ = "0.40.0"
+__version__ = "0.41.0"
 
 
 def __getattr__(name: str) -> object:

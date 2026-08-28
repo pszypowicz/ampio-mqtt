@@ -16,6 +16,6 @@ the text says in place exactly what is unverified.
 | [`identity.md`](identity.md)                     | Which id is which - `mac` vs `mac_global`, `id` vs `funkcja` vs `leaf_id`, replacement-stable vs hardware-ordered.          |
 | [`classification.md`](classification.md)         | The classification model, the wire notes the code tables cannot carry, the consumer-CI key contract.                        |
 | [`raw-channel-bridge.md`](raw-channel-bridge.md) | The `ampio/from/<MAC>/state/...` parallel topic surface. What is bridged today and what is not.                             |
-| [`discovery-flow.md`](discovery-flow.md)         | What `start()` does, what runs automatically vs on demand, LAN discovery, and the connection liveness counters.             |
+| [`discovery-flow.md`](discovery-flow.md)         | What `connect()` does, what runs automatically vs on demand, LAN discovery, and the connection liveness counters.           |
 | [`lan-discovery.md`](lan-discovery.md)           | What the M-SERV publishes over mDNS and DHCP, and why the config flow's unique id comes from a probe of the broker instead. |
 | [`untapped-surfaces.md`](untapped-surfaces.md)   | Reachable but unconsumed surfaces, each with a self-contained description and a link to its work-tracking notes.            |

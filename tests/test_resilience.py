@@ -53,7 +53,7 @@ def test_a_raising_listener_does_not_stop_later_messages() -> None:
     feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1"}')
     feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"2"}')
 
-    assert client.objects[41].value == "2"
+    assert client.objects[41].state == "2"
 
 
 # --- replies of the wrong shape --------------------------------------------
@@ -83,7 +83,7 @@ def test_a_malformed_reply_does_not_stop_later_messages() -> None:
     _establish(client, 41)
     feed(client, f"ampio/fromDB/{USER}/config/devicesDetails", b"null")
     feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"77"}')
-    assert client.objects[41].value == "77"
+    assert client.objects[41].state == "77"
 
 
 @pytest.mark.parametrize(
@@ -104,24 +104,24 @@ def test_malformed_diagnostics_frames_are_ignored(payload: bytes) -> None:
 # --- lifecycle --------------------------------------------------------------
 
 
-async def test_stop_after_the_loop_died_does_not_raise() -> None:
+async def test_disconnect_after_the_loop_died_does_not_raise() -> None:
     broker = FakeBroker()
     broker.stream_error = RuntimeError("injected bug")
     client = make_client(broker)
     died: list[ConnectionDied] = []
     client.subscribe(died.append, of=ConnectionDied)
-    await client.start(timeout=2.0, discovery_timeout=0.05)
+    await client.connect(timeout=2.0, discovery_timeout=0.05)
     async with asyncio.timeout(2.0):
         while not died:
             await asyncio.sleep(0.01)
-    await client.stop()  # must not raise
+    await client.disconnect()  # must not raise
     assert client.available is False
 
 
-async def test_stop_is_idempotent() -> None:
+async def test_disconnect_is_idempotent() -> None:
     client = _client()
-    await client.stop()
-    await client.stop()
+    await client.disconnect()
+    await client.disconnect()
 
 
 # Attempts are unbounded, so the exponent must be clamped: a broker down
@@ -159,7 +159,7 @@ async def test_poison_message_does_not_kill_the_connection(
     original = client._store.apply
 
     def fragile(msg: object) -> object:
-        if getattr(msg, "value", None) == "POISON":
+        if getattr(msg, "state", None) == "POISON":
             raise RuntimeError("simulated processing defect")
         return original(msg)  # type: ignore[arg-type]
 
@@ -171,7 +171,7 @@ async def test_poison_message_does_not_kill_the_connection(
     assert sum("failed processing" in r.message for r in caplog.records) == 1
 
     feed(client, topic, b'{"state":"42"}')
-    assert client.objects[5].value == "42"
+    assert client.objects[5].state == "42"
 
     # A recurring poison on the same topic stays out of the error log -
     # the traceback was already recorded once.

@@ -18,7 +18,13 @@ import asyncio
 import logging
 import os
 
-from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioObject, ObjectUpdated
+from ampio_mqtt import (
+    AmpioClient,
+    AmpioConnectionError,
+    AmpioObject,
+    ObjectUpdated,
+    SensorKind,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,14 +59,14 @@ async def run(args: argparse.Namespace) -> int:
     client = AmpioClient(args.host, args.username, args.password, port=args.port)
 
     def on_object(obj: AmpioObject) -> None:
-        if obj.is_sensor and obj.value is not None and obj.kind is not None:
-            print(f"  state  ob/{obj.id:<5} {obj.kind.key:<14} = {obj.value}")
+        if isinstance(obj.kind, SensorKind) and obj.state is not None:
+            print(f"  state  ob/{obj.id:<5} {obj.kind.key:<14} = {obj.state}")
 
     client.subscribe(lambda e: on_object(e.object), of=ObjectUpdated)
 
     print(f"Connecting to {args.host}:{args.port} ...")
     try:
-        await client.start(timeout=15)
+        await client.connect(timeout=15)
     except AmpioConnectionError as err:
         print(f"FAILED to connect: {err}")
         return 1
@@ -69,10 +75,10 @@ async def run(args: argparse.Namespace) -> int:
     await asyncio.sleep(args.duration)
 
     objs = client.objects
-    types: dict = {}
+    types: dict[str | None, int] = {}
     for o in objs.values():
         types[o.typ_komponentu] = types.get(o.typ_komponentu, 0) + 1
-    sensors = [o for o in objs.values() if o.is_sensor]
+    sensors = [o for o in objs.values() if isinstance(o.kind, SensorKind)]
     print(f"\n=== Access tier: {client.access_tier.value} ===")
     print(
         f"=== Objects: {len(objs)} (sensors: {len(sensors)}), modules: {len(client.modules)} ==="
@@ -81,11 +87,14 @@ async def run(args: argparse.Namespace) -> int:
 
     print("\n=== Sensors (auto-discovered) ===")
     for o in sorted(sensors, key=lambda o: o.id):
-        unit = (o.kind.unit or "") if o.kind else ""
-        dc = (o.kind.device_class or "-") if o.kind else "-"
-        print(f"  ob/{o.id:<5} {dc:<18} {o.name!s:<26} = {o.value} {unit}")
+        kind = o.kind
+        if not isinstance(kind, SensorKind):
+            continue
+        unit = kind.unit or ""
+        dc = kind.device_class or "-"
+        print(f"  ob/{o.id:<5} {dc:<18} {o.opis_menu!s:<26} = {o.state} {unit}")
 
-    await client.stop()
+    await client.disconnect()
     return 0
 
 

@@ -125,7 +125,7 @@ described below.
 | `switch`                           | -                           | Inverts the current state. Flags answer it too. `rgbw` objects ignore it (no effect, no reply).                                                                                                                                                                                                                                                    |
 | `open`                             | -                           | Cover to 100.                                                                                                                                                                                                                                                                                                                                      |
 | `close`                            | -                           | Cover to 0.                                                                                                                                                                                                                                                                                                                                        |
-| `stop`                             | -                           | Halts a cover on either axis. Mid-travel, the position stream freezes at the halt point, and the commanded target is never reached. A slat rotation caught mid-turn freezes at an intermediate angle the same way. During the pre-travel slat phase it also cancels the pending move. Stationary, it is a silent no-op. Exposed as `stop_cover()`. |
+| `stop`                             | -                           | Halts a cover on either axis. Mid-travel, the position stream freezes at the halt point, and the commanded target is never reached. A slat rotation caught mid-turn freezes at an intermediate angle the same way. During the pre-travel slat phase it also cancels the pending move. Stationary, it is a silent no-op. Exposed as `stop()`.       |
 | `setValue`                         | `<0-255>[/<time>]`          | `time` is in 10 ms units and **reverts** the object afterwards - a timed pulse, not a fade.                                                                                                                                                                                                                                                        |
 | `setColors`                        | `<R>/<G>/<B>/<W>`           | Also accepts one packed int (`R \| G<<8 \| B<<16 \| W<<24`), which is what object state reports back. Absent from the spec enum - undocumented but real.                                                                                                                                                                                           |
 | `setRollerPos`                     | `<position>/<lamella>`      | Percent each. `101` omits an axis (see the slat-drag note below), so one command moves either axis alone or both together.                                                                                                                                                                                                                         |
@@ -236,10 +236,10 @@ ampio/to/<machex>/raw      30f9<value:2><channel:2>     (ASCII hex)
 
 `0x30` is the generic output-write function (the SPA's leaf command table maps
 every output leaf to it), and `0xF9` is the set-u8 command. `channel` is the
-0-based output index - `AmpioObject.leaf_out_no`, one below the 1-based raw
-state channel. The topic is admin-only like the rest of the `ampio/to` tree. The
-raw `state/o/<ch+1>` echo follows in ~30-50 ms and the per-object push in ~150
-ms, so `confirm=` works unchanged. The frame is proven on panel LEDs and relay
+0-based output index - `AmpioObject.leaf_io_no`, one below the 1-based raw state
+channel. The topic is admin-only like the rest of the `ampio/to` tree. The raw
+`state/o/<ch+1>` echo follows in ~30-50 ms and the per-object push in ~150 ms,
+so `confirm=` works unchanged. The frame is proven on panel LEDs and relay
 outputs alike.
 
 The library's routing is deliberately dumb. On the admin tier, every
@@ -380,7 +380,7 @@ nothing. The match is on the full 16-bit value, at least on the M-DOT firmware
 this ran against.
 
 **The M-SERV raises event 254 from its own MAC whenever a client asks for a
-discovery refresh**, so `start()` normally produces one. It is not periodic. A
+discovery refresh**, so `connect()` normally produces one. It is not periodic. A
 purely passive listener sees no events at all. A consumer that only cares about
 panel presses must filter on the originating MAC, and must not treat every event
 as user intent.

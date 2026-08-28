@@ -168,11 +168,11 @@ async def connected() -> AsyncIterator[tuple[AmpioClient, FakeBroker]]:
     """
     broker = FakeBroker()
     client = AmpioClient("host", username=USER, mqtt_client_factory=broker.factory)
-    await client.start(timeout=2.0, discovery_timeout=0.01)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
     broker.published.clear()
     broker.published_qos.clear()
     yield client, broker
-    await client.stop()
+    await client.disconnect()
 
 
 def details(*items: dict) -> str:

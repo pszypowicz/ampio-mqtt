@@ -102,6 +102,6 @@ def test_unclassified_codes_are_the_deliberate_set() -> None:
 
 
 def test_ampio_module_derives_mounting() -> None:
-    assert AmpioModule(id=1, type=44).mounting == "wall"
-    assert AmpioModule(id=2, type=4).mounting == "cabinet"
-    assert AmpioModule(id=3, type=None).mounting is None
+    assert AmpioModule(id=1, typ_urzadzenia=44).mounting == "wall"
+    assert AmpioModule(id=2, typ_urzadzenia=4).mounting == "cabinet"
+    assert AmpioModule(id=3, typ_urzadzenia=None).mounting is None

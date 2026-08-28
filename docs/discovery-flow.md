@@ -1,8 +1,8 @@
 # Discovery flow
 
-`AmpioClient.start()` runs the bring-up sequence: connect, subscribe, publish
+`AmpioClient.connect()` runs the bring-up sequence: connect, subscribe, publish
 the auto-discovery keywords, wait for the responses, return. By the time
-`start()` returns - unless the `discovery_timeout` elapsed first -
+`connect()` returns - unless the `discovery_timeout` elapsed first -
 `client.objects` and `client.server_info` are populated and ready to consult
 (`client.modules` too on the admin tier - see below). Live state arrives via
 push from that point on.
@@ -10,22 +10,22 @@ push from that point on.
 Some consumers **depend** on populated collections before they do anything else.
 The canonical case resolves `mserv` to pre-register the M-SERV device, so other
 modules' `via_device` parents resolve. Such a consumer must not rely on
-`start()`'s wait as an implementation detail. It must call
+`connect()`'s wait as an implementation detail. It must call
 `await client.wait_for_initial_discovery()` (default `timeout=8.0`) explicitly.
 That method returns `True` once discovery is complete for the account's tier,
-and `False` if the timeout elapses. It never raises. `start()` delegates its
+and `False` if the timeout elapses. It never raises. `connect()` delegates its
 discovery wait to this method and returns its result, so the two share one
-definition of "discovery is done." The explicit dependency keeps `start()` free
-to return earlier in a future revision without a silent break of that ordering.
-The library's own accessors degrade gracefully when nothing is known yet, so
-this guarantee exists for consumers, not for the library.
+definition of "discovery is done." The explicit dependency keeps `connect()`
+free to return earlier in a future revision without a silent break of that
+ordering. The library's own accessors degrade gracefully when nothing is known
+yet, so this guarantee exists for consumers, not for the library.
 
 Authoritative sources:
 [`src/ampio_mqtt/_connection.py`](../src/ampio_mqtt/_connection.py) owns the
 session and reconnect loop.
 [`src/ampio_mqtt/_store.py`](../src/ampio_mqtt/_store.py) owns what a message
 does to state. [`src/ampio_mqtt/client.py`](../src/ampio_mqtt/client.py) owns
-the `start()` / `stop()` lifecycle that joins them.
+the `connect()` / `disconnect()` lifecycle that joins them.
 
 ## Sequence
 
@@ -48,7 +48,7 @@ the `start()` / `stop()` lifecycle that joins them.
      catalogue and the full `params` table), plus `states` and `info`.
 
 4. **Await** completion or the `discovery_timeout` deadline, whichever comes
-   first. This step is `wait_for_initial_discovery()`, which `start()` calls
+   first. This step is `wait_for_initial_discovery()`, which `connect()` calls
    with `timeout=discovery_timeout`: one wait on the four replies of step 3.
    Each dispatched message bumps `stats.last_message_at`. The signals latch, so
    a later `wait_for_initial_discovery()` call returns immediately once its set
@@ -72,17 +72,17 @@ that lists nothing, and it evicts like any other.
 
 `AmpioClient(..., refresh_interval=<seconds>)` opts into a periodic `refresh()`
 while the connection is up. The default, `None`, leaves the cadence entirely to
-the consumer. `start()` schedules the periodic task and `stop()` cancels it. A
-tick while the connection is down skips silently. The reconnect path already
-refreshes on connect, so a periodic request adds nothing while the broker is
-unreachable. Each cycle re-publishes the same initial-discovery requests that
-`start()` and `refresh()` send. The next tick thus surfaces a Designer addition
-or a server-side eviction as `ObjectAdded` / `ObjectRemoved`, with no reconnect
-needed.
+the consumer. `connect()` schedules the periodic task and `disconnect()` cancels
+it. A tick while the connection is down skips silently. The reconnect path
+already refreshes on connect, so a periodic request adds nothing while the
+broker is unreachable. Each cycle re-publishes the same initial-discovery
+requests that `connect()` and `refresh()` send. The next tick thus surfaces a
+Designer addition or a server-side eviction as `ObjectAdded` / `ObjectRemoved`,
+with no reconnect needed.
 
 Each tick also runs `begin_refresh()`, which clears the live-value guard. An
 undated live value can then be re-seeded from the M-SERV's DB snapshot on the
-next reply. A raw-proven object is exempt, because its resync is the broker's
+next reply. A raw-owned object is exempt, because its resync is the broker's
 retained raw table, not the DB snapshot. Each cycle re-fetches the full
 catalogue, so `refresh_interval` is sized in minutes, not seconds.
 
@@ -95,8 +95,8 @@ when - and whether - to call them:
   calls it once at setup to seed `DeviceInfo.suggested_area`. A non-HA consumer
   can skip it.
 - **`fetch_scenes()`** - the scene catalogue, driven with `run_scene()` /
-  `turn_scene_off()` / `undo_scene()`. Same rationale: a consumer that surfaces
-  no scenes never pays for the fetch.
+  `off_scene()` / `undo_scene()`. Same rationale: a consumer that surfaces no
+  scenes never pays for the fetch.
 - **`resolve_records()`** - sweeps every catalogued module over the `device_api`
   tree and folds the per-output Designer record into `AmpioObject.record` (admin
   tier only, see [`identity.md`](identity.md)). The per-module record folds into
@@ -116,7 +116,7 @@ process, it behaves the same on macOS, HAOS, plain Linux, and Docker, without
 host-side `nss-mdns`/avahi configuration. A Home Assistant integration passes
 its shared `AsyncZeroconf` via `discover(zeroconf=...)` instead of a second
 multicast socket. The result is a hint based on the hostname alone. When
-credentials are known, confirm identity with `test_connection()`.
+credentials are known, confirm identity with `check_connection()`.
 
 ## Liveness counters
 

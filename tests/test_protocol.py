@@ -10,7 +10,7 @@ from ampio_mqtt import (
     AccessTier,
     AmpioModule,
     AmpioServerInfo,
-    BusEvent,
+    BusEventRaised,
     ThermostatState,
 )
 from ampio_mqtt._protocol import (
@@ -78,11 +78,11 @@ def test_parse_details_returns_metadata() -> None:
     items = parse_details(payload)
     assert items is not None
     assert [m.id for m in items] == [41, 42]
-    assert items[0].name == "Salon"
+    assert items[0].opis_menu == "Salon"
     assert items[0].funkcja == 7
     assert items[0].leaf_id == "0_cb8f_76_0_0"
     assert items[0].stan_json is not None
-    assert items[1].name is None and items[1].stan_json is None
+    assert items[1].opis_menu is None and items[1].stan_json is None
     assert items[1].funkcja is None  # absent -> None
     assert items[1].leaf_id == ""  # absent -> empty string
     assert items[1].matter_device_type is None  # absent -> None
@@ -196,7 +196,7 @@ def test_state_route_non_dict_payload() -> None:
     update = _route("ampio/fromDB/u/ob/41/state", json.dumps([1, 2]))
     assert isinstance(update, StateUpdate)
     assert update is not None
-    assert update.value == "[1, 2]" and update.on_ms is None
+    assert update.state == "[1, 2]" and update.on_ms is None
 
 
 def test_parse_devices_resolves_the_model_name() -> None:
@@ -268,7 +268,8 @@ def test_parse_server_info_bad_payload_returns_none() -> None:
     # The baseline server always wraps the fields in `Results`.
     assert parse_server_info(json.dumps({"mac": 1})) is None
     # ... and always reports its mac: an identity-less reply is unparseable,
-    # which is what keeps `AmpioServerInfo.key` populated by construction.
+    # which is what keeps `AmpioServerInfo.server_key` populated by
+    # construction.
     assert parse_server_info(json.dumps({"Results": {}})) is None
     assert parse_server_info(json.dumps({"Results": {"serverVersion": "1865"}})) is None
 
@@ -382,13 +383,13 @@ def test_state_route_json_payload() -> None:
         "ampio/fromDB/u/ob/41/state", json.dumps({"state": "22.4", "on": 1700})
     )
     assert isinstance(update, StateUpdate)
-    assert update.id == 41 and update.value == "22.4" and update.on_ms == 1700
+    assert update.id == 41 and update.state == "22.4" and update.on_ms == 1700
 
 
 def test_state_route_plain_payload() -> None:
     update = _route("ampio/fromDB/u/ob/41/state", "ok")
     assert isinstance(update, StateUpdate)
-    assert update.value == "ok" and update.on_ms is None
+    assert update.state == "ok" and update.on_ms is None
 
 
 def test_state_route_strips_plain_payload_whitespace() -> None:
@@ -396,7 +397,7 @@ def test_state_route_strips_plain_payload_whitespace() -> None:
     strips exactly as the raw channel form does."""
     update = _route("ampio/fromDB/u/ob/41/state", "0\n")
     assert isinstance(update, StateUpdate)
-    assert update.value == "0"
+    assert update.state == "0"
 
 
 @pytest.mark.parametrize(
@@ -417,8 +418,8 @@ def test_state_route_coerces_numeric_state_to_str(
         json.dumps({"state": raw_state, "on": 1700}),
     )
     assert isinstance(update, StateUpdate)
-    assert update.value == expected
-    assert isinstance(update.value, str)
+    assert update.state == expected
+    assert isinstance(update.state, str)
 
 
 def test_state_route_null_state_falls_back_to_payload() -> None:
@@ -426,7 +427,7 @@ def test_state_route_null_state_falls_back_to_payload() -> None:
     payload = json.dumps({"state": None, "on": 1700})
     update = _route("ampio/fromDB/u/ob/41/state", payload)
     assert isinstance(update, StateUpdate)
-    assert update.value == payload
+    assert update.state == payload
 
 
 @pytest.mark.parametrize(
@@ -443,10 +444,10 @@ def test_state_route_invalid_topic(topic: str) -> None:
     assert _route(topic, "x") is None
 
 
-def test_parse_stan_json_extracts_value_and_timestamp() -> None:
+def test_parse_stan_json_extracts_state_and_timestamp() -> None:
     seed = parse_stan_json(json.dumps({"state": "21.0", "on": 1700000000000}))
     assert seed is not None
-    assert seed.value == "21.0" and seed.on_ms == 1700000000000
+    assert seed.state == "21.0" and seed.on_ms == 1700000000000
 
 
 @pytest.mark.parametrize(
@@ -462,15 +463,15 @@ def test_parse_stan_json_coerces_numeric_state_to_str(
     """`stan_json` seeds normalize numeric state to text too."""
     seed = parse_stan_json(json.dumps({"state": raw_state, "on": 1}))
     assert seed is not None
-    assert seed.value == expected
-    assert isinstance(seed.value, str)
+    assert seed.state == expected
+    assert isinstance(seed.state, str)
 
 
 def test_parse_stan_json_null_state_yields_none() -> None:
     """An explicit `null` state preserves the None contract."""
     seed = parse_stan_json(json.dumps({"state": None, "on": 1}))
     assert seed is not None
-    assert seed.value is None
+    assert seed.state is None
 
 
 @pytest.mark.parametrize("payload", ["", "not json", json.dumps([1, 2])])
@@ -489,10 +490,10 @@ REG_PAYLOAD = (
 def test_state_route_reg_payload_carries_thermostat() -> None:
     update = _route("ampio/fromDB/u/ob/138/state", REG_PAYLOAD)
     assert isinstance(update, StateUpdate)
-    assert update.value == "0" and update.on_ms == 1787682427583
+    assert update.state == "0" and update.on_ms == 1787682427583
     assert update.thermostat == ThermostatState(
-        measured_temperature=25.9,
-        target_temperature=21.0,
+        measure_temp=25.9,
+        set_temperature=21.0,
         mode="S",
         cooling=False,
     )
@@ -510,8 +511,8 @@ def test_parse_stan_json_reg_shape_carries_thermostat() -> None:
     seed = parse_stan_json(REG_PAYLOAD)
     assert seed is not None
     assert seed.thermostat == ThermostatState(
-        measured_temperature=25.9,
-        target_temperature=21.0,
+        measure_temp=25.9,
+        set_temperature=21.0,
         mode="S",
         cooling=False,
     )
@@ -523,8 +524,8 @@ def test_parse_stan_json_reg_shape_carries_thermostat() -> None:
         pytest.param(
             {"mode": "A"},
             ThermostatState(
-                measured_temperature=None,
-                target_temperature=None,
+                measure_temp=None,
+                set_temperature=None,
                 mode="A",
                 cooling=None,
             ),
@@ -533,8 +534,8 @@ def test_parse_stan_json_reg_shape_carries_thermostat() -> None:
         pytest.param(
             {"cooling": "1", "measureTemp": "junk", "setTemperature": "inf"},
             ThermostatState(
-                measured_temperature=None,
-                target_temperature=None,
+                measure_temp=None,
+                set_temperature=None,
                 mode=None,
                 cooling=True,
             ),
@@ -562,7 +563,7 @@ def test_raw_channel_route_ok(topic: str, expected: tuple[int, str, int]) -> Non
     edge = _route(topic, " 1 ")
     assert isinstance(edge, RawChannelEdge)
     assert (edge.mac, edge.prefix, edge.channel) == expected
-    assert edge.value == "1"  # payload arrives stripped
+    assert edge.state == "1"  # payload arrives stripped
 
 
 @pytest.mark.parametrize(
@@ -583,11 +584,11 @@ def test_raw_channel_route_malformed(topic: str) -> None:
 @pytest.mark.parametrize(
     ("topic", "payload", "expected"),
     [
-        ("ampio/from/1/event", "189", BusEvent(number=189, mac=1)),
-        ("ampio/from/D09A/event", " 42 ", BusEvent(number=42, mac=0xD09A)),
+        ("ampio/from/1/event", "189", BusEventRaised(event_number=189, mac=1)),
+        ("ampio/from/D09A/event", " 42 ", BusEventRaised(event_number=42, mac=0xD09A)),
     ],
 )
-def test_event_route_ok(topic: str, payload: str, expected: BusEvent) -> None:
+def test_event_route_ok(topic: str, payload: str, expected: BusEventRaised) -> None:
     assert _route(topic, payload) == expected
 
 

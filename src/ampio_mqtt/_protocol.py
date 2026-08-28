@@ -30,7 +30,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from .events import BusEvent
+from .events import BusEventRaised
 from .models import (
     AccessTier,
     AmpioModule,
@@ -48,9 +48,9 @@ class ObjectMetadata:
     """Per-object metadata from a `devicesDetails` payload."""
 
     id: int
-    device_id: int | None
+    id_urzadzenia: int | None
     typ_komponentu: str | None
-    name: str | None
+    opis_menu: str | None
     interpretacja: int | None
     funkcja: int | None  # physical channel index within the module
     leaf_id: str  # `leafId`; empty for ghost rows and for system objects
@@ -84,9 +84,9 @@ class StateUpdate:
     """A live state push for a single object."""
 
     id: int
-    value: str
+    state: str
     on_ms: int | float | None
-    tilt: int | None  # `lammel` percent, present only for tilt-capable covers
+    lammel: int | None  # Percent, present only for tilt-capable covers
     # Climate readback, present only in the rich `reg` push shape.
     thermostat: ThermostatState | None = None
 
@@ -103,9 +103,9 @@ class ModuleDiagnostics:
 class StanJsonSeed:
     """Initial `state` value and server timestamp extracted from `stan_json`."""
 
-    value: str | None
+    state: str | None
     on_ms: int | float | None
-    tilt: int | None
+    lammel: int | None
     # Climate readback, present only in the rich `reg` snapshot shape.
     thermostat: ThermostatState | None = None
 
@@ -184,9 +184,9 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
         out.append(
             ObjectMetadata(
                 id=oid,
-                device_id=to_int(item.get("id_urzadzenia")),
+                id_urzadzenia=to_int(item.get("id_urzadzenia")),
                 typ_komponentu=item.get("typ_komponentu"),
-                name=item.get("opis_menu") or None,
+                opis_menu=item.get("opis_menu") or None,
                 interpretacja=to_int(item.get("interpretacja")),
                 funkcja=to_int(item.get("funkcja")),
                 leaf_id=_parse_leaf_id(item.get("leafId")),
@@ -242,10 +242,10 @@ def parse_devices(payload: str) -> list[AmpioModule] | None:
                 id=mid,
                 mac=to_int(item.get("mac")),
                 mac_global=to_int(item.get("mac_global")),
-                name=item.get("nazwa_urzadzenia") or None,
-                type=to_int(item.get("typ_urzadzenia")),
-                sw_version=to_int(item.get("wersja_softu")),
-                hw_version=to_int(item.get("wersja_pcb")),
+                nazwa_urzadzenia=item.get("nazwa_urzadzenia") or None,
+                typ_urzadzenia=to_int(item.get("typ_urzadzenia")),
+                wersja_softu=to_int(item.get("wersja_softu")),
+                wersja_pcb=to_int(item.get("wersja_pcb")),
             )
         )
     return out
@@ -317,7 +317,7 @@ def parse_scenes(payload: str) -> list[AmpioScene] | None:
         out.append(
             AmpioScene(
                 id=sid,
-                name=name if isinstance(name, str) else "",
+                scene_name=name if isinstance(name, str) else "",
                 active=raw_active != 0 if raw_active is not None else True,
                 parent_id=parent if parent is not None and parent >= 0 else None,
                 object_ids=frozenset(objects),
@@ -460,7 +460,7 @@ def _entry_location(
     return location_names.get(entry.out_loc)
 
 
-def _entry_name(entry: OutputDescription) -> str | None:
+def _entry_desc(entry: OutputDescription) -> str | None:
     return None if entry.desc in ("", _EMPTY_DESC) else entry.desc
 
 
@@ -472,7 +472,7 @@ def resolve_designer(
 ) -> dict[int, DesignerRecord]:
     """Join each object to its module's description entry.
 
-    The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], leaf_out_no)`` within
+    The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], leaf_io_no)`` within
     the module record of ``module_mac``. Objects on a colliding mac are
     skipped - the reply cannot be attributed to one module. ``out_loc`` 0
     or 16383 reads unassigned and ``out_type`` 0 untagged, so none
@@ -487,7 +487,7 @@ def resolve_designer(
     for obj in objects.values():
         desc_type = DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "")
         mac = obj.module_mac
-        out_no = obj.leaf_out_no
+        out_no = obj.leaf_io_no
         if desc_type is None or mac is None or out_no is None:
             continue
         if mac in colliding_macs:
@@ -498,7 +498,7 @@ def resolve_designer(
         out[obj.id] = DesignerRecord(
             location=_entry_location(entry, location_names),
             matter_device_type=entry.out_type or None,
-            name=_entry_name(entry),
+            desc=_entry_desc(entry),
         )
     return out
 
@@ -531,7 +531,7 @@ def resolve_module_records(
         else:
             out[mac] = ModuleRecord(
                 location=_entry_location(entry, location_names),
-                name=_entry_name(entry),
+                desc=_entry_desc(entry),
             )
     return out
 
@@ -553,7 +553,7 @@ def parse_server_info(payload: str) -> AmpioServerInfo | None:
     reports its ``mac`` - the identity every consumer scopes a registry by.
     A payload without either is unparseable, exactly as the sibling parsers
     report a corrupt reply, so a parsed info always carries a populated
-    :pyattr:`AmpioServerInfo.key`.
+    :pyattr:`AmpioServerInfo.server_key`.
     """
     try:
         outer = json.loads(payload)
@@ -659,8 +659,8 @@ def _parse_thermostat(data: dict[str, Any]) -> ThermostatState | None:
     raw_mode = data.get("mode")
     raw_cooling = data.get("cooling")
     return ThermostatState(
-        measured_temperature=_finite_float(data.get("measureTemp")),
-        target_temperature=_finite_float(data.get("setTemperature")),
+        measure_temp=_finite_float(data.get("measureTemp")),
+        set_temperature=_finite_float(data.get("setTemperature")),
         mode=str(raw_mode) if raw_mode is not None else None,
         cooling=None if raw_cooling is None else str(raw_cooling) not in ("", "0"),
     )
@@ -670,13 +670,13 @@ def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
     """Parse a live per-object state payload into a `StateUpdate`.
 
     The payload may be plain text or a JSON object with a `state` field; in
-    either case `value` is set, and `on_ms` is populated when the payload
+    either case `state` is set, and `on_ms` is populated when the payload
     carried a server timestamp. Plain text is stripped, exactly as the raw
     channel form is.
     """
-    value: str = payload.strip()
+    state: str = payload.strip()
     on_ms: int | float | None = None
-    tilt: int | None = None
+    lammel: int | None = None
     thermostat: ThermostatState | None = None
     try:
         data = json.loads(payload)
@@ -687,14 +687,14 @@ def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
         # contract is text, so coerce here rather than at every consumer.
         raw_state = data.get("state")
         if raw_state is not None:
-            value = str(raw_state)
+            state = str(raw_state)
         raw_on = data.get("on")
         if isinstance(raw_on, (int, float)):
             on_ms = raw_on
-        tilt = to_int(data.get("lammel"))
+        lammel = to_int(data.get("lammel"))
         thermostat = _parse_thermostat(data)
     return StateUpdate(
-        id=oid, value=value, on_ms=on_ms, tilt=tilt, thermostat=thermostat
+        id=oid, state=state, on_ms=on_ms, lammel=lammel, thermostat=thermostat
     )
 
 
@@ -729,7 +729,7 @@ def parse_diagnostics(payload: str) -> ModuleDiagnostics | None:
 
 
 def parse_stan_json(stan_json: str) -> StanJsonSeed | None:
-    """Parse a `stan_json` blob into an initial value and server timestamp."""
+    """Parse a `stan_json` blob into an initial state and server timestamp."""
     if not stan_json:
         return None
     try:
@@ -742,9 +742,9 @@ def parse_stan_json(stan_json: str) -> StanJsonSeed | None:
     on_ms = raw_on if isinstance(raw_on, (int, float)) else None
     raw_state = data.get("state")
     return StanJsonSeed(
-        value=str(raw_state) if raw_state is not None else None,
+        state=str(raw_state) if raw_state is not None else None,
         on_ms=on_ms,
-        tilt=to_int(data.get("lammel")),
+        lammel=to_int(data.get("lammel")),
         thermostat=_parse_thermostat(data),
     )
 
@@ -779,7 +779,7 @@ class Endpoint:
     req_payload: str  # request keyword, or "" for the states/info surfaces
     resp_surface: str  # fromDB sub-topic: "config" | "data"
     resp_leaf: str  # final response-topic segment
-    # Part of the initial-discovery set awaited by start() /
+    # Part of the initial-discovery set awaited by connect() /
     # wait_for_initial_discovery(). The rooms/scenes endpoints are on-demand.
     initial: bool = False
     # The one tier this endpoint answers for, or None for both. The M-SERV
@@ -941,7 +941,7 @@ def raw_write_topic(mac: int) -> str:
 def raw_output_payload(value: int, channel: int) -> str:
     """The set-output frame as the wire's ASCII hex form.
 
-    ``channel`` is the 0-based output index - :pyattr:`AmpioObject.leaf_out_no`,
+    ``channel`` is the 0-based output index - :pyattr:`AmpioObject.leaf_io_no`,
     one below the 1-based raw state channel.
     """
     return f"30f9{value:02x}{channel:02x}"
@@ -1028,7 +1028,7 @@ class RawChannelEdge:
     mac: int
     prefix: str  # channel-type prefix ("f" flags, "i" digital inputs, ...)
     channel: int
-    value: str
+    state: str
 
 
 @dataclass(slots=True, frozen=True)
@@ -1047,15 +1047,15 @@ class DeviceDescriptions:
     entries: tuple[OutputDescription, ...]
 
 
-# Everything one MQTT message can classify into. `BusEvent` is the public
-# event class itself - for bus events the wire message IS the event.
+# Everything one MQTT message can classify into. `BusEventRaised` is the
+# public event class itself - for bus events the wire message IS the event.
 Inbound = (
     EndpointReply
     | StateUpdate
     | RawChannelEdge
     | DiagnosticsReport
     | DeviceDescriptions
-    | BusEvent
+    | BusEventRaised
 )
 
 
@@ -1122,7 +1122,7 @@ class Router:
             if channel is None:
                 return None
             return RawChannelEdge(
-                mac=mac, prefix=parts[4], channel=channel, value=payload.strip()
+                mac=mac, prefix=parts[4], channel=channel, state=payload.strip()
             )
         if len(parts) == 5 and parts[3] == "b" and parts[4] == "4F":
             diagnostics = parse_diagnostics(payload)
@@ -1131,5 +1131,7 @@ class Router:
             return DiagnosticsReport(mac=mac, diagnostics=diagnostics)
         if len(parts) == 4 and parts[3] == "event":
             number = to_int(payload.strip())
-            return None if number is None else BusEvent(number=number, mac=mac)
+            return (
+                None if number is None else BusEventRaised(event_number=number, mac=mac)
+            )
         return None
