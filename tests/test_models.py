@@ -306,12 +306,41 @@ def test_record_survives_replace() -> None:
     assert replace(obj, state="1").record == DesignerRecord(location="Potter")
 
 
-def test_leaf_out_no_parses_last_segment() -> None:
-    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_7").leaf_out_no == 7
-    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_0").leaf_out_no == 0
-    assert AmpioObject(id=1, leaf_id="").leaf_out_no is None
-    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_x").leaf_out_no is None
-    assert AmpioObject(id=1, leaf_id="junk").leaf_out_no is None
+def test_leaf_io_no_parses_last_segment() -> None:
+    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_7").leaf_io_no == 7
+    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_0").leaf_io_no == 0
+    assert AmpioObject(id=1, leaf_id="").leaf_io_no is None
+    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_x").leaf_io_no is None
+    assert AmpioObject(id=1, leaf_id="junk").leaf_io_no is None
+
+
+def test_sf_id_and_sub_sf_id_parse_the_middle_segments():
+    """sf_id and sub_sf_id read the third and fourth leaf_id segments."""
+    obj = AmpioObject(id=1, leaf_id="0_1f2e_257_2_5")
+    assert obj.sf_id == 257
+    assert obj.sub_sf_id == 2
+
+
+def test_sf_id_reads_none_for_a_malformed_leaf_id():
+    """A leaf_id that does not parse yields None on every segment."""
+    obj = AmpioObject(id=1, leaf_id="not-a-leaf")
+    assert obj.sf_id is None
+    assert obj.sub_sf_id is None
+    assert obj.leaf_io_no is None
+
+
+def test_sf_id_reads_none_for_an_empty_leaf_id():
+    """System objects and ghost rows carry an empty leaf_id."""
+    obj = AmpioObject(id=1, leaf_id="")
+    assert obj.sf_id is None
+    assert obj.sub_sf_id is None
+
+
+def test_sf_id_reads_none_when_the_segment_is_not_a_number():
+    """A non-numeric segment yields None rather than raising."""
+    obj = AmpioObject(id=1, leaf_id="0_1f2e_abc_2_5")
+    assert obj.sf_id is None
+    assert obj.sub_sf_id == 2
 
 
 def test_record_bundles_default_to_none() -> None:

@@ -48,12 +48,9 @@ _BELL_FLAG = 1 << 15
 _BELL_TYPES = frozenset({"przekaznik", "flaga"})
 
 # The `leafId` shape: `0_<macHex>_<sfId>_<subSfId>_<ioNo>`, the Designer's
-# own segment names and the same structure the M-SERV's Matter bridge
-# parses (docs/identity.md). Only the mac and `ioNo` are extracted. The
-# function ids classify a leaf, and the library classifies on
-# `typ_komponentu` instead. Strict on purpose - a half-parsed mac that is
-# wrong is worse than None.
-_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_[^_]+_[^_]+_([^_]+)")
+# own four segments (docs/identity.md). Strict on purpose - a half-parsed
+# mac that is wrong is worse than None.
+_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_([^_]+)_([^_]+)_([^_]+)")
 
 # The M-SERV's Designer override mac: its objects' leafId embeds this value
 # (not the factory mac_global), and its own module row reports it as
@@ -357,22 +354,46 @@ class AmpioObject:
         match = _LEAF_ID_RE.fullmatch(self.leaf_id)
         return int(match.group(1), 16) if match is not None else None
 
-    @property
-    def leaf_out_no(self) -> int | None:
-        """The output index within the module's description record.
-
-        Parsed from ``leaf_id``'s last segment - the join key that pairs
-        this object with its :class:`OutputDescription` entry
-        (docs/identity.md). None when ``leaf_id`` is empty, malformed,
-        or the segment is not a number.
-        """
+    def _leaf_segment(self, group: int) -> int | None:
+        """One numeric `leaf_id` segment, or None when it does not parse."""
         match = _LEAF_ID_RE.fullmatch(self.leaf_id)
         if match is None:
             return None
         try:
-            return int(match.group(2))
+            return int(match.group(group))
         except ValueError:
             return None
+
+    @property
+    def sf_id(self) -> int | None:
+        """The special-function id, the third ``leaf_id`` segment.
+
+        The Designer's own name for the per-leaf function class. None when
+        ``leaf_id`` is empty, malformed, or the segment is not a number.
+        See docs/identity.md.
+        """
+        return self._leaf_segment(2)
+
+    @property
+    def sub_sf_id(self) -> int | None:
+        """The sub-function id, the fourth ``leaf_id`` segment.
+
+        Its meaning is scoped to :pyattr:`sf_id`. None when ``leaf_id`` is
+        empty, malformed, or the segment is not a number. See
+        docs/identity.md.
+        """
+        return self._leaf_segment(3)
+
+    @property
+    def leaf_io_no(self) -> int | None:
+        """The I/O index within the module's description record.
+
+        The last ``leaf_id`` segment, and the join key that pairs this
+        object with its :class:`OutputDescription` entry. It covers inputs
+        as well as outputs. None when ``leaf_id`` is empty, malformed, or
+        the segment is not a number.
+        """
+        return self._leaf_segment(4)
 
     @property
     def is_server_owned(self) -> bool:

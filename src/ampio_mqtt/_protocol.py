@@ -472,7 +472,7 @@ def resolve_designer(
 ) -> dict[int, DesignerRecord]:
     """Join each object to its module's description entry.
 
-    The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], leaf_out_no)`` within
+    The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], leaf_io_no)`` within
     the module record of ``module_mac``. Objects on a colliding mac are
     skipped - the reply cannot be attributed to one module. ``out_loc`` 0
     or 16383 reads unassigned and ``out_type`` 0 untagged, so none
@@ -487,7 +487,7 @@ def resolve_designer(
     for obj in objects.values():
         desc_type = DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "")
         mac = obj.module_mac
-        out_no = obj.leaf_out_no
+        out_no = obj.leaf_io_no
         if desc_type is None or mac is None or out_no is None:
             continue
         if mac in colliding_macs:
@@ -941,7 +941,7 @@ def raw_write_topic(mac: int) -> str:
 def raw_output_payload(value: int, channel: int) -> str:
     """The set-output frame as the wire's ASCII hex form.
 
-    ``channel`` is the 0-based output index - :pyattr:`AmpioObject.leaf_out_no`,
+    ``channel`` is the 0-based output index - :pyattr:`AmpioObject.leaf_io_no`,
     one below the 1-based raw state channel.
     """
     return f"30f9{value:02x}{channel:02x}"

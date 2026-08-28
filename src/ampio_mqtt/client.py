@@ -988,7 +988,7 @@ class AmpioClient:
 
         Admin-tier `przekaznik` objects on CAN modules, addressed by their
         own leaf: mac from ``leaf_id`` (the replacement-stable override)
-        and the 0-based :pyattr:`AmpioObject.leaf_out_no` channel. The
+        and the 0-based :pyattr:`AmpioObject.leaf_io_no` channel. The
         M-SERV's own virtual outputs stay on `/api` - they live in its DB,
         not on the CAN bus. The restricted tier always returns None: the
         raw write tree is admin-only, so `/api` is all that tier has -
@@ -1000,7 +1000,7 @@ class AmpioClient:
         if obj is None or obj.typ_komponentu != "przekaznik" or obj.is_server_owned:
             return None
         mac = obj.module_mac
-        channel = obj.leaf_out_no
+        channel = obj.leaf_io_no
         if mac is None or channel is None:
             return None
         return mac, channel
