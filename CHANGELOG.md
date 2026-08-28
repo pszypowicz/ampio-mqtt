@@ -12,6 +12,33 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.40.0
+
+Two Ampio Designer objects can drive one physical output. Both carry the same
+`leafId`, so `AmpioObject.stable_key` returns one key for both. A consumer keyed
+on it keeps only one of the objects. `AmpioObject.unique_key` is the identity
+that separates them.
+
+### Added
+
+- **`AmpioObject.unique_key`** - the per-object identity token (`obj_<id>`). It
+  is unique among every object in one discovery snapshot, served on both account
+  tiers, and never None. Use it as the per-object unique id, scoped per server
+  with `AmpioServerInfo.key`. The physical output an object drives stays on
+  `stable_key`, which several Designer views of one output share by design. The
+  full model lives in [`docs/identity.md`](docs/identity.md).
+
+### Changed
+
+- **`AmpioObject.stable_key`** - unchanged in behavior, and now documented as
+  what it actually names, the physical output an object drives. Several Designer
+  views of one output share one `leafId`, so it cannot separate them.
+- **`docs/identity.md`** - names `unique_key` as the identity a consumer keys
+  on, and corrects the object table's claim about the database object id. An
+  object delete is soft on the `config` catalogue, so the autoincrement never
+  renumbers and the id is stable in practice. `device_id` keeps its warning,
+  because it mirrors the module row.
+
 ## 0.39.0
 
 Designer's per-object "time" surfaces as `AmpioObject.pulse_ms` (#141). The

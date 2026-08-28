@@ -131,9 +131,9 @@ class AmpioObject:
     # replacement-stable but NOT unique - objects can share one. Routes raw
     # channel events to this object.
     funkcja: int | None = None
-    # `leafId`, identical on both discovery surfaces; empty for ghost rows
+    # `leafId`, identical on both discovery surfaces. Empty for ghost rows
     # and system objects. Doubles as the visibility marker (`visible`) and
-    # the stable identity source (`stable_key`) - docs/identity.md.
+    # the physical-output key (`stable_key`) - docs/identity.md.
     leaf_id: str = ""
     # `params` bitfield (Designer config flags; see `hidden`/`visible`).
     # Defaults to 0 so a payload without the column reads "nothing hidden".
@@ -317,15 +317,28 @@ class AmpioObject:
 
     @property
     def stable_key(self) -> str | None:
-        """Replacement-stable identity token (``leaf_<leaf_id>``), or None.
+        """The physical output this object drives (``leaf_<leaf_id>``), or None.
 
-        The recommended per-object unique id, identical on both access
-        tiers and unique among ``visible`` objects - filter on ``visible``
-        first, and scope per M-SERV with ``AmpioServerInfo.key``. None for
-        an empty ``leaf_id`` (system objects, ghost rows): a consumer
-        surfacing those needs its own fallback key. See docs/identity.md.
+        Identical on both access tiers. It is not an identity for the
+        object row. Several Designer views of one output share one
+        ``leafId``, so two objects can return the same key. The
+        per-object identity is :pyattr:`unique_key`. None for an empty
+        ``leaf_id`` (system objects, ghost rows). See docs/identity.md.
         """
         return f"leaf_{self.leaf_id}" if self.leaf_id else None
+
+    @property
+    def unique_key(self) -> str:
+        """Snapshot-unique identity token (``obj_<id>``).
+
+        The recommended per-object unique id: unique among every object
+        in one discovery snapshot, served on both account tiers, and
+        never None. Scope it per M-SERV with ``AmpioServerInfo.key``.
+        The physical output an object drives is :pyattr:`stable_key`,
+        which several Designer views of one output share by design.
+        See docs/identity.md.
+        """
+        return f"obj_{self.id}"
 
     @property
     def module_mac(self) -> int | None:
