@@ -159,7 +159,7 @@ async def test_poison_message_does_not_kill_the_connection(
     original = client._store.apply
 
     def fragile(msg: object) -> object:
-        if getattr(msg, "value", None) == "POISON":
+        if getattr(msg, "state", None) == "POISON":
             raise RuntimeError("simulated processing defect")
         return original(msg)  # type: ignore[arg-type]
 

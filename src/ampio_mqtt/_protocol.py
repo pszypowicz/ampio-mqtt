@@ -84,9 +84,9 @@ class StateUpdate:
     """A live state push for a single object."""
 
     id: int
-    value: str
+    state: str
     on_ms: int | float | None
-    tilt: int | None  # `lammel` percent, present only for tilt-capable covers
+    lammel: int | None  # Percent, present only for tilt-capable covers
     # Climate readback, present only in the rich `reg` push shape.
     thermostat: ThermostatState | None = None
 
@@ -103,9 +103,9 @@ class ModuleDiagnostics:
 class StanJsonSeed:
     """Initial `state` value and server timestamp extracted from `stan_json`."""
 
-    value: str | None
+    state: str | None
     on_ms: int | float | None
-    tilt: int | None
+    lammel: int | None
     # Climate readback, present only in the rich `reg` snapshot shape.
     thermostat: ThermostatState | None = None
 
@@ -460,7 +460,7 @@ def _entry_location(
     return location_names.get(entry.out_loc)
 
 
-def _entry_name(entry: OutputDescription) -> str | None:
+def _entry_desc(entry: OutputDescription) -> str | None:
     return None if entry.desc in ("", _EMPTY_DESC) else entry.desc
 
 
@@ -498,7 +498,7 @@ def resolve_designer(
         out[obj.id] = DesignerRecord(
             location=_entry_location(entry, location_names),
             matter_device_type=entry.out_type or None,
-            desc=_entry_name(entry),
+            desc=_entry_desc(entry),
         )
     return out
 
@@ -531,7 +531,7 @@ def resolve_module_records(
         else:
             out[mac] = ModuleRecord(
                 location=_entry_location(entry, location_names),
-                desc=_entry_name(entry),
+                desc=_entry_desc(entry),
             )
     return out
 
@@ -670,13 +670,13 @@ def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
     """Parse a live per-object state payload into a `StateUpdate`.
 
     The payload may be plain text or a JSON object with a `state` field; in
-    either case `value` is set, and `on_ms` is populated when the payload
+    either case `state` is set, and `on_ms` is populated when the payload
     carried a server timestamp. Plain text is stripped, exactly as the raw
     channel form is.
     """
-    value: str = payload.strip()
+    state: str = payload.strip()
     on_ms: int | float | None = None
-    tilt: int | None = None
+    lammel: int | None = None
     thermostat: ThermostatState | None = None
     try:
         data = json.loads(payload)
@@ -687,14 +687,14 @@ def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
         # contract is text, so coerce here rather than at every consumer.
         raw_state = data.get("state")
         if raw_state is not None:
-            value = str(raw_state)
+            state = str(raw_state)
         raw_on = data.get("on")
         if isinstance(raw_on, (int, float)):
             on_ms = raw_on
-        tilt = to_int(data.get("lammel"))
+        lammel = to_int(data.get("lammel"))
         thermostat = _parse_thermostat(data)
     return StateUpdate(
-        id=oid, value=value, on_ms=on_ms, tilt=tilt, thermostat=thermostat
+        id=oid, state=state, on_ms=on_ms, lammel=lammel, thermostat=thermostat
     )
 
 
@@ -729,7 +729,7 @@ def parse_diagnostics(payload: str) -> ModuleDiagnostics | None:
 
 
 def parse_stan_json(stan_json: str) -> StanJsonSeed | None:
-    """Parse a `stan_json` blob into an initial value and server timestamp."""
+    """Parse a `stan_json` blob into an initial state and server timestamp."""
     if not stan_json:
         return None
     try:
@@ -742,9 +742,9 @@ def parse_stan_json(stan_json: str) -> StanJsonSeed | None:
     on_ms = raw_on if isinstance(raw_on, (int, float)) else None
     raw_state = data.get("state")
     return StanJsonSeed(
-        value=str(raw_state) if raw_state is not None else None,
+        state=str(raw_state) if raw_state is not None else None,
         on_ms=on_ms,
-        tilt=to_int(data.get("lammel")),
+        lammel=to_int(data.get("lammel")),
         thermostat=_parse_thermostat(data),
     )
 
@@ -1028,7 +1028,7 @@ class RawChannelEdge:
     mac: int
     prefix: str  # channel-type prefix ("f" flags, "i" digital inputs, ...)
     channel: int
-    value: str
+    state: str
 
 
 @dataclass(slots=True, frozen=True)
@@ -1122,7 +1122,7 @@ class Router:
             if channel is None:
                 return None
             return RawChannelEdge(
-                mac=mac, prefix=parts[4], channel=channel, value=payload.strip()
+                mac=mac, prefix=parts[4], channel=channel, state=payload.strip()
             )
         if len(parts) == 5 and parts[3] == "b" and parts[4] == "4F":
             diagnostics = parse_diagnostics(payload)

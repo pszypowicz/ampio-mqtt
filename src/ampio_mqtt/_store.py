@@ -297,8 +297,8 @@ class AmpioStore:
                 self._guarded.add(meta.id)
             if wins:
                 changed |= (
-                    updated.state != update.value
-                    or (update.tilt is not None and updated.lammel != update.tilt)
+                    updated.state != update.state
+                    or (update.lammel is not None and updated.lammel != update.lammel)
                     or (
                         update.thermostat is not None
                         and updated.thermostat != update.thermostat
@@ -306,8 +306,10 @@ class AmpioStore:
                 )
                 updated = replace(
                     updated,
-                    state=update.value,
-                    lammel=(update.tilt if update.tilt is not None else updated.lammel),
+                    state=update.state,
+                    lammel=(
+                        update.lammel if update.lammel is not None else updated.lammel
+                    ),
                     thermostat=(
                         update.thermostat
                         if update.thermostat is not None
@@ -444,8 +446,8 @@ class AmpioStore:
         )
         obj = replace(
             obj,
-            state=update.value,
-            lammel=update.tilt if update.tilt is not None else obj.lammel,
+            state=update.state,
+            lammel=update.lammel if update.lammel is not None else obj.lammel,
             thermostat=(
                 update.thermostat if update.thermostat is not None else obj.thermostat
             ),
@@ -470,7 +472,7 @@ class AmpioStore:
         obj = replace(
             self.objects[oid],
             raw_owned=True,
-            state=edge.value,
+            state=edge.state,
             updated_at=time.time(),
         )
         self.objects[oid] = obj
@@ -517,17 +519,17 @@ class AmpioStore:
         if seed is None:
             return obj, False
         reported_at = None if seed.on_ms is None else float(seed.on_ms) / 1000.0
-        if seed.value is None or not self._supersedes(obj, reported_at):
+        if seed.state is None or not self._supersedes(obj, reported_at):
             return obj, False
         changed = (
-            obj.state != seed.value
-            or (seed.tilt is not None and obj.lammel != seed.tilt)
+            obj.state != seed.state
+            or (seed.lammel is not None and obj.lammel != seed.lammel)
             or (seed.thermostat is not None and obj.thermostat != seed.thermostat)
         )
         obj = replace(
             obj,
-            state=seed.value,
-            lammel=seed.tilt if seed.tilt is not None else obj.lammel,
+            state=seed.state,
+            lammel=seed.lammel if seed.lammel is not None else obj.lammel,
             thermostat=seed.thermostat
             if seed.thermostat is not None
             else obj.thermostat,
