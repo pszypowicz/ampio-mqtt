@@ -220,8 +220,8 @@ def test_reg_classifies_as_thermostat_and_surfaces_the_running_flag() -> None:
     ],
 )
 def test_module_mac_parses_strictly(leaf_id: str, expected: int | None) -> None:
-    """`0_<macHex>_<F2>_<F3>_<F4>` yields the module's override mac; any
-    other shape yields None rather than a half-parsed guess."""
+    """`0_<macHex>_<sfId>_<subSfId>_<ioNo>` yields the module's override mac;
+    any other shape yields None rather than a half-parsed guess."""
     assert AmpioObject(id=1, leaf_id=leaf_id).module_mac == expected
 
 

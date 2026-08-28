@@ -213,8 +213,10 @@ def _parse_leaf_id(value: Any) -> str:
     The M-SERV emits an empty string for ghost rows (object removed from the
     Designer tree, DB row still returned) and for system objects (presence
     simulation / detection types). For everything else the value is a short
-    underscored token like ``0_cb8f_76_0_0`` whose meaning is opaque - the
-    library uses it only as the binary visibility marker.
+    underscored token like ``0_cb8f_76_0_0``, which the Designer reads as
+    ``macGroup``, ``mac``, ``sfId``, ``subSfId``, and ``ioNo``. This parse
+    keeps the raw string, which the library also uses as the binary
+    visibility marker.
     """
     return value if isinstance(value, str) else ""
 

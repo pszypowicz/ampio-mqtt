@@ -101,8 +101,8 @@ group entities by physical module even on the restricted tier, which never
 receives the module catalogue. An entry created with a standard account and
 later switched to an administrator keeps its entity-to-device mapping and only
 gains metadata. The parse is strict: any shape other than
-`0_<macHex>_<F2>_<F3>_<F4>` reads as None, exactly like the empty `leafId` of
-system objects and ghost rows.
+`0_<macHex>_<sfId>_<subSfId>_<ioNo>` reads as None, exactly like the empty
+`leafId` of system objects and ghost rows.
 
 Three helpers close the loop for a consumer that builds devices on `module_mac`.
 `AmpioObject.is_server_owned` marks the objects that belong to the M-SERV itself
@@ -115,39 +115,54 @@ pair an object with a replaced module's stale row. The join keys the lookup
 rather than the mac, because override macs can collide across rows. The mac then
 gates what the join found.
 
-## The F segments (`0_<macHex>_<F2>_<F3>_<F4>`)
+## The leaf-id segments (`0_<macHex>_<sfId>_<subSfId>_<ioNo>`)
 
-The library parses only the mac and the trailing `F4` (the 0-based output index,
-`AmpioObject.leaf_out_no`). `F2` and `F3` stay unparsed. A live join of every
-leaf-bearing object against the module catalogue pins down what they hold.
+The Designer names all five segments. Its web bundle builds the token, and it
+parses the token back into `macGroup`, `mac`, `sfId`, `subSfId`, and `ioNo`.
+Earlier revisions of this page called the last three `F2`, `F3`, and `F4`.
 
-**`F2` is a per-leaf class code, not the module type.** No module showed `F2`
-equal to its `typ_urzadzenia`. Virtual cover objects hosted on a relay module
-carry the roller code, so the code follows the configured leaf class, not the
-host product. The low codes match the Designer bundle's IO type enum exactly
-where both are known:
+The library parses only the mac and the trailing `ioNo` (the 0-based output
+index, `AmpioObject.leaf_out_no`). The two tables below come from a live join of
+every leaf-bearing object against the module catalogue.
 
-| `F2`  | Observed leaf class                                             |
-| ----- | --------------------------------------------------------------- |
-| 3     | binary flag (`flaga`)                                           |
-| 5     | roller (`roleta_*`)                                             |
-| 13    | heating regulator (`reg`)                                       |
-| 30    | `rgbw`                                                          |
-| 67    | open-collector output (`led`/`przekaznik` on M-INOC)            |
-| 73-76 | M-SENS channels (`lin_wej`, `temp`)                             |
-| 257   | binary I/O                                                      |
-| 296   | `satel_alarm`                                                   |
-| >1000 | bridged/wireless leaves: 1001 `temp`, 1002 `bit8`, 1005 `bit32` |
+**`sfId` is a per-leaf special-function id, not the module type.** No module
+showed `sfId` equal to its `typ_urzadzenia`. Virtual cover objects hosted on a
+relay module carry the roller code, so the code follows the configured leaf
+class, not the host product. The low codes match the Designer bundle's IO type
+enum exactly where both are known:
 
-**`F3` is a role discriminator within the class**, not a bank index. Class 257
-carries inputs as `F3` 1 (`wej`) and outputs as `F3` 2 (`przekaznik`). The two
-`satel_alarm` roles (armed, alarmed) ride 296 as `F3` 3 and 4. Every single-role
-class observed uses 0.
+| `sfId` | Observed leaf class                                             |
+| ------ | --------------------------------------------------------------- |
+| 3      | binary flag (`flaga`)                                           |
+| 5      | roller (`roleta_*`)                                             |
+| 13     | heating regulator (`reg`)                                       |
+| 30     | `rgbw`                                                          |
+| 67     | open-collector output (`led`/`przekaznik` on M-INOC)            |
+| 73-76  | M-SENS channels (`lin_wej`, `temp`)                             |
+| 257    | binary I/O                                                      |
+| 296    | `satel_alarm`                                                   |
+| >1000  | bridged/wireless leaves: 1001 `temp`, 1002 `bit8`, 1005 `bit32` |
 
-`F2` thus carries a tier-independent function-class signal (it rides the
+**`subSfId` selects a sub-function inside its `sfId`**, not a bank index. The
+Designer nests the sub-functions under each special function, so a value has
+meaning only in that scope. No global sub-function enum exists. The observed
+values follow the same pattern the bundle uses:
+
+| `sfId` | `subSfId` | Observed role         |
+| ------ | --------- | --------------------- |
+| 257    | 1         | input (`wej`)         |
+| 257    | 2         | output (`przekaznik`) |
+| 296    | 3         | alarm armed           |
+| 296    | 4         | alarm alarmed         |
+
+Every single-role class observed uses 0. The bundle's own alarm special function
+names sub-function 1 as input, 2 as output, 3 as armed, and 4 as alarmed, which
+is the pattern the rows above show.
+
+`sfId` thus carries a tier-independent function-class signal (it rides the
 app-sync catalogue the restricted tier receives), but it cannot replace the
-module type code. The table above is observed coverage, not a specification, so
-an unlisted code proves nothing. The library keeps its classification on
+module type code. Both tables are observed coverage, not a specification, so an
+unlisted code proves nothing. The library keeps its classification on
 `typ_komponentu` alone.
 
 ## Visibility (`AmpioObject.visible`)
@@ -240,13 +255,13 @@ The M-SERV ships its own Matter bridge (a matter.js app launched by
 an object only when `(params & 2**37) && !(params & 16)`. Bit 37 is the
 per-object Matter opt-in set in Designer. Bit 4 is the hidden/stub marker that
 `hidden` and `visible` build on. The `leafId` structure
-`0_<macHex>_<F2>_<F3>_<F4>` that `AmpioObject.module_mac` parses is likewise the
-structure the bridge's own classifier reads. The bridge also shows why a
-dedicated integration is the right path for sensors. It types objects through a
-registry with known gaps (no `lin_wej` branch, and loudness has no Matter device
-type at all). And it exposes only the channels hand-flagged for Matter - a dozen
-on the reference install, with humidity, pressure, illuminance, and CO2 on zero
-modules.
+`0_<macHex>_<sfId>_<subSfId>_<ioNo>` that `AmpioObject.module_mac` parses is
+likewise the structure the bridge's own classifier reads. The bridge also shows
+why a dedicated integration is the right path for sensors. It types objects
+through a registry with known gaps (no `lin_wej` branch, and loudness has no
+Matter device type at all). And it exposes only the channels hand-flagged for
+Matter - a dozen on the reference install, with humidity, pressure, illuminance,
+and CO2 on zero modules.
 
 ## The read-only marker (`AmpioObject.read_only`)
 
