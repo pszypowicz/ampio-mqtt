@@ -49,6 +49,7 @@ from .models import (
     AmpioServerInfo,
     DesignerRecord,
     ModuleRecord,
+    RecordSweep,
     ThermostatState,
 )
 
@@ -85,13 +86,14 @@ __all__ = [
     "ObjectRemoved",
     "ObjectUpdated",
     "OutputKind",
+    "RecordSweep",
     "SensorKind",
     "ThermostatKind",
     "ThermostatState",
     "discover",
 ]
 
-__version__ = "0.41.0"
+__version__ = "0.42.0"
 
 
 def __getattr__(name: str) -> object:

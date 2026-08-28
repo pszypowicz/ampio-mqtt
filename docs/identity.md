@@ -430,6 +430,22 @@ location. On the full-catalogue probe, each of those landed on two or more
 descTypes with a cleared majority at once. The join for such a kind is thus
 ambiguous, not merely unproven by sample size.
 
+### Sweep coverage
+
+`resolve_records()` returns a `RecordSweep`. Its `records` map holds the join
+result. Its `answered_macs` and `silent_macs` sets say which modules the pass
+read. The two sets matter because `AmpioObject.record` reads None in two
+different cases. A module in `answered_macs` answered and carries no entry for
+that output. A module in `silent_macs` was never read, so its objects say
+nothing either way. The M-SERV's own catalogue row is never requested and
+appears in neither set.
+
+The M-SERV answers one module at a time. The `timeout` argument therefore bounds
+the silence between replies. It does not bound the whole sweep. Every request
+goes out first. The sweep then ends once no further reply arrives within
+`timeout`. The call runs as long as the M-SERV needs. A caller that must finish
+by a deadline applies its own ceiling.
+
 ### Tier gate
 
 The whole `device_api` tree is admin-only, exactly like the raw tree. A

@@ -56,6 +56,14 @@ object to its entry are in [`identity.md`](identity.md). The tree is admin-only,
 exactly like the raw tree. `AmpioClient.resolve_records()` drives this pair. A
 consumer never calls it directly.
 
+The M-SERV serves these requests one module at a time. A request for a single
+module answers in about a second, but a burst of requests answers no faster in
+total: on the reference install 36 of 39 modules replied over 27 seconds, at a
+mean gap of 0.75 seconds. Three modules never replied. One of the three was the
+M-SERV's own catalogue row, which is not a CAN module and answers no `get_data`
+request. This is why `resolve_records()` bounds the silence between replies
+instead of the whole sweep.
+
 Each account namespace also carries a retained
 `ampio/fromDB/<user>/md5/<keyword>` topic per app-sync table (`devices`,
 `params_devices`, `groups`, `group_devices`, `scenes`, `resources`, `icons`,
