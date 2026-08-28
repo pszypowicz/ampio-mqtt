@@ -457,7 +457,7 @@ async def test_restricted_account_completes_via_data_surface_fallback() -> None:
         assert await client.wait_for_initial_discovery(timeout=1.0) is True
         assert client.access_tier is AccessTier.RESTRICTED
         obj = client.objects[24]
-        assert obj.name == "CO2"
+        assert obj.opis_menu == "CO2"
         assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
         assert obj.stable_key == "leaf_0_cb9b_75_0_0"
         assert obj.visible is True

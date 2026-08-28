@@ -98,7 +98,7 @@ async def run(a: argparse.Namespace) -> int:
 
     def on_object(obj: AmpioObject) -> None:
         if obj.id == a.object_id:
-            print(f"  state  ob/{obj.id} = {obj.value}")
+            print(f"  state  ob/{obj.id} = {obj.state}")
 
     client.subscribe(lambda e: on_object(e.object), of=ObjectUpdated)
     await client.start()
@@ -106,7 +106,7 @@ async def run(a: argparse.Namespace) -> int:
 
     obj = client.objects.get(a.object_id)
     print(
-        f"before: ob/{a.object_id} = {obj.value if obj else '<not in this account view>'}"
+        f"before: ob/{a.object_id} = {obj.state if obj else '<not in this account view>'}"
     )
 
     await send(client, a)
@@ -115,7 +115,7 @@ async def run(a: argparse.Namespace) -> int:
 
     obj = client.objects.get(a.object_id)
     print(
-        f"after:  ob/{a.object_id} = {obj.value if obj else '<not in this account view>'}"
+        f"after:  ob/{a.object_id} = {obj.state if obj else '<not in this account view>'}"
     )
     await client.stop()
     return 0

@@ -359,7 +359,9 @@ class AmpioClient:
             for mod in self._store.modules.values():
                 if info.mac in (mod.mac_global, mod.mac):
                     return mod
-        candidates = [mod for mod in self._store.modules.values() if is_hub(mod.type)]
+        candidates = [
+            mod for mod in self._store.modules.values() if is_hub(mod.typ_urzadzenia)
+        ]
         if len(candidates) == 1:
             return candidates[0]
         return None
@@ -367,7 +369,7 @@ class AmpioClient:
     def module_for(self, obj: AmpioObject) -> AmpioModule | None:
         """The catalogue row of the module that owns ``obj``, mac-validated.
 
-        Joins ``obj.device_id`` to the module list, gated on the row's
+        Joins ``obj.id_urzadzenia`` to the module list, gated on the row's
         mac agreeing with the object's leaf-derived
         :pyattr:`AmpioObject.module_mac` - DB ids are volatile across a
         module replacement while the leaf mac is the stable identity
@@ -376,9 +378,9 @@ class AmpioClient:
         the module catalogue; tier-independent grouping reads
         ``module_mac`` directly.
         """
-        if obj.device_id is None:
+        if obj.id_urzadzenia is None:
             return None
-        module = self._store.modules.get(obj.device_id)
+        module = self._store.modules.get(obj.id_urzadzenia)
         if module is None or module.mac is None or module.mac != obj.module_mac:
             return None
         return module

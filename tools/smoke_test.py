@@ -53,8 +53,8 @@ async def run(args: argparse.Namespace) -> int:
     client = AmpioClient(args.host, args.username, args.password, port=args.port)
 
     def on_object(obj: AmpioObject) -> None:
-        if obj.is_sensor and obj.value is not None and obj.kind is not None:
-            print(f"  state  ob/{obj.id:<5} {obj.kind.key:<14} = {obj.value}")
+        if obj.is_sensor and obj.state is not None and obj.kind is not None:
+            print(f"  state  ob/{obj.id:<5} {obj.kind.key:<14} = {obj.state}")
 
     client.subscribe(lambda e: on_object(e.object), of=ObjectUpdated)
 
@@ -83,7 +83,7 @@ async def run(args: argparse.Namespace) -> int:
     for o in sorted(sensors, key=lambda o: o.id):
         unit = (o.kind.unit or "") if o.kind else ""
         dc = (o.kind.device_class or "-") if o.kind else "-"
-        print(f"  ob/{o.id:<5} {dc:<18} {o.name!s:<26} = {o.value} {unit}")
+        print(f"  ob/{o.id:<5} {dc:<18} {o.opis_menu!s:<26} = {o.state} {unit}")
 
     await client.stop()
     return 0

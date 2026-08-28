@@ -78,11 +78,11 @@ def test_parse_details_returns_metadata() -> None:
     items = parse_details(payload)
     assert items is not None
     assert [m.id for m in items] == [41, 42]
-    assert items[0].name == "Salon"
+    assert items[0].opis_menu == "Salon"
     assert items[0].funkcja == 7
     assert items[0].leaf_id == "0_cb8f_76_0_0"
     assert items[0].stan_json is not None
-    assert items[1].name is None and items[1].stan_json is None
+    assert items[1].opis_menu is None and items[1].stan_json is None
     assert items[1].funkcja is None  # absent -> None
     assert items[1].leaf_id == ""  # absent -> empty string
     assert items[1].matter_device_type is None  # absent -> None
@@ -491,8 +491,8 @@ def test_state_route_reg_payload_carries_thermostat() -> None:
     assert isinstance(update, StateUpdate)
     assert update.value == "0" and update.on_ms == 1787682427583
     assert update.thermostat == ThermostatState(
-        measured_temperature=25.9,
-        target_temperature=21.0,
+        measure_temp=25.9,
+        set_temperature=21.0,
         mode="S",
         cooling=False,
     )
@@ -510,8 +510,8 @@ def test_parse_stan_json_reg_shape_carries_thermostat() -> None:
     seed = parse_stan_json(REG_PAYLOAD)
     assert seed is not None
     assert seed.thermostat == ThermostatState(
-        measured_temperature=25.9,
-        target_temperature=21.0,
+        measure_temp=25.9,
+        set_temperature=21.0,
         mode="S",
         cooling=False,
     )
@@ -523,8 +523,8 @@ def test_parse_stan_json_reg_shape_carries_thermostat() -> None:
         pytest.param(
             {"mode": "A"},
             ThermostatState(
-                measured_temperature=None,
-                target_temperature=None,
+                measure_temp=None,
+                set_temperature=None,
                 mode="A",
                 cooling=None,
             ),
@@ -533,8 +533,8 @@ def test_parse_stan_json_reg_shape_carries_thermostat() -> None:
         pytest.param(
             {"cooling": "1", "measureTemp": "junk", "setTemperature": "inf"},
             ThermostatState(
-                measured_temperature=None,
-                target_temperature=None,
+                measure_temp=None,
+                set_temperature=None,
                 mode=None,
                 cooling=True,
             ),

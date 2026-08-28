@@ -174,7 +174,7 @@ def test_a_changed_row_reports_only_that_row() -> None:
     topic = f"ampio/fromDB/{USER}/config/devicesDetails"
     _apply(store, topic, _catalogue())
     applied = _apply(store, topic, _catalogue(opis_menu="Renamed"))
-    assert [o.name for o in _updated(applied)] == ["Renamed"]
+    assert [o.opis_menu for o in _updated(applied)] == ["Renamed"]
 
 
 def test_an_unreadable_reply_reports_not_parsed() -> None:
@@ -238,7 +238,7 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
         ),
     )
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
-    assert store.objects[50].value == "1"
+    assert store.objects[50].state == "1"
 
     # After a module swap the id comes back as a cover, which no raw channel
     # feeds, so its only updates are the per-object ones.
@@ -262,7 +262,7 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
     applied = _apply(store, f"ampio/fromDB/{USER}/ob/50/state", '{"state":"55"}')
 
     assert [o.id for o in _updated(applied)] == [50]
-    assert store.objects[50].value == "55"
+    assert store.objects[50].state == "55"
 
 
 def test_the_store_is_the_only_thing_holding_state() -> None:
@@ -384,7 +384,7 @@ def test_snapshots_never_touch_a_raw_proven_object() -> None:
     far_future = int((time.time() + 7200) * 1000)
     applied = _apply(store, STATES_TOPIC, _snapshot("0", far_future))
     assert _updated(applied) == []
-    assert store.objects[10].value == "1"
+    assert store.objects[10].state == "1"
 
 
 def test_the_echo_of_a_raw_edge_is_ignored_whole() -> None:
@@ -399,7 +399,7 @@ def test_the_echo_of_a_raw_edge_is_ignored_whole() -> None:
         json.dumps({"state": "255", "on": 1787000000000}),
     )
     assert _updated(applied) == []
-    assert store.objects[10].value == "1"
+    assert store.objects[10].state == "1"
     assert store.objects[10].updated_at == before
 
 
@@ -407,11 +407,11 @@ def test_a_dated_snapshot_beats_an_undated_seed() -> None:
     store = _store()
     _apply(store, DETAILS_TOPIC, _flaga_details((10, 1)))
     _apply(store, STATES_TOPIC, _snapshot("5", None))
-    assert store.objects[10].value == "5"
+    assert store.objects[10].state == "5"
     assert store.objects[10].updated_at is None
     applied = _apply(store, STATES_TOPIC, _snapshot("7", 1779560000000))
     assert [o.id for o in _updated(applied)] == [10]
-    assert store.objects[10].value == "7"
+    assert store.objects[10].state == "7"
 
 
 def test_an_undated_snapshot_only_fills_a_gap() -> None:
@@ -421,7 +421,7 @@ def test_an_undated_snapshot_only_fills_a_gap() -> None:
     _apply(store, f"ampio/fromDB/{USER}/ob/10/state", '{"state":"live"}')
     applied = _apply(store, STATES_TOPIC, _snapshot("undated", None))
     assert _updated(applied) == []
-    assert store.objects[10].value == "live"
+    assert store.objects[10].state == "live"
 
 
 def test_a_newer_snapshot_corrects_a_value_that_changed_during_an_outage() -> None:
@@ -433,12 +433,12 @@ def test_a_newer_snapshot_corrects_a_value_that_changed_during_an_outage() -> No
     _apply(
         store, f"ampio/fromDB/{USER}/ob/10/state", '{"state":"255","on":1786700100000}'
     )
-    assert store.objects[10].value == "255"
+    assert store.objects[10].state == "255"
 
     # Reconnect: the object was switched off while the connection was down.
     applied = _apply(store, STATES_TOPIC, _snapshot("0", 1786700900000))
     assert [o.id for o in _updated(applied)] == [10]
-    assert store.objects[10].value == "0"
+    assert store.objects[10].state == "0"
 
 
 def test_a_skewed_dated_snapshot_does_not_displace_a_live_undated_push() -> None:
@@ -451,7 +451,7 @@ def test_a_skewed_dated_snapshot_does_not_displace_a_live_undated_push() -> None
     far_future = int((time.time() + 3600) * 1000)
     applied = _apply(store, STATES_TOPIC, _snapshot("stale", far_future))
     assert _updated(applied) == []
-    assert store.objects[10].value == "live"
+    assert store.objects[10].state == "live"
 
 
 def test_begin_refresh_lets_the_snapshot_resync_an_undated_value() -> None:
@@ -463,7 +463,7 @@ def test_begin_refresh_lets_the_snapshot_resync_an_undated_value() -> None:
     store.begin_refresh()
     applied = _apply(store, STATES_TOPIC, _snapshot("0", 1786700900000))
     assert [o.id for o in _updated(applied)] == [10]
-    assert store.objects[10].value == "0"
+    assert store.objects[10].state == "0"
 
 
 def test_a_buffered_undated_push_beats_a_skewed_stan_json_seed() -> None:
@@ -474,7 +474,7 @@ def test_a_buffered_undated_push_beats_a_skewed_stan_json_seed() -> None:
     _apply(store, f"ampio/fromDB/{USER}/ob/93/state", '{"state":"live"}')
     row = {"id": 93, "stan_json": json.dumps({"state": "stale", "on": far_future})}
     _apply(store, DETAILS_TOPIC, details(row))
-    assert store.objects[93].value == "live"
+    assert store.objects[93].state == "live"
 
 
 def test_echo_of_an_earlier_edge_does_not_disturb_a_fast_toggle() -> None:
@@ -490,7 +490,7 @@ def test_echo_of_an_earlier_edge_does_not_disturb_a_fast_toggle() -> None:
         json.dumps({"state": "255", "on": int(time.time() * 1000)}),  # echo of edge 1
     )
     assert _updated(applied) == []
-    assert store.objects[10].value == "0"
+    assert store.objects[10].state == "0"
     assert store.objects[10].updated_at == before
 
 
@@ -522,7 +522,7 @@ def test_an_evicted_objects_raw_channel_no_longer_routes() -> None:
     _apply(store, DEVICES_TOPIC, _devices(0xCAFE, 0xBEEF))
     _apply(store, DETAILS_TOPIC, _flaga_details((10, 1), (11, 2)))
     _apply(store, f"ampio/from/{0xBEEF:X}/state/f/3", "1")
-    assert store.objects[11].value == "1"
+    assert store.objects[11].state == "1"
 
     _apply(store, DETAILS_TOPIC, _flaga_details((10, 1)))
     applied = _apply(store, f"ampio/from/{0xBEEF:X}/state/f/3", "0")
@@ -625,7 +625,7 @@ def test_details_populate_and_classify() -> None:
     assert set(store.objects) == {41, 107, 1}
     temp = store.objects[41]
     assert temp.kind is not None and temp.kind.device_class == "temperature"
-    assert temp.name == "Salon" and temp.device_id == 3
+    assert temp.opis_menu == "Salon" and temp.id_urzadzenia == 3
     # The raw `interpretacja` selector is retained on the object for consumers,
     # alongside the resolved `kind` the library derives from it.
     assert store.objects[107].interpretacja == 7
@@ -696,11 +696,11 @@ def test_devices_populate_modules_with_model_and_versions() -> None:
     )
 
     mod = store.modules[17]
-    assert mod.name == "m-sens salon"
-    assert mod.type == 44
+    assert mod.nazwa_urzadzenia == "m-sens salon"
+    assert mod.typ_urzadzenia == 44
     assert mod.model == "M-SENS"
-    assert mod.sw_version == 63
-    assert mod.hw_version == 7
+    assert mod.wersja_softu == 63
+    assert mod.wersja_pcb == 7
     # Unknown type code -> no model name, but the module is still tracked.
     assert store.modules[99].model is None
 
@@ -771,7 +771,7 @@ def test_states_snapshot_seeds_value_without_touching_last_seen() -> None:
             }
         ),
     )
-    assert store.objects[41].value is None
+    assert store.objects[41].state is None
     assert store.modules[17].last_seen is None
 
     _apply(
@@ -785,7 +785,7 @@ def test_states_snapshot_seeds_value_without_touching_last_seen() -> None:
             }
         ),
     )
-    assert store.objects[41].value == "22.5"
+    assert store.objects[41].state == "22.5"
     assert store.objects[41].updated_at == 1779560000.0
     assert store.modules[17].last_seen is None
 
@@ -805,14 +805,14 @@ def test_states_snapshot_does_not_overwrite_live_value() -> None:
         f"ampio/fromDB/{USER}/ob/41/state",
         '{"state": "fresh", "on": 1779570000000}',
     )
-    assert store.objects[41].value == "fresh"
+    assert store.objects[41].state == "fresh"
 
     _apply(
         store,
         STATES_TOPIC,
         devices({"id": 41, "stan_json": '{"state": "stale", "on": 1779560000000}'}),
     )
-    assert store.objects[41].value == "fresh"
+    assert store.objects[41].state == "fresh"
 
 
 def test_states_snapshot_creates_nothing_for_unknown_ids() -> None:
@@ -866,9 +866,9 @@ def test_snapshot_before_catalogue_seeds_the_value_at_merge() -> None:
         details({"id": 20, "typ_komponentu": "temp", "opis_menu": "T"}),
     )
     assert [o.id for o in _updated(applied)] == [20]
-    assert store.objects[20].value == "7"
+    assert store.objects[20].state == "7"
     assert store.objects[20].updated_at == 1779560000.0
-    assert store.objects[20].name == "T"
+    assert store.objects[20].opis_menu == "T"
 
 
 def test_eviction_prunes_the_buffered_snapshot_value() -> None:
@@ -906,7 +906,7 @@ def test_eviction_prunes_the_buffered_snapshot_value() -> None:
             {"id": 6, "typ_komponentu": "flaga", "opis_menu": "G"},
         ),
     )
-    assert store.objects[6].value is None
+    assert store.objects[6].state is None
 
 
 def test_details_stan_json_seed_does_not_touch_last_seen() -> None:
@@ -932,7 +932,7 @@ def test_details_stan_json_seed_does_not_touch_last_seen() -> None:
             }
         ),
     )
-    assert store.objects[41].value == "22.5"
+    assert store.objects[41].state == "22.5"
     assert store.modules[17].last_seen is None
 
 
@@ -985,7 +985,7 @@ def test_devices_redelivery_preserves_last_seen() -> None:
         DEVICES_TOPIC,
         devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m2"}),
     )
-    assert store.modules[17].name == "m2"
+    assert store.modules[17].nazwa_urzadzenia == "m2"
     assert store.modules[17].last_seen == 1700000000.0
 
 
@@ -1003,8 +1003,8 @@ def test_a_push_for_an_uncatalogued_id_waits_for_its_catalogue_row() -> None:
     applied = _apply(store, DETAILS_TOPIC, details({"id": 93}))
     obj = store.objects[93]
     assert isinstance(obj.kind, SensorKind)  # no typ_komponentu -> fallback
-    assert obj.value == "187.6"
-    assert [o.value for o in _updated(applied)] == ["187.6"]
+    assert obj.state == "187.6"
+    assert [o.state for o in _updated(applied)] == ["187.6"]
 
 
 def test_a_buffered_push_loses_to_a_newer_dated_stan_json_seed() -> None:
@@ -1015,12 +1015,12 @@ def test_a_buffered_push_loses_to_a_newer_dated_stan_json_seed() -> None:
     _apply(store, state_topic, '{"state":"old","on":1000}')
     row = {"id": 93, "stan_json": json.dumps({"state": "new", "on": 2000})}
     _apply(store, DETAILS_TOPIC, details(row))
-    assert store.objects[93].value == "new"
+    assert store.objects[93].state == "new"
 
     fresh = _store()
     _apply(fresh, state_topic, '{"state":"newer","on":3000}')
     _apply(fresh, DETAILS_TOPIC, details(row))
-    assert fresh.objects[93].value == "newer"
+    assert fresh.objects[93].state == "newer"
 
 
 def test_a_buffered_push_for_a_ghost_id_is_pruned_by_a_complete_catalogue() -> None:
@@ -1031,7 +1031,7 @@ def test_a_buffered_push_for_a_ghost_id_is_pruned_by_a_complete_catalogue() -> N
     _apply(store, f"ampio/fromDB/{USER}/ob/99/state", '{"state":"ghost"}')
     _apply(store, DETAILS_TOPIC, details({"id": 41}))
     _apply(store, DETAILS_TOPIC, details({"id": 41}, {"id": 99}))
-    assert store.objects[99].value is None
+    assert store.objects[99].state is None
 
 
 @pytest.mark.parametrize(
@@ -1076,7 +1076,7 @@ def test_stan_json_with_no_state_field_does_not_overwrite_value() -> None:
             }
         ),
     )
-    assert store.objects[41].value is None
+    assert store.objects[41].state is None
 
 
 def test_numeric_value_none_for_bare_nan_state_push() -> None:
@@ -1085,7 +1085,7 @@ def test_numeric_value_none_for_bare_nan_state_push() -> None:
     _apply(store, DETAILS_TOPIC, details({"id": 12}))
     _apply(store, f"ampio/fromDB/{USER}/ob/12/state", '{"state": NaN}')
     obj = store.objects[12]
-    assert obj.value == "nan"
+    assert obj.state == "nan"
     assert obj.numeric_value is None
 
 
@@ -1114,7 +1114,7 @@ def test_raw_channel_routes_to_input_object_and_notifies() -> None:
     applied = _apply(store, "ampio/from/CAFE/state/f/32", "1")
 
     obj = store.objects[50]
-    assert obj.value == "1" and obj.is_on is True
+    assert obj.state == "1" and obj.is_on is True
     assert _updated(applied) == [obj]
 
 
@@ -1125,7 +1125,7 @@ def test_raw_channel_unmapped_is_ignored() -> None:
     unmapped = _apply(store, "ampio/from/CAFE/state/f/5", "1")
     other_mac = _apply(store, "ampio/from/BEEF/state/f/32", "1")
 
-    assert store.objects[50].value is None
+    assert store.objects[50].state is None
     assert _updated(unmapped) == [] and _updated(other_mac) == []
 
 
@@ -1133,7 +1133,7 @@ def test_raw_channel_malformed_topic_is_ignored() -> None:
     """A topic that passes the dispatch filter but fails the parser is dropped."""
     store = _panel_store()
     _apply(store, "ampio/from/CAFE/state/f", "1")  # too short
-    assert store.objects[50].value is None
+    assert store.objects[50].state is None
 
 
 def test_index_rebuilds_when_devices_arrive_after_details() -> None:
@@ -1141,12 +1141,12 @@ def test_index_rebuilds_when_devices_arrive_after_details() -> None:
     # Details first: module mac unknown, so the flag is not yet routable.
     _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32)))
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
-    assert store.objects[50].value is None  # not routed - no module mac yet
+    assert store.objects[50].state is None  # not routed - no module mac yet
 
     # Devices arrive -> index rebuilds -> now routable.
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
-    assert store.objects[50].value == "1"
+    assert store.objects[50].state == "1"
 
 
 def test_flag_without_funkcja_is_not_bridged() -> None:
@@ -1162,7 +1162,7 @@ def test_flag_without_funkcja_is_not_bridged() -> None:
     }
     _apply(store, DETAILS_TOPIC, details(no_funkcja))
     applied = _apply(store, "ampio/from/CAFE/state/f/1", "1")
-    assert store.objects[51].value is None and _updated(applied) == []
+    assert store.objects[51].state is None and _updated(applied) == []
 
 
 def test_mapped_input_without_raw_uses_per_object_fallback() -> None:
@@ -1173,7 +1173,7 @@ def test_mapped_input_without_raw_uses_per_object_fallback() -> None:
         store, f"ampio/fromDB/{USER}/ob/50/state", '{"state": "255", "on": 1700}'
     )
     obj = store.objects[50]
-    assert obj.value == "255" and obj.is_on is True
+    assert obj.state == "255" and obj.is_on is True
     assert _updated(applied) == [obj]
 
 
@@ -1192,7 +1192,7 @@ def test_detekcja_routes_via_digital_input_prefix() -> None:
     _apply(store, "ampio/from/CAFE/state/i/4", "1")
     obj = store.objects[60]
     assert obj.kind is not None and obj.kind.device_class == "motion"
-    assert obj.value == "1"
+    assert obj.state == "1"
 
 
 def test_wej_routes_via_digital_input_prefix() -> None:
@@ -1212,7 +1212,7 @@ def test_wej_routes_via_digital_input_prefix() -> None:
     assert isinstance(obj.kind, InputKind)
     assert obj.kind.key == "wej" and obj.kind.device_class is None
     _apply(store, "ampio/from/CAFE/state/i/1", "1")
-    assert store.objects[62].value == "1" and store.objects[62].is_on is True
+    assert store.objects[62].state == "1" and store.objects[62].is_on is True
 
 
 def test_wej_per_object_edge_reads_255_as_on() -> None:
@@ -1239,7 +1239,7 @@ def test_module_record_survives_refresh_and_eviction() -> None:
     re-applies it on every merge, including re-creation after eviction."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    rec = ModuleRecord(location="Rozdzielnia", name="Panel")
+    rec = ModuleRecord(location="Rozdzielnia", desc="Panel")
     applied = store.apply_module_records({0xCAFE: rec})
     assert store.modules[7].record == rec
     assert [e.module.record for e in applied.events] == [rec]
@@ -1280,7 +1280,7 @@ def test_symulacja_classifies_but_is_not_bridged() -> None:
     _apply(store, DETAILS_TOPIC, details(sym))
     assert isinstance(store.objects[61].kind, InputKind)
     applied = _apply(store, "ampio/from/CAFE/state/f/1", "1")
-    assert store.objects[61].value is None and _updated(applied) == []
+    assert store.objects[61].state is None and _updated(applied) == []
 
 
 # --- app-sync data-surface fallback (non-admin accounts) --------------------
@@ -1303,9 +1303,9 @@ def test_data_devices_populate_and_classify() -> None:
     store = _store()
     _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1", interp=7)))
     obj = store.objects[24]
-    assert obj.name == "Air quality"
+    assert obj.opis_menu == "Air quality"
     assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
-    assert obj.device_id == 20 and obj.funkcja == 5
+    assert obj.id_urzadzenia == 20 and obj.funkcja == 5
     assert obj.leaf_id == "0_cb9b_74_0_1"
 
 
@@ -1371,7 +1371,7 @@ def test_params_table_after_catalogue_updates_pulse_ms_and_notifies() -> None:
 # --- cover tilt state ------------------------------------------------------
 
 
-def test_lammel_is_parsed_into_tilt_position() -> None:
+def test_lammel_is_parsed_into_the_object() -> None:
     store = _store()
     _apply(
         store,
@@ -1384,8 +1384,8 @@ def test_lammel_is_parsed_into_tilt_position() -> None:
         '{ "state": "95","lammel": "65","block": "0" , "on": 1786723383804}',
     )
     obj = store.objects[66]
-    assert obj.value == "95"
-    assert obj.tilt_position == 65
+    assert obj.state == "95"
+    assert obj.lammel == 65
     assert obj.supports_tilt is True
     assert isinstance(obj.kind, OutputKind)
 
@@ -1399,12 +1399,12 @@ def test_plain_cover_reports_no_tilt() -> None:
     )
     _apply(store, f"ampio/fromDB/{USER}/ob/48/state", '{ "state": "55","block": "0" }')
     obj = store.objects[48]
-    assert obj.value == "55"
-    assert obj.tilt_position is None
+    assert obj.state == "55"
+    assert obj.lammel is None
     assert obj.supports_tilt is False
 
 
-def test_states_snapshot_seeds_tilt_position() -> None:
+def test_states_snapshot_seeds_lammel() -> None:
     store = _store()
     _apply(
         store,
@@ -1421,7 +1421,7 @@ def test_states_snapshot_seeds_tilt_position() -> None:
             }
         ),
     )
-    assert store.objects[66].tilt_position == 100
+    assert store.objects[66].lammel == 100
 
 
 # --- reg climate readback --------------------------------------------------
@@ -1432,8 +1432,8 @@ REG_PAYLOAD = (
     '"measureTemp": "25.90","setTemperature": "21.00", "on": 1787682427583}'
 )
 REG_READBACK = ThermostatState(
-    measured_temperature=25.9,
-    target_temperature=21.0,
+    measure_temp=25.9,
+    set_temperature=21.0,
     mode="S",
     cooling=False,
 )
@@ -1444,7 +1444,7 @@ def test_reg_push_carries_thermostat_readback() -> None:
     _apply(store, DETAILS_TOPIC, details({"id": 138, "typ_komponentu": "reg"}))
     _apply(store, f"ampio/fromDB/{USER}/ob/138/state", REG_PAYLOAD)
     obj = store.objects[138]
-    assert obj.value == "0"
+    assert obj.state == "0"
     assert isinstance(obj.kind, ThermostatKind)
     assert obj.thermostat == REG_READBACK
 
@@ -1460,7 +1460,7 @@ def test_plain_push_keeps_last_readback() -> None:
         '{"state": "1", "on": 1787682500000}',
     )
     obj = store.objects[138]
-    assert obj.value == "1"
+    assert obj.state == "1"
     assert obj.thermostat == REG_READBACK
 
 
@@ -1476,7 +1476,7 @@ def test_snapshot_readback_change_alone_dispatches() -> None:
     applied = _apply(store, STATES_TOPIC, devices({"id": 138, "stan_json": newer}))
     assert [o.id for o in _updated(applied)] == [138]
     assert store.objects[138].thermostat is not None
-    assert store.objects[138].thermostat.measured_temperature == 26.4
+    assert store.objects[138].thermostat.measure_temp == 26.4
 
 
 def test_states_snapshot_seeds_thermostat() -> None:
@@ -1492,7 +1492,7 @@ def test_pending_reg_push_replays_thermostat() -> None:
     _apply(store, f"ampio/fromDB/{USER}/ob/138/state", REG_PAYLOAD)
     _apply(store, DETAILS_TOPIC, details({"id": 138, "typ_komponentu": "reg"}))
     obj = store.objects[138]
-    assert obj.value == "0"
+    assert obj.state == "0"
     assert obj.thermostat == REG_READBACK
 
 
@@ -1550,7 +1550,9 @@ def test_devices_reply_dispatches_module_updated_for_new_and_changed() -> None:
     doc = json.loads(_devices(10, 20))
     doc["List"][1]["nazwa_urzadzenia"] = "renamed"
     changed = _apply(store, DEVICES_TOPIC, json.dumps(doc))
-    assert [(m.id, m.name) for m in _mod_updated(changed)] == [(2, "renamed")]
+    assert [(m.id, m.nazwa_urzadzenia) for m in _mod_updated(changed)] == [
+        (2, "renamed")
+    ]
 
 
 def test_object_updated_carries_a_snapshot() -> None:
@@ -1562,8 +1564,8 @@ def test_object_updated_carries_a_snapshot() -> None:
     state_topic = f"ampio/fromDB/{USER}/ob/5/state"
     (event,) = _updated(_apply(store, state_topic, '{"state": "1", "on": 2000}'))
     _apply(store, state_topic, '{"state": "2", "on": 3000}')
-    assert event.value == "1"
-    assert store.objects[5].value == "2"
+    assert event.state == "1"
+    assert store.objects[5].state == "2"
 
 
 def test_module_updated_carries_a_snapshot() -> None:
@@ -1581,9 +1583,9 @@ def test_a_cleared_name_clears_in_the_store() -> None:
     surfaces agree on names, so a server-side clear must clear here too."""
     store = _store()
     _apply(store, DETAILS_TOPIC, _catalogue(id=9, opis_menu="Old name"))
-    assert store.objects[9].name == "Old name"
+    assert store.objects[9].opis_menu == "Old name"
     applied = _apply(store, DETAILS_TOPIC, _catalogue(id=9, opis_menu=""))
-    assert store.objects[9].name is None
+    assert store.objects[9].opis_menu is None
     assert [o.id for o in _updated(applied)] == [9]
 
 
@@ -1608,7 +1610,7 @@ def test_updated_at_takes_the_report_date_or_the_receipt_time() -> None:
         json.dumps({"List": [{"id": 9, "stan_json": json.dumps({"state": "5"})}]}),
     )
     obj = seeded.objects[9]
-    assert obj.value == "5"
+    assert obj.state == "5"
     assert obj.updated_at is None
 
 
@@ -1647,7 +1649,7 @@ def test_a_formerly_raw_proven_value_survives_a_skewed_snapshot() -> None:
     far_future = int((time.time() + 3600) * 1000)
     stan = json.dumps({"state": "0", "on": far_future})
     _apply(store, STATES_TOPIC, json.dumps({"List": [{"id": 50, "stan_json": stan}]}))
-    assert store.objects[50].value == "1"
+    assert store.objects[50].state == "1"
 
 
 def test_colliding_override_macs_warn_once_and_surface(
@@ -1688,7 +1690,7 @@ def test_apply_designer_records_sets_the_bundle() -> None:
     _seed_catalogue(
         store, {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     )
-    rec = DesignerRecord(location="Potter", matter_device_type=256, name="Lampa")
+    rec = DesignerRecord(location="Potter", matter_device_type=256, desc="Lampa")
     applied = store.apply_designer_records({64: rec})
     assert store.objects[64].record == rec
     assert [e.object.id for e in applied.events] == [64]
@@ -1721,7 +1723,7 @@ def test_record_replaces_wholesale() -> None:
     row = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     _seed_catalogue(store, row)
     store.apply_designer_records(
-        {64: DesignerRecord(location="Potter", matter_device_type=256, name="Lampa")}
+        {64: DesignerRecord(location="Potter", matter_device_type=256, desc="Lampa")}
     )
     applied = store.apply_designer_records({64: DesignerRecord(location="Salon")})
     assert store.objects[64].record == DesignerRecord(location="Salon")
@@ -1817,7 +1819,7 @@ def test_panel_output_o_channel_routes_to_its_object() -> None:
     applied = _apply(store, "ampio/from/CAFE/state/o/2", "1")
 
     obj = store.objects[90]
-    assert obj.value == "1" and obj.is_on is True and obj.raw_proven is True
+    assert obj.state == "1" and obj.is_on is True and obj.raw_proven is True
     assert _updated(applied) == [obj]
 
 
@@ -1831,7 +1833,7 @@ def test_o_channel_of_a_relay_module_is_bridged_too() -> None:
     applied = _apply(store, "ampio/from/B0B0/state/o/1", "1")
 
     obj = store.objects[91]
-    assert obj.value == "1" and obj.raw_proven is True
+    assert obj.state == "1" and obj.raw_proven is True
     assert _updated(applied) == [obj]
 
 
@@ -1843,5 +1845,5 @@ def test_panel_output_per_object_echo_is_dropped_once_raw_proven() -> None:
 
     applied = _apply(store, f"ampio/fromDB/{USER}/ob/90/state", '{"state": "255"}')
 
-    assert store.objects[90].value == "1"
+    assert store.objects[90].state == "1"
     assert _updated(applied) == []

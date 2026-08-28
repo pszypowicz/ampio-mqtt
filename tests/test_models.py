@@ -17,7 +17,7 @@ from ampio_mqtt.models import DesignerRecord, ModuleRecord
     [(None, False), ("", False), ("0", False), ("1", True), ("255", True)],
 )
 def test_is_on_interpretation(value, expected) -> None:
-    assert AmpioObject(id=1, value=value).is_on is expected
+    assert AmpioObject(id=1, state=value).is_on is expected
 
 
 @pytest.mark.parametrize(
@@ -37,7 +37,7 @@ def test_is_on_interpretation(value, expected) -> None:
     ],
 )
 def test_numeric_value_interpretation(value, expected) -> None:
-    assert AmpioObject(id=1, value=value).numeric_value == expected
+    assert AmpioObject(id=1, state=value).numeric_value == expected
 
 
 @pytest.mark.parametrize(
@@ -191,10 +191,10 @@ def test_kind_cannot_be_passed() -> None:
 
 
 def test_module_model_derives_from_type() -> None:
-    module = AmpioModule(id=1, type=4)
+    module = AmpioModule(id=1, typ_urzadzenia=4)
     assert module.model == module_model(4)
     assert module.model is not None
-    assert replace(module, type=None).model is None
+    assert replace(module, typ_urzadzenia=None).model is None
     with pytest.raises(TypeError):
         AmpioModule(id=1, model="M-REL")  # type: ignore[call-arg]
 
@@ -202,7 +202,7 @@ def test_module_model_derives_from_type() -> None:
 def test_reg_classifies_as_thermostat_and_surfaces_the_running_flag() -> None:
     obj = AmpioObject(id=138, typ_komponentu="reg")
     assert isinstance(obj.kind, ThermostatKind)
-    assert replace(obj, value="1").is_on  # the surfaced value is the running flag
+    assert replace(obj, state="1").is_on  # the surfaced value is the running flag
 
 
 @pytest.mark.parametrize(
@@ -248,7 +248,7 @@ def test_server_key_is_the_decimal_mac(mac: int, expected: str) -> None:
 
 
 def _colored(value: str | None) -> AmpioObject:
-    return AmpioObject(id=1, typ_komponentu="rgbw", value=value)
+    return AmpioObject(id=1, typ_komponentu="rgbw", state=value)
 
 
 @pytest.mark.parametrize(
@@ -276,12 +276,12 @@ def test_rgbw_decodes_the_packed_state(
 
 def test_rgbw_reads_none_for_non_color_kinds() -> None:
     """A dimmer's 0-255 level must not masquerade as a color."""
-    dimmer = AmpioObject(id=1, typ_komponentu="led", value="255")
+    dimmer = AmpioObject(id=1, typ_komponentu="led", state="255")
     assert dimmer.rgbw is None
 
 
 def _cover(value: str | None, typ: str = "roleta_procenty") -> AmpioObject:
-    return AmpioObject(id=1, typ_komponentu=typ, value=value)
+    return AmpioObject(id=1, typ_komponentu=typ, state=value)
 
 
 @pytest.mark.parametrize(
@@ -303,7 +303,7 @@ def test_position_reads_none_off_the_position_axis() -> None:
 
 def test_record_survives_replace() -> None:
     obj = AmpioObject(id=1, record=DesignerRecord(location="Potter"))
-    assert replace(obj, value="1").record == DesignerRecord(location="Potter")
+    assert replace(obj, state="1").record == DesignerRecord(location="Potter")
 
 
 def test_leaf_out_no_parses_last_segment() -> None:
@@ -321,6 +321,6 @@ def test_record_bundles_default_to_none() -> None:
 
 def test_record_bundle_fields_default_to_none() -> None:
     assert DesignerRecord() == DesignerRecord(
-        location=None, matter_device_type=None, name=None
+        location=None, matter_device_type=None, desc=None
     )
-    assert ModuleRecord() == ModuleRecord(location=None, name=None)
+    assert ModuleRecord() == ModuleRecord(location=None, desc=None)

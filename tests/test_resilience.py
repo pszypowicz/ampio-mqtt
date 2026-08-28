@@ -53,7 +53,7 @@ def test_a_raising_listener_does_not_stop_later_messages() -> None:
     feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1"}')
     feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"2"}')
 
-    assert client.objects[41].value == "2"
+    assert client.objects[41].state == "2"
 
 
 # --- replies of the wrong shape --------------------------------------------
@@ -83,7 +83,7 @@ def test_a_malformed_reply_does_not_stop_later_messages() -> None:
     _establish(client, 41)
     feed(client, f"ampio/fromDB/{USER}/config/devicesDetails", b"null")
     feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"77"}')
-    assert client.objects[41].value == "77"
+    assert client.objects[41].state == "77"
 
 
 @pytest.mark.parametrize(
@@ -171,7 +171,7 @@ async def test_poison_message_does_not_kill_the_connection(
     assert sum("failed processing" in r.message for r in caplog.records) == 1
 
     feed(client, topic, b'{"state":"42"}')
-    assert client.objects[5].value == "42"
+    assert client.objects[5].state == "42"
 
     # A recurring poison on the same topic stays out of the error log -
     # the traceback was already recorded once.

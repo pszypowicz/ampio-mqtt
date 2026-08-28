@@ -72,8 +72,8 @@ class ThermostatState:
     vocabulary is in docs/protocol.md.
     """
 
-    measured_temperature: float | None
-    target_temperature: float | None
+    measure_temp: float | None
+    set_temperature: float | None
     # Mode letter, verbatim from the wire.
     mode: str | None
     # The push's cooling flag; `"0"` reads False, anything else True.
@@ -94,7 +94,7 @@ class DesignerRecord:
 
     location: str | None = None
     matter_device_type: int | None = None
-    name: str | None = None
+    desc: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -103,12 +103,12 @@ class ModuleRecord:
 
     Admin-guarded, exactly as :class:`DesignerRecord` is. ``location`` is
     the module-level "Lokalizacja" (where the box is mounted, not where
-    its loads are) and ``name`` the CAN-resident module name; either can
+    its loads are) and ``desc`` the CAN-resident module name; either can
     differ from the admin catalogue row.
     """
 
     location: str | None = None
-    name: str | None = None
+    desc: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -123,13 +123,13 @@ class AmpioObject:
 
     # The per-object identity source, exposed as `unique_key`. An object
     # delete is soft on the `config` catalogue, so the autoincrement never
-    # renumbers. `device_id` is the volatile one: it mirrors the module row,
-    # which is reassigned when a module is replaced.
+    # renumbers. `id_urzadzenia` is the volatile one: it mirrors the module
+    # row, which is reassigned when a module is replaced.
     # docs/identity.md is the home for the identity model.
     id: int
-    device_id: int | None = None  # id_urzadzenia (physical module)
+    id_urzadzenia: int | None = None  # physical module
     typ_komponentu: str | None = None
-    name: str | None = None
+    opis_menu: str | None = None
     interpretacja: int | None = None
     # Physical channel index within the module (obiekty.funkcja);
     # replacement-stable but NOT unique - objects can share one. Routes raw
@@ -166,8 +166,9 @@ class AmpioObject:
     # `dataclasses.replace` included, so no instance can hold a kind that
     # disagrees with its inputs (#94).
     kind: ObjectKind = field(init=False)
-    value: str | None = None
-    # Epoch seconds of the report `value` came from: the M-SERV's own `on`
+    # The state payload's `state` key, verbatim.
+    state: str | None = None
+    # Epoch seconds of the report `state` came from: the M-SERV's own `on`
     # timestamp when the report carried one, the local receive time for the
     # undated raw tree. Lets a later bulk snapshot be compared against what
     # is held instead of applied or dropped blind. None until any report
@@ -178,12 +179,11 @@ class AmpioObject:
     # resync is the broker's retained raw table. Admin tier only; cleared
     # when the raw index stops covering the object. docs/raw-channel-bridge.md.
     raw_proven: bool = False
-    # Slat angle percent, from the `lammel` state field. Only tilt-capable
-    # covers report it.
-    tilt_position: int | None = None
+    # Slat angle percent. Only tilt-capable covers report it.
+    lammel: int | None = None
     # Climate readback, from the rich state shape only `reg` objects push.
     # None until a reg-shaped report arrives; a later report that lacks the
-    # shape keeps the last readback, like `tilt_position` does.
+    # shape keeps the last readback, like `lammel` does.
     thermostat: ThermostatState | None = None
 
     def __post_init__(self) -> None:
@@ -199,26 +199,26 @@ class AmpioObject:
 
     @property
     def is_on(self) -> bool:
-        """Boolean interpretation of `value`, meaningful for input objects.
+        """Boolean interpretation of `state`, meaningful for input objects.
 
-        Off when `value` is None/empty/`"0"`, on otherwise - so both the raw
+        Off when `state` is None/empty/`"0"`, on otherwise - so both the raw
         channel form (`"1"`) and the per-object form (`"255"`) read as on.
         """
-        return self.value not in (None, "", "0")
+        return self.state not in (None, "", "0")
 
     @property
     def numeric_value(self) -> float | None:
-        """Numeric interpretation of `value`, meaningful for sensor objects.
+        """Numeric interpretation of `state`, meaningful for sensor objects.
 
-        None when `value` is missing, not parseable as a number, or not
+        None when `state` is missing, not parseable as a number, or not
         finite - `float()` alone accepts forms like `"nan"`, `"inf"` and the
         overflowing `"1e999"`, which for a sensor reading are glitches rather
         than measurements.
         """
-        if self.value is None:
+        if self.state is None:
             return None
         try:
-            parsed = float(self.value)
+            parsed = float(self.state)
         except ValueError:
             return None
         return parsed if math.isfinite(parsed) else None
@@ -236,10 +236,10 @@ class AmpioObject:
         """
         if not (isinstance(self.kind, OutputKind) and self.kind.color):
             return None
-        if self.value is None:
+        if self.state is None:
             return None
         try:
-            packed = int(self.value)
+            packed = int(self.state)
         except ValueError:
             return None
         if not -(1 << 31) <= packed <= 0xFFFFFFFF:
@@ -259,14 +259,14 @@ class AmpioObject:
 
         Anything but a position-capable cover (`OutputKind.position`)
         reads None, as does a value outside 0-100. The slat axis is
-        :pyattr:`tilt_position`, exactly as `setRollerPos` splits them.
+        :pyattr:`lammel`, exactly as `setRollerPos` splits them.
         """
         if not (isinstance(self.kind, OutputKind) and self.kind.position):
             return None
-        if self.value is None:
+        if self.state is None:
             return None
         try:
-            pos = int(self.value)
+            pos = int(self.state)
         except ValueError:
             return None
         return pos if 0 <= pos <= 100 else None
@@ -417,17 +417,19 @@ class AmpioModule:
     mac: int | None = None  # devices.mac (override / effective bus address)
     # Factory-burned hardware id; CHANGES when the unit is replaced.
     mac_global: int | None = None  # devices.mac_global (factory id)
-    name: str | None = None  # nazwa_urzadzenia (user-given module name)
-    type: int | None = None  # typ_urzadzenia
-    # Resolved model name for `type`. Derived - never passed: computed on
-    # every construction (#94), None when `type` is unknown or missing.
+    nazwa_urzadzenia: str | None = None  # user-given module name
+    typ_urzadzenia: int | None = None
+    # Resolved model name for `typ_urzadzenia`. Derived - never passed:
+    # computed on every construction (#94), None when `typ_urzadzenia` is
+    # unknown or missing.
     model: str | None = field(init=False)
-    # Curated mounting class for `type` ("cabinet" DIN rail / "wall" /
-    # "flush" in-box), derived exactly like `model` (#115). Decoration for
-    # device info only - never a topology input. None when unclassified.
+    # Curated mounting class for `typ_urzadzenia` ("cabinet" DIN rail /
+    # "wall" / "flush" in-box), derived exactly like `model` (#115).
+    # Decoration for device info only - never a topology input. None when
+    # unclassified.
     mounting: Mounting | None = field(init=False)
-    sw_version: int | None = None  # wersja_softu
-    hw_version: int | None = None  # wersja_pcb
+    wersja_softu: int | None = None
+    wersja_pcb: int | None = None
     # The module's DEVICE_NAME record entry, admin sweep only; None
     # until a sweep covers the module.
     record: ModuleRecord | None = None
@@ -444,8 +446,8 @@ class AmpioModule:
     temperature: float | None = None  # °C
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "model", module_model(self.type))
-        object.__setattr__(self, "mounting", module_mounting(self.type))
+        object.__setattr__(self, "model", module_model(self.typ_urzadzenia))
+        object.__setattr__(self, "mounting", module_mounting(self.typ_urzadzenia))
 
 
 @dataclass(slots=True, frozen=True)
@@ -453,7 +455,7 @@ class AmpioScene:
     """A named multi-action preset defined in the Ampio app."""
 
     id: int
-    name: str
+    scene_name: str
     # The M-SERV's own enabled flag for the scene.
     active: bool = True
     # Parent scene when the install nests them; None for a top-level scene.

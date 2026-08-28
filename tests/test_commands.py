@@ -350,7 +350,7 @@ async def test_confirm_resolves_with_the_echo_snapshot(
     await delivery
     assert broker.published == [(API_TOPIC, b"/api/set/64/setValue/255")]
     assert obj is not None
-    assert (obj.id, obj.value) == (64, "255")
+    assert (obj.id, obj.state) == (64, "255")
 
 
 async def test_confirm_ignores_updates_for_other_objects(
@@ -453,7 +453,7 @@ async def test_confirm_survives_the_catalogue_race(
     feed(client, DATA_DEVICES_TOPIC, details({"id": 70, "typ_komponentu": "flaga"}))
     obj = await task
     assert obj is not None
-    assert (obj.id, obj.value) == (70, "255")
+    assert (obj.id, obj.state) == (70, "255")
 
 
 async def test_concurrent_confirms_resolve_on_one_echo(
@@ -468,7 +468,7 @@ async def test_concurrent_confirms_resolve_on_one_echo(
     await delivery
     assert one == other
     assert one is not None
-    assert one.value == "255"
+    assert one.state == "255"
 
 
 async def test_confirm_propagates_a_publish_failure(
@@ -529,7 +529,7 @@ async def test_confirm_on_the_admin_tier_resolves_on_the_raw_edge() -> None:
         feed(client, "ampio/from/CAFE/state/f/3", "255")
         obj = await task
         assert obj is not None
-        assert (obj.id, obj.value) == (10, "255")
+        assert (obj.id, obj.state) == (10, "255")
     finally:
         await client.stop()
 
@@ -698,7 +698,7 @@ async def test_panel_output_confirm_resolves_on_the_raw_edge() -> None:
         feed(client, "ampio/from/CAFE/state/o/2", "1")
         obj = await task
         assert obj is not None
-        assert (obj.id, obj.value) == (90, "1")
+        assert (obj.id, obj.state) == (90, "1")
     finally:
         await client.stop()
 

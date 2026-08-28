@@ -297,10 +297,8 @@ class AmpioStore:
                 self._guarded.add(meta.id)
             if wins:
                 changed |= (
-                    updated.value != update.value
-                    or (
-                        update.tilt is not None and updated.tilt_position != update.tilt
-                    )
+                    updated.state != update.value
+                    or (update.tilt is not None and updated.lammel != update.tilt)
                     or (
                         update.thermostat is not None
                         and updated.thermostat != update.thermostat
@@ -308,12 +306,8 @@ class AmpioStore:
                 )
                 updated = replace(
                     updated,
-                    value=update.value,
-                    tilt_position=(
-                        update.tilt
-                        if update.tilt is not None
-                        else updated.tilt_position
-                    ),
+                    state=update.value,
+                    lammel=(update.tilt if update.tilt is not None else updated.lammel),
                     thermostat=(
                         update.thermostat
                         if update.thermostat is not None
@@ -443,15 +437,15 @@ class AmpioStore:
             # what the raw edge delivered ~150 ms earlier, so it is
             # dropped whole. It still counts as live evidence of the
             # module.
-            self._touch_module(obj.device_id)
+            self._touch_module(obj.id_urzadzenia)
             return
         stamp = (
             float(update.on_ms) / 1000.0 if update.on_ms is not None else time.time()
         )
         obj = replace(
             obj,
-            value=update.value,
-            tilt_position=update.tilt if update.tilt is not None else obj.tilt_position,
+            state=update.value,
+            lammel=update.tilt if update.tilt is not None else obj.lammel,
             thermostat=(
                 update.thermostat if update.thermostat is not None else obj.thermostat
             ),
@@ -464,7 +458,7 @@ class AmpioStore:
         else:
             self._local_stamped.discard(update.id)
             self._guarded.discard(update.id)
-        self._touch_module(obj.device_id)
+        self._touch_module(obj.id_urzadzenia)
         self._record(obj, applied)
 
     def _apply_raw_channel(
@@ -476,13 +470,13 @@ class AmpioStore:
         obj = replace(
             self.objects[oid],
             raw_proven=True,
-            value=edge.value,
+            state=edge.value,
             updated_at=time.time(),
         )
         self.objects[oid] = obj
         self._local_stamped.add(oid)
         self._guarded.add(oid)
-        self._touch_module(obj.device_id)
+        self._touch_module(obj.id_urzadzenia)
         self._record(obj, applied)
 
     def _apply_diagnostics(
@@ -526,14 +520,14 @@ class AmpioStore:
         if seed.value is None or not self._supersedes(obj, reported_at):
             return obj, False
         changed = (
-            obj.value != seed.value
-            or (seed.tilt is not None and obj.tilt_position != seed.tilt)
+            obj.state != seed.value
+            or (seed.tilt is not None and obj.lammel != seed.tilt)
             or (seed.thermostat is not None and obj.thermostat != seed.thermostat)
         )
         obj = replace(
             obj,
-            value=seed.value,
-            tilt_position=seed.tilt if seed.tilt is not None else obj.tilt_position,
+            state=seed.value,
+            lammel=seed.tilt if seed.tilt is not None else obj.lammel,
             thermostat=seed.thermostat
             if seed.thermostat is not None
             else obj.thermostat,
@@ -556,7 +550,7 @@ class AmpioStore:
         Raw-proven objects never reach this comparison: their snapshot
         rows are skipped before it.
         """
-        if obj.value is None:
+        if obj.state is None:
             return True
         if reported_at is None:
             return False
@@ -599,9 +593,9 @@ class AmpioStore:
             prefix = input_channel_prefix(obj.typ_komponentu)
             if prefix is None and obj.typ_komponentu == "przekaznik":
                 prefix = "o"
-            if prefix is None or obj.funkcja is None or obj.device_id is None:
+            if prefix is None or obj.funkcja is None or obj.id_urzadzenia is None:
                 continue
-            module = self.modules.get(obj.device_id)
+            module = self.modules.get(obj.id_urzadzenia)
             if module is None or module.mac is None:
                 continue
             index[(module.mac, prefix, obj.funkcja)] = obj.id

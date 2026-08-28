@@ -48,9 +48,9 @@ class ObjectMetadata:
     """Per-object metadata from a `devicesDetails` payload."""
 
     id: int
-    device_id: int | None
+    id_urzadzenia: int | None
     typ_komponentu: str | None
-    name: str | None
+    opis_menu: str | None
     interpretacja: int | None
     funkcja: int | None  # physical channel index within the module
     leaf_id: str  # `leafId`; empty for ghost rows and for system objects
@@ -184,9 +184,9 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
         out.append(
             ObjectMetadata(
                 id=oid,
-                device_id=to_int(item.get("id_urzadzenia")),
+                id_urzadzenia=to_int(item.get("id_urzadzenia")),
                 typ_komponentu=item.get("typ_komponentu"),
-                name=item.get("opis_menu") or None,
+                opis_menu=item.get("opis_menu") or None,
                 interpretacja=to_int(item.get("interpretacja")),
                 funkcja=to_int(item.get("funkcja")),
                 leaf_id=_parse_leaf_id(item.get("leafId")),
@@ -242,10 +242,10 @@ def parse_devices(payload: str) -> list[AmpioModule] | None:
                 id=mid,
                 mac=to_int(item.get("mac")),
                 mac_global=to_int(item.get("mac_global")),
-                name=item.get("nazwa_urzadzenia") or None,
-                type=to_int(item.get("typ_urzadzenia")),
-                sw_version=to_int(item.get("wersja_softu")),
-                hw_version=to_int(item.get("wersja_pcb")),
+                nazwa_urzadzenia=item.get("nazwa_urzadzenia") or None,
+                typ_urzadzenia=to_int(item.get("typ_urzadzenia")),
+                wersja_softu=to_int(item.get("wersja_softu")),
+                wersja_pcb=to_int(item.get("wersja_pcb")),
             )
         )
     return out
@@ -317,7 +317,7 @@ def parse_scenes(payload: str) -> list[AmpioScene] | None:
         out.append(
             AmpioScene(
                 id=sid,
-                name=name if isinstance(name, str) else "",
+                scene_name=name if isinstance(name, str) else "",
                 active=raw_active != 0 if raw_active is not None else True,
                 parent_id=parent if parent is not None and parent >= 0 else None,
                 object_ids=frozenset(objects),
@@ -498,7 +498,7 @@ def resolve_designer(
         out[obj.id] = DesignerRecord(
             location=_entry_location(entry, location_names),
             matter_device_type=entry.out_type or None,
-            name=_entry_name(entry),
+            desc=_entry_name(entry),
         )
     return out
 
@@ -531,7 +531,7 @@ def resolve_module_records(
         else:
             out[mac] = ModuleRecord(
                 location=_entry_location(entry, location_names),
-                name=_entry_name(entry),
+                desc=_entry_name(entry),
             )
     return out
 
@@ -659,8 +659,8 @@ def _parse_thermostat(data: dict[str, Any]) -> ThermostatState | None:
     raw_mode = data.get("mode")
     raw_cooling = data.get("cooling")
     return ThermostatState(
-        measured_temperature=_finite_float(data.get("measureTemp")),
-        target_temperature=_finite_float(data.get("setTemperature")),
+        measure_temp=_finite_float(data.get("measureTemp")),
+        set_temperature=_finite_float(data.get("setTemperature")),
         mode=str(raw_mode) if raw_mode is not None else None,
         cooling=None if raw_cooling is None else str(raw_cooling) not in ("", "0"),
     )
