@@ -282,7 +282,7 @@ async def test_stats_cover_the_current_run_only() -> None:
         await client.disconnect()
 
 
-async def test_concurrent_starts_serialize_and_the_survivor_stays_up() -> None:
+async def test_concurrent_connects_serialize_and_the_survivor_stays_up() -> None:
     """Overlapping connect() calls run one after another. Unserialized, the
     first caller's connect-timeout teardown would kill the runner the
     second caller had just successfully started, returning success on a

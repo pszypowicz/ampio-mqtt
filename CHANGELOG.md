@@ -43,7 +43,10 @@ proven, how stable it is, or how unique it is.
 
 - **Nothing changed behavior.** Every value, type, and wire payload a consumer
   reads is exactly what it was before this release. Only names moved, to the
-  table below.
+  table below. `AmpioClient.diagnostics_snapshot()` is the one exception,
+  because its `server_info` entry is built from the dataclass with `asdict()`,
+  so that entry's keys follow the rename too, and `key` now reads as
+  `server_key`.
 
 | Where               | Old name                   | New name                   |
 | ------------------- | -------------------------- | -------------------------- |
