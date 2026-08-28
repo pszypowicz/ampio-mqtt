@@ -31,24 +31,24 @@ device topology must never branch on them.
 
 | Field                     | Stable across module replacement?                                                                                                                                                                                                                                                | Notes                                                                                |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `id`                      | **Yes**, in practice. An object delete is soft on the `config` catalogue. The row stays, with the `params` hidden bit set, so the autoincrement never renumbers. Observed unchanged on a live install across years of configuration uploads, module replacements, and deletions. | The per-object unique id, exposed as `AmpioObject.unique_key`.                       |
-| `device_id`               | **No** - it mirrors the module row, which is reassigned in `mac_global` order when a module is replaced.                                                                                                                                                                         | Cross-referencing an object to its module _within a single discovery snapshot_ only. |
+| `id`                      | **Yes**, in practice. An object delete is soft on the `config` catalogue. The row stays, with the `params` hidden bit set, so the autoincrement never renumbers. Observed unchanged on a live install across years of configuration uploads, module replacements, and deletions. | The per-object unique id, exposed as `AmpioObject.object_key`.                       |
+| `id_urzadzenia`           | **No** - it mirrors the module row, which is reassigned in `mac_global` order when a module is replaced.                                                                                                                                                                         | Cross-referencing an object to its module _within a single discovery snapshot_ only. |
 | `funkcja` (channel index) | **Yes** - part of the reloaded Designer config. Not unique: if the same physical signal is exposed as several Designer objects, they share one `funkcja`.                                                                                                                        |
 | `typ_komponentu`          | **Yes** - the type vocabulary (`temp`, `lin_wej`, `flaga`, ...).                                                                                                                                                                                                                 |
 | `leaf_id`                 | **Yes**, when set. The wire-side visibility marker and the physical-output key source - see below.                                                                                                                                                                               |
 
-## Unique id: the object id (`AmpioObject.unique_key`)
+## Unique id: the object id (`AmpioObject.object_key`)
 
 The recommended per-object unique id is the database object id, exposed as
-`AmpioObject.unique_key` (`obj_<id>`) and scoped per server by the consumer:
+`AmpioObject.object_key` (`obj_<id>`) and scoped per server by the consumer:
 
 ```
 {prefix}_obj_{id}
 ```
 
-`prefix` is a per-M-SERV scope: use `AmpioServerInfo.key`, the canonical decimal
-form of the server's own CAN mac. Every account tier receives it, and it is
-guaranteed present once `wait_for_initial_discovery()` returns True.
+`prefix` is a per-M-SERV scope: use `AmpioServerInfo.server_key`, the canonical
+decimal form of the server's own CAN mac. Every account tier receives it, and it
+is guaranteed present once `wait_for_initial_discovery()` returns True.
 
 Three properties make the object id the right source:
 
@@ -63,26 +63,26 @@ Three properties make the object id the right source:
   has to renumber, and a live install has kept every id across years of
   configuration uploads, module replacements, and deletions.
 
-## Physical-output key: `leaf_id` (`AmpioObject.stable_key`)
+## Physical-output key: `leaf_id` (`AmpioObject.leaf_key`)
 
-`AmpioObject.stable_key` (`leaf_<leaf_id>`) names the physical output an object
+`AmpioObject.leaf_key` (`leaf_<leaf_id>`) names the physical output an object
 drives. It is not an identity for the object row, and it must not be used as
 one.
 
 Several Designer objects can drive one output, and the Designer supports this
 today. One view can act as a plain relay. Another view of the same output can
 carry the bell marker and a pulse time. Every such view carries the same
-`leafId`. A consumer keyed on `stable_key` therefore sees one key for several
+`leafId`. A consumer keyed on `leaf_key` therefore sees one key for several
 objects and loses all but one of them.
 
-`stable_key` answers three questions:
+`leaf_key` answers three questions:
 
-- **Which entities drive one output.** Two objects with equal `stable_key` share
-  a relay, a dimmer, or a roller.
-- **The parse source.** `module_mac` and `leaf_out_no` are read out of it.
+- **Which entities drive one output.** Two objects with equal `leaf_key` share a
+  relay, a dimmer, or a roller.
+- **The parse source.** `module_mac` and `leaf_io_no` are read out of it.
 - **The join anchor.** The raw-channel bridge matches on the leaf structure.
 
-`leafId` is empty for ghost rows and for system objects, so `stable_key` reads
+`leafId` is empty for ghost rows and for system objects, so `leaf_key` reads
 None for them. It is also the wire-side visibility marker, which the next
 section covers.
 
@@ -110,7 +110,7 @@ Three helpers close the loop for a consumer that builds devices on `module_mac`.
 identically on both tiers. `AmpioClient.mserv` returns the M-SERV's own module
 row - name, model, versions - on the admin tier that has the catalogue.
 `AmpioClient.module_for(obj)` resolves any object to its catalogue row. It joins
-on `device_id` and gates on mac agreement, so the volatile DB join can never
+on `id_urzadzenia` and gates on mac agreement, so the volatile DB join can never
 pair an object with a replaced module's stale row. The join keys the lookup
 rather than the mac, because override macs can collide across rows. The mac then
 gates what the join found.
@@ -121,9 +121,14 @@ The Designer names all five segments. Its web bundle builds the token, and it
 parses the token back into `macGroup`, `mac`, `sfId`, `subSfId`, and `ioNo`.
 Earlier revisions of this page called the last three `F2`, `F3`, and `F4`.
 
-The library parses only the mac and the trailing `ioNo` (the 0-based output
-index, `AmpioObject.leaf_out_no`). The two tables below come from a live join of
-every leaf-bearing object against the module catalogue.
+The library parses the mac, the `sfId`, the `subSfId`, and the trailing `ioNo`.
+`AmpioObject.leaf_io_no` reads the last segment. It covers inputs as well as
+outputs. `AmpioObject.sf_id` and `AmpioObject.sub_sf_id` read the third and
+fourth segments, next to `module_mac` and `leaf_io_no`. A `subSfId` has meaning
+only inside its `sfId`. Both read None when `leaf_id` is empty or malformed.
+
+The two tables below come from a live join of every leaf-bearing object against
+the module catalogue.
 
 **`sfId` is a per-leaf special-function id, not the module type.** No module
 showed `sfId` equal to its `typ_urzadzenia`. Virtual cover objects hosted on a
@@ -178,8 +183,8 @@ visible = not hidden and (bool(leaf_id) or is_system)
   marks phantom rows that duplicate a real Designer channel (same `leaf_id`, no
   value), and it marks objects the user hid. Those are exactly the rows the
   `leaf_id` test alone wrongly keeps. It is a Designer config flag, so unlike
-  `device_id` it is replacement-stable. Every account tier receives `params` on
-  a baseline server (via `devicesDetails` or `data/params_devices`). A row
+  `id_urzadzenia` it is replacement-stable. Every account tier receives `params`
+  on a baseline server (via `devicesDetails` or `data/params_devices`). A row
   without a received value reads `0`, so `hidden` is False and the `leaf_id`
   test alone decides. This is the same gate the M-SERV's Matter bridge uses
   (`(params & 2**37) && !(params & 16)`) - see the section on the bit semantics
@@ -334,7 +339,7 @@ column mirror lags it. An output tagged 256 (0x0100) on the CAN record can still
 show an empty `type` column, live-observed on the reference install.
 `AmpioClient.resolve_records()` reads the CAN record into `AmpioObject.record`:
 the tag lands in `record.matter_device_type`, the location pointer in
-`record.location`, and the entry's own description string in `record.name`. The
+`record.location`, and the entry's own description string in `record.desc`. The
 column mirror stays in `matter_device_type`, identical on both tiers. The two
 fields are separate facts. The consumer picks which one to trust.
 
@@ -402,7 +407,7 @@ The record's one DEVICE_NAME frame (descType 1) describes the module itself. Its
 `desc` is the module name, and its `outLoc` is the module-level "Lokalizacja" -
 where the module is mounted, not where its loads are. `resolve_records()` reads
 it from the same reply and sets `AmpioModule.record`, with a `ModuleUpdated`
-dispatch on change. `record.location` is the mounting location and `record.name`
+dispatch on change. `record.location` is the mounting location and `record.desc`
 the CAN-resident module name. A record without the frame, or with `outLoc` 0,
 reads unassigned (None). The module answered, so None is authoritative. A module
 the sweep did not cover keeps its previous value, exactly like the per-object
@@ -413,11 +418,11 @@ untagged.
 ### The join rule
 
 An object joins its entry through
-`(DESC_TYPE_BY_KIND[typ_komponentu], leaf_out_no)` within the description record
-of its own module (`AmpioObject.module_mac`). `leaf_out_no` is the last `leafId`
+`(DESC_TYPE_BY_KIND[typ_komponentu], leaf_io_no)` within the description record
+of its own module (`AmpioObject.module_mac`). `leaf_io_no` is the last `leafId`
 segment. It is live-proven as the out-no key over `funkcja` across the full
 catalogue: `funkcja` under- or over-matches, dependent on the kind, and
-`leaf_out_no` does not. `DESC_TYPE_BY_KIND` ships only live-proven pairs:
+`leaf_io_no` does not. `DESC_TYPE_BY_KIND` ships only live-proven pairs:
 `przekaznik` -> 12 (OUTPUTS), `roleta_procenty` -> 26 (ROLLER), `roleta_lamelki`
 -> 26 (ROLLER), `led` -> 16 (OUT_OC_U8), `rgbw` -> 34. A kind outside that table
 (`bit32`, `flaga`, `lin_wej`, `satel_alarm`, `temp` among them) resolves no

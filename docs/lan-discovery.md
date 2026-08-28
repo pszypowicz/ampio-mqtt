@@ -8,8 +8,8 @@ observation from the probe, or is marked as inference from one.
 
 Authoritative source for the discovery mechanics themselves:
 [`src/ampio_mqtt/discovery.py`](../src/ampio_mqtt/discovery.py) and
-`AmpioClient.test_connection` /
-[`AmpioServerInfo.key`](../src/ampio_mqtt/models.py).
+`AmpioClient.check_connection` /
+[`AmpioServerInfo.server_key`](../src/ampio_mqtt/models.py).
 
 ## What the M-SERV publishes over mDNS
 
@@ -66,11 +66,11 @@ instance names are fabric and node identifiers from that co-located process,
 unrelated to the interface MAC. No ARP read exposes more than the OUI above.
 
 So a config flow cannot derive
-[`AmpioServerInfo.key`](../src/ampio_mqtt/models.py) (the mac-derived unique id
-every config entry needs) from mDNS or DHCP alone. It must probe the broker
-itself. `AmpioClient.test_connection()` connects with the candidate host, port,
-and credentials, requests the server info, and returns an `AmpioServerInfo`. Its
-`.key` property is the unique id to store.
+[`AmpioServerInfo.server_key`](../src/ampio_mqtt/models.py) (the mac-derived
+unique id every config entry needs) from mDNS or DHCP alone. It must probe the
+broker itself. `AmpioClient.check_connection()` connects with the candidate
+host, port, and credentials, requests the server info, and returns an
+`AmpioServerInfo`. Its `.server_key` property is the unique id to store.
 
 ## `discover()` is the manual-flow fallback
 
@@ -78,5 +78,5 @@ and credentials, requests the server info, and returns an `AmpioServerInfo`. Its
 confirms a listener on the broker port with a TCP probe. It returns a
 `DiscoveryResult` hint, not a confirmed identity. The manual flow uses it to
 find a candidate host on the LAN before credentials are known.
-`test_connection()` still confirms that the candidate is an Ampio M-SERV, and it
-produces the unique id.
+`check_connection()` still confirms that the candidate is an Ampio M-SERV, and
+it produces the unique id.

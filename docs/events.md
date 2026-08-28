@@ -41,10 +41,10 @@ Any other combination raises `ValueError` at registration time.
 | `ObjectRemoved`       | The account's authoritative catalogue stopped listing an object.                                                                                                                                                                         | both       | no       |
 | `ModuleUpdated`       | A module's catalogue row changed, or its diagnostics broadcast arrived.                                                                                                                                                                  | admin only | no       |
 | `ModuleRemoved`       | The module list stopped listing a module.                                                                                                                                                                                                | admin only | no       |
-| `BusEvent`            | Ampio logic raised a bus event (1-65535).                                                                                                                                                                                                | admin only | no       |
-| `AvailabilityChanged` | The broker connection came up or went down (never for a `stop()`).                                                                                                                                                                       | both       | no       |
-| `AuthFailed`          | The broker rejected the credentials after `start()`. Reauthenticate.                                                                                                                                                                     | both       | yes      |
-| `ConnectionDied`      | The connection loop crashed. Only a fresh `start()` recovers.                                                                                                                                                                            | both       | yes      |
+| `BusEventRaised`      | Ampio logic raised a bus event (1-65535).                                                                                                                                                                                                | admin only | no       |
+| `AvailabilityChanged` | The broker connection came up or went down (never for a `disconnect()`).                                                                                                                                                                 | both       | no       |
+| `AuthFailed`          | The broker rejected the credentials after `connect()`. Reauthenticate.                                                                                                                                                                   | both       | yes      |
+| `ConnectionDied`      | The connection loop crashed. Only a fresh `connect()` recovers.                                                                                                                                                                          | both       | yes      |
 
 `ObjectAdded` subclasses `ObjectUpdated`. A `match` statement that destructures
 the stream must put its `case ObjectAdded():` arm before
@@ -53,14 +53,14 @@ the stream must put its `case ObjectAdded():` arm before
 
 "Admin only" reflects what the M-SERV serves each account tier - see
 [`account-tiers.md`](account-tiers.md). A standard account can still _raise_ bus
-events (`send_event`), but it never receives them.
+events (`set_event`), but it never receives them.
 
 ## Ordering and the terminal events
 
 The contract lives on the `ampio_mqtt.events` module docstring and the event
 classes themselves. In short: removals follow the updates of the catalogue reply
 that caused them. `AvailabilityChanged(False)` precedes a terminal `AuthFailed`
-or `ConnectionDied`. After a terminal event, only a fresh `start()` continues,
+or `ConnectionDied`. After a terminal event, only a fresh `connect()` continues,
 and a genuinely changed password means a new client.
 
 An evicted object that later reappears follows the same first-event rule as
@@ -70,7 +70,7 @@ the store held nothing for that id in between.
 
 ## Delivery context
 
-Events dispatch synchronously on the loop that ran `start()`. Most arrive from
+Events dispatch synchronously on the loop that ran `connect()`. Most arrive from
 the connection task's message handling. An explicit call such as
 `resolve_records()` dispatches from the caller's own task instead. Either way it
 is the same loop, so a listener gets the same ordering guarantees on both paths.

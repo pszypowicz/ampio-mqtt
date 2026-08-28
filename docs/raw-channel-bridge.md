@@ -19,7 +19,7 @@ input platform that wants minimum latency on a button-press or flag toggle, the
 raw form is the right source.
 
 Once an object produced a raw message, it is **raw-owned**
-(`AmpioObject.raw_proven`). The store then ignores the slower per-object echo
+(`AmpioObject.raw_owned`). The store then ignores the slower per-object echo
 whole, and the bulk `states` snapshot skips the object. Its resync is the
 retained raw table itself. Every reconnect's subscribe re-delivers that table,
 and the index that persists across sessions routes it. On the first connect the
@@ -59,8 +59,8 @@ The channel wildcards are bridged to the owning `AmpioObject`, so listeners see
 the same push as for any other update. The `o` prefix covers every `przekaznik`
 uniformly. A touch panel's per-field status LEDs have no other retained surface,
 and a relay's outputs share the channel shape, so both gain the raw-first path.
-The event wildcard feeds `BusEvent` subscribers - a different surface with its
-own semantics, described in [`protocol.md`](protocol.md).
+The event wildcard feeds `BusEventRaised` subscribers - a different surface with
+its own semantics, described in [`protocol.md`](protocol.md).
 
 The whole tree is administrator-only (the broker rejects the filters for any
 other account in the SUBACK with reason code 128). Only the `admin` login

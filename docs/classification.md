@@ -38,7 +38,7 @@ surfaces, as the generic value sensor or the `analog_<n>` fallback.
 - `roleta_lamelki` is what the Ampio app writes when a cover's type is set to
   "blinds - slats". The same cover reads back as `roleta_procenty` while it is
   set to "blinds - percentage". Only the slats variant reports a `lammel` angle
-  in its state payload, surfaced as `AmpioObject.tilt_position`.
+  in its state payload, surfaced as `AmpioObject.lammel`.
 - `rgbw` is the one output that ignores the `turnOn`/`turnOff`/`switch` family.
   The replay pattern Ampio's own consumers use for on/off is in
   [`protocol.md`](protocol.md).
@@ -68,7 +68,7 @@ deliberately does not encode:
 `THERMOSTAT_KIND_KEYS` export every static `kind.key` the library can emit. They
 derive from `TYPE_PROFILES` and the `lin_wej` map at import time, so they cannot
 drift. Two key families embed `interpretacja` and stay open.
-`OPEN_SENSOR_KEY_PREFIXES` (`analog_`, `value_`) names them. A consumer maps
+`SENSOR_KIND_KEY_PREFIXES` (`analog_`, `value_`) names them. A consumer maps
 `kind.key` to its own entity descriptions. Its CI must assert that every
 exported key is either mapped or deliberately excluded. Each open prefix counts
 as one decision. Then a library upgrade that adds a kind fails a test instead of
@@ -90,7 +90,7 @@ It does **not** use:
   not change what it is.
 - **`funkcja` (the channel index)** - the physical channel index within the
   module. It routes raw channel events to the object, and it never affects the
-  kind. It is not part of the object identity key. Use `unique_key` for identity
+  kind. It is not part of the object identity key. Use `object_key` for identity
   (see [`identity.md`](identity.md)).
 
 `typ_komponentu` must be the primary key. On an M-SENS the **temperature**

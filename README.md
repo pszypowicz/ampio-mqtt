@@ -35,17 +35,17 @@ async def main() -> None:
 
     client = AmpioClient(found.address, "user", "secret")
     client.subscribe(
-        lambda e: print(e.object.id, e.object.kind, e.object.value),
+        lambda e: print(e.object.id, e.object.kind, e.object.state),
         of=ObjectUpdated,
     )
-    await client.start()  # connect, subscribe, run discovery
+    await client.connect()  # connect, subscribe, run discovery
 
     rooms = await client.fetch_rooms()
     for obj_id, room in rooms.items():
         print(f"object {obj_id} -> {room}")
 
     await asyncio.sleep(30)
-    await client.stop()
+    await client.disconnect()
 
 
 asyncio.run(main())
