@@ -641,6 +641,35 @@ def test_details_populate_and_classify() -> None:
     }
 
 
+def test_two_catalogue_rows_sharing_one_leaf_id_get_distinct_unique_keys() -> None:
+    """Two Designer views of one output share one `leafId`. Both objects
+    exist, `stable_key` reads the same for both, and `unique_key` (built
+    from the catalogue `id`) still tells them apart."""
+    store = _store()
+    _apply(
+        store,
+        DETAILS_TOPIC,
+        details(
+            {
+                "id": 150,
+                "typ_komponentu": "flaga",
+                "leafId": "0_be82_257_2_2",
+                "opis_menu": "Relay",
+            },
+            {
+                "id": 151,
+                "typ_komponentu": "flaga",
+                "leafId": "0_be82_257_2_2",
+                "opis_menu": "Relay",
+            },
+        ),
+    )
+    assert set(store.objects) == {150, 151}
+    first, second = store.objects[150], store.objects[151]
+    assert first.stable_key == second.stable_key
+    assert first.unique_key != second.unique_key
+
+
 def test_devices_populate_modules_with_model_and_versions() -> None:
     store = _store()
     _apply(

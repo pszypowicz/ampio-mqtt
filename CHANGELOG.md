@@ -37,7 +37,8 @@ that separates them.
   on, and corrects the object table's claim about the database object id. An
   object delete is soft on the `config` catalogue, so the autoincrement never
   renumbers and the id is stable in practice. `device_id` keeps its warning,
-  because it mirrors the module row.
+  because it mirrors the module row. Adopting `unique_key` re-keys every entity
+  a consumer built on `stable_key`.
 
 ## 0.39.0
 

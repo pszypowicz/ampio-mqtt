@@ -88,8 +88,10 @@ It does **not** use:
 - **`opis_menu` (the object name)** - display only. A consumer uses it as the
   entity's friendly name, and it never affects the kind. A renamed channel does
   not change what it is.
-- **`funkcja` (the channel index)** - identity only. It is part of a consumer's
-  stable per-object key, and it never affects the kind.
+- **`funkcja` (the channel index)** - the physical channel index within the
+  module. It routes raw channel events to the object, and it never affects the
+  kind. It is not part of the object identity key. Use `unique_key` for identity
+  (see [`identity.md`](identity.md)).
 
 `typ_komponentu` must be the primary key. On an M-SENS the **temperature**
 object and the **humidity** object both carry `interpretacja=1`. Only

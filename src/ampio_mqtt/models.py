@@ -119,9 +119,11 @@ class AmpioObject:
     through the read surface.
     """
 
-    # Volatile: `id` (and `device_id`) are DB autoincrement ids that change
-    # when a module is replaced - never durable identity across a hardware
-    # swap. docs/identity.md is the home for the identity model.
+    # The per-object identity source, exposed as `unique_key`. An object
+    # delete is soft on the `config` catalogue, so the autoincrement never
+    # renumbers. `device_id` is the volatile one: it mirrors the module row,
+    # which is reassigned when a module is replaced.
+    # docs/identity.md is the home for the identity model.
     id: int
     device_id: int | None = None  # id_urzadzenia (physical module)
     typ_komponentu: str | None = None
