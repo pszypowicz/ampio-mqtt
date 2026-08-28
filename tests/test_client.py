@@ -519,7 +519,7 @@ def test_subscribe_object_id_listener_exception_is_isolated() -> None:
     assert seen == [41]
 
 
-async def test_start_times_out_without_auth_error() -> None:
+async def test_connect_times_out_without_auth_error() -> None:
     """A connection that simply never comes up still raises AmpioConnectionError."""
     broker = FakeBroker()
     broker.enter_delay = 10.0

@@ -547,7 +547,7 @@ class AmpioStore:
         snapshot request is the ordering boundary: a live value received
         after the latest request (guarded) outranks every seed, and one
         received before it loses to the seed that request produced.
-        Raw-proven objects never reach this comparison: their snapshot
+        Raw-owned objects never reach this comparison: their snapshot
         rows are skipped before it.
         """
         if obj.state is None:

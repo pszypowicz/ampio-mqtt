@@ -228,7 +228,7 @@ async def test_an_admin_client_requests_only_the_config_pair() -> None:
 # --- disconnect() and connect() lifecycle -----------------------------------------
 
 
-async def test_stop_cancels_a_runner_sleeping_in_backoff() -> None:
+async def test_disconnect_cancels_a_runner_sleeping_in_backoff() -> None:
     """disconnect() returns promptly while the loop sleeps in reconnect backoff."""
     broker = FakeBroker()
     broker.stream_error = aiomqtt.MqttError("connection lost")
@@ -240,7 +240,7 @@ async def test_stop_cancels_a_runner_sleeping_in_backoff() -> None:
     assert client.available is False
 
 
-async def test_second_start_recycles_the_connection_loop() -> None:
+async def test_second_connect_recycles_the_connection_loop() -> None:
     """connect() on a running client closes the previous loop first - two
     loops would share one client id and steal the session from each other
     on every reconnect."""
@@ -305,7 +305,7 @@ async def test_concurrent_starts_serialize_and_the_survivor_stays_up() -> None:
         await client.disconnect()
 
 
-async def test_stop_during_start_aborts_the_connect_promptly() -> None:
+async def test_disconnect_during_connect_aborts_the_connect_promptly() -> None:
     """disconnect() while connect() is mid-connect wakes the connect wait instead
     of leaving it to run out its full timeout budget."""
     broker = FakeBroker()
@@ -322,7 +322,7 @@ async def test_stop_during_start_aborts_the_connect_promptly() -> None:
     assert client.available is False
 
 
-async def test_start_drives_full_discovery_through_mocked_broker() -> None:
+async def test_connect_drives_full_discovery_through_mocked_broker() -> None:
     """A scripted broker drives connect() through connect + discovery to completion."""
     broker = FakeBroker()
     broker.scripted_messages = [
@@ -495,7 +495,7 @@ async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
     assert availability == [True, False]
 
 
-async def test_fresh_start_clears_a_runtime_auth_failure() -> None:
+async def test_fresh_connect_clears_a_runtime_auth_failure() -> None:
     """auth_failure is terminal for one run, not for the client: a new
     connect() - presumably with accepted credentials - clears it and the
     connection comes back up."""
@@ -581,7 +581,7 @@ async def test_loop_crash_dispatches_connection_died_and_stops() -> None:
         await client.disconnect()
 
 
-async def test_crash_during_start_raises_connection_error() -> None:
+async def test_crash_during_connect_raises_connection_error() -> None:
     """A loop crash before the first connect surfaces from connect() itself,
     promptly, and dispatches nothing - mirroring the auth path."""
     broker = FakeBroker()
@@ -633,7 +633,7 @@ async def test_unacknowledged_publish_raises_timeout(
         await client.set_event(9)
 
 
-async def test_consumer_stop_is_not_an_availability_event() -> None:
+async def test_consumer_disconnect_is_not_an_availability_event() -> None:
     """disconnect() must not report the drop it causes itself (#56): every
     consumer reacting to availability would otherwise see a deliberate
     shutdown as a lost connection."""
@@ -801,7 +801,7 @@ async def test_a_rejected_namespace_filter_warns(
 # --- listener delivery context --------------------------------------------
 
 
-async def test_listeners_run_on_the_start_loop_in_the_main_thread() -> None:
+async def test_listeners_run_on_the_connect_loop_in_the_main_thread() -> None:
     """Transport-driven dispatch invokes listeners synchronously on the
     event loop that ran connect(), never from another thread (#81)."""
     broker = FakeBroker()

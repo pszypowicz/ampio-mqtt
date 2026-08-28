@@ -279,6 +279,7 @@ def is_system_type(typ_komponentu: str | None) -> bool:
 
 
 def input_channel_prefix(typ_komponentu: str | None) -> str | None:
-    """Raw-channel bridge prefix for ``typ_komponentu``, or None if it bridges no channel."""
+    """Raw-channel bridge prefix for ``typ_komponentu``, or None if it bridges
+    no channel."""
     profile = TYPE_PROFILES.get(typ_komponentu) if typ_komponentu is not None else None
     return profile.channel_prefix if profile is not None else None

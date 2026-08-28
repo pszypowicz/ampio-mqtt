@@ -211,7 +211,7 @@ def test_an_unrelated_topic_changes_nothing() -> None:
 def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
     """An id recycled onto a type the raw tree does not carry must not freeze.
 
-    DB ids are reassigned when a module is replaced, so a raw-proven flag can
+    DB ids are reassigned when a module is replaced, so a raw-owned flag can
     come back as something else entirely - which no raw channel feeds.
     """
     store = _store()

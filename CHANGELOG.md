@@ -12,6 +12,82 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.41.0
+
+The public API named one concept several ways across classes, and a few names
+described how a value had been produced rather than what it holds.
+`AmpioObject.raw_proven` said what had been proven rather than what the object
+carries. `device_id` named an `int` module row id on `AmpioObject` and a `str`
+host identifier on `AmpioServerInfo`. `AmpioObject.leaf_out_no` called itself an
+output number even though the live catalogue returns it for `wej` (input)
+objects too. This release renames 33 public names against five ordered rules, so
+each name matches the surface it is read from or the wire verb it sends.
+
+A lower-numbered rule wins wherever two could apply. R1 gives a field the name
+of the database column or Designer key it is read from. R2 keeps an English name
+only where the value itself was converted, not merely parsed or filtered. R3
+names a command method after the wire verb it sends. R4 keeps a qualified
+English name where the column name is a Python builtin or collides inside its
+own class. R5 names a derived value for the thing it is, never for how it was
+proven, how stable it is, or how unique it is.
+
+### Added
+
+- **`AmpioObject.sf_id` and `AmpioObject.sub_sf_id`** - the third and fourth
+  `leaf_id` segments, the Designer's own special-function id and its
+  sub-function id. Both parse the way `module_mac` and `leaf_io_no` already do,
+  through a strict regex, and read None when `leaf_id` is empty or malformed. A
+  `sub_sf_id` has meaning only inside its `sf_id`.
+
+### Changed
+
+- **Nothing changed behavior.** Every value, type, and wire payload a consumer
+  reads is exactly what it was before this release. Only names moved, to the
+  table below.
+
+| Where               | Old name                   | New name                   |
+| ------------------- | -------------------------- | -------------------------- |
+| `AmpioObject`       | `device_id`                | `id_urzadzenia`            |
+| `AmpioObject`       | `name`                     | `opis_menu`                |
+| `AmpioObject`       | `value`                    | `state`                    |
+| `AmpioObject`       | `tilt_position`            | `lammel`                   |
+| `AmpioObject`       | `raw_proven`               | `raw_owned`                |
+| `AmpioObject`       | `leaf_out_no`              | `leaf_io_no`               |
+| `AmpioObject`       | `stable_key`               | `leaf_key`                 |
+| `AmpioObject`       | `unique_key`               | `object_key`               |
+| `AmpioModule`       | `name`                     | `nazwa_urzadzenia`         |
+| `AmpioModule`       | `type`                     | `typ_urzadzenia`           |
+| `AmpioModule`       | `sw_version`               | `wersja_softu`             |
+| `AmpioModule`       | `hw_version`               | `wersja_pcb`               |
+| `AmpioServerInfo`   | `key`                      | `server_key`               |
+| `AmpioScene`        | `name`                     | `scene_name`               |
+| `ThermostatState`   | `measured_temperature`     | `measure_temp`             |
+| `ThermostatState`   | `target_temperature`       | `set_temperature`          |
+| `DesignerRecord`    | `name`                     | `desc`                     |
+| `ModuleRecord`      | `name`                     | `desc`                     |
+| `AmpioClient`       | `start`                    | `connect`                  |
+| `AmpioClient`       | `stop`                     | `disconnect`               |
+| `AmpioClient`       | `toggle`                   | `switch`                   |
+| `AmpioClient`       | `set_color`                | `set_colors`               |
+| `AmpioClient`       | `open_cover`               | `open`                     |
+| `AmpioClient`       | `close_cover`              | `close`                    |
+| `AmpioClient`       | `stop_cover`               | `stop`                     |
+| `AmpioClient`       | `set_cover_position`       | `set_roller_pos`           |
+| `AmpioClient`       | `set_cover_tilt`           | `set_roller_lamella`       |
+| `AmpioClient`       | `turn_scene_off`           | `off_scene`                |
+| `AmpioClient`       | `send_event`               | `set_event`                |
+| `AmpioClient`       | `test_connection`          | `check_connection`         |
+| `events.py`         | `BusEvent`                 | `BusEventRaised`           |
+| `events.py`         | `BusEvent.number`          | `event_number`             |
+| `classification.py` | `OPEN_SENSOR_KEY_PREFIXES` | `SENSOR_KIND_KEY_PREFIXES` |
+
+`AmpioClient.stop_cover` becomes `AmpioClient.stop`, freed by `disconnect`
+taking over the lifecycle sense of `stop`. A test or a consumer that keyed on
+the word `stop` for shutdown now means the cover command instead.
+
+- **`tools/smoke_test.py`** - repaired. It called `obj.is_sensor`, a property
+  removed in 0.29.0, so the tool had raised `AttributeError` on every run since.
+
 ## 0.40.0
 
 Two Ampio Designer objects can drive one physical output. Both carry the same

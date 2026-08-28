@@ -41,13 +41,13 @@ def test_numeric_value_interpretation(value, expected) -> None:
 
 
 def test_leaf_key_is_the_physical_output_token() -> None:
-    """leaf_key returns leaf_<leaf_id>, unchanged by the rename."""
+    """leaf_key returns leaf_<leaf_id>."""
     obj = AmpioObject(id=1, leaf_id="0_1f2e_257_2_5")
     assert obj.leaf_key == "leaf_0_1f2e_257_2_5"
 
 
 def test_object_key_is_the_per_object_token() -> None:
-    """object_key returns obj_<id>, unchanged by the rename."""
+    """object_key returns obj_<id>."""
     obj = AmpioObject(id=7)
     assert obj.object_key == "obj_7"
 

@@ -486,7 +486,7 @@ async def test_confirm_propagates_a_publish_failure(
 
 
 async def test_confirm_on_the_admin_tier_resolves_on_the_raw_edge() -> None:
-    """The store drops a raw-proven object's per-object echo whole, so the
+    """The store drops a raw-owned object's per-object echo whole, so the
     raw edge must satisfy the wait - any-source ObjectUpdated is the
     primitive, or admin-tier confirms on bridged inputs would always
     time out."""

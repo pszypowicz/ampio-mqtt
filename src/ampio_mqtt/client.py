@@ -689,7 +689,7 @@ class AmpioClient:
         return True
 
     async def disconnect(self) -> None:
-        """Stop the connection.
+        """Close the connection.
 
         Safe to call at any point, including when the connection loop has
         already failed: whatever it died of is logged rather than raised, so a
@@ -803,8 +803,9 @@ class AmpioClient:
         None fields included - with :class:`ObjectUpdated` dispatched on
         change. The same reply's DEVICE_NAME entry folds into
         :pyattr:`AmpioModule.record` with :class:`ModuleUpdated` (#114).
-        The catalogue facts (``matter_device_type``, ``name``) are never
-        touched: the record is the separate, admin-guarded fact (#133).
+        The catalogue facts (``matter_device_type``, ``opis_menu``) are
+        never touched: the record is the separate, admin-guarded fact
+        (#133).
 
         Returns ``{object_id: DesignerRecord}`` for what resolved. A
         module that does not answer within ``timeout`` is skipped

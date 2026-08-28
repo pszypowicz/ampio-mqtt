@@ -104,7 +104,7 @@ def test_malformed_diagnostics_frames_are_ignored(payload: bytes) -> None:
 # --- lifecycle --------------------------------------------------------------
 
 
-async def test_stop_after_the_loop_died_does_not_raise() -> None:
+async def test_disconnect_after_the_loop_died_does_not_raise() -> None:
     broker = FakeBroker()
     broker.stream_error = RuntimeError("injected bug")
     client = make_client(broker)
@@ -118,7 +118,7 @@ async def test_stop_after_the_loop_died_does_not_raise() -> None:
     assert client.available is False
 
 
-async def test_stop_is_idempotent() -> None:
+async def test_disconnect_is_idempotent() -> None:
     client = _client()
     await client.disconnect()
     await client.disconnect()
