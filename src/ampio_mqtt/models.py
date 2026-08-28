@@ -131,9 +131,9 @@ class AmpioObject:
     # replacement-stable but NOT unique - objects can share one. Routes raw
     # channel events to this object.
     funkcja: int | None = None
-    # `leafId`, identical on both discovery surfaces; empty for ghost rows
+    # `leafId`, identical on both discovery surfaces. Empty for ghost rows
     # and system objects. Doubles as the visibility marker (`visible`) and
-    # the stable identity source (`stable_key`) - docs/identity.md.
+    # the physical-output key (`stable_key`) - docs/identity.md.
     leaf_id: str = ""
     # `params` bitfield (Designer config flags; see `hidden`/`visible`).
     # Defaults to 0 so a payload without the column reads "nothing hidden".
