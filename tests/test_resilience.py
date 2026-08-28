@@ -110,18 +110,18 @@ async def test_stop_after_the_loop_died_does_not_raise() -> None:
     client = make_client(broker)
     died: list[ConnectionDied] = []
     client.subscribe(died.append, of=ConnectionDied)
-    await client.start(timeout=2.0, discovery_timeout=0.05)
+    await client.connect(timeout=2.0, discovery_timeout=0.05)
     async with asyncio.timeout(2.0):
         while not died:
             await asyncio.sleep(0.01)
-    await client.stop()  # must not raise
+    await client.disconnect()  # must not raise
     assert client.available is False
 
 
 async def test_stop_is_idempotent() -> None:
     client = _client()
-    await client.stop()
-    await client.stop()
+    await client.disconnect()
+    await client.disconnect()
 
 
 # Attempts are unbounded, so the exponent must be clamped: a broker down

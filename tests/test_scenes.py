@@ -118,7 +118,7 @@ async def test_fetch_scenes_survives_a_malformed_infos_row(
     ("call", "expected"),
     [
         (lambda c: c.run_scene(1), b"/api/run/scene/1"),
-        (lambda c: c.turn_scene_off(1), b"/api/off/scene/1"),
+        (lambda c: c.off_scene(1), b"/api/off/scene/1"),
         (lambda c: c.undo_scene(1), b"/api/undo/scene/1"),
     ],
 )

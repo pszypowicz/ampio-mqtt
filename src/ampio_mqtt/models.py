@@ -458,7 +458,7 @@ class AmpioModule:
     # the module: a state push or raw edge for one of its objects, or its own
     # diagnostics broadcast. One clock only - snapshot and catalogue seeds do
     # not count, since they replay DB state that may be arbitrarily old. None
-    # until the first live message after start().
+    # until the first live message after connect().
     last_seen: float | None = None
     # Self-reported health from the module's `b/4F` broadcast. Both stay None
     # on a standard account, which is not served the raw tree, and
@@ -538,8 +538,8 @@ class ConnectionStats:
     """Internal liveness counters behind ``diagnostics_snapshot()``.
 
     Updated by the connection layer (`last_message_at` by the client).
-    `started_at` and `reconnect_count` cover the current ``start()`` run -
-    a deliberate stop/start restarts them, so a snapshot never reads a
+    `started_at` and `reconnect_count` cover the current ``connect()`` run -
+    a deliberate disconnect/connect restarts them, so a snapshot never reads a
     consumer-initiated restart as a flapping connection. `last_error` and
     `last_message_at` roll across runs.
     """

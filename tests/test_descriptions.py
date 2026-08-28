@@ -227,7 +227,7 @@ async def _admin_client_with_catalogue() -> tuple[AmpioClient, FakeBroker]:
     client = AmpioClient(
         "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
     )
-    await client.start(timeout=2.0, discovery_timeout=0.01)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
     feed(
         client,
         ADMIN_DETAILS_TOPIC,
@@ -263,20 +263,20 @@ async def test_admin_subscribes_the_device_api_wildcard() -> None:
     client = AmpioClient(
         "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
     )
-    await client.start(timeout=2.0, discovery_timeout=0.01)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         assert "device_api/from/+/info" in broker.subscribed
     finally:
-        await client.stop()
+        await client.disconnect()
     restricted_broker = FakeBroker()
     restricted = AmpioClient(
         "host", username="u", mqtt_client_factory=restricted_broker.factory
     )
-    await restricted.start(timeout=2.0, discovery_timeout=0.01)
+    await restricted.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         assert "device_api/from/+/info" not in restricted_broker.subscribed
     finally:
-        await restricted.stop()
+        await restricted.disconnect()
 
 
 async def test_resolve_records_sweeps_joins_and_merges() -> None:
@@ -326,7 +326,7 @@ async def test_resolve_records_sweeps_joins_and_merges() -> None:
         )
         assert [m.module.record.location for m in module_events] == ["Rozdzielnia"]
     finally:
-        await client.stop()
+        await client.disconnect()
 
 
 async def test_resolve_records_tolerates_silent_modules() -> None:
@@ -356,15 +356,15 @@ async def test_resolve_records_tolerates_silent_modules() -> None:
             64: DesignerRecord(location="Potter", matter_device_type=256, desc="L")
         }
     finally:
-        await client.stop()
+        await client.disconnect()
 
 
 async def test_resolve_records_raises_on_restricted_tier() -> None:
     broker = FakeBroker()
     client = AmpioClient("host", username="u", mqtt_client_factory=broker.factory)
-    await client.start(timeout=2.0, discovery_timeout=0.01)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         with pytest.raises(RuntimeError, match="admin"):
             await client.resolve_records(timeout=0.1)
     finally:
-        await client.stop()
+        await client.disconnect()

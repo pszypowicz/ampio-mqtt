@@ -91,7 +91,7 @@ class BusEvent:
 
     Receiving these rides the administrator-only raw tree, so they never
     fire on a standard account - though such an account can raise events
-    itself via :meth:`AmpioClient.send_event`.
+    itself via :meth:`AmpioClient.set_event`.
     """
 
     number: int
@@ -108,7 +108,7 @@ class AvailabilityChanged:
     connection coming up, an outage, and the drop preceding the terminal
     :class:`AuthFailed` / :class:`ConnectionDied` events (dispatched
     after it, so entities read unavailable by then). A consumer-initiated
-    ``stop()`` is not reported - a deliberate shutdown is not an
+    ``disconnect()`` is not reported - a deliberate shutdown is not an
     availability event - though ``AmpioClient.available`` still reads
     False after it.
     """
@@ -118,12 +118,12 @@ class AvailabilityChanged:
 
 @dataclass(frozen=True, slots=True)
 class AuthFailed:
-    """Terminal: the broker rejected the credentials after ``start()``.
+    """Terminal: the broker rejected the credentials after ``connect()``.
 
     Carries the broker's reason string. By dispatch time
     ``AvailabilityChanged(False)`` has fired and the connection loop has
     stopped for good, so this is the signal to drive a reauthentication
-    flow. A rejection during ``start()`` itself raises
+    flow. A rejection during ``connect()`` itself raises
     ``AmpioAuthError`` there instead and dispatches nothing.
     """
 
@@ -140,8 +140,8 @@ class ConnectionDied:
     per message and the connection stays up. Dispatched after
     ``AvailabilityChanged(False)``, with the traceback logged and the
     reason kept in the diagnostics snapshot's ``last_error``. Only a
-    fresh ``start()`` recovers. A crash during ``start()`` itself makes
-    ``start()`` raise ``AmpioConnectionError`` instead and dispatches
+    fresh ``connect()`` recovers. A crash during ``connect()`` itself makes
+    ``connect()`` raise ``AmpioConnectionError`` instead and dispatches
     nothing, mirroring the auth path.
     """
 

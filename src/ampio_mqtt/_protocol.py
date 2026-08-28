@@ -779,7 +779,7 @@ class Endpoint:
     req_payload: str  # request keyword, or "" for the states/info surfaces
     resp_surface: str  # fromDB sub-topic: "config" | "data"
     resp_leaf: str  # final response-topic segment
-    # Part of the initial-discovery set awaited by start() /
+    # Part of the initial-discovery set awaited by connect() /
     # wait_for_initial_discovery(). The rooms/scenes endpoints are on-demand.
     initial: bool = False
     # The one tier this endpoint answers for, or None for both. The M-SERV

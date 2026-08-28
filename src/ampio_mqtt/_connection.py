@@ -145,8 +145,8 @@ class Connection:
             # while this open holds the lock lands its abort on THIS event.
             abort = self._abort_open = asyncio.Event()
             await self._shutdown()
-            # The run counters restart with the run: a deliberate stop()/
-            # start() must not read as a reconnect in a diagnostics blob.
+            # The run counters restart with the run: a deliberate disconnect()/
+            # connect() must not read as a reconnect in a diagnostics blob.
             self._stats.started_at = None
             self._stats.reconnect_count = 0
             self._stop = False

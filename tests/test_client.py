@@ -531,7 +531,7 @@ async def test_start_times_out_without_auth_error() -> None:
         mqtt_client_factory=broker.factory,
     )
     with pytest.raises(AmpioConnectionError):
-        await client.start(timeout=0.1, discovery_timeout=0.05)
+        await client.connect(timeout=0.1, discovery_timeout=0.05)
 
 
 def test_last_payloads_retained_for_each_handler() -> None:
@@ -658,14 +658,14 @@ async def test_reconnect_count_increments_on_reconnect() -> None:
             broker.stream_error = None
 
     client.subscribe(_recover, of=AvailabilityChanged)
-    await client.start(timeout=2.0, discovery_timeout=0.05)
+    await client.connect(timeout=2.0, discovery_timeout=0.05)
     try:
         # Wait for the second connection to land (reconnect_count incremented).
         async with asyncio.timeout(2.0):
             while client.diagnostics_snapshot()["connection"]["reconnect_count"] < 1:
                 await asyncio.sleep(0.01)
     finally:
-        await client.stop()
+        await client.disconnect()
 
     assert client.diagnostics_snapshot()["connection"]["reconnect_count"] == 1
     assert client.diagnostics_snapshot()["connection"]["started_at"] is not None
@@ -708,7 +708,7 @@ async def test_refresh_resets_the_snapshot_boundary() -> None:
     can correct a value that carries only a local receive stamp."""
     broker = FakeBroker()
     client = make_client(broker)
-    await client.start(timeout=1.0, discovery_timeout=0.01)
+    await client.connect(timeout=1.0, discovery_timeout=0.01)
     try:
         feed(client, DATA_DEVICES_TOPIC, details({"id": 10}))
         feed(client, f"ampio/fromDB/{USER}/ob/10/state", '{"state":"live"}')
@@ -721,7 +721,7 @@ async def test_refresh_resets_the_snapshot_boundary() -> None:
         feed(client, STATES_TOPIC, snapshot)
         assert client.objects[10].state == "0"
     finally:
-        await client.stop()
+        await client.disconnect()
 
 
 def test_subscribe_rejects_an_empty_of_tuple() -> None:
