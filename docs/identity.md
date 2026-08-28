@@ -29,50 +29,66 @@ device topology must never branch on them.
 
 ## Objects
 
-| Field                     | Stable across module replacement?                                                                                                                         | Notes |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
-| `id` / `device_id`        | **No** - DB autoincrement, change with the module.                                                                                                        |
-| `funkcja` (channel index) | **Yes** - part of the reloaded Designer config. Not unique: if the same physical signal is exposed as several Designer objects, they share one `funkcja`. |
-| `typ_komponentu`          | **Yes** - the type vocabulary (`temp`, `lin_wej`, `flaga`, ...).                                                                                          |
-| `leaf_id`                 | **Yes**, when set. The wire-side visibility marker and the stable unique-id source - see below.                                                           |
+| Field                     | Stable across module replacement?                                                                                                                                                                                                                                                   | Notes                                                                                |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `id`                      | **Yes**, in practice. Designer soft-deletes: `params` bit 4 is `DELETED`, and a deleted object returns as a ghost row. The autoincrement therefore never renumbers. Observed unchanged on a live install across years of configuration uploads, module replacements, and deletions. | The per-object unique id, exposed as `AmpioObject.unique_key`.                       |
+| `device_id`               | **No** - it mirrors the module row, which is reassigned in `mac_global` order when a module is replaced.                                                                                                                                                                            | Cross-referencing an object to its module _within a single discovery snapshot_ only. |
+| `funkcja` (channel index) | **Yes** - part of the reloaded Designer config. Not unique: if the same physical signal is exposed as several Designer objects, they share one `funkcja`.                                                                                                                           |
+| `typ_komponentu`          | **Yes** - the type vocabulary (`temp`, `lin_wej`, `flaga`, ...).                                                                                                                                                                                                                    |
+| `leaf_id`                 | **Yes**, when set. The wire-side visibility marker and the physical-output key source - see below.                                                                                                                                                                                  |
 
-## Stable unique id: `leaf_id` (`AmpioObject.stable_key`)
+## Unique id: the object id (`AmpioObject.unique_key`)
 
-The recommended per-object unique id is the Designer `leafId`, exposed as
-`AmpioObject.stable_key` (`leaf_<leaf_id>`) and scoped per server by the
-consumer:
+The recommended per-object unique id is the database object id, exposed as
+`AmpioObject.unique_key` (`obj_<id>`) and scoped per server by the consumer:
 
 ```
-{prefix}_leaf_{leaf_id}
+{prefix}_obj_{id}
 ```
 
 `prefix` is a per-M-SERV scope: use `AmpioServerInfo.key`, the canonical decimal
 form of the server's own CAN mac. Every account tier receives it, and it is
-guaranteed present once `wait_for_initial_discovery()` returns True. Why
-`leaf_id` rather than the module-mac composite
-(`{prefix}_obj_{module.mac}_{typ_komponentu}_{funkcja}`):
+guaranteed present once `wait_for_initial_discovery()` returns True.
 
-- **Available on both account tiers.** The composite needs `module.mac`, which
-  only administrator accounts receive (`config/devices` does not answer for
-  standard accounts, and the app-sync catalogue carries no module list).
-  `leafId` ships in both the `config` and app-sync `data` catalogues with
-  identical values. An install that upgrades a standard account to an
-  administrator thus keeps every unique id.
-- **Replacement-stable.** `leafId` is part of the reloaded Designer config, like
-  `funkcja` and the `mac` override.
-- **Unique among visible objects.** Across a full admin catalogue there is no
-  duplicate `leafId` once the `visible` filter is applied. The known collision
-  is a hidden phantom stub that shares its labeled twin's `leaf_id`. The
-  `hidden` flag removes exactly that stub, so filter on `visible` before you
-  key. (Live installs can carry several such pairs at once, all on M-SENS analog
-  channels.) If a user deliberately exposes one physical signal as several
-  visible Designer objects, those share a `leafId`. The same shape collides the
-  composite too (same mac, typ, and funkcja), so `leaf_id` is never worse.
+Three properties make the object id the right source:
 
-Objects with an empty `leaf_id` still need a fallback key, because system
-objects (`symulacja`, `detekcja`) are visible without one. On the admin tier the
-module-mac composite above still covers them. On the standard tier only the DB
-`id` is available, with its replacement instability accepted and documented.
+- **Unique, always.** One id belongs to one catalogue row. No filter and no
+  fallback is needed, so ghost rows and system objects key exactly like every
+  other object.
+- **Available on both account tiers.** The id is the key of every catalogue
+  surface, so a standard account and an administrator account agree on it.
+- **Stable in practice.** Designer soft-deletes. The `params` `DELETED` bit
+  marks a removed object, and the row stays. The autoincrement therefore never
+  has to renumber, and a live install has kept every id across years of
+  configuration uploads, module replacements, and deletions.
+
+## Physical-output key: `leaf_id` (`AmpioObject.stable_key`)
+
+`AmpioObject.stable_key` (`leaf_<leaf_id>`) names the physical output an object
+drives. It is not an identity for the object row, and it must not be used as
+one.
+
+Several Designer objects can drive one output, and the Designer supports this
+today. One view can act as a plain relay. Another view of the same output can
+carry the bell marker and a pulse time. Every such view carries the same
+`leafId`. A consumer keyed on `stable_key` therefore sees one key for several
+objects and loses all but one of them.
+
+Use `stable_key` for what it does state:
+
+- **Which entities drive one output.** Two objects with equal `stable_key` share
+  a relay, a dimmer, or a roller.
+- **The parse source.** `module_mac` and `leaf_out_no` are read out of it.
+- **The join anchor.** The raw-channel bridge matches on the leaf structure.
+
+`leafId` is empty for ghost rows and for system objects, so `stable_key` reads
+None for them. It is also the wire-side visibility marker, which the next
+section covers.
+
+One further collision exists and is unrelated to the Designer views above. A
+hidden phantom stub can share its labeled twin's `leaf_id` on M-SENS analog
+channels. The `hidden` flag removes exactly that stub, so filter on `visible`
+before grouping by output.
 
 ## Module identity on every tier: `AmpioObject.module_mac`
 
