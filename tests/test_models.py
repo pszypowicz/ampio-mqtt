@@ -48,6 +48,24 @@ def test_stable_key_from_leaf_id(leaf_id: str, expected: str | None) -> None:
     assert AmpioObject(id=1, leaf_id=leaf_id).stable_key == expected
 
 
+def test_unique_key_is_the_object_id() -> None:
+    assert AmpioObject(id=150, leaf_id="0_be82_257_2_2").unique_key == "obj_150"
+
+
+def test_unique_key_separates_views_of_one_output() -> None:
+    """Two Designer views of one output share a leaf but not an identity."""
+    leaf = "0_be82_257_2_2"
+    relay_view = AmpioObject(id=150, leaf_id=leaf)
+    bell_view = AmpioObject(id=151, leaf_id=leaf)
+    assert relay_view.stable_key == bell_view.stable_key
+    assert relay_view.unique_key != bell_view.unique_key
+
+
+def test_unique_key_survives_an_empty_leaf_id() -> None:
+    """System objects and ghost rows carry no leaf, but do carry an id."""
+    assert AmpioObject(id=99, leaf_id="").unique_key == "obj_99"
+
+
 @pytest.mark.parametrize(
     ("typ", "leaf_id", "is_system", "visible"),
     [

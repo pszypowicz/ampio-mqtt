@@ -328,6 +328,19 @@ class AmpioObject:
         return f"leaf_{self.leaf_id}" if self.leaf_id else None
 
     @property
+    def unique_key(self) -> str:
+        """Snapshot-unique identity token (``obj_<id>``).
+
+        The recommended per-object unique id: unique among every object
+        in one discovery snapshot, served on both account tiers, and
+        never None. Scope it per M-SERV with ``AmpioServerInfo.key``.
+        The physical output an object drives is :pyattr:`stable_key`,
+        which several Designer views of one output share by design.
+        See docs/identity.md.
+        """
+        return f"obj_{self.id}"
+
+    @property
     def module_mac(self) -> int | None:
         """The owning module's effective bus mac, parsed from ``leaf_id``.
 
