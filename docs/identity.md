@@ -53,8 +53,9 @@ guaranteed present once `wait_for_initial_discovery()` returns True.
 Three properties make the object id the right source:
 
 - **Unique, always.** One id belongs to one catalogue row. No filter and no
-  fallback is needed, so ghost rows and system objects key exactly like every
-  other object.
+  fallback are needed, so ghost rows and system objects key exactly like every
+  other object. `visible` remains the discovery filter, and this uniqueness does
+  not depend on it.
 - **Available on both account tiers.** The id is the key of every catalogue
   surface, so a standard account and an administrator account agree on it.
 - **Stable in practice.** Designer soft-deletes. The `params` `DELETED` bit
@@ -74,7 +75,7 @@ carry the bell marker and a pulse time. Every such view carries the same
 `leafId`. A consumer keyed on `stable_key` therefore sees one key for several
 objects and loses all but one of them.
 
-Use `stable_key` for what it does state:
+`stable_key` answers three questions:
 
 - **Which entities drive one output.** Two objects with equal `stable_key` share
   a relay, a dimmer, or a roller.
@@ -162,7 +163,7 @@ visible = not hidden and (bool(leaf_id) or is_system)
   marks phantom rows that duplicate a real Designer channel (same `leaf_id`, no
   value), and it marks objects the user hid. Those are exactly the rows the
   `leaf_id` test alone wrongly keeps. It is a Designer config flag, so unlike
-  the DB `id` it is replacement-stable. Every account tier receives `params` on
+  `device_id` it is replacement-stable. Every account tier receives `params` on
   a baseline server (via `devicesDetails` or `data/params_devices`). A row
   without a received value reads `0`, so `hidden` is False and the `leaf_id`
   test alone decides. This is the same gate the M-SERV's Matter bridge uses
@@ -243,9 +244,9 @@ per-object Matter opt-in set in Designer. Bit 4 is the hidden/stub marker that
 structure the bridge's own classifier reads. The bridge also shows why a
 dedicated integration is the right path for sensors. It types objects through a
 registry with known gaps (no `lin_wej` branch, and loudness has no Matter device
-type at all). It keys endpoints on the volatile DB `id`. And it exposes only the
-channels hand-flagged for Matter - a dozen on the reference install, with
-humidity, pressure, illuminance, and CO2 on zero modules.
+type at all). And it exposes only the channels hand-flagged for Matter - a dozen
+on the reference install, with humidity, pressure, illuminance, and CO2 on zero
+modules.
 
 ## The read-only marker (`AmpioObject.read_only`)
 
@@ -268,6 +269,8 @@ consumer must reject writes and keep the entity's platform stable. In Home
 Assistant, keep the entity a switch and raise an error on the service call. Do
 not rebuild it as a binary sensor. A platform swap breaks the entity id, its
 history, and every automation on each checkbox change.
+
+## Deletion on the wire
 
 Deletion behaves as follows on the wire, on the baseline server. A **module**
 delete hard-removes its row from the `devices` list (the library evicts it and
