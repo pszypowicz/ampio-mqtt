@@ -25,7 +25,19 @@ blind-calibration, panel LCD page, and alarm writes on the same `ampio/to` tree
 remain unexplored. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/60).
 
-Picking one up: verify the wire shape live first (`tools/probe_config.py`
-publishes candidate keywords and prints the replies), then follow the
-add-an-endpoint recipe on the `ENDPOINTS` table in
-[`src/ampio_mqtt/_protocol.py`](../src/ampio_mqtt/_protocol.py).
+Picking one up takes three steps.
+
+1. Find the topic. The M-SERV serves the Designer web application at its own
+   root, and that bundle contains the literal topic string for every surface the
+   vendor's own app uses. Read the topics out of the bundle instead of guessing
+   keywords.
+2. Verify the wire shape live. `tools/dump.py` subscribes to a filter, publishes
+   one request, and prints the replies:
+
+   ```sh
+   uv run python tools/dump.py --topic 'ampio/fromDB/admin/config/#' \
+       --request ampio/control/admin/config --request-payload devices
+   ```
+
+3. Follow the add-an-endpoint recipe on the `ENDPOINTS` table in
+   [`src/ampio_mqtt/_protocol.py`](../src/ampio_mqtt/_protocol.py).

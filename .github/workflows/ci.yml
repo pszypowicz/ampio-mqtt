@@ -58,5 +58,8 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: python -m pip install --group dev -e .
-      # Strict comes from [tool.mypy] in pyproject.toml.
-      - run: mypy src/ampio_mqtt
+      # Strict comes from [tool.mypy] in pyproject.toml. `tools` is checked
+      # too: it ships in neither the wheel nor the sdist and carries no tests,
+      # so the type checker is the only thing that notices when a library
+      # change leaves a tool calling something that no longer exists.
+      - run: mypy src/ampio_mqtt tools
