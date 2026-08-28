@@ -39,7 +39,7 @@ from ampio_mqtt.classification import (
     ThermostatKind,
 )
 from ampio_mqtt.events import (
-    BusEvent,
+    BusEventRaised,
     ModuleRemoved,
     ModuleUpdated,
     ObjectAdded,
@@ -188,7 +188,7 @@ def test_an_unreadable_reply_reports_not_parsed() -> None:
     ("topic", "payload", "event_type"),
     [
         (f"ampio/fromDB/{USER}/ob/41/state", '{"state":"1"}', ObjectUpdated),
-        ("ampio/from/1/event", "189", BusEvent),
+        ("ampio/from/1/event", "189", BusEventRaised),
     ],
 )
 def test_live_messages_dispatch_their_event(
@@ -321,7 +321,7 @@ def test_an_identityless_info_reply_never_wipes_held_identity(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A reply without a server mac is unparseable, so it neither takes a
-    held identity away nor is stored - `AmpioServerInfo.key` stays
+    held identity away nor is stored - `AmpioServerInfo.server_key` stays
     populated by construction."""
     store = _store()
     topic = f"ampio/fromDB/{USER}/data/info"
@@ -361,7 +361,7 @@ def test_handler_table_misalignment_fails_at_construction(
         AmpioStore()
 
 
-def _raw_proven_flag(store: AmpioStore, mac: int = 0xCAFE) -> None:
+def _raw_owned_flag(store: AmpioStore, mac: int = 0xCAFE) -> None:
     """Discover one flaga (ob/10 on module 1, channel f/3) and land a raw edge."""
     _apply(store, DEVICES_TOPIC, _devices(mac))
     _apply(store, DETAILS_TOPIC, _flaga_details((10, 1)))
@@ -375,12 +375,12 @@ def _snapshot(state: str, on_ms: int | None) -> str:
     return json.dumps({"List": [{"id": 10, "stan_json": json.dumps(stan)}]})
 
 
-def test_snapshots_never_touch_a_raw_proven_object() -> None:
-    """A raw-proven object's resync is the broker's retained raw table; a
+def test_snapshots_never_touch_a_raw_owned_object() -> None:
+    """A raw-owned object's resync is the broker's retained raw table; a
     DB snapshot may be staler than that raw truth with no comparable clock
     to prove it, so its rows are skipped whatever date they carry."""
     store = _store()
-    _raw_proven_flag(store)
+    _raw_owned_flag(store)
     far_future = int((time.time() + 7200) * 1000)
     applied = _apply(store, STATES_TOPIC, _snapshot("0", far_future))
     assert _updated(applied) == []
@@ -391,7 +391,7 @@ def test_the_echo_of_a_raw_edge_is_ignored_whole() -> None:
     """The per-object echo repeats what the raw edge delivered ~150 ms
     earlier: no second event, no overwrite, not even its timestamp."""
     store = _store()
-    _raw_proven_flag(store)
+    _raw_owned_flag(store)
     before = store.objects[10].updated_at
     applied = _apply(
         store,
@@ -481,7 +481,7 @@ def test_echo_of_an_earlier_edge_does_not_disturb_a_fast_toggle() -> None:
     """Edge 1, edge 2, then the echo of edge 1: the value must stay edge 2's
     and nothing may notify - the echo contributes nothing at all."""
     store = _store()
-    _raw_proven_flag(store)
+    _raw_owned_flag(store)
     _apply(store, f"ampio/from/{0xCAFE:X}/state/f/3", "0")  # edge 2
     before = store.objects[10].updated_at
     applied = _apply(
@@ -641,9 +641,9 @@ def test_details_populate_and_classify() -> None:
     }
 
 
-def test_two_catalogue_rows_sharing_one_leaf_id_get_distinct_unique_keys() -> None:
+def test_two_catalogue_rows_sharing_one_leaf_id_get_distinct_object_keys() -> None:
     """Two Designer views of one output share one `leafId`. Both objects
-    exist, `stable_key` reads the same for both, and `unique_key` (built
+    exist, `leaf_key` reads the same for both, and `object_key` (built
     from the catalogue `id`) still tells them apart."""
     store = _store()
     _apply(
@@ -666,8 +666,8 @@ def test_two_catalogue_rows_sharing_one_leaf_id_get_distinct_unique_keys() -> No
     )
     assert set(store.objects) == {150, 151}
     first, second = store.objects[150], store.objects[151]
-    assert first.stable_key == second.stable_key
-    assert first.unique_key != second.unique_key
+    assert first.leaf_key == second.leaf_key
+    assert first.object_key != second.object_key
 
 
 def test_devices_populate_modules_with_model_and_versions() -> None:
@@ -1614,38 +1614,38 @@ def test_updated_at_takes_the_report_date_or_the_receipt_time() -> None:
     assert obj.updated_at is None
 
 
-def test_raw_proven_tracks_the_bridge_coverage() -> None:
+def test_raw_owned_tracks_the_bridge_coverage() -> None:
     """Set by the first raw edge; cleared when the rebuilt index stops
     covering the object, so it goes back to per-object updates."""
     store = _panel_store()
-    assert store.objects[50].raw_proven is False
+    assert store.objects[50].raw_owned is False
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
-    assert store.objects[50].raw_proven is True
+    assert store.objects[50].raw_owned is True
     retyped = dict(_flaga_row(50, 32), typ_komponentu="roleta_procenty")
     _apply(store, DETAILS_TOPIC, details(retyped))
-    assert store.objects[50].raw_proven is False
+    assert store.objects[50].raw_owned is False
 
 
-def test_clearing_raw_proven_dispatches_the_final_state() -> None:
+def test_clearing_raw_owned_dispatches_the_final_state() -> None:
     """The flip back to per-object updates is public state; the reply's
-    events must end with a snapshot carrying raw_proven False."""
+    events must end with a snapshot carrying raw_owned False."""
     store = _panel_store()
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
     retyped = dict(_flaga_row(50, 32), typ_komponentu="roleta_procenty")
     applied = _apply(store, DETAILS_TOPIC, details(retyped))
-    assert store.objects[50].raw_proven is False
-    assert any(o.id == 50 and o.raw_proven is False for o in _updated(applied))
+    assert store.objects[50].raw_owned is False
+    assert any(o.id == 50 and o.raw_owned is False for o in _updated(applied))
 
 
-def test_a_formerly_raw_proven_value_survives_a_skewed_snapshot() -> None:
-    """Clearing raw_proven hands the object back to the per-object path,
+def test_a_formerly_raw_owned_value_survives_a_skewed_snapshot() -> None:
+    """Clearing raw_owned hands the object back to the per-object path,
     not to a skewed DB seed: the raw value stamped local time, so a dated
     snapshot waits for the next request cycle."""
     store = _panel_store()
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
     retyped = dict(_flaga_row(50, 32), typ_komponentu="roleta_procenty")
     _apply(store, DETAILS_TOPIC, details(retyped))
-    assert store.objects[50].raw_proven is False
+    assert store.objects[50].raw_owned is False
     far_future = int((time.time() + 3600) * 1000)
     stan = json.dumps({"state": "0", "on": far_future})
     _apply(store, STATES_TOPIC, json.dumps({"List": [{"id": 50, "stan_json": stan}]}))
@@ -1819,7 +1819,7 @@ def test_panel_output_o_channel_routes_to_its_object() -> None:
     applied = _apply(store, "ampio/from/CAFE/state/o/2", "1")
 
     obj = store.objects[90]
-    assert obj.state == "1" and obj.is_on is True and obj.raw_proven is True
+    assert obj.state == "1" and obj.is_on is True and obj.raw_owned is True
     assert _updated(applied) == [obj]
 
 
@@ -1833,11 +1833,11 @@ def test_o_channel_of_a_relay_module_is_bridged_too() -> None:
     applied = _apply(store, "ampio/from/B0B0/state/o/1", "1")
 
     obj = store.objects[91]
-    assert obj.state == "1" and obj.raw_proven is True
+    assert obj.state == "1" and obj.raw_owned is True
     assert _updated(applied) == [obj]
 
 
-def test_panel_output_per_object_echo_is_dropped_once_raw_proven() -> None:
+def test_panel_output_per_object_echo_is_dropped_once_raw_owned() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
     _apply(store, DETAILS_TOPIC, details(_przekaznik_row(90, 2, 7, "0_cafe_257_2_1")))

@@ -40,30 +40,42 @@ def test_numeric_value_interpretation(value, expected) -> None:
     assert AmpioObject(id=1, state=value).numeric_value == expected
 
 
+def test_leaf_key_is_the_physical_output_token() -> None:
+    """leaf_key returns leaf_<leaf_id>, unchanged by the rename."""
+    obj = AmpioObject(id=1, leaf_id="0_1f2e_257_2_5")
+    assert obj.leaf_key == "leaf_0_1f2e_257_2_5"
+
+
+def test_object_key_is_the_per_object_token() -> None:
+    """object_key returns obj_<id>, unchanged by the rename."""
+    obj = AmpioObject(id=7)
+    assert obj.object_key == "obj_7"
+
+
 @pytest.mark.parametrize(
     ("leaf_id", "expected"),
     [("0_cb9b_74_0_1", "leaf_0_cb9b_74_0_1"), ("", None)],
 )
-def test_stable_key_from_leaf_id(leaf_id: str, expected: str | None) -> None:
-    assert AmpioObject(id=1, leaf_id=leaf_id).stable_key == expected
+def test_leaf_key_from_leaf_id(leaf_id: str, expected: str | None) -> None:
+    assert AmpioObject(id=1, leaf_id=leaf_id).leaf_key == expected
 
 
-def test_unique_key_is_the_object_id() -> None:
-    assert AmpioObject(id=150, leaf_id="0_be82_257_2_2").unique_key == "obj_150"
+def test_object_key_is_the_object_id() -> None:
+    assert AmpioObject(id=150, leaf_id="0_be82_257_2_2").object_key == "obj_150"
 
 
-def test_unique_key_separates_views_of_one_output() -> None:
+def test_object_key_separates_views_of_one_output() -> None:
     """Two Designer views of one output share a leaf but not an identity."""
     leaf = "0_be82_257_2_2"
     relay_view = AmpioObject(id=150, leaf_id=leaf)
     bell_view = AmpioObject(id=151, leaf_id=leaf)
-    assert relay_view.stable_key == bell_view.stable_key
-    assert relay_view.unique_key != bell_view.unique_key
+    assert relay_view.leaf_key == bell_view.leaf_key
+    assert relay_view.object_key != bell_view.object_key
 
 
-def test_unique_key_survives_an_empty_leaf_id() -> None:
+def test_object_key_survives_an_empty_leaf_id() -> None:
     """System objects and ghost rows carry no leaf, but do carry an id."""
-    assert AmpioObject(id=99, leaf_id="").unique_key == "obj_99"
+    assert AmpioObject(id=99, leaf_id="").object_key == "obj_99"
 
 
 @pytest.mark.parametrize(
@@ -244,7 +256,7 @@ def test_is_server_owned_reads_the_mserv_override_mac(
 @pytest.mark.parametrize(("mac", "expected"), [(47846, "47846"), (1, "1")])
 def test_server_key_is_the_decimal_mac(mac: int, expected: str) -> None:
     """The canonical registry-scoping string; its format is a promise."""
-    assert AmpioServerInfo(mac=mac).key == expected
+    assert AmpioServerInfo(mac=mac).server_key == expected
 
 
 def _colored(value: str | None) -> AmpioObject:

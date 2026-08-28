@@ -3,7 +3,7 @@
 These tests inject a scripted FakeBroker through the ``mqtt_client_factory``
 transport seam so the connect/subscribe/publish/messages path can be
 exercised without a real broker. They cover:
-- the ``AmpioClient.test_connection`` config-flow helper,
+- the ``AmpioClient.check_connection`` config-flow helper,
 - ``refresh()`` / ``fetch_*`` raising when disconnected,
 - ``disconnect()`` cancelling the runner cleanly,
 - ``connect()`` driving a successful discovery via scripted broker messages,
@@ -63,10 +63,10 @@ def _auth_rejection(name: str = "Not authorized") -> aiomqtt.MqttCodeError:
     return aiomqtt.MqttCodeError(ReasonCode(PacketTypes.CONNACK, name))
 
 
-# --- AmpioClient.test_connection ------------------------------------------
+# --- AmpioClient.check_connection ------------------------------------------
 
 
-async def test_connection_returns_server_info_on_happy_path() -> None:
+async def test_check_connection_returns_server_info_on_happy_path() -> None:
     """Messages on other topics are skipped until the info topic arrives."""
     broker = FakeBroker()
     broker.scripted_messages = [
@@ -75,7 +75,7 @@ async def test_connection_returns_server_info_on_happy_path() -> None:
             INFO_TOPIC, json.dumps({"Results": {"mac": 42, "userId": "-1"}}).encode()
         ),
     ]
-    info = await AmpioClient.test_connection(
+    info = await AmpioClient.check_connection(
         "h", USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
     )
     assert info.mac == 42
@@ -90,7 +90,7 @@ async def test_connection_returns_server_info_on_happy_path() -> None:
     assert broker.published_qos == [1]
 
 
-async def test_connection_reports_a_restricted_account_before_setup() -> None:
+async def test_check_connection_reports_a_restricted_account_before_setup() -> None:
     """A config flow can reject a non-admin account at validation time (#59).
 
     An app-created user carries its positive users-table row id; only the
@@ -102,14 +102,14 @@ async def test_connection_reports_a_restricted_account_before_setup() -> None:
             INFO_TOPIC, json.dumps({"Results": {"mac": 42, "userId": "4"}}).encode()
         )
     ]
-    info = await AmpioClient.test_connection(
+    info = await AmpioClient.check_connection(
         "h", USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
     )
     assert info.user_id == 4
     assert info.access_tier is AccessTier.RESTRICTED
 
 
-async def test_connection_raises_timeout_when_info_never_arrives() -> None:
+async def test_check_connection_raises_timeout_when_info_never_arrives() -> None:
     """A broker that connects but never replies raises AmpioTimeoutError.
 
     The timeout error subclasses AmpioConnectionError, so a consumer that
@@ -118,49 +118,49 @@ async def test_connection_raises_timeout_when_info_never_arrives() -> None:
     """
     broker = FakeBroker()
     with pytest.raises(AmpioTimeoutError):
-        await AmpioClient.test_connection(
+        await AmpioClient.check_connection(
             "h", USER, "p", info_timeout=0.1, mqtt_client_factory=broker.factory
         )
 
 
-async def test_connection_maps_identityless_info_reply_to_timeout() -> None:
+async def test_check_connection_maps_identityless_info_reply_to_timeout() -> None:
     """A reply without the server identity is unparseable: the config flow
-    needs `key` for its unique id, so it gets the retryable shape instead
-    of an info it cannot scope by."""
+    needs `server_key` for its unique id, so it gets the retryable shape
+    instead of an info it cannot scope by."""
     broker = FakeBroker()
     broker.scripted_messages = [
         Message(INFO_TOPIC, json.dumps({"Results": {}}).encode())
     ]
     with pytest.raises(AmpioTimeoutError):
-        await AmpioClient.test_connection(
+        await AmpioClient.check_connection(
             "h", USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
         )
 
 
-async def test_connection_maps_unparseable_info_reply_to_timeout() -> None:
+async def test_check_connection_maps_unparseable_info_reply_to_timeout() -> None:
     """A corrupt reply gets the same retryable shape as silence."""
     broker = FakeBroker()
     broker.scripted_messages = [Message(INFO_TOPIC, b"not json at all")]
     with pytest.raises(AmpioTimeoutError):
-        await AmpioClient.test_connection(
+        await AmpioClient.check_connection(
             "h", USER, "p", info_timeout=1, mqtt_client_factory=broker.factory
         )
 
 
-async def test_connection_raises_auth_error_on_bad_credentials() -> None:
+async def test_check_connection_raises_auth_error_on_bad_credentials() -> None:
     broker = FakeBroker()
     broker.enter_errors = [_auth_rejection()]
     with pytest.raises(AmpioAuthError):
-        await AmpioClient.test_connection(
+        await AmpioClient.check_connection(
             "h", USER, "bad", info_timeout=0.1, mqtt_client_factory=broker.factory
         )
 
 
-async def test_connection_raises_connection_error_on_transport_failure() -> None:
+async def test_check_connection_raises_connection_error_on_transport_failure() -> None:
     broker = FakeBroker()
     broker.enter_errors = [aiomqtt.MqttError("Connection refused")]
     with pytest.raises(AmpioConnectionError):
-        await AmpioClient.test_connection(
+        await AmpioClient.check_connection(
             "h", USER, "p", info_timeout=0.1, mqtt_client_factory=broker.factory
         )
 
@@ -459,7 +459,7 @@ async def test_restricted_account_completes_via_data_surface_fallback() -> None:
         obj = client.objects[24]
         assert obj.opis_menu == "CO2"
         assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
-        assert obj.stable_key == "leaf_0_cb9b_75_0_0"
+        assert obj.leaf_key == "leaf_0_cb9b_75_0_0"
         assert obj.visible is True
         assert client.modules == {}
         assert client.server_info is not None and client.server_info.mac == 99

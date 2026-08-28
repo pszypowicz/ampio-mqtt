@@ -689,7 +689,7 @@ async def test_discovery_stays_incomplete_without_server_identity(
     feed(client, DETAILS_TOPIC, details())
     feed(client, DEVICES_TOPIC, devices())
     assert await client.wait_for_initial_discovery(timeout=1.0) is True
-    assert client.server_info.key == "555"
+    assert client.server_info.server_key == "555"
 
 
 @pytest.mark.parametrize("username", [None, ""])
@@ -700,7 +700,7 @@ async def test_username_is_required(username: str | None) -> None:
     with pytest.raises(ValueError):
         AmpioClient("host", username=username)
     with pytest.raises(ValueError):
-        await AmpioClient.test_connection("host", username, None)
+        await AmpioClient.check_connection("host", username, None)
 
 
 async def test_refresh_resets_the_snapshot_boundary() -> None:

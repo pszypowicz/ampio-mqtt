@@ -10,7 +10,7 @@ from ampio_mqtt import (
     AccessTier,
     AmpioModule,
     AmpioServerInfo,
-    BusEvent,
+    BusEventRaised,
     ThermostatState,
 )
 from ampio_mqtt._protocol import (
@@ -268,7 +268,8 @@ def test_parse_server_info_bad_payload_returns_none() -> None:
     # The baseline server always wraps the fields in `Results`.
     assert parse_server_info(json.dumps({"mac": 1})) is None
     # ... and always reports its mac: an identity-less reply is unparseable,
-    # which is what keeps `AmpioServerInfo.key` populated by construction.
+    # which is what keeps `AmpioServerInfo.server_key` populated by
+    # construction.
     assert parse_server_info(json.dumps({"Results": {}})) is None
     assert parse_server_info(json.dumps({"Results": {"serverVersion": "1865"}})) is None
 
@@ -583,11 +584,11 @@ def test_raw_channel_route_malformed(topic: str) -> None:
 @pytest.mark.parametrize(
     ("topic", "payload", "expected"),
     [
-        ("ampio/from/1/event", "189", BusEvent(number=189, mac=1)),
-        ("ampio/from/D09A/event", " 42 ", BusEvent(number=42, mac=0xD09A)),
+        ("ampio/from/1/event", "189", BusEventRaised(event_number=189, mac=1)),
+        ("ampio/from/D09A/event", " 42 ", BusEventRaised(event_number=42, mac=0xD09A)),
     ],
 )
-def test_event_route_ok(topic: str, payload: str, expected: BusEvent) -> None:
+def test_event_route_ok(topic: str, payload: str, expected: BusEventRaised) -> None:
     assert _route(topic, payload) == expected
 
 

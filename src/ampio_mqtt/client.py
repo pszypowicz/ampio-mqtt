@@ -339,7 +339,7 @@ class AmpioClient:
 
         Guaranteed non-None once :meth:`wait_for_initial_discovery` has
         returned True; every held info carries a populated
-        :pyattr:`AmpioServerInfo.key` by construction.
+        :pyattr:`AmpioServerInfo.server_key` by construction.
         """
         return self._store.server_info
 
@@ -395,7 +395,7 @@ class AmpioClient:
         """The account tier, decided by the authenticated username at
         construction - see :class:`AccessTier`. Before any client exists,
         a config flow reads :pyattr:`AmpioServerInfo.access_tier` from a
-        :meth:`test_connection` result instead."""
+        :meth:`check_connection` result instead."""
         return self._tier
 
     def diagnostics_snapshot(self) -> dict[str, Any]:
@@ -582,7 +582,7 @@ class AmpioClient:
         return _unsubscribe
 
     @staticmethod
-    async def test_connection(
+    async def check_connection(
         host: str,
         username: str,
         password: str | None,
@@ -598,8 +598,8 @@ class AmpioClient:
         no parseable info reply arrives within ``info_timeout``, and
         ``AmpioConnectionError`` on any other connection failure. A
         returned info always has a populated
-        :pyattr:`AmpioServerInfo.key` for the config flow's unique id,
-        and its ``access_tier`` tells the flow what the account will be
+        :pyattr:`AmpioServerInfo.server_key` for the config flow's unique
+        id, and its ``access_tier`` tells the flow what the account will be
         served before any client exists.
         """
         if not username:
@@ -670,8 +670,9 @@ class AmpioClient:
 
         A True guarantees ``objects`` and ``server_info`` (and, on the
         admin tier, ``modules``) are populated, with
-        :pyattr:`AmpioServerInfo.key` a string by construction. It never
-        raises on timeout - discovery continues and this returns False.
+        :pyattr:`AmpioServerInfo.server_key` a string by construction. It
+        never raises on timeout - discovery continues and this returns
+        False.
         Safe to call repeatedly and after reconnects: the signals latch
         on first completion, so this then returns immediately.
         """

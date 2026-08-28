@@ -17,7 +17,7 @@ from typing import Any
 from . import _protocol
 from .classification import input_channel_prefix
 from .events import (
-    BusEvent,
+    BusEventRaised,
     ModuleRemoved,
     ModuleUpdated,
     ObjectAdded,
@@ -191,7 +191,7 @@ class AmpioStore:
                 self._apply_raw_channel(edge, applied)
             case _protocol.DiagnosticsReport(mac=mac, diagnostics=diagnostics):
                 self._apply_diagnostics(mac, diagnostics, applied)
-            case BusEvent() as event:
+            case BusEventRaised() as event:
                 applied.events.append(event)
         return applied
 
@@ -432,7 +432,7 @@ class AmpioStore:
         if obj is None:
             self._pending_state[update.id] = (update, time.time())
             return
-        if obj.raw_proven:
+        if obj.raw_owned:
             # The raw path owns this object: the per-object echo repeats
             # what the raw edge delivered ~150 ms earlier, so it is
             # dropped whole. It still counts as live evidence of the
@@ -469,7 +469,7 @@ class AmpioStore:
             return  # channel has no exposed Designer object - ignore
         obj = replace(
             self.objects[oid],
-            raw_proven=True,
+            raw_owned=True,
             state=edge.value,
             updated_at=time.time(),
         )
@@ -507,11 +507,11 @@ class AmpioStore:
         still losing to the live push that can arrive first on a fresh
         connection. The bool reports whether the visible state changed; the
         returned instance can differ even when it did not (a newer timestamp
-        on the same value). A raw-proven object is skipped outright: its
+        on the same value). A raw-owned object is skipped outright: its
         resync is the broker's retained raw table, and a DB snapshot may be
         staler than that raw truth with no comparable clock to prove it.
         """
-        if obj.raw_proven:
+        if obj.raw_owned:
             return obj, False
         seed = _protocol.parse_stan_json(stan_json)
         if seed is None:
@@ -623,8 +623,8 @@ class AmpioStore:
         # flip is public state, so it dispatches like any other change.
         covered = set(index.values())
         for oid, obj in self.objects.items():
-            if obj.raw_proven and oid not in covered:
-                obj = replace(obj, raw_proven=False)
+            if obj.raw_owned and oid not in covered:
+                obj = replace(obj, raw_owned=False)
                 self.objects[oid] = obj
                 self._record(obj, applied)
 

@@ -47,9 +47,9 @@ _BELL_FLAG = 1 << 15
 # else (slider layout, lamella step, ...), so it must not read as bell.
 _BELL_TYPES = frozenset({"przekaznik", "flaga"})
 
-# The `leafId` shape: `0_<macHex>_<sfId>_<subSfId>_<ioNo>`, the Designer's
-# own four segments (docs/identity.md). Strict on purpose - a half-parsed
-# mac that is wrong is worse than None.
+# The `leafId` shape: `0_<macHex>_<sfId>_<subSfId>_<ioNo>` - a leading
+# literal `0`, then the four fields the regex captures (docs/identity.md).
+# Strict on purpose - a half-parsed mac that is wrong is worse than None.
 _LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_([^_]+)_([^_]+)_([^_]+)")
 
 # The M-SERV's Designer override mac: its objects' leafId embeds this value
@@ -118,7 +118,7 @@ class AmpioObject:
     through the read surface.
     """
 
-    # The per-object identity source, exposed as `unique_key`. An object
+    # The per-object identity source, exposed as `object_key`. An object
     # delete is soft on the `config` catalogue, so the autoincrement never
     # renumbers. `id_urzadzenia` is the volatile one: it mirrors the module
     # row, which is reassigned when a module is replaced.
@@ -134,7 +134,7 @@ class AmpioObject:
     funkcja: int | None = None
     # `leafId`, identical on both discovery surfaces. Empty for ghost rows
     # and system objects. Doubles as the visibility marker (`visible`) and
-    # the physical-output key (`stable_key`) - docs/identity.md.
+    # the physical-output key (`leaf_key`) - docs/identity.md.
     leaf_id: str = ""
     # `params` bitfield (Designer config flags; see `hidden`/`visible`).
     # Defaults to 0 so a payload without the column reads "nothing hidden".
@@ -175,7 +175,7 @@ class AmpioObject:
     # observed): per-object echoes and snapshot rows are then skipped -
     # resync is the broker's retained raw table. Admin tier only; cleared
     # when the raw index stops covering the object. docs/raw-channel-bridge.md.
-    raw_proven: bool = False
+    raw_owned: bool = False
     # Slat angle percent. Only tilt-capable covers report it.
     lammel: int | None = None
     # Climate readback, from the rich state shape only `reg` objects push.
@@ -317,27 +317,27 @@ class AmpioObject:
         return self.typ_komponentu in _BELL_TYPES and bool(self.params & _BELL_FLAG)
 
     @property
-    def stable_key(self) -> str | None:
+    def leaf_key(self) -> str | None:
         """The physical output this object drives (``leaf_<leaf_id>``), or None.
 
         Identical on both access tiers. It is not an identity for the
         object row. Several Designer views of one output share one
         ``leafId``, so two objects can return the same key. The
-        per-object identity is :pyattr:`unique_key`. None for an empty
+        per-object identity is :pyattr:`object_key`. None for an empty
         ``leaf_id`` (system objects, ghost rows). See docs/identity.md.
         """
         return f"leaf_{self.leaf_id}" if self.leaf_id else None
 
     @property
-    def unique_key(self) -> str:
+    def object_key(self) -> str:
         """Snapshot-unique identity token (``obj_<id>``).
 
         The recommended per-object unique id: unique among every object
         in one discovery snapshot, served on both account tiers, and
-        never None. Scope it per M-SERV with ``AmpioServerInfo.key``.
-        The physical output an object drives is :pyattr:`stable_key`,
-        which several Designer views of one output share by design.
-        See docs/identity.md.
+        never None. Scope it per M-SERV with
+        ``AmpioServerInfo.server_key``. The physical output an object
+        drives is :pyattr:`leaf_key`, which several Designer views of one
+        output share by design. See docs/identity.md.
         """
         return f"obj_{self.id}"
 
@@ -505,7 +505,7 @@ class AmpioServerInfo:
     device_id: str | None = None  # hardware identifier of the host
 
     @property
-    def key(self) -> str:
+    def server_key(self) -> str:
         """Canonical scoping key for this M-SERV, for consumer registries.
 
         The string to prefix per-server artifacts with - unique ids, device
@@ -521,7 +521,7 @@ class AmpioServerInfo:
         """Account tier per the account id in the info reply, or None.
 
         The wire's own confirmation for a config flow reading a
-        :meth:`AmpioClient.test_connection` result; a running client's
+        :meth:`AmpioClient.check_connection` result; a running client's
         operational tier comes from the authenticated username instead.
         The reserved ``admin`` login reports the pseudo-user id ``-1``;
         app-created users carry a positive row id and are always the

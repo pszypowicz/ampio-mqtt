@@ -9,7 +9,7 @@ from conftest import API_TOPIC, USER, FakeBroker, details, feed
 from ampio_mqtt import (
     AmpioClient,
     AmpioConnectionError,
-    BusEvent,
+    BusEventRaised,
     ObjectAdded,
     ObjectUpdated,
 )
@@ -18,18 +18,18 @@ from ampio_mqtt import (
 def test_received_event_reaches_listeners() -> None:
     """The originator mac is the sending module's, hex-parsed off the topic."""
     client = AmpioClient("host", username=USER)
-    seen: list[BusEvent] = []
-    client.subscribe(seen.append, of=BusEvent)
+    seen: list[BusEventRaised] = []
+    client.subscribe(seen.append, of=BusEventRaised)
 
     feed(client, "ampio/from/D09A/event", b"42")
 
-    assert seen == [BusEvent(number=42, mac=0xD09A)]
+    assert seen == [BusEventRaised(event_number=42, mac=0xD09A)]
 
 
 def test_a_raw_channel_message_is_not_a_bus_event() -> None:
     client = AmpioClient("host", username=USER)
-    seen: list[BusEvent] = []
-    client.subscribe(seen.append, of=BusEvent)
+    seen: list[BusEventRaised] = []
+    client.subscribe(seen.append, of=BusEventRaised)
     feed(client, "ampio/from/1/state/f/2", b"189")
     assert seen == []
 

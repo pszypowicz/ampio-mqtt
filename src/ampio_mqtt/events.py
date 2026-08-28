@@ -86,7 +86,7 @@ class ModuleRemoved:
 
 
 @dataclass(frozen=True, slots=True)
-class BusEvent:
+class BusEventRaised:
     """A logical bus event (1-65535) raised by Ampio logic.
 
     Receiving these rides the administrator-only raw tree, so they never
@@ -94,7 +94,7 @@ class BusEvent:
     itself via :meth:`AmpioClient.set_event`.
     """
 
-    number: int
+    event_number: int
     # Effective bus mac of whatever raised it: a module for a panel press,
     # the M-SERV itself for an event injected through the command surface.
     mac: int
@@ -155,7 +155,7 @@ StoreEvent = (
     | ObjectRemoved
     | ModuleUpdated
     | ModuleRemoved
-    | BusEvent
+    | BusEventRaised
 )
 
 # Everything a subscriber can receive.

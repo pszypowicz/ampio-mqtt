@@ -30,7 +30,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from .events import BusEvent
+from .events import BusEventRaised
 from .models import (
     AccessTier,
     AmpioModule,
@@ -553,7 +553,7 @@ def parse_server_info(payload: str) -> AmpioServerInfo | None:
     reports its ``mac`` - the identity every consumer scopes a registry by.
     A payload without either is unparseable, exactly as the sibling parsers
     report a corrupt reply, so a parsed info always carries a populated
-    :pyattr:`AmpioServerInfo.key`.
+    :pyattr:`AmpioServerInfo.server_key`.
     """
     try:
         outer = json.loads(payload)
@@ -1047,15 +1047,15 @@ class DeviceDescriptions:
     entries: tuple[OutputDescription, ...]
 
 
-# Everything one MQTT message can classify into. `BusEvent` is the public
-# event class itself - for bus events the wire message IS the event.
+# Everything one MQTT message can classify into. `BusEventRaised` is the
+# public event class itself - for bus events the wire message IS the event.
 Inbound = (
     EndpointReply
     | StateUpdate
     | RawChannelEdge
     | DiagnosticsReport
     | DeviceDescriptions
-    | BusEvent
+    | BusEventRaised
 )
 
 
@@ -1131,5 +1131,7 @@ class Router:
             return DiagnosticsReport(mac=mac, diagnostics=diagnostics)
         if len(parts) == 4 and parts[3] == "event":
             number = to_int(payload.strip())
-            return None if number is None else BusEvent(number=number, mac=mac)
+            return (
+                None if number is None else BusEventRaised(event_number=number, mac=mac)
+            )
         return None
