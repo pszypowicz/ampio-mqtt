@@ -169,18 +169,25 @@ def test_module_for_rejects_a_mac_disagreement() -> None:
     assert client.module_for(client.objects[10]) is None
 
 
-@pytest.mark.parametrize(
-    ("module_mac", "leaf_hex"),
-    [(0xCAFE, None), (None, "cafe"), (None, None)],
-)
-def test_module_for_requires_a_proven_agreement(
-    module_mac: int | None, leaf_hex: str | None
+@pytest.mark.parametrize("module_mac", [0xCAFE, None])
+def test_module_for_joins_a_leafless_object_without_the_mac_gate(
+    module_mac: int | None,
 ) -> None:
-    """A missing mac on either side is an unvalidated join, not a match -
-    two Nones agreeing proves nothing."""
+    """An object with no leafId (its Matter box unchecked in Designer) has
+    no leaf mac to gate on, so the id_urzadzenia join stands as is."""
     client = _admin_client()
     feed(client, ADMIN_DEVICES, devices(_module_row(7, module_mac)))
-    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, leaf_hex)))
+    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, None)))
+    module = client.module_for(client.objects[10])
+    assert module is not None
+    assert module.id == 7
+
+
+def test_module_for_rejects_a_module_row_without_a_mac() -> None:
+    """A leafed object cannot agree with a row that carries no mac."""
+    client = _admin_client()
+    feed(client, ADMIN_DEVICES, devices(_module_row(7, None)))
+    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, "cafe")))
     assert client.module_for(client.objects[10]) is None
 
 

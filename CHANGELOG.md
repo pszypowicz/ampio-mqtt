@@ -12,6 +12,34 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.43.0
+
+`AmpioObject.visible` read `leafId` as the visibility marker, and Designer
+clears that field when an object's Matter box is unchecked (#152). One click
+turned a real object, with its type, its module, its rooms, and its state, into
+an invisible row for every consumer, and `AmpioClient.module_for()` lost its
+module too. The `params` DELETED bit is the one wire-side visibility signal. A
+live join of the config catalogue against the app-sync catalogue shows that
+every row app-sync omits carries the bit, and that the unfiltered params table
+serves the bit for the hidden rows app-sync still lists. So `visible` now reads
+the bit alone.
+
+### Changed
+
+- **`AmpioObject.visible`** is `not hidden`. A row with an empty `leafId` and a
+  clear DELETED bit is visible. Before, such a row was invisible unless it was a
+  system object. `is_system` stays a public property but no longer enters the
+  predicate. A hidden system object reads exactly as before.
+- **`AmpioClient.module_for()`** gates on mac agreement only when the object
+  carries a leaf mac. A leafless object resolves to its `id_urzadzenia` row as
+  is. Before, it always returned None.
+
+### Documentation
+
+- `docs/identity.md` rewrites the visibility section around the DELETED bit,
+  records what Designer's Matter uncheck clears and what a leafless object still
+  carries, and states the app-sync membership rule observed live.
+
 ## 0.42.0
 
 `resolve_records()` lost the tail of every install it could not sweep inside one

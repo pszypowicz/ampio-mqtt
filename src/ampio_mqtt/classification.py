@@ -173,8 +173,8 @@ class TypeProfile:
     # per-object topic.
     channel_prefix: str | None = None
     # System objects (presence simulation / detection) live outside the
-    # room/group hierarchy; the M-SERV always exposes them, so they read as
-    # visible even with an empty leafId and no group membership.
+    # room/group hierarchy, and the M-SERV lists them unconditionally.
+    # Backs `AmpioObject.is_system`.
     system: bool = False
 
 

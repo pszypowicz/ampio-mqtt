@@ -53,7 +53,7 @@ class ObjectMetadata:
     opis_menu: str | None
     interpretacja: int | None
     funkcja: int | None  # physical channel index within the module
-    leaf_id: str  # `leafId`; empty for ghost rows and for system objects
+    leaf_id: str  # `leafId`; empty for system objects, and after a Matter uncheck
     # `params` bitfield; bit 4 = hidden/stub, bit 37 = matter-exposed. None
     # when the reply carried no such column, which the app-sync catalogue never
     # does - the client then keeps whatever `params_devices` supplied.
@@ -210,13 +210,12 @@ def _czas_to_pulse_ms(value: Any) -> int | None:
 def _parse_leaf_id(value: Any) -> str:
     """Coerce the `leafId` field to a string.
 
-    The M-SERV emits an empty string for ghost rows (object removed from the
-    Designer tree, DB row still returned) and for system objects (presence
-    simulation / detection types). For everything else the value is a short
+    The M-SERV emits an empty string or null for system objects (presence
+    simulation / detection types) and for an object whose Matter box was
+    unchecked in Designer. For everything else the value is a short
     underscored token like ``0_cb8f_76_0_0``, which the Designer reads as
     ``macGroup``, ``mac``, ``sfId``, ``subSfId``, and ``ioNo``. This parse
-    keeps the raw string, which the library also uses as the binary
-    visibility marker.
+    keeps the raw string.
     """
     return value if isinstance(value, str) else ""
 

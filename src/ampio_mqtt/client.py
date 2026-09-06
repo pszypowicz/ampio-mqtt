@@ -368,13 +368,14 @@ class AmpioClient:
         return None
 
     def module_for(self, obj: AmpioObject) -> AmpioModule | None:
-        """The catalogue row of the module that owns ``obj``, mac-validated.
+        """The catalogue row of the module that owns ``obj``.
 
-        Joins ``obj.id_urzadzenia`` to the module list, gated on the row's
-        mac agreeing with the object's leaf-derived
-        :pyattr:`AmpioObject.module_mac` - DB ids are volatile across a
-        module replacement while the leaf mac is the stable identity
-        (docs/identity.md). None when either side is missing or they
+        Joins ``obj.id_urzadzenia`` to the module list. When the object
+        carries a leaf-derived :pyattr:`AmpioObject.module_mac`, the row's
+        mac must agree with it - DB ids are volatile across a module
+        replacement while the leaf mac is the stable identity
+        (docs/identity.md). A leafless object has no mac to gate on, so
+        its join stands as is. None when the join finds no row or the macs
         disagree, and always on the restricted tier, which never receives
         the module catalogue; tier-independent grouping reads
         ``module_mac`` directly.
@@ -382,7 +383,9 @@ class AmpioClient:
         if obj.id_urzadzenia is None:
             return None
         module = self._store.modules.get(obj.id_urzadzenia)
-        if module is None or module.mac is None or module.mac != obj.module_mac:
+        if module is None:
+            return None
+        if obj.module_mac is not None and module.mac != obj.module_mac:
             return None
         return module
 

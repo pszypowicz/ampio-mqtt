@@ -24,9 +24,9 @@ surfaces, as the generic value sensor or the `analog_<n>` fallback.
 
 - `reg` state is the running flag. The rich climate readback (measured and
   target temperature, mode, cooling) is `AmpioObject.thermostat`.
-- `detekcja` and `symulacja` are system objects: the M-SERV always exposes them,
-  visible even with an empty `leafId` (unless hidden). `symulacja`'s raw-channel
-  prefix is not yet bridged.
+- `detekcja` and `symulacja` are system objects: the M-SERV lists them
+  unconditionally, with an empty `leafId`. `symulacja`'s raw-channel prefix is
+  not yet bridged.
 - `wej` is the per-channel physical-input object the Designer creates for a
   wired button. Its per-object payload is 255 pressed / 0 released. Its
   `interpretacja` mirrors `funkcja` (the channel number), so it refines nothing.
@@ -109,8 +109,7 @@ should_surface = obj.visible          # classify() always yields a kind
 platform = obj.kind    # SensorKind | InputKind | OutputKind | ThermostatKind
 ```
 
-A ghost row (`leaf_id == ""`, not a system object) is still classifiable,
-because the type field is intact - but it must not become an entity. The two
-checks stay separate so that a future consumer can use one without the other.
-For example, a diagnostics report wants the ghost classified, so it can show
-"ghosts of type X".
+A hidden row is still classifiable, because the type field is intact, but it
+must not become an entity. The two checks stay separate so that a consumer can
+use one without the other. For example, a diagnostics report wants the hidden
+row classified, so it can show "hidden objects of type X".

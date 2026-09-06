@@ -35,7 +35,7 @@ device topology must never branch on them.
 | `id_urzadzenia`           | **No** - it mirrors the module row, which is reassigned in `mac_global` order when a module is replaced.                                                                                                                                                                         | Cross-referencing an object to its module _within a single discovery snapshot_ only. |
 | `funkcja` (channel index) | **Yes** - part of the reloaded Designer config. Not unique: if the same physical signal is exposed as several Designer objects, they share one `funkcja`.                                                                                                                        |
 | `typ_komponentu`          | **Yes** - the type vocabulary (`temp`, `lin_wej`, `flaga`, ...).                                                                                                                                                                                                                 |
-| `leaf_id`                 | **Yes**, when set. The wire-side visibility marker and the physical-output key source - see below.                                                                                                                                                                               |
+| `leaf_id`                 | **Yes**, when set. The physical-output key source and the parse source for `module_mac`. Empty for system objects and after a Matter uncheck - see below.                                                                                                                        |
 
 ## Unique id: the object id (`AmpioObject.object_key`)
 
@@ -53,7 +53,7 @@ is guaranteed present once `wait_for_initial_discovery()` returns True.
 Three properties make the object id the right source:
 
 - **Unique, always.** One id belongs to one catalogue row. No filter and no
-  fallback are needed, so ghost rows and system objects key exactly like every
+  fallback are needed, so leafless rows and hidden rows key exactly like every
   other object. `visible` remains the discovery filter, and this uniqueness does
   not depend on it.
 - **Available on both account tiers.** The id is the key of every catalogue
@@ -80,11 +80,12 @@ objects and loses all but one of them.
 - **Which entities drive one output.** Two objects with equal `leaf_key` share a
   relay, a dimmer, or a roller.
 - **The parse source.** `module_mac` and `leaf_io_no` are read out of it.
-- **The join anchor.** The raw-channel bridge matches on the leaf structure.
+- **The join anchor.** The description-record join matches on `module_mac` and
+  `leaf_io_no`.
 
-`leafId` is empty for ghost rows and for system objects, so `leaf_key` reads
-None for them. It is also the wire-side visibility marker, which the next
-section covers.
+`leafId` is empty for system objects, and Designer clears it on any object whose
+Matter box is unchecked, so `leaf_key` reads None for both. An empty `leafId`
+says nothing about visibility, which the section below covers.
 
 One further collision exists and is unrelated to the Designer views above. A
 hidden phantom stub can share its labeled twin's `leaf_id` on M-SENS analog
@@ -101,8 +102,8 @@ group entities by physical module even on the restricted tier, which never
 receives the module catalogue. An entry created with a standard account and
 later switched to an administrator keeps its entity-to-device mapping and only
 gains metadata. The parse is strict: any shape other than
-`0_<macHex>_<sfId>_<subSfId>_<ioNo>` reads as None, exactly like the empty
-`leafId` of system objects and ghost rows.
+`0_<macHex>_<sfId>_<subSfId>_<ioNo>` reads as None, exactly like an empty
+`leafId`.
 
 Three helpers close the loop for a consumer that builds devices on `module_mac`.
 `AmpioObject.is_server_owned` marks the objects that belong to the M-SERV itself
@@ -113,7 +114,9 @@ row - name, model, versions - on the admin tier that has the catalogue.
 on `id_urzadzenia` and gates on mac agreement, so the volatile DB join can never
 pair an object with a replaced module's stale row. The join keys the lookup
 rather than the mac, because override macs can collide across rows. The mac then
-gates what the join found.
+gates what the join found. A leafless object has no mac to gate on, so its join
+stands as is. That is the one module lookup a leafless object has, and it
+answers on the admin tier only.
 
 ## The leaf-id segments (`0_<macHex>_<sfId>_<subSfId>_<ioNo>`)
 
@@ -172,34 +175,46 @@ unlisted code proves nothing. The library keeps its classification on
 
 ## Visibility (`AmpioObject.visible`)
 
-Not every row in `devicesDetails` is meant to be surfaced. The predicate is:
+Not every row in the catalogue is meant to be surfaced. The predicate is:
 
 ```
-visible = not hidden and (bool(leaf_id) or is_system)
+visible = not hidden
 ```
 
-- **`hidden`** - `params` bit 4 (`params & 16`). The M-SERV's own authoritative
-  "do not surface" marker, and it takes precedence over everything else. It
-  marks phantom rows that duplicate a real Designer channel (same `leaf_id`, no
-  value), and it marks objects the user hid. Those are exactly the rows the
-  `leaf_id` test alone wrongly keeps. It is a Designer config flag, so unlike
-  `id_urzadzenia` it is replacement-stable. Every account tier receives `params`
-  on a baseline server (via `devicesDetails` or `data/params_devices`). A row
-  without a received value reads `0`, so `hidden` is False and the `leaf_id`
-  test alone decides. This is the same gate the M-SERV's Matter bridge uses
-  (`(params & 2**37) && !(params & 16)`) - see the section on the bit semantics
-  below. Bit 37 is a Matter-only opt-in. The library deliberately does not
-  filter on it and does not surface it.
-- **`leaf_id`** - non-empty for every "real" object in the M-SERV's view. Empty
-  for **ghost rows** (objects the user deleted in Designer but that still come
-  back over the wire) and for **system objects** (presence simulation,
-  detection). Use `leaf_id` non-empty as the default visibility filter.
-- **`is_system`** - `typ_komponentu in {symulacja, detekcja}`. Always visible
-  regardless of grouping. The M-SERV exposes these unconditionally.
+`hidden` is `params` bit 4 (`params & 16`), the bit the Designer enum names
+`DELETED`. It is the M-SERV's own "do not surface" marker, and the one wire-side
+visibility signal. It marks the rows the user deleted or hid, and the phantom
+stubs that duplicate a real Designer channel (same `leaf_id`, no value). It is a
+Designer config flag, so unlike `id_urzadzenia` it is replacement-stable. Every
+account tier receives `params` on a baseline server, through `devicesDetails` or
+`data/params_devices`. A row without a received value reads `0`, so it is
+visible. This is the same gate the M-SERV's Matter bridge uses
+(`(params & 2**37) && !(params & 16)`) - see the section on the bit semantics
+below. Bit 37 is a Matter-only opt-in. The library deliberately does not filter
+on it and does not surface it.
 
-Treat `visible` as the discovery filter. Ghosts that slip in look like real
-entities until the user notices that their HA counterpart no longer exists in
-Designer.
+A live join of the two catalogues on the reference install pins the bit's reach.
+Every config row that the app-sync catalogue omits carries the bit. Rows that
+app-sync still lists can carry it too, such as a hidden object or a phantom
+stub, and the unfiltered params table serves the bit for those on both tiers. So
+`not hidden` selects the same set on the admin tier that a restricted client
+with a full grant sees.
+
+`leaf_id` is not a visibility marker. Designer clears it when an object's Matter
+box is unchecked, and the row keeps its type, its module, its rooms, and its
+state. A re-check of the box writes `leafId` back from the linked leaf record. A
+leafless object is a real object without leaf-derived facts. `leaf_key`,
+`module_mac`, `sf_id`, `sub_sf_id`, and `leaf_io_no` read None, and
+`is_server_owned` reads False. `record` stays None, because the description join
+has no channel to match on. `AmpioClient.module_for()` still resolves the module
+on the admin tier.
+
+`is_system` (`typ_komponentu in {symulacja, detekcja}`) names the
+presence-simulation and detection objects. They live outside the room tree, and
+the app-sync catalogue lists them unconditionally. They carry no `leafId`. The
+flag does not enter `visible`, so a hidden system object stays hidden.
+
+Treat `visible` as the discovery filter.
 
 ## Where the `params` bit semantics come from
 
@@ -300,7 +315,8 @@ dispatches `ModuleRemoved`), but it does not cascade to the module's objects. An
 is soft. The row stays, `leaf_id` intact, with the `params` hidden bit set, so
 it drops out through `visible`. The app-sync surfaces (`data/devices`,
 `data/params_devices`) hard-remove it, and that is what lets the restricted tier
-evict for real.
+evict for real. On the reference install the app-sync catalogue lists exactly
+the objects with a room, plus the two system objects.
 
 ## The Matter device type tag (the `type` column)
 

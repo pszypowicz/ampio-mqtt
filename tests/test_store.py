@@ -817,7 +817,7 @@ def test_states_snapshot_does_not_overwrite_live_value() -> None:
 
 def test_states_snapshot_creates_nothing_for_unknown_ids() -> None:
     """Only the catalogues decide which objects exist. The snapshot replays
-    DB rows, ghost rows included - creating from it would later evict an
+    DB rows, unlisted ids included - creating from it would later evict an
     object no consumer was ever told existed."""
     store = _store()
     _apply(
@@ -1023,7 +1023,7 @@ def test_a_buffered_push_loses_to_a_newer_dated_stan_json_seed() -> None:
     assert fresh.objects[93].state == "newer"
 
 
-def test_a_buffered_push_for_a_ghost_id_is_pruned_by_a_complete_catalogue() -> None:
+def test_a_buffered_push_for_an_unlisted_id_is_pruned() -> None:
     """A catalogue that does not list the pushed id proves it will never
     gain a row; the buffered value must not resurface if the id later
     appears (a DB id reassignment, not the same object)."""
