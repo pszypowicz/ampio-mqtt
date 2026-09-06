@@ -51,16 +51,19 @@ the `channel_prefix` field on the `TYPE_PROFILES` rows. The store's
 ampio/from/+/state/f/+   # flags  ("flaga")
 ampio/from/+/state/i/+   # digital inputs  ("detekcja", "wej")
 ampio/from/+/state/o/+   # binary outputs ("przekaznik")
+ampio/from/+/state/a/+   # analog outputs ("przekaznik" on an open-collector leaf)
 ampio/from/+/b/4F        # per-module diagnostics broadcast
 ampio/from/+/event       # bus events
 ```
 
 The channel wildcards are bridged to the owning `AmpioObject`, so listeners see
 the same push as for any other update. The `o` prefix covers every `przekaznik`
-uniformly. A touch panel's per-field status LEDs have no other retained surface,
-and a relay's outputs share the channel shape, so both gain the raw-first path.
-The event wildcard feeds `BusEventRaised` subscribers - a different surface with
-its own semantics, described in [`protocol.md`](protocol.md).
+on a binary-output leaf, and `a` the ones on an open-collector leaf (class 67),
+which report a u8 there and never on their object topic. A touch panel's
+per-field status LEDs have no other retained surface, and a relay's outputs
+share the channel shape, so both gain the raw-first path. The event wildcard
+feeds `BusEventRaised` subscribers - a different surface with its own semantics,
+described in [`protocol.md`](protocol.md).
 
 The whole tree is administrator-only (the broker rejects the filters for any
 other account in the SUBACK with reason code 128). Only the `admin` login
@@ -98,13 +101,13 @@ report voltage only.
 
 ## What the library deliberately does NOT subscribe to
 
-| Prefix                 | Why excluded                                                                                                                                                                                         |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `a` (analog input)     | It already arrives on the per-object topic with full precision and the right state-class metadata. The raw form forces a re-classify per push.                                                       |
-| `t` (temperature)      | Same reasoning - the per-object form is sufficient.                                                                                                                                                  |
-| `rgbw` (RGBW output)   | Output side. Latency is not the win it is for inputs, and the per-object form carries the user-friendly desc.                                                                                        |
-| `o` (non-przekaznik)   | Subscribed, but indexed for `przekaznik` objects alone (see above). Channels of other output classes drop at the lookup.                                                                             |
-| `symulacja` raw prefix | Classified as an input, but the wire prefix is not confirmed. The object still updates through the per-object topic. It is listed as forward work in [`untapped-surfaces.md`](untapped-surfaces.md). |
+| Prefix                           | Why excluded                                                                                                                                                                                                                            |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `a` (other than class-67 relays) | Subscribed, but indexed for `przekaznik` objects on an open-collector leaf alone. Every other analog channel already arrives on the per-object topic with full precision and the right state-class metadata, so it drops at the lookup. |
+| `t` (temperature)                | Same reasoning - the per-object form is sufficient.                                                                                                                                                                                     |
+| `rgbw` (RGBW output)             | Output side. Latency is not the win it is for inputs, and the per-object form carries the user-friendly desc.                                                                                                                           |
+| `o` (non-przekaznik)             | Subscribed, but indexed for `przekaznik` objects alone (see above). Channels of other output classes drop at the lookup.                                                                                                                |
+| `symulacja` raw prefix           | Classified as an input, but the wire prefix is not confirmed. The object still updates through the per-object topic. It is listed as forward work in [`untapped-surfaces.md`](untapped-surfaces.md).                                    |
 
 ## The full retained prefix inventory
 
@@ -112,20 +115,20 @@ Passive retained sweeps of `ampio/from/+/state/#` on the baseline install show
 more prefixes than the bridge consumes. The full observed set, with the module
 classes that publish each:
 
-| Prefix           | Publishes on                 | Meaning                                                                                                                                                     |
-| ---------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `f`              | every module                 | Binary flags - bridged.                                                                                                                                     |
-| `i`              | most modules                 | Binary inputs - bridged.                                                                                                                                    |
-| `o`              | most modules                 | Binary outputs - bridged for `przekaznik` (see above).                                                                                                      |
-| `a`              | dimmers, OC, rollers, relays | Analog output/input channels - the per-object form is preferred.                                                                                            |
-| `t`              | M-SENS                       | Temperature - the per-object form is preferred.                                                                                                             |
-| `rgbw`           | RGBW-capable modules         | Packed color - the per-object form is preferred.                                                                                                            |
-| `afu8`, `afi16`  | M-SERV, panels, M-INOC       | Analog flags, u8 and i16 - the `FLAG_ANALOG_U8` / `FLAG_ANALOG_I16` functions of the module's own census (`supportedFunctions` in its `device_api` record). |
-| `au16l`          | M-SENS only                  | 16-bit sensor channels (humidity, pressure, noise, illuminance, air quality).                                                                               |
-| `au32`           | alarm bridge (M-CON) only    | 32-bit channels of the bridged alarm system (`bit32` objects).                                                                                              |
-| `bi`, `bo`       | alarm bridge (M-CON) only    | The bridged alarm system's binary inputs and outputs (zone table, 128 channels each on the observed install).                                               |
-| `armed`, `alarm` | alarm bridge (M-CON) only    | Alarm partition states - the pair behind `satel_alarm` objects.                                                                                             |
-| `rs`             | M-SERV only                  | Heating-zone setpoint in °C (`ampio/from/1/state/rs/<zone>`), the raw mirror of the `reg` object's target.                                                  |
+| Prefix           | Publishes on                 | Meaning                                                                                                                                                                    |
+| ---------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `f`              | every module                 | Binary flags - bridged.                                                                                                                                                    |
+| `i`              | most modules                 | Binary inputs - bridged.                                                                                                                                                   |
+| `o`              | most modules                 | Binary outputs - bridged for `przekaznik` (see above).                                                                                                                     |
+| `a`              | dimmers, OC, rollers, relays | Analog output/input channels - bridged for `przekaznik` on an open-collector leaf (class 67), whose object topic never echoes. The per-object form is preferred elsewhere. |
+| `t`              | M-SENS                       | Temperature - the per-object form is preferred.                                                                                                                            |
+| `rgbw`           | RGBW-capable modules         | Packed color - the per-object form is preferred.                                                                                                                           |
+| `afu8`, `afi16`  | M-SERV, panels, M-INOC       | Analog flags, u8 and i16 - the `FLAG_ANALOG_U8` / `FLAG_ANALOG_I16` functions of the module's own census (`supportedFunctions` in its `device_api` record).                |
+| `au16l`          | M-SENS only                  | 16-bit sensor channels (humidity, pressure, noise, illuminance, air quality).                                                                                              |
+| `au32`           | alarm bridge (M-CON) only    | 32-bit channels of the bridged alarm system (`bit32` objects).                                                                                                             |
+| `bi`, `bo`       | alarm bridge (M-CON) only    | The bridged alarm system's binary inputs and outputs (zone table, 128 channels each on the observed install).                                                              |
+| `armed`, `alarm` | alarm bridge (M-CON) only    | Alarm partition states - the pair behind `satel_alarm` objects.                                                                                                            |
+| `rs`             | M-SERV only                  | Heating-zone setpoint in °C (`ampio/from/1/state/rs/<zone>`), the raw mirror of the `reg` object's target.                                                                 |
 
 Two companion claims from a third-party integration stay unverified: `rsdn/<n>`
 (day/night setpoints) and `rm/<n>` (operating mode, 0=calendar 1=manual-day

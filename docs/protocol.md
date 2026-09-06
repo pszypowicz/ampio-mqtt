@@ -240,24 +240,29 @@ The write that works is the raw CAN frame the SPA itself sends, captured live
 and replicated from a plain client:
 
 ```
-ampio/to/<machex>/raw      30f9<value:2><channel:2>     (ASCII hex)
+ampio/to/<machex>/raw      <fn>f9<value:2><channel:2>     (ASCII hex)
 ```
 
-`0x30` is the generic output-write function (the SPA's leaf command table maps
-every output leaf to it), and `0xF9` is the set-u8 command. `channel` is the
-0-based output index - `AmpioObject.leaf_io_no`, one below the 1-based raw state
-channel. The topic is admin-only like the rest of the `ampio/to` tree. The raw
-`state/o/<ch+1>` echo follows in ~30-50 ms and the per-object push in ~150 ms,
-so `confirm=` works unchanged. The frame is proven on panel LEDs and relay
-outputs alike.
+The first byte is the function the Designer sends the leaf's class: `0x30` for a
+binary output (leaf class 257, relays and panel LEDs) and `0x32` for an
+open-collector output (class 67, the M-INOC). A module drops `0x30` on a
+class-67 leaf, live-proven: the write returns, nothing moves, and no frame
+follows on the bus. `0xF9` is the set-u8 command. `channel` is the 0-based
+output index - `AmpioObject.leaf_io_no`, one below the 1-based raw state
+channel. The topic is admin-only like the rest of the `ampio/to` tree. A binary
+output echoes on `state/o/<ch+1>` in ~30-50 ms and on its object topic in ~150
+ms. An open-collector output echoes on `state/a/<ch+1>` as a u8 value and never
+on its object topic, on any write path, so the library bridges `a` for those
+objects. `confirm=` resolves on either edge.
 
-The library's routing is deliberately dumb. On the admin tier, every
-`przekaznik` on a CAN module rides this frame, addressed purely by its own leaf
-(mac and 0-based channel). There is no module-type table to maintain. Two writes
-stay on `/api`: the M-SERV's own virtual outputs (they live in the server's DB,
-not on the CAN bus) and every `pulse_ms` write. The raw frame has no timed form,
-so a panel output cannot pulse, and `confirm=` is what surfaces that. The
-restricted tier always publishes the `/api` form, which a panel output ignores.
+On the admin tier, a `przekaznik` on a CAN module rides this frame when its leaf
+class has a proven function byte, addressed purely by its own leaf (mac, 0-based
+channel, and class). A class outside that table, and a leafless object, stay on
+`/api`. There is no module-type table to maintain. Two more writes stay on
+`/api`: the M-SERV's own virtual outputs (they live in the server's DB, not on
+the CAN bus) and every `pulse_ms` write. The raw frame has no timed form, so a
+panel output cannot pulse, and `confirm=` is what surfaces that. The restricted
+tier always publishes the `/api` form, which a panel output ignores.
 
 A module condition bound to the LED overrides such writes eventually, not
 preventively. A live write to a condition-bound LED took effect and was

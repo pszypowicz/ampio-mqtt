@@ -1895,6 +1895,34 @@ def test_o_channel_of_a_relay_module_is_bridged_too() -> None:
     assert _updated(applied) == [obj]
 
 
+_INOC_MODULE = {"id": 9, "mac": 0x1A2B, "typ_urzadzenia": 14, "nazwa_urzadzenia": "oc"}
+
+
+def test_a_channel_routes_to_an_open_collector_relay() -> None:
+    """A przekaznik on leaf class 67 reports on the `a` prefix, not `o`."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_INOC_MODULE))
+    _apply(store, DETAILS_TOPIC, details(_przekaznik_row(93, 8, 9, "0_1a2b_67_0_7")))
+
+    ignored = _apply(store, "ampio/from/1A2B/state/o/8", "1")
+    assert _updated(ignored) == []
+
+    applied = _apply(store, "ampio/from/1A2B/state/a/8", "255")
+    obj = store.objects[93]
+    assert obj.state == "255" and obj.is_on is True and obj.raw_owned is True
+    assert _updated(applied) == [obj]
+
+
+def test_a_channel_does_not_route_a_binary_output_relay() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_RELAY_MODULE))
+    _apply(store, DETAILS_TOPIC, details(_przekaznik_row(91, 1, 8, "0_b0b0_257_2_0")))
+
+    applied = _apply(store, "ampio/from/B0B0/state/a/1", "255")
+    assert _updated(applied) == []
+    assert store.objects[91].raw_owned is False
+
+
 def test_panel_output_per_object_echo_is_dropped_once_raw_owned() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))

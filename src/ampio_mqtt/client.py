@@ -22,9 +22,11 @@ from ._protocol import (
     ENDPOINT_BY_NAME,
     ENDPOINTS,
     KEEP_POSITION,
+    RAW_ANALOG_WILDCARD,
     RAW_DIAGNOSTICS_WILDCARD,
     RAW_EVENT_WILDCARD,
     RAW_INPUT_WILDCARDS,
+    RAW_OUTPUT_FUNCTION_BY_SF,
     RAW_OUTPUT_WILDCARD,
     Endpoint,
     command_payload,
@@ -225,6 +227,7 @@ class AmpioClient:
             topics += [
                 *RAW_INPUT_WILDCARDS,
                 RAW_OUTPUT_WILDCARD,
+                RAW_ANALOG_WILDCARD,
                 RAW_DIAGNOSTICS_WILDCARD,
                 RAW_EVENT_WILDCARD,
                 _protocol.DEVICE_API_LIST_TOPIC,
@@ -998,17 +1001,20 @@ class AmpioClient:
         finally:
             unsubscribe()
 
-    def _raw_output_address(self, object_id: int) -> tuple[int, int] | None:
-        """The (module mac, frame channel) of a binary output the admin
-        session drives over the raw CAN write topic, or None.
+    def _raw_output_address(self, object_id: int) -> tuple[int, int, int] | None:
+        """The (module mac, frame channel, function byte) of an output the
+        admin session drives over the raw CAN write topic, or None.
 
         Admin-tier `przekaznik` objects on CAN modules, addressed by their
-        own leaf: mac from ``leaf_id`` (the replacement-stable override)
-        and the 0-based :pyattr:`AmpioObject.leaf_io_no` channel. The
-        M-SERV's own virtual outputs stay on `/api` - they live in its DB,
-        not on the CAN bus. The restricted tier always returns None: the
-        raw write tree is admin-only, so `/api` is all that tier has -
-        which a panel output ignores (docs/protocol.md, "Panel outputs").
+        own leaf: mac from ``leaf_id`` (the replacement-stable override),
+        the 0-based :pyattr:`AmpioObject.leaf_io_no` channel, and the
+        function byte the leaf class takes
+        (:data:`RAW_OUTPUT_FUNCTION_BY_SF`). A class outside that table,
+        and a leafless object, stay on `/api`. The M-SERV's own virtual
+        outputs stay on `/api` too - they live in its DB, not on the CAN
+        bus. The restricted tier always returns None: the raw write tree
+        is admin-only, so `/api` is all that tier has - which a panel
+        output ignores (docs/protocol.md, "Panel outputs").
         """
         if self._tier is not AccessTier.ADMIN:
             return None
@@ -1017,27 +1023,30 @@ class AmpioClient:
             return None
         mac = obj.module_mac
         channel = obj.leaf_io_no
-        if mac is None or channel is None:
+        function = (
+            RAW_OUTPUT_FUNCTION_BY_SF.get(obj.sf_id) if obj.sf_id is not None else None
+        )
+        if mac is None or channel is None or function is None:
             return None
-        return mac, channel
+        return mac, channel, function
 
     async def _raw_output(
         self,
         object_id: int,
-        address: tuple[int, int],
+        address: tuple[int, int, int],
         value: int,
         confirm: float | None,
     ) -> AmpioObject | None:
-        """Drive a binary output over the raw CAN write topic.
+        """Drive an output over the raw CAN write topic.
 
         The one write that reaches a panel's status LEDs, and equivalent
         to the `/api` switch verbs on relay outputs (docs/protocol.md,
         "Panel outputs"); admin-only, like the raw tree it echoes on.
         """
-        mac, channel = address
+        mac, channel, function = address
         return await self._publish_command(
             raw_write_topic(mac),
-            raw_output_payload(value, channel).encode(),
+            raw_output_payload(function, value, channel).encode(),
             object_id,
             "the raw output write",
             confirm,

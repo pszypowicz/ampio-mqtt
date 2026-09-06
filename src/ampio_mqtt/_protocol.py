@@ -957,16 +957,23 @@ def scene_payload(scene_id: int, verb: str) -> str:
 KEEP_POSITION = 101
 
 
-# --- Raw CAN writes --------------------------------------------------------
-#
-# The admin-only `ampio/to/<machex>/raw` topic broadcasts a raw CAN frame
-# from the M-SERV. Frame `[0x30, 0xF9, value, channel]` sets a module's
-# output: 0x30 is the generic output-write function (the Designer SPA maps
-# every output leaf to it) and 0xF9 the set-u8 command. It is the ONLY
-# write that reaches a classic panel's binary outputs (status LEDs) - the
-# `/api` verbs and the per-channel `o/<ch>/cmd` form are silently dropped
-# for those, while a relay module answers all three. docs/protocol.md
-# ("Panel outputs") carries the live evidence.
+# The raw CAN write frame `<fn> F9 <value> <channel>`: 0xF9 is the set-u8
+# command and the first byte the per-class function the Designer sends
+# from its SF table. It is the ONLY write that reaches a classic panel's
+# binary outputs (status LEDs) - the `/api` verbs and the per-channel
+# `o/<ch>/cmd` form are silently dropped for those, while a relay module
+# answers all three. docs/protocol.md ("Panel outputs") carries the live
+# evidence.
+
+# The first frame byte per leaf class, live-proven pairs only: binary
+# outputs (sfId 257: relays and panel LEDs) take the generic 0x30, the
+# open-collector output (sfId 67, M-INOC) takes 0x32. A module drops 0x30
+# on a class-67 leaf. A class outside the table stays on `/api`.
+RAW_OUTPUT_FUNCTION_BY_SF: dict[int, int] = {257: 0x30, 67: 0x32}
+
+# The leaf class whose outputs report on the raw `a` prefix as a u8 value
+# instead of the binary `o` prefix; the same 1-based channel numbering.
+OC_OUTPUT_SF = 67
 
 
 def raw_write_topic(mac: int) -> str:
@@ -974,13 +981,15 @@ def raw_write_topic(mac: int) -> str:
     return f"ampio/to/{mac:x}/raw"
 
 
-def raw_output_payload(value: int, channel: int) -> str:
+def raw_output_payload(function: int, value: int, channel: int) -> str:
     """The set-output frame as the wire's ASCII hex form.
 
-    ``channel`` is the 0-based output index - :pyattr:`AmpioObject.leaf_io_no`,
-    one below the 1-based raw state channel.
+    ``function`` is the leaf class's first byte
+    (:data:`RAW_OUTPUT_FUNCTION_BY_SF`). ``channel`` is the 0-based output
+    index - :pyattr:`AmpioObject.leaf_io_no`, one below the 1-based raw
+    state channel.
     """
-    return f"30f9{value:02x}{channel:02x}"
+    return f"{function:02x}f9{value:02x}{channel:02x}"
 
 
 def request_topic(ep: Endpoint, user: str) -> str:
@@ -1007,6 +1016,10 @@ RAW_INPUT_WILDCARDS = ("ampio/from/+/state/f/+", "ampio/from/+/state/i/+")
 # panel's status LEDs have no other retained surface, and every module's
 # binary outputs share the channel shape (docs/raw-channel-bridge.md).
 RAW_OUTPUT_WILDCARD = "ampio/from/+/state/o/+"
+# Analog output channels, bridged for the `przekaznik` objects on an
+# open-collector leaf (class 67): the module reports those as a u8 on `a`,
+# and the object topic never echoes them on any write path.
+RAW_ANALOG_WILDCARD = "ampio/from/+/state/a/+"
 
 # Per-module diagnostics broadcasts (CAN supply voltage, own temperature).
 RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"

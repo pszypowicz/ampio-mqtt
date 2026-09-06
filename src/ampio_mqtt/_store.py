@@ -602,17 +602,20 @@ class AmpioStore:
         Both are keyed on the module's effective bus address (`mac`, the
         Designer override) - never `mac_global`, which diverges from the
         raw-topic MAC on replaced modules. `(mac, prefix, channel)` routes a
-        raw channel to its object: the bridgeable input types, plus binary
-        outputs (`przekaznik`) on the `o` prefix - a panel's status LEDs
-        have no other retained surface, and every module's outputs share
-        the channel shape. `mac` alone routes a module's own diagnostics
-        broadcast.
+        raw channel to its object: the bridgeable input types, plus
+        `przekaznik` outputs on the `o` prefix, or on `a` for an
+        open-collector leaf - a panel's status LEDs have no other retained
+        surface, an OC output never echoes on its object topic, and every
+        module's outputs share the channel shape. `mac` alone routes a
+        module's own diagnostics broadcast.
         """
         index: dict[tuple[int, str, int], int] = {}
         for obj in self.objects.values():
             prefix = input_channel_prefix(obj.typ_komponentu)
             if prefix is None and obj.typ_komponentu == "przekaznik":
-                prefix = "o"
+                # A binary output reports on `o`; an open-collector output
+                # (leaf class 67) reports a u8 on `a`, same 1-based channel.
+                prefix = "a" if obj.sf_id == _protocol.OC_OUTPUT_SF else "o"
             if prefix is None or obj.funkcja is None or obj.id_urzadzenia is None:
                 continue
             module = self.modules.get(obj.id_urzadzenia)
