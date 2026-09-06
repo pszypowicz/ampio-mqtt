@@ -838,9 +838,10 @@ class AmpioClient:
                 "device_api tree answers no other account"
             )
         names = await self.fetch_locations(timeout=timeout)
-        # The M-SERV's own row is a catalogue module with a mac, but it is
-        # not a CAN module and never answers a get_data request. Asking
-        # would put it in `silent_macs` on every sweep.
+        # The M-SERV's own row is a catalogue module with a mac, but it
+        # answers a get_data request on its factory id only, and the sweep
+        # keys requests by the override mac. Asking on `mac` would put it
+        # in `silent_macs` on every sweep.
         macs = sorted(
             {
                 mod.mac
