@@ -371,12 +371,21 @@ in, because Designer does not mirror `outLoc` to the object catalogue. The DB
 row's `lokalizacja` column reads 0 for every object on the reference install.
 `outType` differs: the `type` column does mirror it, with the lag noted above.
 
-### The get_data request/reply pair
+### The list request/reply pair
 
-Request: an empty payload to `device_api/to/<machex>/get_data`, mac in lowercase
-hex. Reply: JSON on `device_api/from/<MACHEX>/info`, mac in UPPERCASE hex on the
-wire - parse the topic segment with `int(x, 16)`, never compare strings. The
-reply's `descriptions` field is base64 of the module's full description record.
+Request: the payload `0` to `device_api/to/list`. Reply: JSON on
+`device_api/from/list`, `{devices: [...]}` with one entry per module, the
+M-SERV's own row included. Each entry carries `macUser` (the override, the id
+every leaf embeds), `macProd` (the factory id), `protocol`, `name` (base64), and
+`descriptions`, base64 of the module's full description record.
+
+The per-module pair serves the same blob for one module. Request: an empty
+payload to `device_api/to/<machex>/get_data`. Reply: JSON on
+`device_api/from/<MACHEX>/info`. Both macs are the factory id, lowercase hex on
+the request and uppercase on the reply. A module with a Designer override
+answers on `mac_global` only and stays silent on `mac`, the M-SERV included. On
+the reference install the list blob and the `get_data` blob were identical for
+every module right after a Designer edit, so the library reads the list.
 
 The blob decodes into repeated little-endian frames:
 
@@ -449,18 +458,16 @@ ambiguous, not merely unproven by sample size.
 ### Sweep coverage
 
 `resolve_records()` returns a `RecordSweep`. Its `records` map holds the join
-result. Its `answered_macs` and `silent_macs` sets say which modules the pass
-read. The two sets matter because `AmpioObject.record` reads None in two
-different cases. A module in `answered_macs` answered and carries no entry for
-that output. A module in `silent_macs` was never read, so its objects say
-nothing either way. The M-SERV's own catalogue row is never requested and
-appears in neither set.
+result. Its `answered_macs` and `silent_macs` sets say which catalogued modules
+the list reply covered. The two sets matter because `AmpioObject.record` reads
+None in two different cases. A module in `answered_macs` is in the reply and
+carries no entry for that output. A module in `silent_macs` is in the module
+catalogue but missing from the reply, so its objects say nothing either way. The
+M-SERV's own row is a device like any other in both sets.
 
-The M-SERV answers one module at a time. The `timeout` argument therefore bounds
-the silence between replies. It does not bound the whole sweep. Every request
-goes out first. The sweep then ends once no further reply arrives within
-`timeout`. The call runs as long as the M-SERV needs. A caller that must finish
-by a deadline applies its own ceiling.
+One request returns every record. The `timeout` argument bounds each of the two
+replies, the name table and the list, so the call ends within twice that. A
+reply that never arrives raises `AmpioTimeoutError`.
 
 ### Tier gate
 

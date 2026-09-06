@@ -419,20 +419,22 @@ def parse_descriptions_blob(blob: bytes) -> tuple[OutputDescription, ...]:
     return tuple(out)
 
 
-def parse_device_info(payload: str) -> tuple[OutputDescription, ...] | None:
-    """The description entries of a ``device_api/from/<mac>/info`` reply.
+@dataclass(slots=True, frozen=True)
+class DeviceRecord:
+    """One device of a ``device_api/from/list`` reply with its record.
 
-    A record without a ``descriptions`` field reads as empty - a module
-    with no descriptions written. None when the payload is not a JSON
-    object or the base64 is unreadable.
+    ``mac`` is the override (``macUser``): the id every leaf embeds and
+    ``AmpioModule.mac`` carries. ``mac_global`` is the factory id
+    (``macProd``): the id the device_api tree itself is keyed by.
     """
-    try:
-        data = json.loads(payload)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    raw = data.get("descriptions")
+
+    mac: int
+    mac_global: int
+    entries: tuple[OutputDescription, ...]
+
+
+def _decode_descriptions(raw: object) -> tuple[OutputDescription, ...] | None:
+    """The decoded ``descriptions`` field: empty when absent, None when unreadable."""
     if raw in (None, ""):
         return ()
     if not isinstance(raw, str):
@@ -442,6 +444,33 @@ def parse_device_info(payload: str) -> tuple[OutputDescription, ...] | None:
     except (binascii.Error, ValueError):
         return None
     return parse_descriptions_blob(blob)
+
+
+def parse_device_list(payload: str) -> tuple[DeviceRecord, ...] | None:
+    """Every device of a ``device_api/from/list`` reply, with its record.
+
+    None when the payload is not a JSON object with a ``devices`` list. A
+    device without a ``descriptions`` field reads empty - no descriptions
+    written. A device whose ids do not parse or whose blob is unreadable
+    is left out, so it counts as unlisted.
+    """
+    try:
+        data = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("devices"), list):
+        return None
+    out: list[DeviceRecord] = []
+    for item in data["devices"]:
+        if not isinstance(item, dict):
+            continue
+        mac = to_int(item.get("macUser"))
+        mac_global = to_int(item.get("macProd"))
+        entries = _decode_descriptions(item.get("descriptions"))
+        if mac is None or mac_global is None or entries is None:
+            continue
+        out.append(DeviceRecord(mac=mac, mac_global=mac_global, entries=entries))
+    return tuple(out)
 
 
 # Designer's cleared-entry form, live-proven: a clear never deletes the
@@ -979,16 +1008,14 @@ RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
 RAW_EVENT_WILDCARD = "ampio/from/+/event"
 
 
-# The admin-only device_api tree: get_data asks the M-SERV for a module's
-# full CAN-resident record; the info reply carries the description
-# entries. Request macs are lowercase hex, reply macs uppercase - the
-# router parses the segment numerically.
-DEVICE_API_INFO_WILDCARD = "device_api/from/+/info"
-
-
-def device_api_request_topic(mac: int) -> str:
-    """The get_data request topic for one module's CAN-resident record."""
-    return f"device_api/to/{mac:x}/get_data"
+# The admin-only device_api tree. One `list` request returns every
+# module's CAN-resident record in a single reply, the M-SERV's own
+# included, each device tagged with both of its ids. The per-module
+# get_data pair is keyed by the factory id and answers nothing on an
+# override mac - docs/identity.md.
+DEVICE_API_LIST_REQUEST = "device_api/to/list"
+DEVICE_API_LIST_PAYLOAD = b"0"
+DEVICE_API_LIST_TOPIC = "device_api/from/list"
 
 
 # typ_komponentu -> description class (descType), live-proven pairs only
@@ -1039,11 +1066,10 @@ class DiagnosticsReport:
 
 
 @dataclass(slots=True, frozen=True)
-class DeviceDescriptions:
-    """A module's parsed description record from a device_api info reply."""
+class DeviceList:
+    """Every device's parsed record from a device_api list reply."""
 
-    mac: int
-    entries: tuple[OutputDescription, ...]
+    devices: tuple[DeviceRecord, ...]
 
 
 # Everything one MQTT message can classify into. `BusEventRaised` is the
@@ -1053,7 +1079,7 @@ Inbound = (
     | StateUpdate
     | RawChannelEdge
     | DiagnosticsReport
-    | DeviceDescriptions
+    | DeviceList
     | BusEventRaised
 )
 
@@ -1094,22 +1120,9 @@ class Router:
         ):
             oid = to_int(parts[4])
             return None if oid is None else _parse_state_payload(oid, payload)
-        if (
-            len(parts) == 4
-            and parts[0] == "device_api"
-            and parts[1] == "from"
-            and parts[3] == "info"
-        ):
-            try:
-                mac = int(parts[2], 16)
-            except ValueError:
-                return None
-            entries = parse_device_info(payload)
-            return (
-                None
-                if entries is None
-                else DeviceDescriptions(mac=mac, entries=entries)
-            )
+        if topic == DEVICE_API_LIST_TOPIC:
+            devices = parse_device_list(payload)
+            return None if devices is None else DeviceList(devices=devices)
         if len(parts) < 4 or parts[0] != "ampio" or parts[1] != "from":
             return None
         try:

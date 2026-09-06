@@ -112,20 +112,20 @@ Passive retained sweeps of `ampio/from/+/state/#` on the baseline install show
 more prefixes than the bridge consumes. The full observed set, with the module
 classes that publish each:
 
-| Prefix           | Publishes on                 | Meaning                                                                                                                                                   |
-| ---------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `f`              | every module                 | Binary flags - bridged.                                                                                                                                   |
-| `i`              | most modules                 | Binary inputs - bridged.                                                                                                                                  |
-| `o`              | most modules                 | Binary outputs - bridged for `przekaznik` (see above).                                                                                                    |
-| `a`              | dimmers, OC, rollers, relays | Analog output/input channels - the per-object form is preferred.                                                                                          |
-| `t`              | M-SENS                       | Temperature - the per-object form is preferred.                                                                                                           |
-| `rgbw`           | RGBW-capable modules         | Packed color - the per-object form is preferred.                                                                                                          |
-| `afu8`, `afi16`  | M-SERV, panels, M-INOC       | Analog flags, u8 and i16 - the `FLAG_ANALOG_U8` / `FLAG_ANALOG_I16` functions of the module's own census (`supportedFunctions` in its `get_data` record). |
-| `au16l`          | M-SENS only                  | 16-bit sensor channels (humidity, pressure, noise, illuminance, air quality).                                                                             |
-| `au32`           | alarm bridge (M-CON) only    | 32-bit channels of the bridged alarm system (`bit32` objects).                                                                                            |
-| `bi`, `bo`       | alarm bridge (M-CON) only    | The bridged alarm system's binary inputs and outputs (zone table, 128 channels each on the observed install).                                             |
-| `armed`, `alarm` | alarm bridge (M-CON) only    | Alarm partition states - the pair behind `satel_alarm` objects.                                                                                           |
-| `rs`             | M-SERV only                  | Heating-zone setpoint in °C (`ampio/from/1/state/rs/<zone>`), the raw mirror of the `reg` object's target.                                                |
+| Prefix           | Publishes on                 | Meaning                                                                                                                                                     |
+| ---------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `f`              | every module                 | Binary flags - bridged.                                                                                                                                     |
+| `i`              | most modules                 | Binary inputs - bridged.                                                                                                                                    |
+| `o`              | most modules                 | Binary outputs - bridged for `przekaznik` (see above).                                                                                                      |
+| `a`              | dimmers, OC, rollers, relays | Analog output/input channels - the per-object form is preferred.                                                                                            |
+| `t`              | M-SENS                       | Temperature - the per-object form is preferred.                                                                                                             |
+| `rgbw`           | RGBW-capable modules         | Packed color - the per-object form is preferred.                                                                                                            |
+| `afu8`, `afi16`  | M-SERV, panels, M-INOC       | Analog flags, u8 and i16 - the `FLAG_ANALOG_U8` / `FLAG_ANALOG_I16` functions of the module's own census (`supportedFunctions` in its `device_api` record). |
+| `au16l`          | M-SENS only                  | 16-bit sensor channels (humidity, pressure, noise, illuminance, air quality).                                                                               |
+| `au32`           | alarm bridge (M-CON) only    | 32-bit channels of the bridged alarm system (`bit32` objects).                                                                                              |
+| `bi`, `bo`       | alarm bridge (M-CON) only    | The bridged alarm system's binary inputs and outputs (zone table, 128 channels each on the observed install).                                               |
+| `armed`, `alarm` | alarm bridge (M-CON) only    | Alarm partition states - the pair behind `satel_alarm` objects.                                                                                             |
+| `rs`             | M-SERV only                  | Heating-zone setpoint in °C (`ampio/from/1/state/rs/<zone>`), the raw mirror of the `reg` object's target.                                                  |
 
 Two companion claims from a third-party integration stay unverified: `rsdn/<n>`
 (day/night setpoints) and `rm/<n>` (operating mode, 0=calendar 1=manual-day
