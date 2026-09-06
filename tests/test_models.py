@@ -74,39 +74,46 @@ def test_object_key_separates_views_of_one_output() -> None:
 
 
 def test_object_key_survives_an_empty_leaf_id() -> None:
-    """System objects and ghost rows carry no leaf, but do carry an id."""
+    """System objects and Matter-unchecked rows carry no leaf, but do carry an id."""
     assert AmpioObject(id=99, leaf_id="").object_key == "obj_99"
 
 
 @pytest.mark.parametrize(
-    ("typ", "leaf_id", "is_system", "visible"),
+    ("typ", "leaf_id", "params", "visible"),
     [
         # Real object with a non-empty leafId (the real-install shape).
-        ("temp", "0_cb8f_76_0_0", False, True),
-        # Ghost: empty leafId, not a system type.
-        ("temp", "", False, False),
-        # Named-output ghost on the M-SERV - the canonical Matter-leak case.
-        ("przekaznik", "", False, False),
-        # System objects are visible regardless of leafId.
-        ("symulacja", "", True, True),
-        ("detekcja", "", True, True),
-        # `flaga` is an input but NOT a system object, so it needs its leafId.
-        ("flaga", "", False, False),
-        ("flaga", "0_d09a_3_0_1", False, True),
-        # Unclassified / missing typ_komponentu - treat as non-system.
-        (None, "", False, False),
-        (None, "0_x_x_x_x", False, True),
+        ("temp", "0_cb8f_76_0_0", 0, True),
+        # A relay whose Matter box was unchecked: Designer clears leafId and
+        # the row keeps its type, its module, and its state.
+        ("przekaznik", "", 0, True),
+        # System objects carry no leafId either.
+        ("symulacja", "", 0, True),
+        ("detekcja", "", 0, True),
+        # The DELETED bit hides a row whatever its leafId says.
+        ("temp", "0_cb8f_76_0_0", 16, False),
+        ("przekaznik", "", 16, False),
+        ("symulacja", "", 16, False),
+        # A missing typ_komponentu reads like any other row.
+        (None, "", 0, True),
+        (None, "0_x_x_x_x", 16, False),
     ],
 )
 def test_visibility_predicate(
     typ: str | None,
     leaf_id: str,
-    is_system: bool,
+    params: int,
     visible: bool,
 ) -> None:
-    obj = AmpioObject(id=1, typ_komponentu=typ, leaf_id=leaf_id)
-    assert obj.is_system is is_system
+    obj = AmpioObject(id=1, typ_komponentu=typ, leaf_id=leaf_id, params=params)
     assert obj.visible is visible
+
+
+@pytest.mark.parametrize(
+    ("typ", "is_system"),
+    [("symulacja", True), ("detekcja", True), ("flaga", False), (None, False)],
+)
+def test_is_system_names_the_two_system_types(typ: str | None, is_system: bool) -> None:
+    assert AmpioObject(id=1, typ_komponentu=typ).is_system is is_system
 
 
 @pytest.mark.parametrize(
@@ -223,7 +230,7 @@ def test_reg_classifies_as_thermostat_and_surfaces_the_running_flag() -> None:
         ("0_cb8f_76_0_0", 0xCB8F),
         ("0_1_10_0_0", 1),  # the M-SERV's override mac, not its factory id
         ("0_D09A_5_1_2", 0xD09A),  # uppercase hex parses too
-        ("", None),  # system objects and ghost rows carry no leafId
+        ("", None),  # an empty leafId: system objects, Matter box unchecked
         ("0_cb8f_76_0", None),  # four segments
         ("0_cb8f_76_0_0_9", None),  # six segments
         ("1_cb8f_76_0_0", None),  # unexpected leading segment
@@ -242,7 +249,7 @@ def test_module_mac_parses_strictly(leaf_id: str, expected: int | None) -> None:
     [
         ("0_1_10_0_0", True),  # the M-SERV's override mac
         ("0_cb8f_76_0_0", False),  # another module's object
-        ("", False),  # system objects and ghost rows
+        ("", False),  # an empty leafId
     ],
 )
 def test_is_server_owned_reads_the_mserv_override_mac(
@@ -342,7 +349,7 @@ def test_sf_id_reads_none_for_a_malformed_leaf_id():
 
 
 def test_sf_id_reads_none_for_an_empty_leaf_id():
-    """System objects and ghost rows carry an empty leaf_id."""
+    """System objects and Matter-unchecked rows carry an empty leaf_id."""
     obj = AmpioObject(id=1, leaf_id="")
     assert obj.sf_id is None
     assert obj.sub_sf_id is None

@@ -226,7 +226,7 @@ class AmpioStore:
         reply included (a full grant revocation empties the app-sync view).
         """
         # The same completeness proves a buffered push's id will never gain
-        # a catalogue row; without the prune, ghost-row pushes accumulate.
+        # a catalogue row; without the prune, pushes for such ids accumulate.
         for oid in list(self._pending_state):
             if oid not in present:
                 del self._pending_state[oid]

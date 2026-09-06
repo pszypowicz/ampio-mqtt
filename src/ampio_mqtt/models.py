@@ -151,9 +151,10 @@ class AmpioObject:
     # replacement-stable but NOT unique - objects can share one. Routes raw
     # channel events to this object.
     funkcja: int | None = None
-    # `leafId`, identical on both discovery surfaces. Empty for ghost rows
-    # and system objects. Doubles as the visibility marker (`visible`) and
-    # the physical-output key (`leaf_key`) - docs/identity.md.
+    # `leafId`, identical on both discovery surfaces. Empty for system
+    # objects, and Designer clears it when an object's Matter box is
+    # unchecked. The physical-output key (`leaf_key`) and the parse source
+    # for `module_mac` - docs/identity.md.
     leaf_id: str = ""
     # `params` bitfield (Designer config flags; see `hidden`/`visible`).
     # Defaults to 0 so a payload without the column reads "nothing hidden".
@@ -293,8 +294,7 @@ class AmpioObject:
 
         ``symulacja`` (presence-simulation) and ``detekcja`` (detection) live
         outside the room/group hierarchy by design; the M-SERV always exposes
-        them. Used by :pyattr:`visible` so consumers do not have to hardcode
-        the membership rule.
+        them.
         """
         return is_system_type(self.typ_komponentu)
 
@@ -343,7 +343,8 @@ class AmpioObject:
         object row. Several Designer views of one output share one
         ``leafId``, so two objects can return the same key. The
         per-object identity is :pyattr:`object_key`. None for an empty
-        ``leaf_id`` (system objects, ghost rows). See docs/identity.md.
+        ``leaf_id`` (system objects, Matter box unchecked). See
+        docs/identity.md.
         """
         return f"leaf_{self.leaf_id}" if self.leaf_id else None
 
@@ -427,19 +428,13 @@ class AmpioObject:
 
     @property
     def visible(self) -> bool:
-        """Whether the object is one the user can see in Designer's tree.
+        """Whether the M-SERV means to surface this object: ``not hidden``.
 
-        ``hidden`` (``params`` bit 4) takes precedence: a hidden object is never
-        visible, even with a populated ``leaf_id`` - this is what drops the
-        phantom half of a duplicated Designer channel. Otherwise the wire-side
-        marker is ``leaf_id``, set for every real object and empty for ghost
-        rows and system objects, with the latter pulled back in by
-        ``is_system``. When ``params`` is absent (so ``hidden`` is False) the
-        ``leaf_id`` test alone decides.
+        The ``params`` DELETED bit is the one wire-side marker. ``leaf_id``
+        says nothing here: Designer clears it when an object's Matter box
+        is unchecked, and the row stays a real object. See docs/identity.md.
         """
-        if self.hidden:
-            return False
-        return bool(self.leaf_id) or self.is_system
+        return not self.hidden
 
 
 @dataclass(slots=True, frozen=True)
