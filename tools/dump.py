@@ -11,9 +11,8 @@ Usage:
   python tools/dump.py --host ampio.lan --username U --password P \
       --topic 'ampio/fromDB/U/#' --request ampio/control/U/config \
       --request-payload devices --duration 15
-  python tools/dump.py --topic 'device_api/from/+/info' \
-      --request device_api/to/1a2b/get_data \
-      --request device_api/to/3c4d/get_data --duration 60
+  python tools/dump.py --topic 'device_api/from/list' \
+      --request device_api/to/list --request-payload 0 --duration 15
 """
 
 from __future__ import annotations

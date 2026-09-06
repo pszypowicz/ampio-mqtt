@@ -50,7 +50,6 @@ from .events import (
     ObjectUpdated,
 )
 from .models import (
-    MSERV_MAC,
     AccessTier,
     AmpioModule,
     AmpioObject,
@@ -208,12 +207,11 @@ class AmpioClient:
         # poison payload logs its traceback once instead of per delivery.
         self._poisoned_topics: set[str] = set()
 
-        # Per-mac futures awaiting a device_api info reply; every waiter
-        # for a mac receives the same reply, exactly as endpoint fetches
-        # share one.
-        self._descriptions_waiters: dict[
-            int, list[asyncio.Future[tuple[_protocol.OutputDescription, ...]]]
-        ] = {}
+        # Futures awaiting the next device_api list reply; every waiter
+        # receives the same reply, exactly as endpoint fetches share one.
+        self._device_list_waiters: list[
+            asyncio.Future[tuple[_protocol.DeviceRecord, ...]]
+        ] = []
 
     def _subscriptions(self) -> list[str]:
         """Every topic the client needs on each (re)connect."""
@@ -229,7 +227,7 @@ class AmpioClient:
                 RAW_OUTPUT_WILDCARD,
                 RAW_DIAGNOSTICS_WILDCARD,
                 RAW_EVENT_WILDCARD,
-                _protocol.DEVICE_API_INFO_WILDCARD,
+                _protocol.DEVICE_API_LIST_TOPIC,
             ]
         return topics
 
@@ -260,9 +258,11 @@ class AmpioClient:
                     _retained(msg.endpoint, payload), parsed
                 )
                 return
-            if isinstance(msg, _protocol.DeviceDescriptions):
-                for future in self._descriptions_waiters.pop(msg.mac, []):
-                    future.set_result(msg.entries)
+            if isinstance(msg, _protocol.DeviceList):
+                waiters, self._device_list_waiters = self._device_list_waiters, []
+                for future in waiters:
+                    if not future.done():
+                        future.set_result(msg.devices)
                 return
             applied = self._store.apply(msg)
             if isinstance(msg, _protocol.EndpointReply):
@@ -798,39 +798,34 @@ class AmpioClient:
         return dict(cast("dict[int, str]", replies["locations"]))
 
     async def resolve_records(self, timeout: float = 10.0) -> RecordSweep:
-        """Sweep the CAN description records and return what the pass covered.
+        """Read every module's CAN description record and return what the pass covered.
 
-        Fetches the locations name table, asks each catalogued module
-        for its CAN-resident description record over the ``device_api``
-        tree, joins the entries to objects, and folds each joined
-        object's entry into :pyattr:`AmpioObject.record` - wholesale,
-        None fields included - with :class:`ObjectUpdated` dispatched on
-        change. The same reply's DEVICE_NAME entry folds into
-        :pyattr:`AmpioModule.record` with :class:`ModuleUpdated` (#114).
-        The catalogue facts (``matter_device_type``, ``opis_menu``) are
-        never touched: the record is the separate, admin-guarded fact
-        (#133).
+        Fetches the locations name table, reads the ``device_api`` list
+        reply - one message carrying every catalogued module's record,
+        the M-SERV's own included - joins the entries to objects, and
+        folds each joined object's entry into :pyattr:`AmpioObject.record`
+        - wholesale, None fields included - with :class:`ObjectUpdated`
+        dispatched on change. The same record's DEVICE_NAME entry folds
+        into :pyattr:`AmpioModule.record` with :class:`ModuleUpdated`
+        (#114). The catalogue facts (``matter_device_type``,
+        ``opis_menu``) are never touched: the record is the separate,
+        admin-guarded fact (#133).
 
         Returns a :class:`RecordSweep`. Its ``records`` map is
         ``{object_id: DesignerRecord}`` for what resolved, and its two
-        mac sets say which modules answered - a caller that reads
-        ``record`` None needs them to tell an empty entry from an unread
-        module. An object absent from a sweep keeps its previous
-        ``record`` until a later sweep covers it.
+        mac sets say which catalogued modules the reply listed - a caller
+        that reads ``record`` None needs them to tell an empty entry from
+        an unlisted module. An object absent from a pass keeps its
+        previous ``record`` until a later pass covers it.
 
-        The M-SERV answers the requests one module at a time, so
-        ``timeout`` bounds the silence between replies, not the sweep.
-        Every request goes out first, and the sweep ends once no further
-        reply arrives for ``timeout`` seconds. The whole call therefore
-        runs as long as the M-SERV needs, plus the ``timeout`` budget the
-        name table is fetched on. A caller that must finish by a deadline
-        applies its own ceiling.
+        ``timeout`` bounds each of the two replies, the name table and
+        the list, so the call ends within twice that.
 
         Admin tier only: the ``device_api`` tree answers no other
         account, and the call raises ``RuntimeError`` for one. Requires
         ``connect()`` to have completed. Raises ``AmpioConnectionError``
-        if the broker is not connected and ``AmpioTimeoutError`` if the
-        name table itself does not arrive.
+        if the broker is not connected and ``AmpioTimeoutError`` if
+        either reply does not arrive.
         """
         if self._tier is not AccessTier.ADMIN:
             raise RuntimeError(
@@ -838,59 +833,36 @@ class AmpioClient:
                 "device_api tree answers no other account"
             )
         names = await self.fetch_locations(timeout=timeout)
-        # The M-SERV's own row is a catalogue module with a mac, but it
-        # answers a get_data request on its factory id only, and the sweep
-        # keys requests by the override mac. Asking on `mac` would put it
-        # in `silent_macs` on every sweep.
-        macs = sorted(
-            {
-                mod.mac
-                for mod in self._store.modules.values()
-                if mod.mac is not None and mod.mac != MSERV_MAC
-            }
-        )
         loop = asyncio.get_running_loop()
-        futures: dict[int, asyncio.Future[tuple[_protocol.OutputDescription, ...]]] = {}
-        for mac in macs:
-            future = loop.create_future()
-            futures[mac] = future
-            self._descriptions_waiters.setdefault(mac, []).append(future)
+        future: asyncio.Future[tuple[_protocol.DeviceRecord, ...]] = (
+            loop.create_future()
+        )
+        self._device_list_waiters.append(future)
         try:
-            for mac in macs:
+            async with asyncio.timeout(timeout):
                 await self._connection.publish(
-                    _protocol.device_api_request_topic(mac), b""
+                    _protocol.DEVICE_API_LIST_REQUEST,
+                    _protocol.DEVICE_API_LIST_PAYLOAD,
                 )
-            pending: set[asyncio.Future[tuple[_protocol.OutputDescription, ...]]] = set(
-                futures.values()
-            )
-            while pending:
-                # One idle window per pass: a pass that completes nothing
-                # means the M-SERV stopped answering, and the rest of the
-                # modules are the offline ones. asyncio.wait leaves the
-                # unfinished futures pending, so nothing races the
-                # unregister below.
-                done, pending = await asyncio.wait(
-                    pending, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
-                )
-                if not done:
-                    break
+                devices = await future
+        except TimeoutError as err:
+            raise AmpioTimeoutError(
+                "Timed out fetching the module records from the Ampio broker"
+            ) from err
         finally:
-            for mac, future in futures.items():
-                waiters = self._descriptions_waiters.get(mac)
-                if waiters is not None:
-                    waiters.remove(future)
-                    if not waiters:
-                        del self._descriptions_waiters[mac]
-        by_mac = {
-            mac: future.result()
-            for mac, future in futures.items()
-            if future.done() and not future.cancelled()
+            if future in self._device_list_waiters:
+                self._device_list_waiters.remove(future)
+        # Keyed by the override mac the reply carries: the id every leaf
+        # embeds, so the join needs no catalogue lookup.
+        by_mac = {device.mac: device.entries for device in devices}
+        catalogued = {
+            mod.mac for mod in self._store.modules.values() if mod.mac is not None
         }
-        silent = frozenset(futures) - frozenset(by_mac)
+        silent = frozenset(catalogued - by_mac.keys())
         if silent:
             _LOGGER.warning(
-                "Ampio modules %s did not answer the description sweep; their "
-                "objects keep whatever record an earlier sweep resolved",
+                "Ampio modules %s are missing from the device list; their "
+                "objects keep whatever record an earlier pass resolved",
                 sorted(silent),
             )
         resolved = _protocol.resolve_designer(

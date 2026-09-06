@@ -12,6 +12,39 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.44.0
+
+`resolve_records()` asked each module for its record by the override mac, and
+the `device_api` tree answers on the factory id only (#154). Every module with a
+Designer override, the M-SERV's own row included, stayed silent on each pass,
+and its objects never got a record. The list reply of the same tree carries
+every module's record in one message, tagged with both ids. The pass now reads
+that one reply.
+
+### Changed
+
+- **`resolve_records()` reads `device_api/to/list` once** instead of a
+  per-module `get_data` pass. One reply in about a second replaces a serial pass
+  of about forty seconds on the reference install. The M-SERV's own record is
+  read like any other, so its virtual outputs resolve a location and a Matter
+  type.
+- **`RecordSweep.silent_macs`** now means a catalogued module missing from the
+  list reply. `answered_macs` is the reply's mac set, and the M-SERV's row
+  appears in one of the two like any other module.
+- **`timeout`** bounds each of the two replies, the name table and the list. A
+  list that never arrives raises `AmpioTimeoutError`, as a missing name table
+  already did. Before, silence produced an all-silent sweep.
+
+### Fixed
+
+- Modules with a Designer override mac resolve their records. The per-module
+  path keyed by the override never answered for them.
+
+### Documentation
+
+- `docs/identity.md` and `docs/protocol.md` describe the list pair, the
+  factory-id keying of `get_data`, and the new coverage semantics.
+
 ## 0.43.0
 
 `AmpioObject.visible` read `leafId` as the visibility marker, and Designer

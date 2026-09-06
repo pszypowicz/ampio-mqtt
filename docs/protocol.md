@@ -43,26 +43,27 @@ for every account.
 | (empty)          | `ampio/control/<user>/states` | `ampio/fromDB/<user>/data/states`           | `{List: [{id, stan_json}]}` - bulk snapshot of the account's object states.                                                                                                                                                                                                                                                                                        |
 | (empty)          | `ampio/control/<user>/info`   | `ampio/fromDB/<user>/data/info`             | `{Results: {mac, userId, serverVersion, serverRevision, mqttVersion, local_ip, device_id, ...}}` - server self-report, retained in the account namespace. `userId` is the asking account's id (`-1` for the reserved `admin` login). `AmpioServerInfo.access_tier` surfaces it for config flows. A running client's tier is decided by its authenticated username. |
 
-## Per-module CAN records (`device_api`)
+## Module CAN records (`device_api`)
 
 A third topic pair sits next to the `config`/`data` request-response surfaces
-and the raw tree. `device_api/to/<machex>/get_data` (empty payload, mac
-lowercase hex) asks one module for its full CAN-resident description record. The
-reply lands on `device_api/from/<MACHEX>/info` (mac UPPERCASE hex on the wire).
-The reply's `descriptions` field carries, base64-encoded, the per-output entries
-behind both the Matter device type tag and the Designer "Lokalizacja" location
-pointer. The frame layout, the descType enum, and the join rule that resolves an
-object to its entry are in [`identity.md`](identity.md). The tree is admin-only,
-exactly like the raw tree. `AmpioClient.resolve_records()` drives this pair. A
-consumer never calls it directly.
+and the raw tree. `device_api/to/list` with the payload `0` asks the M-SERV for
+every module's CAN-resident record at once. The reply lands on
+`device_api/from/list` as `{devices: [...]}`. Each device carries `macUser` (the
+override), `macProd` (the factory id), `protocol`, `name` (base64), and
+`descriptions`, base64 of the per-output entries behind both the Matter device
+type tag and the Designer "Lokalizacja" location pointer. The frame layout, the
+descType enum, and the join rule that resolves an object to its entry are in
+[`identity.md`](identity.md). The tree is admin-only, exactly like the raw tree.
+`AmpioClient.resolve_records()` drives this pair. A consumer never calls it
+directly.
 
-The M-SERV serves these requests one module at a time. A request for a single
-module answers in about a second, but a burst of requests answers no faster in
-total: on the reference install 36 of 39 modules replied over 27 seconds, at a
-mean gap of 0.75 seconds. Three modules never replied. One of the three was the
-M-SERV's own catalogue row, which is not a CAN module and answers no `get_data`
-request. This is why `resolve_records()` bounds the silence between replies
-instead of the whole sweep.
+The per-module pair serves the same record for one module.
+`device_api/to/<machex>/get_data` (empty payload) answers on
+`device_api/from/<MACHEX>/info`. Both macs are the factory id, never the
+override. A module with a Designer override stays silent on its override mac,
+the M-SERV's own row included. The M-SERV serves those requests one module at a
+time, at a mean gap of 0.75 seconds on the reference install. The list reply
+carries the same blobs in one message, so the library reads the list.
 
 Each account namespace also carries a retained
 `ampio/fromDB/<user>/md5/<keyword>` topic per app-sync table (`devices`,

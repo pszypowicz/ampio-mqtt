@@ -103,9 +103,9 @@ class RecordSweep:
     ``records`` is the join result. The two mac sets separate the case a
     bare record map cannot: a module in ``answered_macs`` whose object
     still reads ``record`` None carries no entry for that output, while a
-    module in ``silent_macs`` was never read and says nothing either way.
-    The M-SERV's own row is not a CAN module and is never requested, so
-    it appears in neither set.
+    module in ``silent_macs`` is catalogued but missing from the device
+    list reply and says nothing either way. The M-SERV's own row is a
+    device like any other in both sets.
     """
 
     records: Mapping[int, DesignerRecord]
