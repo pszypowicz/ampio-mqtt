@@ -47,6 +47,24 @@ _BELL_FLAG = 1 << 15
 # "Bell object" checkbox. On every other type the bit means something
 # else (slider layout, lamella step, ...), so it must not read as bell.
 _BELL_TYPES = frozenset({"przekaznik", "flaga"})
+# The component types whose Designer editor renders the `czas` column as
+# the "turn-on time" field - the Designer bundle's own list. A camera
+# reads the same column as a refresh time in milliseconds, and no other
+# type gets the field, so `AmpioObject.pulse_ms` gates on the type.
+_PULSE_TYPES = frozenset(
+    {
+        "flaga",
+        "flaga_l",
+        "flaga_p",
+        "przekaznik",
+        "led",
+        "flaga_liniowa",
+        "flaga_liniowa16",
+        "rgb",
+        "rgbww",
+        "ledww",
+    }
+)
 
 # The `leafId` shape: `0_<macHex>_<sfId>_<subSfId>_<ioNo>` - a leading
 # literal `0`, then the four fields the regex captures (docs/identity.md).
@@ -179,14 +197,13 @@ class AmpioObject:
     # consumer's choice. docs/identity.md holds the vocabulary and the
     # storage path.
     matter_device_type: int | None = None
-    # Designer's per-object time (the `czas` column), in milliseconds - the
-    # wire unit is 10 ms ticks. The app reads it as the default pulse length
-    # for a press; the M-SERV never applies it server-side, so a caller
-    # honors it by passing it to `AmpioClient.set_value(pulse_ms=...)`.
+    # The `czas` column as served, in the wire unit of 10 ms ticks. Its
+    # meaning follows the component type: Designer's "turn-on time" on the
+    # types `pulse_ms` reads, a refresh time in milliseconds on a camera.
     # 0 when not configured. Served on both tiers: `devicesDetails` carries
     # the column, and `data/params_devices` supplies it unfiltered where the
     # app-sync catalogue omits it.
-    pulse_ms: int = 0
+    czas: int = 0
     # The object's description-record entry, admin sweep only; None on
     # the restricted tier and before a sweep covers the object.
     record: DesignerRecord | None = None
@@ -346,6 +363,22 @@ class AmpioObject:
         the module's own configuration. See docs/identity.md.
         """
         return self.typ_komponentu in _BELL_TYPES and bool(self.params & _BELL_FLAG)
+
+    @property
+    def pulse_ms(self) -> int:
+        """Designer's "turn-on time" in milliseconds, 0 where the field does not exist.
+
+        The ``czas`` column in 10 ms ticks, read on the component types
+        whose Designer editor offers the field (relays, flags, dimmers,
+        the RGB kinds). Every other type reads 0, a camera included, where
+        the same column is a refresh time. The app reads the value as the
+        default pulse length for a press; the M-SERV never applies it
+        server-side, so a caller honors it by passing it to
+        :meth:`AmpioClient.set_value` as ``pulse_ms``. See docs/identity.md.
+        """
+        if self.typ_komponentu not in _PULSE_TYPES:
+            return 0
+        return self.czas * 10
 
     @property
     def leaf_key(self) -> str | None:

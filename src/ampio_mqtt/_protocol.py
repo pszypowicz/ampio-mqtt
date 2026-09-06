@@ -63,11 +63,11 @@ class ObjectMetadata:
     # null when the object has no tag - both read as None. docs/identity.md
     # holds the vocabulary.
     matter_device_type: int | None
-    # `czas` column converted to milliseconds (the wire unit is 10 ms ticks):
-    # Designer's per-object time, the app's default pulse length. None when
-    # the reply carried no such column, which the app-sync catalogue never
-    # does - the client then keeps whatever `params_devices` supplied.
-    pulse_ms: int | None
+    # `czas` column as served, in 10 ms ticks; `AmpioObject.pulse_ms` reads
+    # it by component type. None when the reply carried no such column,
+    # which the app-sync catalogue never does - the client then keeps
+    # whatever `params_devices` supplied.
+    czas: int | None
     stan_json: str | None  # raw seed for the initial value, applied by the client
 
 
@@ -194,17 +194,11 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
                 # 37), which Python ints handle natively.
                 params=to_int(item.get("params")),
                 matter_device_type=to_int(item.get("type")),
-                pulse_ms=_czas_to_pulse_ms(item.get("czas")),
+                czas=to_int(item.get("czas")),
                 stan_json=item.get("stan_json") or None,
             )
         )
     return out
-
-
-def _czas_to_pulse_ms(value: Any) -> int | None:
-    """The `czas` column in milliseconds, or None when absent / not a number."""
-    czas = to_int(value)
-    return czas * 10 if czas is not None else None
 
 
 def _parse_leaf_id(value: Any) -> str:
@@ -255,7 +249,7 @@ class ParamsEntry:
     """One object's row in the ``data/params_devices`` table."""
 
     params: int
-    pulse_ms: int
+    czas: int
 
 
 def parse_params_devices(payload: str) -> dict[int, ParamsEntry] | None:
@@ -277,7 +271,7 @@ def parse_params_devices(payload: str) -> dict[int, ParamsEntry] | None:
             continue
         out[oid] = ParamsEntry(
             params=to_int(item.get("params")) or 0,
-            pulse_ms=_czas_to_pulse_ms(item.get("czas")) or 0,
+            czas=to_int(item.get("czas")) or 0,
         )
     return out
 
