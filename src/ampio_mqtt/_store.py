@@ -278,8 +278,8 @@ class AmpioStore:
         entry = self._params_by_id.get(meta.id)
         if updates["params"] is None:
             updates["params"] = entry.params if entry is not None else obj.params
-        if updates["pulse_ms"] is None:
-            updates["pulse_ms"] = entry.pulse_ms if entry is not None else obj.pulse_ms
+        if updates["czas"] is None:
+            updates["czas"] = entry.czas if entry is not None else obj.czas
         # The catalogue never carries the record entry, so the held table
         # re-applies it on every merge - including the re-creation after
         # an eviction.
@@ -399,9 +399,9 @@ class AmpioStore:
         for oid, entry in table.items():
             obj = self.objects.get(oid)
             if obj is not None and (
-                obj.params != entry.params or obj.pulse_ms != entry.pulse_ms
+                obj.params != entry.params or obj.czas != entry.czas
             ):
-                obj = replace(obj, params=entry.params, pulse_ms=entry.pulse_ms)
+                obj = replace(obj, params=entry.params, czas=entry.czas)
                 self.objects[oid] = obj
                 self._record(obj, applied)
         return True

@@ -12,6 +12,33 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.46.0
+
+`AmpioObject.pulse_ms` served the raw `czas` column on every component type,
+while the Designer editor offers that field, "turn-on time", on a fixed list of
+types only (#143). A camera reads the same column as a refresh time in
+milliseconds, so a consumer that treated a positive `pulse_ms` as "this object
+pulses" mislabeled it. `pulse_ms` now reads the column on Designer's own list
+and 0 elsewhere, and the raw column is served as `czas`.
+
+### Added
+
+- **`AmpioObject.czas`** - the `czas` column as served, in 10 ms ticks, on both
+  tiers. Its meaning follows the component type.
+
+### Changed
+
+- **`AmpioObject.pulse_ms` is a property gated by component type.** It reads
+  `czas` times ten on the types whose Designer editor renders the turn-on time
+  field (relays, flags, dimmers, the RGB kinds) and 0 on every other type, a
+  camera and a cover included. Before, it was a field that carried the column
+  for every type.
+
+### Documentation
+
+- `docs/identity.md` names Designer's type list as the gate and states the
+  camera meaning of the column.
+
 ## 0.45.0
 
 An object whose Matter box was checked and unchecked in Designer keeps its type,

@@ -268,12 +268,20 @@ own configuration. The marker is readable on both account tiers, because
 `data/params_devices` serves `params` unfiltered.
 
 Designer's per-object "time" field is the `czas` column. The wire unit is 10 ms
-ticks. The library surfaces the value as `AmpioObject.pulse_ms`, in
-milliseconds. The M-SERV never applies the value server-side: a plain `turnOn`
-or `setValue` latches the object even when `czas` is set. Only an explicit time
-argument pulses, and that argument is authoritative - `czas` neither stretches
-nor caps it. Live measurements: with `czas` = 500 (5 s), a time argument of 100
-ran 990 ms and an argument of 1000 ran 10011 ms. The timed form works on every
+ticks, and the library serves the raw column as `AmpioObject.czas`. The field's
+meaning follows the component type. The Designer editor renders the column as
+"turn-on time" on a fixed list of types: `flaga`, `flaga_l`, `flaga_p`,
+`przekaznik`, `led`, `flaga_liniowa`, `flaga_liniowa16`, `rgb`, `rgbww`, and
+`ledww`. A camera reads the same column as a refresh time in milliseconds. No
+other type gets the field, so a cover never carries a value. The library
+surfaces the turn-on time as `AmpioObject.pulse_ms`, in milliseconds, on the
+listed types only. Every other type reads 0, whatever the column holds.
+
+The M-SERV never applies the value server-side: a plain `turnOn` or `setValue`
+latches the object even when `czas` is set. Only an explicit time argument
+pulses, and that argument is authoritative - `czas` neither stretches nor caps
+it. Live measurements: with `czas` = 500 (5 s), a time argument of 100 ran 990
+ms and an argument of 1000 ran 10011 ms. The timed form works on every
 switchable output type probed (relay, flag, dimmer), independent of the bell
 marker. The field is therefore the app's default pulse length - the app reads it
 and sends the timed command itself, and a consumer honors it by passing the

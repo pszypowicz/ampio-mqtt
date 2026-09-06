@@ -149,6 +149,28 @@ def test_read_only_reads_params_bit_6(params: int, read_only: bool) -> None:
 
 
 @pytest.mark.parametrize(
+    ("typ", "czas", "pulse_ms"),
+    [
+        ("przekaznik", 500, 5000),  # 10 ms ticks -> ms, the live bell-relay value
+        ("flaga", 500, 5000),
+        ("led", 50, 500),
+        ("rgb", 500, 5000),  # on Designer's list, even with none on this install
+        ("ledww", 500, 5000),
+        ("flaga_liniowa16", 500, 5000),
+        ("przekaznik", 0, 0),
+        ("rgbw", 500, 0),  # not on the list: Designer offers no turn-on time
+        ("roleta_procenty", 500, 0),  # covers never get the field
+        ("kamera", 500, 0),  # the same column is a refresh time in ms there
+        (None, 500, 0),
+    ],
+)
+def test_pulse_ms_reads_czas_only_on_the_turn_on_time_types(
+    typ: str | None, czas: int, pulse_ms: int
+) -> None:
+    assert AmpioObject(id=1, typ_komponentu=typ, czas=czas).pulse_ms == pulse_ms
+
+
+@pytest.mark.parametrize(
     ("typ", "params", "bell"),
     [
         ("przekaznik", 1 << 15, True),  # bit 15 -> Designer bell-object checkbox
