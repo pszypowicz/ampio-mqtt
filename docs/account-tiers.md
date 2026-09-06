@@ -34,6 +34,7 @@ example is `modules`/`mserv`, which the standard tier never receives.
 | md5 change-detection tree                                                                    | yes           | yes                                   |
 | Commands                                                                                     | all objects   | granted objects                       |
 | Designer per-output record (the `device_api` tree, `resolve_records()`, `fetch_locations()`) | yes           | no                                    |
+| Sibling module mac (`sibling_module_mac`)                                                    | yes           | yes, bounded by the grant             |
 | **Module list** (`modules`, `mserv`)                                                         | yes           | **no**                                |
 | **Raw channel tree** (`ampio/from/#`)                                                        | yes           | **no**                                |
 | **Module diagnostics** (voltage, temperature)                                                | yes           | **no**                                |
@@ -49,9 +50,11 @@ enforcement, not to convention.
 Two of the gaps are narrower than the table suggests. The `data/devices` rows
 carry `id_urzadzenia`, so a standard account still learns the module ids that
 own its granted objects. That is enough to group entities by physical module,
-but without names, macs, or models. And the M-SERV's own identity needs no
-module list at all. Both tiers receive `server_info` fully, so a consumer can
-anchor its hub device on `AmpioServerInfo.mac` instead of `mserv`.
+but without names, macs, or models. `AmpioObject.sibling_module_mac` turns that
+id into the module's override mac whenever one leafed object on the same module
+is in the grant. And the M-SERV's own identity needs no module list at all. Both
+tiers receive `server_info` fully, so a consumer can anchor its hub device on
+`AmpioServerInfo.mac` instead of `mserv`.
 
 Grants bound reads and object writes alike. The M-SERV drops a command for an
 object outside a standard account's grant, with no effect and no reply. No state

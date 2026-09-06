@@ -180,7 +180,7 @@ def test_resolve_designer_joins_location_and_type() -> None:
     by_mac = {
         0xCB89: _entries((12, 0, 14, 256, "Lampa"), (26, 1, 0, 0, "Roleta")),
     }
-    resolved = resolve_designer(objects, by_mac, {14: "Potter"}, frozenset())
+    resolved = resolve_designer(objects, by_mac, {14: "Potter"}, frozenset(), {})
     assert resolved == {
         64: DesignerRecord(location="Potter", matter_device_type=256, desc="Lampa"),
         48: DesignerRecord(location=None, matter_device_type=None, desc="Roleta"),
@@ -195,7 +195,7 @@ def test_resolve_designer_skips_the_unjoinable() -> None:
         4: AmpioObject(id=4, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_9"),
     }
     by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
-    assert resolve_designer(objects, by_mac, {14: "P"}, frozenset()) == {}
+    assert resolve_designer(objects, by_mac, {14: "P"}, frozenset(), {}) == {}
 
 
 def test_resolve_designer_skips_colliding_macs() -> None:
@@ -203,7 +203,7 @@ def test_resolve_designer_skips_colliding_macs() -> None:
         64: AmpioObject(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
     }
     by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
-    assert resolve_designer(objects, by_mac, {14: "P"}, frozenset({0xCB89})) == {}
+    assert resolve_designer(objects, by_mac, {14: "P"}, frozenset({0xCB89}), {}) == {}
 
 
 def test_resolve_designer_reads_empty_desc_as_none() -> None:
@@ -211,7 +211,7 @@ def test_resolve_designer_reads_empty_desc_as_none() -> None:
         64: AmpioObject(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
     }
     by_mac = {0xCB89: _entries((12, 0, 0, 0, ""))}
-    assert resolve_designer(objects, by_mac, {}, frozenset()) == {
+    assert resolve_designer(objects, by_mac, {}, frozenset(), {}) == {
         64: DesignerRecord(location=None, matter_device_type=None, desc=None)
     }
 
@@ -223,9 +223,55 @@ def test_resolve_designer_reads_clear_sentinels_as_none() -> None:
         64: AmpioObject(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
     }
     by_mac = {0xCB89: _entries((12, 0, 16383, 0, "."))}
-    assert resolve_designer(objects, by_mac, {16383: "Bogus"}, frozenset()) == {
+    assert resolve_designer(objects, by_mac, {16383: "Bogus"}, frozenset(), {}) == {
         64: DesignerRecord(location=None, matter_device_type=None, desc=None)
     }
+
+
+def test_resolve_designer_joins_a_flag_on_the_binary_flag_class() -> None:
+    objects = {152: AmpioObject(id=152, typ_komponentu="flaga", leaf_id="0_1_3_0_0")}
+    by_mac = {1: _entries((6, 0, 19, 21, "flag"), (12, 0, 1, 266, "relay"))}
+    assert resolve_designer(objects, by_mac, {19: "Testowe"}, frozenset(), {}) == {
+        152: DesignerRecord(location="Testowe", matter_device_type=21, desc="flag")
+    }
+
+
+def test_resolve_designer_joins_a_leafless_object_through_funkcja() -> None:
+    """No leaf: the module comes from id_urzadzenia and the channel from
+    funkcja - 1, the relation every leafed object of the table kinds holds."""
+    objects = {
+        153: AmpioObject(
+            id=153, typ_komponentu="flaga", id_urzadzenia=1, funkcja=2, leaf_id=""
+        ),
+        143: AmpioObject(
+            id=143, typ_komponentu="przekaznik", id_urzadzenia=3, funkcja=1, leaf_id=""
+        ),
+    }
+    by_mac = {
+        1: _entries((6, 1, 19, 21, "test2")),
+        0xBE82: _entries((12, 0, 19, 266, "Test Switch")),
+    }
+    resolved = resolve_designer(
+        objects, by_mac, {19: "Testowe"}, frozenset(), {1: 1, 3: 0xBE82}
+    )
+    assert resolved == {
+        153: DesignerRecord(location="Testowe", matter_device_type=21, desc="test2"),
+        143: DesignerRecord(
+            location="Testowe", matter_device_type=266, desc="Test Switch"
+        ),
+    }
+
+
+def test_resolve_designer_skips_a_leafless_object_without_a_module() -> None:
+    objects = {
+        153: AmpioObject(
+            id=153, typ_komponentu="flaga", id_urzadzenia=9, funkcja=2, leaf_id=""
+        ),
+        154: AmpioObject(id=154, typ_komponentu="flaga", funkcja=2, leaf_id=""),
+        155: AmpioObject(id=155, typ_komponentu="flaga", id_urzadzenia=1, leaf_id=""),
+    }
+    by_mac = {1: _entries((6, 1, 19, 21, "test2"))}
+    assert resolve_designer(objects, by_mac, {19: "Testowe"}, frozenset(), {1: 1}) == {}
 
 
 def test_resolve_module_records_reads_the_device_name_entry() -> None:
@@ -440,6 +486,42 @@ async def test_resolve_records_joins_by_the_override_mac_the_reply_carries() -> 
         assert result.answered_macs == frozenset({0xCB89, 1})
         assert result.silent_macs == frozenset()
         assert client.modules[1].record == ModuleRecord()
+    finally:
+        await client.disconnect()
+
+
+async def test_resolve_records_joins_a_leafless_object_through_the_catalogue() -> None:
+    client, broker = await _admin_client_with_catalogue()
+    try:
+        feed(
+            client,
+            ADMIN_DETAILS_TOPIC,
+            details(
+                {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"},
+                {
+                    "id": 65,
+                    "typ_komponentu": "przekaznik",
+                    "id_urzadzenia": 16,
+                    "funkcja": 2,
+                },
+            ),
+        )
+        delivery = asyncio.create_task(
+            _deliver_causally(
+                client,
+                broker,
+                json.dumps({"List": [{"id": 14, "opis_menu": "Potter"}]}),
+                _list(_device(0xCB89, 0xCB89, frame(12, 1, 14, 256, "Second"))),
+            )
+        )
+        try:
+            result = await client.resolve_records(timeout=0.2)
+        finally:
+            await delivery
+        assert result.records == {
+            65: DesignerRecord(location="Potter", matter_device_type=256, desc="Second")
+        }
+        assert client.objects[65].record is not None
     finally:
         await client.disconnect()
 

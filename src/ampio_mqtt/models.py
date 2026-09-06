@@ -53,6 +53,13 @@ _BELL_TYPES = frozenset({"przekaznik", "flaga"})
 # Strict on purpose - a half-parsed mac that is wrong is worse than None.
 _LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_([^_]+)_([^_]+)_([^_]+)")
 
+
+def leaf_mac(leaf_id: str) -> int | None:
+    """The override mac a `leafId` embeds, or None for an empty or odd shape."""
+    match = _LEAF_ID_RE.fullmatch(leaf_id)
+    return int(match.group(1), 16) if match is not None else None
+
+
 # The M-SERV's Designer override mac: its objects' leafId embeds this value
 # (not the factory mac_global), and its own module row reports it as
 # `AmpioModule.mac`. The one place the rule lives - consumers read
@@ -156,6 +163,11 @@ class AmpioObject:
     # unchecked. The physical-output key (`leaf_key`) and the parse source
     # for `module_mac` - docs/identity.md.
     leaf_id: str = ""
+    # The override mac that leafed objects on the same `id_urzadzenia`
+    # embed, read out of the catalogue this tier holds - a leafless
+    # object's module on both tiers, None without such a sibling in the
+    # grant. `module_mac` stays the leaf-parsed fact - docs/identity.md.
+    sibling_module_mac: int | None = None
     # `params` bitfield (Designer config flags; see `hidden`/`visible`).
     # Defaults to 0 so a payload without the column reads "nothing hidden".
     params: int = 0
@@ -371,8 +383,7 @@ class AmpioObject:
         catalogue (docs/identity.md). None when ``leaf_id`` is empty or,
         on no observed install, has an unexpected shape.
         """
-        match = _LEAF_ID_RE.fullmatch(self.leaf_id)
-        return int(match.group(1), 16) if match is not None else None
+        return leaf_mac(self.leaf_id)
 
     def _leaf_segment(self, group: int) -> int | None:
         """One numeric `leaf_id` segment, or None when it does not parse."""

@@ -865,8 +865,17 @@ class AmpioClient:
                 "objects keep whatever record an earlier pass resolved",
                 sorted(silent),
             )
+        mac_by_device_id = {
+            mod.id: mod.mac
+            for mod in self._store.modules.values()
+            if mod.mac is not None
+        }
         resolved = _protocol.resolve_designer(
-            self._store.objects, by_mac, names, self._store.colliding_macs
+            self._store.objects,
+            by_mac,
+            names,
+            self._store.colliding_macs,
+            mac_by_device_id,
         )
         applied = self._store.apply_designer_records(resolved)
         module_applied = self._store.apply_module_records(

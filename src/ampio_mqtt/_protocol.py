@@ -497,15 +497,19 @@ def resolve_designer(
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
     location_names: Mapping[int, str],
     colliding_macs: frozenset[int],
+    mac_by_device_id: Mapping[int, int],
 ) -> dict[int, DesignerRecord]:
     """Join each object to its module's description entry.
 
     The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], leaf_io_no)`` within
-    the module record of ``module_mac``. Objects on a colliding mac are
-    skipped - the reply cannot be attributed to one module. ``out_loc`` 0
-    or 16383 reads unassigned and ``out_type`` 0 untagged, so none
-    produces a value. A ``desc`` that is empty or the ``.`` placeholder
-    reads as None, like the other two fields.
+    the module record of ``module_mac``. A leafless object joins through
+    ``mac_by_device_id[id_urzadzenia]`` and ``funkcja - 1`` instead: its
+    module row's mac, and the channel every leafed object of these kinds
+    embeds as ``leaf_io_no`` (docs/identity.md). Objects on a colliding
+    mac are skipped - the reply cannot be attributed to one module.
+    ``out_loc`` 0 or 16383 reads unassigned and ``out_type`` 0 untagged,
+    so none produces a value. A ``desc`` that is empty or the ``.``
+    placeholder reads as None, like the other two fields.
     """
     entries_by_key = {
         mac: {(e.desc_type, e.out_no): e for e in entries}
@@ -514,9 +518,19 @@ def resolve_designer(
     out: dict[int, DesignerRecord] = {}
     for obj in objects.values():
         desc_type = DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "")
-        mac = obj.module_mac
-        out_no = obj.leaf_io_no
-        if desc_type is None or mac is None or out_no is None:
+        if desc_type is None:
+            continue
+        if obj.leaf_id:
+            mac = obj.module_mac
+            out_no = obj.leaf_io_no
+        else:
+            mac = (
+                mac_by_device_id.get(obj.id_urzadzenia)
+                if obj.id_urzadzenia is not None
+                else None
+            )
+            out_no = obj.funkcja - 1 if obj.funkcja is not None else None
+        if mac is None or out_no is None:
             continue
         if mac in colliding_macs:
             continue
@@ -1027,6 +1041,7 @@ DESC_TYPE_BY_KIND: dict[str, int] = {
     "roleta_lamelki": 26,  # ROLLER
     "led": 16,  # OUT_OC_U8
     "rgbw": 34,  # RGBW output class; no symbolic name in the recovered enum
+    "flaga": 6,  # FLAG_BIN
 }
 
 
