@@ -12,6 +12,37 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.45.0
+
+An object whose Matter box was checked and unchecked in Designer keeps its type,
+its module id, its rooms, and its state, and loses its leaf. Since 0.43.0 it
+stays visible, but it still had no module on the restricted tier and no Designer
+record on any tier (#157, #158). Both now resolve from facts the catalogue
+already carries.
+
+### Added
+
+- **`AmpioObject.sibling_module_mac`** - the override mac that leafed objects on
+  the same `id_urzadzenia` embed, read out of each catalogue reply on both
+  tiers. None without such a sibling in the catalogue this tier holds.
+  `module_mac` stays the leaf-parsed fact, and no helper picks between the two.
+- **`flaga` resolves a record.** The binary-flag description class joins a flag
+  to its entry, so a flag reads its Designer location and Matter type like a
+  relay does.
+
+### Changed
+
+- **`resolve_records()` joins a leafless object through `funkcja`.** The module
+  comes from the object's `id_urzadzenia` row and the channel from `funkcja`
+  minus one, the relation every leafed object of the resolvable kinds holds on
+  the reference install. The leaf stays the key when present.
+
+### Documentation
+
+- `docs/identity.md` states the `funkcja` relation and its one exception, the
+  M-SENS analog inputs, adds the flag class to the proven table, and describes
+  `sibling_module_mac` next to `module_mac`.
+
 ## 0.44.0
 
 `resolve_records()` asked each module for its record by the override mac, and

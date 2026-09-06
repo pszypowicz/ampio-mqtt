@@ -815,6 +815,54 @@ def test_states_snapshot_does_not_overwrite_live_value() -> None:
     assert store.objects[41].state == "fresh"
 
 
+def test_sibling_module_mac_comes_from_leafed_rows_on_the_same_module() -> None:
+    """A leafless row reads the mac its leafed siblings embed, a row without
+    a leafed sibling reads None, and a leafed row reads its own module's mac."""
+    store = _store()
+    _apply(
+        store,
+        DATA_DEVICES_TOPIC,
+        details(
+            {
+                "id": 1,
+                "typ_komponentu": "przekaznik",
+                "id_urzadzenia": 3,
+                "leafId": "0_be82_257_2_1",
+            },
+            {"id": 2, "typ_komponentu": "przekaznik", "id_urzadzenia": 3},
+            {"id": 3, "typ_komponentu": "flaga", "id_urzadzenia": 7},
+        ),
+    )
+    assert store.objects[1].sibling_module_mac == 0xBE82
+    assert store.objects[2].sibling_module_mac == 0xBE82
+    assert store.objects[3].sibling_module_mac is None
+
+
+def test_sibling_module_mac_follows_the_next_catalogue() -> None:
+    store = _store()
+    _apply(
+        store,
+        DETAILS_TOPIC,
+        details({"id": 2, "typ_komponentu": "przekaznik", "id_urzadzenia": 3}),
+    )
+    assert store.objects[2].sibling_module_mac is None
+    applied = _apply(
+        store,
+        DETAILS_TOPIC,
+        details(
+            {
+                "id": 1,
+                "typ_komponentu": "przekaznik",
+                "id_urzadzenia": 3,
+                "leafId": "0_be82_257_2_1",
+            },
+            {"id": 2, "typ_komponentu": "przekaznik", "id_urzadzenia": 3},
+        ),
+    )
+    assert store.objects[2].sibling_module_mac == 0xBE82
+    assert 2 in [o.id for o in _updated(applied)]
+
+
 def test_states_snapshot_creates_nothing_for_unknown_ids() -> None:
     """Only the catalogues decide which objects exist. The snapshot replays
     DB rows, unlisted ids included - creating from it would later evict an

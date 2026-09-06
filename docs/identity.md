@@ -115,8 +115,18 @@ on `id_urzadzenia` and gates on mac agreement, so the volatile DB join can never
 pair an object with a replaced module's stale row. The join keys the lookup
 rather than the mac, because override macs can collide across rows. The mac then
 gates what the join found. A leafless object has no mac to gate on, so its join
-stands as is. That is the one module lookup a leafless object has, and it
-answers on the admin tier only.
+stands as is. It answers on the admin tier only.
+
+`AmpioObject.sibling_module_mac` is the module lookup that works on both tiers.
+Every leafed object on the same `id_urzadzenia` embeds the module's override mac
+in its leaf, and the store reads that mac out of each catalogue reply for every
+row that shares the module id. A leafless object thus names its module whenever
+one leafed sibling is in the catalogue this tier holds. The field is separate
+from `module_mac` on purpose. `module_mac` is the leaf-parsed fact, identical on
+both tiers. `sibling_module_mac` depends on the grant, so the two can disagree
+between tiers when the grant lacks a leafed sibling, and the consumer picks
+which one drives its topology. On the reference install every module id maps to
+one leaf mac, with no conflict on either tier.
 
 ## The leaf-id segments (`0_<macHex>_<sfId>_<subSfId>_<ioNo>`)
 
@@ -205,9 +215,10 @@ box is unchecked, and the row keeps its type, its module, its rooms, and its
 state. A re-check of the box writes `leafId` back from the linked leaf record. A
 leafless object is a real object without leaf-derived facts. `leaf_key`,
 `module_mac`, `sf_id`, `sub_sf_id`, and `leaf_io_no` read None, and
-`is_server_owned` reads False. `record` stays None, because the description join
-has no channel to match on. `AmpioClient.module_for()` still resolves the module
-on the admin tier.
+`is_server_owned` reads False. `sibling_module_mac` names its module when a
+leafed sibling is in the catalogue. `AmpioClient.module_for()` resolves the
+module row on the admin tier, and the record join falls back to `funkcja` (see
+the join rule below).
 
 `is_system` (`typ_komponentu in {symulacja, detekcja}`) names the
 presence-simulation and detection objects. They live outside the room tree, and
@@ -445,15 +456,23 @@ untagged.
 An object joins its entry through
 `(DESC_TYPE_BY_KIND[typ_komponentu], leaf_io_no)` within the description record
 of its own module (`AmpioObject.module_mac`). `leaf_io_no` is the last `leafId`
-segment. It is live-proven as the out-no key over `funkcja` across the full
-catalogue: `funkcja` under- or over-matches, dependent on the kind, and
-`leaf_io_no` does not. `DESC_TYPE_BY_KIND` ships only live-proven pairs:
-`przekaznik` -> 12 (OUTPUTS), `roleta_procenty` -> 26 (ROLLER), `roleta_lamelki`
--> 26 (ROLLER), `led` -> 16 (OUT_OC_U8), `rgbw` -> 34. A kind outside that table
-(`bit32`, `flaga`, `lin_wej`, `satel_alarm`, `temp` among them) resolves no
-location. On the full-catalogue probe, each of those landed on two or more
-descTypes with a cleared majority at once. The join for such a kind is thus
-ambiguous, not merely unproven by sample size.
+segment, and it is the Designer's own channel key. `DESC_TYPE_BY_KIND` ships
+only live-proven pairs: `przekaznik` -> 12 (OUTPUTS), `roleta_procenty` -> 26
+(ROLLER), `roleta_lamelki` -> 26 (ROLLER), `led` -> 16 (OUT_OC_U8), `rgbw` ->
+34, `flaga` -> 6 (FLAG_BIN). A channel index repeats across classes by design,
+so a frame at the right index in another class proves nothing on its own. The
+object name is the proof: every leafed flag on the reference install has a
+class-6 frame at its channel, and the frame carries the object's own name
+wherever a name is set. A kind outside the table (`bit32`, `lin_wej`,
+`satel_alarm`, `temp` among them) resolves no location, because no class was
+proven for it.
+
+A leafless object has no `leaf_io_no`. The join then uses the module that
+`id_urzadzenia` resolves to and `funkcja` minus one as the channel. On the
+reference install `funkcja` minus one equals `leaf_io_no` for every leafed
+object of every kind except `lin_wej`, where the M-SENS analog channels follow
+another numbering. The read is admin-only, so the module catalogue is present
+for the join.
 
 ### Sweep coverage
 

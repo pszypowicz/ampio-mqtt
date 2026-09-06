@@ -31,6 +31,7 @@ from .models import (
     AmpioServerInfo,
     DesignerRecord,
     ModuleRecord,
+    leaf_mac,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -208,9 +209,16 @@ class AmpioStore:
         if items is None:
             _LOGGER.warning("Could not parse Ampio %s catalogue", surface)
             return False
+        # One reply is the whole catalogue this tier holds, so its leafed
+        # rows are every sibling a leafless row can learn its module from.
+        sibling_macs: dict[int, int] = {}
+        for meta in items:
+            mac = leaf_mac(meta.leaf_id)
+            if meta.id_urzadzenia is not None and mac is not None:
+                sibling_macs[meta.id_urzadzenia] = mac
         touched = False
         for meta in items:
-            touched |= self._merge_metadata(meta, applied)
+            touched |= self._merge_metadata(meta, sibling_macs, applied)
         evicted = self._evict_missing_objects({meta.id for meta in items}, applied)
         if touched or evicted:
             self._rebuild_indexes(applied)
@@ -242,7 +250,12 @@ class AmpioStore:
             applied.events.append(ObjectRemoved(obj))
         return True
 
-    def _merge_metadata(self, meta: _protocol.ObjectMetadata, applied: Applied) -> bool:
+    def _merge_metadata(
+        self,
+        meta: _protocol.ObjectMetadata,
+        sibling_macs: Mapping[int, int],
+        applied: Applied,
+    ) -> bool:
         """Fold one catalogue row into its object; True when anything changed.
 
         Only a real change is reported, so re-requesting the catalogue on every
@@ -256,6 +269,11 @@ class AmpioStore:
         updates: dict[str, Any] = {
             name: getattr(meta, name) for name in _METADATA_FIELDS
         }
+        updates["sibling_module_mac"] = (
+            sibling_macs.get(meta.id_urzadzenia)
+            if meta.id_urzadzenia is not None
+            else None
+        )
         # A row without the column leaves the params_devices value standing.
         entry = self._params_by_id.get(meta.id)
         if updates["params"] is None:
