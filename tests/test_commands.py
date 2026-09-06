@@ -553,6 +553,7 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
         devices(
             {"id": 7, "mac": 0xCAFE, "typ_urzadzenia": 11, "nazwa_urzadzenia": "p"},
             {"id": 8, "mac": 0xB0B0, "typ_urzadzenia": 4, "nazwa_urzadzenia": "r"},
+            {"id": 9, "mac": 0x1A2B, "typ_urzadzenia": 14, "nazwa_urzadzenia": "oc"},
         ),
     )
     feed(
@@ -576,6 +577,24 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
                 "funkcja": 1,
                 "leafId": "0_b0b0_257_2_0",
                 "opis_menu": "Relay",
+            },
+            {
+                "id": 93,
+                "id_urzadzenia": 9,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 8,
+                "funkcja": 8,
+                "leafId": "0_1a2b_67_0_7",
+                "opis_menu": "OC",
+            },
+            {
+                "id": 94,
+                "id_urzadzenia": 8,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 4,
+                "funkcja": 4,
+                "leafId": "0_b0b0_999_0_3",
+                "opis_menu": "Odd",
             },
         ),
     )
@@ -633,6 +652,45 @@ async def test_relay_output_rides_the_raw_frame_on_admin_too() -> None:
     try:
         await client.turn_on(91)
         assert broker.published == [("ampio/to/b0b0/raw", b"30f9ff00")]
+    finally:
+        await client.disconnect()
+
+
+async def test_oc_output_rides_the_raw_frame_with_its_own_function_byte() -> None:
+    """An open-collector output (leaf class 67) takes the 0x32 function the
+    Designer sends it; 0x30 is dropped by the module."""
+    client, broker = await _admin_with_panel_output()
+    try:
+        await client.turn_on(93)
+        await client.turn_off(93)
+        assert broker.published == [
+            ("ampio/to/1a2b/raw", b"32f9ff07"),
+            ("ampio/to/1a2b/raw", b"32f90007"),
+        ]
+    finally:
+        await client.disconnect()
+
+
+async def test_relay_of_an_unproven_leaf_class_keeps_the_api_path() -> None:
+    client, broker = await _admin_with_panel_output()
+    try:
+        await client.turn_on(94)
+        assert broker.published == [(ADMIN_API_TOPIC, b"/api/set/94/turnOn")]
+    finally:
+        await client.disconnect()
+
+
+async def test_oc_output_confirm_resolves_on_the_a_edge() -> None:
+    """The OC output echoes on the `a` prefix, 1-based, and never on the
+    object topic."""
+    client, _broker = await _admin_with_panel_output()
+    try:
+        task = asyncio.create_task(client.turn_on(93, confirm=1.0))
+        await asyncio.sleep(0)
+        feed(client, "ampio/from/1A2B/state/a/8", "255")
+        obj = await task
+        assert obj is not None
+        assert obj.state == "255" and obj.raw_owned is True
     finally:
         await client.disconnect()
 
@@ -709,10 +767,12 @@ async def test_admin_subscribes_the_o_wildcard_and_restricted_does_not(
     admin_client, admin_broker = await _admin_with_panel_output()
     try:
         assert "ampio/from/+/state/o/+" in admin_broker.subscribed
+        assert "ampio/from/+/state/a/+" in admin_broker.subscribed
     finally:
         await admin_client.disconnect()
     _, restricted_broker = connected
     assert "ampio/from/+/state/o/+" not in restricted_broker.subscribed
+    assert "ampio/from/+/state/a/+" not in restricted_broker.subscribed
 
 
 # --- flags as switch targets (#125) ----------------------------------------

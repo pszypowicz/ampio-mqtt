@@ -15,6 +15,7 @@ from ampio_mqtt import (
 )
 from ampio_mqtt._protocol import (
     ENDPOINTS,
+    RAW_OUTPUT_FUNCTION_BY_SF,
     REDACTED,
     DiagnosticsReport,
     EndpointReply,
@@ -654,7 +655,13 @@ def test_raw_write_topic_is_lowercase_hex() -> None:
     assert raw_write_topic(1) == "ampio/to/1/raw"
 
 
-def test_raw_output_payload_encodes_value_and_channel() -> None:
-    assert raw_output_payload(255, 1) == "30f9ff01"
-    assert raw_output_payload(0, 0) == "30f90000"
-    assert raw_output_payload(128, 23) == "30f98017"
+def test_raw_output_payload_encodes_function_value_and_channel() -> None:
+    assert raw_output_payload(0x30, 255, 1) == "30f9ff01"
+    assert raw_output_payload(0x30, 0, 0) == "30f90000"
+    assert raw_output_payload(0x32, 128, 23) == "32f98017"
+
+
+def test_raw_output_function_is_mapped_per_proven_leaf_class() -> None:
+    """Binary outputs (257) take 0x30, open-collector outputs (67) take 0x32;
+    no other class has a proven byte."""
+    assert RAW_OUTPUT_FUNCTION_BY_SF == {257: 0x30, 67: 0x32}

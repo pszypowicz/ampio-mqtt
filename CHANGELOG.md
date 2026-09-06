@@ -12,6 +12,29 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.47.0
+
+The admin-tier raw output write sent function `0x30` to every relay object on a
+CAN module, and an open-collector output (leaf class 67, the M-INOC) drops that
+byte (#160). The write returned without an error and nothing moved. The Designer
+sends `0x32` to that class, live-proven on the reference install, and the output
+echoes on the raw `a` prefix instead of `o`, never on its object topic.
+
+### Changed
+
+- **The raw output frame takes its function byte from the leaf class.** Class
+  257 (relays, panel LEDs) keeps `0x30`, class 67 takes `0x32`. A relay object
+  on any other class, or without a leaf, takes `/api`. Server-owned outputs and
+  `pulse_ms` writes stay on `/api` as before.
+- **The `a` prefix is bridged for open-collector relays.** Such an object reads
+  the module's u8 report (`255` or `0`) as its state, `confirm=` resolves on
+  that edge, and the admin tier subscribes to `ampio/from/+/state/a/+`.
+
+### Documentation
+
+- `docs/protocol.md` states the byte per class and the OC echo.
+  `docs/raw-channel-bridge.md` marks `a` as bridged for class-67 relays.
+
 ## 0.46.0
 
 `AmpioObject.pulse_ms` served the raw `czas` column on every component type,
