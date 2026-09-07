@@ -15,6 +15,8 @@ from ampio_mqtt import (
 )
 from ampio_mqtt._protocol import (
     ENDPOINTS,
+    RAW_BUZZER_OFF,
+    RAW_BUZZER_SILENCE,
     RAW_OUTPUT_FUNCTION_BY_SF,
     REDACTED,
     DiagnosticsReport,
@@ -29,6 +31,8 @@ from ampio_mqtt._protocol import (
     parse_server_info,
     parse_stan_json,
     parse_states_snapshot,
+    raw_buzzer_pattern_payload,
+    raw_buzzer_payload,
     raw_output_payload,
     raw_write_topic,
     redact_info_payload,
@@ -665,3 +669,27 @@ def test_raw_output_function_is_mapped_per_proven_leaf_class() -> None:
     """Binary outputs (257) take 0x30, open-collector outputs (67) take 0x32;
     no other class has a proven byte."""
     assert RAW_OUTPUT_FUNCTION_BY_SF == {257: 0x30, 67: 0x32}
+
+
+def test_raw_buzzer_payload_encodes_the_simple_action() -> None:
+    """Sub-function ON or OFF, tone, and the time byte in 10 ms ticks."""
+    assert raw_buzzer_payload(True, 6, 50) == "0c070370010632"
+    assert raw_buzzer_payload(False, 6, 0) == "0c070370000600"
+
+
+def test_raw_buzzer_pattern_payload_encodes_the_sequence_action() -> None:
+    """Two tones with 16-bit little-endian times, a cycle count, and a delay."""
+    assert raw_buzzer_pattern_payload(6, 30, 20, 30, 3, 0) == (
+        "0c07037101000006001e0014001e0003"
+    )
+    assert raw_buzzer_pattern_payload(6, 30, 6, 0, 1, 100) == (
+        "0c07037101640006001e000600000001"
+    )
+    assert raw_buzzer_pattern_payload(6, 400, 6, 0, 1, 0) == (
+        "0c070371010000060090010600000001"
+    )
+
+
+def test_raw_buzzer_stop_frames() -> None:
+    assert RAW_BUZZER_SILENCE == "0c070371010000000001000000000001"
+    assert RAW_BUZZER_OFF == "0c070370000600"
