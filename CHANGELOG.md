@@ -12,6 +12,28 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.48.0
+
+The M-DOT panels carry a piezo buzzer that the Designer drives through raw
+condition-action frames, with no DB object, no `/api` verb, and no state topic
+(#164). The library had no way to reach it. Both frame forms were proven live
+with microphone recordings, and the client now wraps them on the admin tier.
+
+### Added
+
+- **`buzz()`, `buzz_pattern()`, and `buzz_stop()`** sound, pattern, and silence
+  a panel's buzzer, addressed by `AmpioModule.id`. A beep takes a tone (1 to 31)
+  and a length up to 2.55 s. A pattern takes two tones, their lengths, a cycle
+  count where 0 repeats until stopped, and a delay. The stop sends the silent
+  one-cycle sequence and then the simple OFF, which covers a running pattern and
+  a plain beep. No readback exists, so none takes `confirm=`.
+
+### Documentation
+
+- `docs/protocol.md` gains "Panel buzzer": the frames, the tone formula (16576
+  Hz / (tone + 1)), the loudness table, and the stop rules.
+  `docs/account-tiers.md` lists the buzzer write as admin-only.
+
 ## 0.47.0
 
 The admin-tier raw output write sent function `0x30` to every relay object on a
