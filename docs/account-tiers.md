@@ -31,7 +31,7 @@ example is `modules`/`mserv`, which the standard tier never receives.
 | Scenes (`fetch_scenes`, scene commands)                                                      | yes           | yes                                   |
 | `resources` / `icons` tables (`data` surface)                                                | yes           | yes                                   |
 | `logging` config table (`data` surface)                                                      | yes           | yes (the table is not grant-filtered) |
-| md5 change-detection tree                                                                    | yes           | yes                                   |
+| md5 change-detection tree (the admin client watches `devices` and `params_devices`)          | yes           | yes                                   |
 | Commands                                                                                     | all objects   | granted objects                       |
 | Designer per-output record (the `device_api` tree, `resolve_records()`, `fetch_locations()`) | yes           | no                                    |
 | Sibling module mac (`sibling_module_mac`)                                                    | yes           | yes, bounded by the grant             |

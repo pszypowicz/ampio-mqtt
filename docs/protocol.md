@@ -70,8 +70,14 @@ Each account namespace also carries a retained
 `params_devices`, `groups`, `group_devices`, `scenes`, `resources`, `icons`,
 `logging`). Each holds the MD5 of the exact reply payload the account receives,
 per-account for the grant-filtered tables. The Designer SPA uses these to skip
-redundant refetches. The library does not: the hashes cover neither the `config`
-catalogues nor `states`, so the requests worth saving have no hash.
+redundant refetches. The hashes cover neither the `config` catalogues nor
+`states`, so the library saves no request with them. It reads two of them as
+change signals instead. A Designer save makes the M-SERV publish `data/devices`,
+`md5/devices`, and `data/params_devices` into every account namespace unasked, a
+few seconds after the save. Designer triggers that push with a `refresh` keyword
+on its `data` surface. The admin client watches the retained `md5/devices` and
+`md5/params_devices` digests and re-requests its `config` pair when one changes
+([`discovery-flow.md`](discovery-flow.md)).
 
 ## Commands (write)
 

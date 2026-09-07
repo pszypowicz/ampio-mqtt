@@ -19,11 +19,13 @@ from ampio_mqtt._protocol import (
     RAW_BUZZER_SILENCE,
     RAW_OUTPUT_FUNCTION_BY_SF,
     REDACTED,
+    CatalogueDigest,
     DiagnosticsReport,
     EndpointReply,
     RawChannelEdge,
     Router,
     StateUpdate,
+    md5_topic,
     parse_details,
     parse_devices,
     parse_params_devices,
@@ -642,6 +644,27 @@ def test_endpoint_reply_route_carries_raw_payload() -> None:
 
 def test_route_is_user_scoped_for_endpoint_replies() -> None:
     assert _route("ampio/fromDB/other/config/devicesDetails", "{}") is None
+
+
+@pytest.mark.parametrize("keyword", ["devices", "params_devices"])
+def test_digest_route_ok(keyword: str) -> None:
+    digest = _route(md5_topic("u", keyword), "0f343b0931126a20f133d67c2b018a3b\n")
+    assert digest == CatalogueDigest(
+        keyword=keyword, digest="0f343b0931126a20f133d67c2b018a3b"
+    )
+
+
+@pytest.mark.parametrize(
+    ("topic", "payload"),
+    [
+        ("ampio/fromDB/u/md5/scenes", "abc"),  # no catalogue behind it
+        ("ampio/fromDB/other/md5/devices", "abc"),  # another account
+        ("ampio/fromDB/u/md5/devices", ""),  # a retained clear, not a digest
+        ("ampio/fromDB/u/md5", "abc"),
+    ],
+)
+def test_digest_route_rejects(topic: str, payload: str) -> None:
+    assert _route(topic, payload) is None
 
 
 def test_diagnostics_three_element_frame_has_no_temperature() -> None:

@@ -12,6 +12,33 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.49.0
+
+An object added in Designer reached an admin session only on a reconnect, a
+`refresh()` call, or a `refresh_interval` tick, while a standard account saw it
+at once (#166). The M-SERV pushes the app-sync tables into every account
+namespace a few seconds after a save, the admin one included, and the standard
+tier parses that push as its catalogue. It never pushes the `config` catalogues
+an admin session builds on. The admin client now watches the retained digests
+the same push rewrites and re-requests its catalogues.
+
+### Changed
+
+- **The admin client subscribes to `md5/devices` and `md5/params_devices`.** The
+  broker replays each retained digest on subscribe, and that replay seeds the
+  comparison. A digest that then differs re-requests `devicesDetails` and
+  `devices`, and the reply's diff fires `ObjectAdded`, `ObjectUpdated`,
+  `ObjectRemoved`, and the module events, so a Designer save surfaces on both
+  tiers without a reconnect. The re-request opens no snapshot cycle, so a live
+  value pushed since the last request keeps outranking the reply's `stan_json`.
+  `refresh_interval` stays as the fallback for a change the M-SERV pushes no
+  digest for.
+
+### Documentation
+
+- `discovery-flow.md` describes the Designer-save push per tier, and
+  `protocol.md` records what the M-SERV publishes unasked on a save.
+
 ## 0.48.0
 
 The M-DOT panels carry a piezo buzzer that the Designer drives through raw

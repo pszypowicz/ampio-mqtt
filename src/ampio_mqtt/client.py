@@ -179,6 +179,11 @@ class AmpioClient:
         )
         self._served = tuple(ep for ep in ENDPOINTS if ep.tier in (None, self._tier))
         self._initial_endpoints = tuple(ep.name for ep in self._served if ep.initial)
+        # The admin catalogue pair a pushed digest change re-requests (#166);
+        # empty on the restricted tier, which never subscribes to a digest.
+        self._catalogue_endpoints = tuple(
+            ep for ep in self._served if ep.initial and ep.tier is AccessTier.ADMIN
+        )
         self._router = _protocol.Router(username, self._served)
         self._store = AmpioStore()
         self._stats = ConnectionStats()
@@ -192,7 +197,7 @@ class AmpioClient:
             stats=self._stats,
             on_message=self._handle_message,
             on_availability=self._handle_availability,
-            on_connected=self.refresh,
+            on_connected=self._handle_connected,
             on_auth_failure=self._handle_auth_failure,
             on_fatal=self._handle_fatal,
             client_factory=mqtt_client_factory,
@@ -219,6 +224,13 @@ class AmpioClient:
             asyncio.Future[tuple[_protocol.DeviceRecord, ...]]
         ] = []
 
+        # Last digest per app-sync table from the retained `md5` topics the
+        # admin session subscribes to; the first value per table seeds. The
+        # tasks that answer a change with the catalogue requests are held
+        # so a pending one is never garbage-collected mid-publish.
+        self._digests: dict[str, str] = {}
+        self._catalogue_tasks: set[asyncio.Task[None]] = set()
+
     def _subscriptions(self) -> list[str]:
         """Every topic the client needs on each (re)connect."""
         topics = [
@@ -235,6 +247,14 @@ class AmpioClient:
                 RAW_DIAGNOSTICS_WILDCARD,
                 RAW_EVENT_WILDCARD,
                 _protocol.DEVICE_API_LIST_TOPIC,
+                # The M-SERV never pushes the `config` catalogues; the
+                # retained digests of the app-sync tables are what reveal a
+                # Designer save to an admin session (#166). The restricted
+                # tier receives the tables themselves and needs no digest.
+                *(
+                    _protocol.md5_topic(self._username, keyword)
+                    for keyword in _protocol.CATALOGUE_DIGEST_KEYWORDS
+                ),
             ]
         return topics
 
@@ -271,6 +291,9 @@ class AmpioClient:
                     if not future.done():
                         future.set_result(msg.devices)
                 return
+            if isinstance(msg, _protocol.CatalogueDigest):
+                self._note_digest(msg)
+                return
             applied = self._store.apply(msg)
             if isinstance(msg, _protocol.EndpointReply):
                 self._channels[msg.endpoint.name].record(
@@ -293,6 +316,56 @@ class AmpioClient:
 
     def _handle_availability(self, available: bool) -> None:
         self._dispatch(AvailabilityChanged(available))
+
+    async def _handle_connected(self) -> None:
+        """The connection loop's on-connect step: seed anew, then refresh.
+
+        The broker replays every retained digest after the subscribe, and
+        the refresh fetches the catalogues anyway, so the replay must seed
+        rather than count as a change against the previous session's value.
+        """
+        self._digests.clear()
+        await self.refresh()
+
+    def _note_digest(self, digest: _protocol.CatalogueDigest) -> None:
+        """Re-request the config catalogues when a pushed table digest changes.
+
+        The M-SERV rewrites the retained digest of an app-sync table on a
+        Designer save but never pushes the ``config`` catalogues, so the
+        change is what tells an admin session its catalogues went stale.
+        The store's diff then reports what the save changed as the usual
+        object and module events. The live-value guard is left alone: a
+        catalogue re-request is not a snapshot cycle, so a value pushed
+        since the last request keeps outranking the reply's ``stan_json``.
+        """
+        previous = self._digests.get(digest.keyword)
+        self._digests[digest.keyword] = digest.digest
+        if previous is None or previous == digest.digest:
+            return
+        task = asyncio.get_running_loop().create_task(self._request_catalogues())
+        self._catalogue_tasks.add(task)
+        task.add_done_callback(self._catalogue_tasks.discard)
+
+    async def _request_catalogues(self) -> None:
+        """Publish the admin catalogue requests from a digest-change task.
+
+        A publish failure ends this request only: the task runs outside
+        the connection loop, which handles the drop itself, and the next
+        (re)connect refreshes the catalogues anyway.
+        """
+        try:
+            for ep in self._catalogue_endpoints:
+                await self._publish(ep)
+        except AmpioConnectionError as err:
+            _LOGGER.debug("Ampio catalogue re-request did not go out: %s", err)
+
+    async def _cancel_catalogue_tasks(self) -> None:
+        tasks = list(self._catalogue_tasks)
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     def _handle_auth_failure(self, message: str) -> None:
         self._dispatch(AuthFailed(message))
@@ -709,6 +782,7 @@ class AmpioClient:
         an availability event.
         """
         await self._cancel_refresh_task()
+        await self._cancel_catalogue_tasks()
         await self._connection.close()
 
     async def _cancel_refresh_task(self) -> None:
