@@ -12,6 +12,47 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.50.0
+
+An M-CON-485 lands each Modbus reading in an integer sensor slot, and Designer
+turns the slot into a `bit8`, `bit16`, `sbit16`, or `bit32` object (#169). The
+library classified the 8-bit and 32-bit subtypes only, and nothing on
+`AmpioObject` said what the number means, so a consumer could give the entity
+neither a unit nor a device class. Designer carries both per object. The "Unit"
+field is the `url` column, and the "String format" field is the `format` column,
+a printf conversion the dropdown composes with the unit. Both reach the
+restricted tier. The library now serves the columns and derives the unit and the
+display precision from them.
+
+### Added
+
+- **`AmpioObject.url` and `AmpioObject.format`** - the two Designer columns,
+  verbatim, on both tiers. `format` rides both catalogues. `url` rides
+  `devicesDetails` and the unfiltered `data/params_devices` table, which
+  supplies it where the app-sync catalogue omits it, the way `czas` is served.
+- **`AmpioObject.unit`** - the literal text after the last printf conversion in
+  `format`, else the stripped `url`, else None. Designer's editor states that
+  the format overwrites the unit, so the format tail wins when the two disagree.
+  The single space Designer writes for "without unit" reads as None. None on
+  every kind but a sensor.
+- **`AmpioObject.decimals`** - the explicit precision of a fixed-point
+  conversion in `format` (`%.3f A` reads 3), else None. None on every kind but a
+  sensor.
+
+### Changed
+
+- **`bit16` and `sbit16` classify as numeric measurements.** They join `bit8`
+  and `bit32` in the open `value_<interpretacja>` family, so all four integer
+  slots mint `value_<n>` keys. Before, the two 16-bit subtypes classified as the
+  generic `value` sensor.
+
+### Documentation
+
+- `docs/classification.md` names the four-subtype family and the unit and
+  precision sources. It states where Designer's "Divide by" lives and that the
+  M-SERV applies the divider to the published state, so the library carries no
+  scale logic.
+
 ## 0.49.0
 
 An object added in Designer reached an admin session only on a reconnect, a

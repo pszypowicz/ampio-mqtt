@@ -171,6 +171,66 @@ def test_pulse_ms_reads_czas_only_on_the_turn_on_time_types(
 
 
 @pytest.mark.parametrize(
+    ("typ", "url", "fmt", "unit"),
+    [
+        ("bit32", "", "%.3f A", "A"),  # the live meter: unit typed into the format
+        ("bit32", "V", "%.1f V", "V"),  # the dropdown-composed shape
+        ("bit32", "V", "%.3f", "V"),  # a format without a tail leaves the url
+        ("bit32", "V", "%.3f A", "A"),  # Designer: the format overwrites the unit
+        ("bit32", " ", "%.1f", None),  # the "without unit" sentinel
+        ("bit32", " ", "", None),
+        ("bit32", "%", "", "%"),  # Designer writes % when the box is unticked
+        ("bit32", "", "%.1f %%", "%"),  # the printf escape is one literal percent
+        ("bit32", "", "%d%%", "%"),
+        ("bit32", "", "abc", None),  # no conversion, no tail
+        ("bit32", "V", "abc", "V"),
+        ("bit32", "  A  ", "", "A"),  # stripped
+        ("lin_wej", "IAQ", "", "IAQ"),  # the live air-quality row
+        ("temp", "°C", "", "°C"),
+        ("no_such_type", "kWh", "", "kWh"),  # unknown types are the generic sensor
+        ("symulacja", "0", "", None),  # system objects carry "0": not a sensor
+        ("przekaznik", "V", "%.1f V", None),  # a unit applies to measurements only
+        ("reg", "°C", "", None),
+    ],
+)
+def test_unit_reads_the_format_tail_then_the_url_on_sensor_kinds(
+    typ: str, url: str, fmt: str, unit: str | None
+) -> None:
+    obj = AmpioObject(id=1, typ_komponentu=typ, interpretacja=1, url=url, format=fmt)
+    assert obj.unit == unit
+
+
+@pytest.mark.parametrize(
+    ("typ", "fmt", "decimals"),
+    [
+        ("bit32", "%.3f A", 3),  # the live meter shape
+        ("bit32", "%.1f", 1),  # the Designer dropdown, in its order
+        ("bit32", "%.2f", 2),
+        ("bit32", "%.0f", 0),
+        ("bit32", "%6.2f", 2),
+        ("bit32", "%06.2f", 2),
+        ("bit32", "%+6.2f", 2),
+        ("bit32", "%.3e", None),  # scientific notation has no fixed precision
+        ("bit32", "%g", None),
+        ("bit32", "%.3g", None),
+        ("bit32", "%#x", None),
+        ("bit32", "%.2F", 2),
+        ("bit32", "%.1f %%", 1),
+        ("bit32", "%f", None),  # only an explicit precision counts
+        ("bit32", "%d", None),
+        ("bit32", "", None),
+        ("bit32", "abc", None),
+        ("przekaznik", "%.1f", None),  # measurements only, like `unit`
+    ],
+)
+def test_decimals_reads_the_explicit_precision_of_a_fixed_point_format(
+    typ: str, fmt: str, decimals: int | None
+) -> None:
+    obj = AmpioObject(id=1, typ_komponentu=typ, interpretacja=1, format=fmt)
+    assert obj.decimals == decimals
+
+
+@pytest.mark.parametrize(
     ("typ", "params", "bell"),
     [
         ("przekaznik", 1 << 15, True),  # bit 15 -> Designer bell-object checkbox

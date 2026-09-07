@@ -1335,7 +1335,7 @@ def test_symulacja_classifies_but_is_not_bridged() -> None:
 
 
 def _app_row(oid: int, leaf: str, name: str = "Air quality", interp: int = 5) -> dict:
-    """One `data/devices` row: the devicesDetails shape minus params/stan_json."""
+    """One `data/devices` row: the devicesDetails shape minus params/stan_json/url."""
     return {
         "id": oid,
         "id_urzadzenia": 20,
@@ -1423,6 +1423,36 @@ def test_params_table_after_catalogue_updates_czas_and_notifies() -> None:
         store, PARAMS_DEVICES_TOPIC, devices({"id": 24, "params": 1, "czas": 500})
     )
     assert store.objects[24].czas == 500
+    assert _updated(applied) == [store.objects[24]]
+
+
+def test_details_row_url_and_format_land_on_the_object() -> None:
+    store = _store()
+    _apply(
+        store,
+        DETAILS_TOPIC,
+        details({"id": 128, "typ_komponentu": "bit32", "url": "", "format": "%.3f A"}),
+    )
+    assert store.objects[128].url == ""
+    assert store.objects[128].format == "%.3f A"
+
+
+def test_params_table_supplies_url_when_catalogue_lacks_the_column() -> None:
+    store = _store()
+    _apply(store, PARAMS_DEVICES_TOPIC, devices({"id": 24, "params": 1, "url": "IAQ"}))
+    _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1")))
+    assert store.objects[24].url == "IAQ"
+
+
+def test_params_table_after_catalogue_updates_url_and_notifies() -> None:
+    store = _store()
+    _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1")))
+    assert store.objects[24].url == ""
+
+    applied = _apply(
+        store, PARAMS_DEVICES_TOPIC, devices({"id": 24, "params": 1, "url": "IAQ"})
+    )
+    assert store.objects[24].url == "IAQ"
     assert _updated(applied) == [store.objects[24]]
 
 
