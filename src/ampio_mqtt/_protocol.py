@@ -992,6 +992,50 @@ def raw_output_payload(function: int, value: int, channel: int) -> str:
     return f"{function:02x}f9{value:02x}{channel:02x}"
 
 
+# The M-DOT buzzer rides the condition-action frames the Designer's "test
+# condition" button sends: the `0c0703` prefix, then the action. The
+# action's first byte is the buzzer destination 0x70 with the action
+# function in its low nibble (0 simple, 1 sequence). Every time field
+# counts 10 ms ticks, 16-bit fields are little-endian, and the sequence
+# form's speed bytes stay 0, since they had no audible effect.
+# docs/protocol.md ("Panel buzzer") carries the wire facts.
+_BUZZER_ACTION_PREFIX = "0c0703"
+
+
+def raw_buzzer_payload(on: bool, tone: int, ticks: int) -> str:
+    """The simple buzzer action as the wire's ASCII hex form.
+
+    ``on`` selects the ON sub-function, else OFF. ``ticks`` is the length
+    in 10 ms ticks; 0 with ON latches the buzzer on.
+    """
+    return f"{_BUZZER_ACTION_PREFIX}70{int(on):02x}{tone:02x}{ticks:02x}"
+
+
+def raw_buzzer_pattern_payload(
+    tone1: int, ticks1: int, tone2: int, ticks2: int, cycles: int, delay_ticks: int
+) -> str:
+    """The sequence buzzer action, sub-function ON, as ASCII hex.
+
+    Tone 0 is a silent rest. ``cycles`` 0 repeats until another frame
+    replaces the sequence.
+    """
+    return (
+        f"{_BUZZER_ACTION_PREFIX}7101"
+        f"{delay_ticks & 0xFF:02x}{delay_ticks >> 8:02x}"
+        f"{tone1:02x}00{ticks1 & 0xFF:02x}{ticks1 >> 8:02x}"
+        f"{tone2:02x}00{ticks2 & 0xFF:02x}{ticks2 >> 8:02x}"
+        f"{cycles:02x}"
+    )
+
+
+# The stop pair. A one-cycle silent sequence replaces a running pattern
+# within 100 ms; the simple OFF (tone at the Designer default 6) ends a
+# plain beep or a latched ON, which a sequence step would otherwise
+# re-assert.
+RAW_BUZZER_SILENCE = raw_buzzer_pattern_payload(0, 1, 0, 0, 1, 0)
+RAW_BUZZER_OFF = raw_buzzer_payload(False, 6, 0)
+
+
 def request_topic(ep: Endpoint, user: str) -> str:
     """Control topic an endpoint's request keyword is published to."""
     return f"ampio/control/{user}/{ep.req_surface}"

@@ -19,10 +19,10 @@ input, but its raw-channel prefix is unconfirmed on the wire. The object still
 updates through the per-object topic. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/26).
 
-**CAN write tree device classes.** The raw write frame for binary outputs is
-documented in [`protocol.md`](protocol.md) ("Panel outputs"). The CCT, DALI,
-blind-calibration, panel LCD page, and alarm writes on the same `ampio/to` tree
-remain unexplored. Probe notes:
+**CAN write tree device classes.** The raw write frames for binary outputs and
+the panel buzzer are documented in [`protocol.md`](protocol.md) ("Panel
+outputs", "Panel buzzer"). The CCT, DALI, blind-calibration, panel LCD page, and
+alarm writes on the same `ampio/to` tree remain unexplored. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/60).
 
 Picking one up takes three steps.
