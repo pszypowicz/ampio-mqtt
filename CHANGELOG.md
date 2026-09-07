@@ -15,9 +15,10 @@ explicit beta posture above and is no longer the supported upgrade path.
 ## 0.48.0
 
 The M-DOT panels carry a piezo buzzer that the Designer drives through raw
-condition-action frames, with no DB object, no `/api` verb, and no state topic
-(#164). The library had no way to reach it. Both frame forms were proven live
-with microphone recordings, and the client now wraps them on the admin tier.
+condition-action frames (#164). It has no DB object, no `/api` verb, and no
+state topic. The library had no way to reach it. Both frame forms were proven
+live with microphone recordings, and the client now wraps them on the admin
+tier.
 
 ### Added
 
