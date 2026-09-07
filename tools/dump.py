@@ -56,7 +56,12 @@ def parse_args() -> argparse.Namespace:
         help="Payload for every --request (default empty)",
     )
     p.add_argument("--duration", type=float, default=15.0)
-    p.add_argument("--max", type=int, default=200, help="Max messages to print")
+    p.add_argument(
+        "--max",
+        type=int,
+        default=0,
+        help="Stop after this many messages. 0 means no limit (default)",
+    )
     p.add_argument(
         "--outfile", default=None, help="Append full topic\\tpayload lines to this file"
     )
@@ -97,7 +102,7 @@ async def run(a: argparse.Namespace) -> int:
                     print(f"  +{elapsed:7.3f}s  {topic}  =  {payload[:200]}")
                     if a.outfile:
                         captured.append(f"{topic}\t{payload}\n")
-                    if count >= a.max:
+                    if a.max > 0 and count >= a.max:
                         return
 
             with contextlib.suppress(TimeoutError):
