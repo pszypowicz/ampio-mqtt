@@ -39,6 +39,7 @@ example is `modules`/`mserv`, which the standard tier never receives.
 | **Raw channel tree** (`ampio/from/#`)                                                        | yes           | **no**                                |
 | **Module diagnostics** (voltage, temperature)                                                | yes           | **no**                                |
 | **CAN write tree** (`ampio/to/#`)                                                            | yes           | **no**                                |
+| **Panel buzzer** (`buzz`, `buzz_pattern`, `buzz_stop`)                                       | yes           | **no**                                |
 
 The SUBACK enforces the raw-tree denial. A standard account's subscription to
 the `ampio/from/...` filters comes back with reason code 128, even over MQTT
@@ -142,9 +143,9 @@ Prefer an administrator account when the install needs:
   with a temperature sensor their temperature, as `AmpioModule.supply_voltage` /
   `temperature`. This is useful to find a sagging bus or a hot module before it
   misbehaves.
-- **Panel outputs and the CAN vocabulary** - the raw write frame for panel
-  status LEDs, and the device classes `/api` cannot express (CCT, DALI, display
-  text). See [`protocol.md`](protocol.md) and
+- **Panel outputs, the panel buzzer, and the CAN vocabulary** - the raw write
+  frames for panel status LEDs and the buzzer, and the device classes `/api`
+  cannot express (CCT, DALI, display text). See [`protocol.md`](protocol.md) and
   [`untapped-surfaces.md`](untapped-surfaces.md).
 - **Per-object Designer records** for area assignment - `resolve_records()` and
   `fetch_locations()` answer no other account.
