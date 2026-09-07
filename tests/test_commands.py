@@ -828,7 +828,7 @@ async def test_flag_switch_verbs_ride_api_on_the_restricted_tier(
 # --- panel buzzer (the raw CAN write path) ----------------------------------
 
 
-async def _admin_with_panel() -> tuple[AmpioClient, FakeBroker]:
+async def _admin_with_panel_module() -> tuple[AmpioClient, FakeBroker]:
     """Admin client whose module catalogue holds one M-DOT panel (id 7)."""
     broker = FakeBroker()
     client = AmpioClient(
@@ -849,7 +849,7 @@ async def _admin_with_panel() -> tuple[AmpioClient, FakeBroker]:
 
 async def test_buzz_rides_the_simple_buzzer_action() -> None:
     """Sub-function ON, the tone, and the length in 10 ms ticks."""
-    client, broker = await _admin_with_panel()
+    client, broker = await _admin_with_panel_module()
     try:
         await client.buzz(7)
         await client.buzz(7, tone=24, seconds=2.55)
@@ -864,7 +864,7 @@ async def test_buzz_rides_the_simple_buzzer_action() -> None:
 
 async def test_buzz_pattern_rides_the_sequence_buzzer_action() -> None:
     """Two tones with little-endian 16-bit times, cycles 0 = until stopped."""
-    client, broker = await _admin_with_panel()
+    client, broker = await _admin_with_panel_module()
     try:
         await client.buzz_pattern(
             7, tone=6, seconds=0.3, tone2=20, seconds2=0.3, cycles=3
@@ -879,7 +879,7 @@ async def test_buzz_pattern_rides_the_sequence_buzzer_action() -> None:
 
 
 async def test_buzz_stop_sends_the_silent_sequence_then_the_off() -> None:
-    client, broker = await _admin_with_panel()
+    client, broker = await _admin_with_panel_module()
     try:
         await client.buzz_stop(7)
         assert broker.published == [
@@ -892,7 +892,7 @@ async def test_buzz_stop_sends_the_silent_sequence_then_the_off() -> None:
 
 async def test_buzz_rejects_bad_arguments_without_a_publish() -> None:
     """A zero length latches the buzzer on, so buzz() refuses it."""
-    client, broker = await _admin_with_panel()
+    client, broker = await _admin_with_panel_module()
     try:
         with pytest.raises(ValueError):
             await client.buzz(7, seconds=0)
@@ -906,6 +906,10 @@ async def test_buzz_rejects_bad_arguments_without_a_publish() -> None:
             await client.buzz_pattern(7, tone=32, seconds=1.0)
         with pytest.raises(ValueError):
             await client.buzz(8)
+        with pytest.raises(ValueError):
+            await client.buzz(7, tone=True)
+        with pytest.raises(ValueError):
+            await client.buzz_pattern(7, tone=6, seconds=1.0, cycles=3.5)
         assert broker.published == []
     finally:
         await client.disconnect()

@@ -299,6 +299,8 @@ amplitude control exists:
 | 4, 20                 | 3315 Hz, 789 Hz   | about 10 dB below tone 6      |
 | 8, 12, 16, 24, 28, 31 | 1842 Hz to 518 Hz | 16 to 22 dB below tone 6      |
 
+Tone 1 (8288 Hz) is barely audible and is not in the table.
+
 `cycles` 0 repeats the sequence until another frame replaces it. The speed bytes
 had no audible effect and stay 0. Cycles 255 is unproven.
 

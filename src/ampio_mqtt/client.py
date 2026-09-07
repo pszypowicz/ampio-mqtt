@@ -1147,7 +1147,9 @@ class AmpioClient:
             )
         module = self._store.modules.get(module_id)
         if module is None or module.mac is None:
-            raise ValueError(f"unknown module id {module_id}")
+            raise ValueError(
+                f"module id {module_id} is not in the catalogue or has no mac"
+            )
         return module.mac
 
     @staticmethod
@@ -1155,12 +1157,6 @@ class AmpioClient:
         if not 0 <= seconds <= limit:
             raise ValueError(f"{name} must be within 0 and {limit} s, got {seconds}")
         return round(seconds * 100)
-
-    @staticmethod
-    def _buzz_tone(name: str, tone: int, lowest: int) -> int:
-        if not lowest <= tone <= 31:
-            raise ValueError(f"{name} must be within {lowest} and 31, got {tone}")
-        return tone
 
     async def buzz(
         self, module_id: int, *, tone: int = 6, seconds: float = 0.5
@@ -1187,7 +1183,8 @@ class AmpioClient:
             raise ValueError(
                 "seconds must be at least 0.01 - a zero time latches the buzzer on"
             )
-        payload = raw_buzzer_payload(True, self._buzz_tone("tone", tone, 1), ticks)
+        _check_range("tone", tone, 1, 31)
+        payload = raw_buzzer_payload(True, tone, ticks)
         await self._connection.publish(raw_write_topic(mac), payload.encode())
 
     async def buzz_pattern(
@@ -1212,12 +1209,13 @@ class AmpioClient:
         tier, the errors, and the missing readback.
         """
         mac = self._buzzer_mac(module_id)
-        if not 0 <= cycles <= 254:
-            raise ValueError(f"cycles must be within 0 and 254, got {cycles}")
+        _check_range("tone", tone, 0, 31)
+        _check_range("tone2", tone2, 0, 31)
+        _check_range("cycles", cycles, 0, 254)
         payload = raw_buzzer_pattern_payload(
-            self._buzz_tone("tone", tone, 0),
+            tone,
             self._buzz_ticks("seconds", seconds, 655.35),
-            self._buzz_tone("tone2", tone2, 0),
+            tone2,
             self._buzz_ticks("seconds2", seconds2, 655.35),
             cycles,
             self._buzz_ticks("delay", delay, 655.35),
