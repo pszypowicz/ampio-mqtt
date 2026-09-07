@@ -14,6 +14,7 @@ exercised without a real broker. They cover:
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import logging
 import threading
@@ -24,6 +25,8 @@ from conftest import (
     ADMIN_DETAILS_TOPIC,
     ADMIN_DEVICES_TOPIC,
     ADMIN_INFO_TOPIC,
+    ADMIN_MD5_DEVICES_TOPIC,
+    ADMIN_MD5_PARAMS_DEVICES_TOPIC,
     ADMIN_STATES_TOPIC,
     ADMIN_USER,
     DATA_DEVICES_TOPIC,
@@ -36,6 +39,7 @@ from conftest import (
     FakeBroker,
     Message,
     details,
+    feed,
     make_client,
 )
 from paho.mqtt.enums import MQTTErrorCode
@@ -51,6 +55,7 @@ from ampio_mqtt import (
     AvailabilityChanged,
     ClientEvent,
     ConnectionDied,
+    ObjectAdded,
     ObjectUpdated,
 )
 from ampio_mqtt._connection import _is_auth_error
@@ -910,5 +915,171 @@ async def test_refresh_interval_survives_a_publish_error_on_tick() -> None:
         await asyncio.sleep(0.12)
         assert client.available is True
         assert ("ampio/control/u/states", b"") in broker.published
+    finally:
+        await client.disconnect()
+
+
+# --- Designer-save digest trigger -------------------------------------------
+
+
+async def test_only_the_admin_client_subscribes_to_the_md5_digests() -> None:
+    """The M-SERV pushes the app-sync tables themselves into a restricted
+    namespace, so that tier needs no digest. The admin catalogues are never
+    pushed, so the digest is what tells an admin session to re-ask. The two
+    filters lead the SUBSCRIBE packet: the broker replays retained values
+    in filter order and caps the queue, and the raw tree alone overflows
+    it, so a digest subscribed after the raw tree never seeds."""
+    admin_broker, broker = FakeBroker(), FakeBroker()
+    admin = make_client(admin_broker, username=ADMIN_USER)
+    client = make_client(broker)
+    await admin.connect(timeout=2.0, discovery_timeout=0.01)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    try:
+        assert admin_broker.subscribed[:2] == [
+            ADMIN_MD5_DEVICES_TOPIC,
+            ADMIN_MD5_PARAMS_DEVICES_TOPIC,
+        ]
+        assert not any("/md5/" in t for t in broker.subscribed)
+    finally:
+        await admin.disconnect()
+        await client.disconnect()
+
+
+async def _published(broker: FakeBroker, count: int) -> None:
+    """Wait until `count` publishes landed; the trigger runs as a task."""
+    async with asyncio.timeout(1.0):
+        while len(broker.published) < count:
+            await asyncio.sleep(0.005)
+
+
+@pytest.mark.parametrize(
+    "topic", [ADMIN_MD5_DEVICES_TOPIC, ADMIN_MD5_PARAMS_DEVICES_TOPIC]
+)
+async def test_a_changed_digest_re_requests_the_config_pair(topic: str) -> None:
+    """The first digest per table seeds and a repeat says nothing. A change
+    re-requests the two config catalogues and nothing else."""
+    broker = FakeBroker()
+    client = make_client(broker, username=ADMIN_USER)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    try:
+        broker.published.clear()
+        feed(client, topic, "a" * 32)
+        feed(client, topic, "a" * 32)
+        await asyncio.sleep(0.01)
+        assert broker.published == []
+        feed(client, topic, "b" * 32)
+        await _published(broker, 2)
+        assert sorted(broker.published) == [
+            (f"ampio/control/{ADMIN_USER}/config", b"devices"),
+            (f"ampio/control/{ADMIN_USER}/config", b"devicesDetails"),
+        ]
+    finally:
+        await client.disconnect()
+
+
+async def test_a_digest_trigger_keeps_the_live_value_guard() -> None:
+    """Unlike refresh(), the trigger opens no snapshot cycle: a value pushed
+    since the last request outranks the stan_json the re-requested
+    catalogue carries, so a Designer save cannot roll a live value back."""
+    broker = FakeBroker()
+    client = make_client(broker, username=ADMIN_USER)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    try:
+        stan = json.dumps({"state": "0", "on": 1786700900000})
+        feed(client, ADMIN_DETAILS_TOPIC, details({"id": 10, "stan_json": stan}))
+        feed(client, f"ampio/fromDB/{ADMIN_USER}/ob/10/state", '{"state":"live"}')
+        broker.published.clear()
+        feed(client, ADMIN_MD5_DEVICES_TOPIC, "a" * 32)
+        feed(client, ADMIN_MD5_DEVICES_TOPIC, "b" * 32)
+        await _published(broker, 2)
+        feed(client, ADMIN_DETAILS_TOPIC, details({"id": 10, "stan_json": stan}))
+        assert client.objects[10].state == "live"
+    finally:
+        await client.disconnect()
+
+
+async def test_the_retained_replay_seeds_again_after_a_reconnect() -> None:
+    """A (re)connect refreshes the catalogues itself, and the broker then
+    replays the retained digest. That replay seeds a fresh comparison
+    rather than counting as a change against what the previous session
+    saw, so a save made during an outage costs one fetch, not two."""
+    broker = FakeBroker()
+    broker.scripted_messages = [Message(ADMIN_MD5_DEVICES_TOPIC, b"a" * 32)]
+    client = make_client(broker, username=ADMIN_USER, reconnect_interval=0.001)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    try:
+        await asyncio.sleep(0.01)  # the first session consumed its replay
+        broker.scripted_messages = [Message(ADMIN_MD5_DEVICES_TOPIC, b"b" * 32)]
+        broker.published.clear()
+        await client.connect(timeout=2.0, discovery_timeout=0.01)
+        await asyncio.sleep(0.02)
+        assert sorted(p for _t, p in broker.published) == [
+            b"",  # info
+            b"",  # states
+            b"devices",
+            b"devicesDetails",
+        ]
+    finally:
+        await client.disconnect()
+
+
+async def test_a_digest_trigger_survives_a_publish_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A publish failure inside a trigger ends that request quietly. The
+    task runs outside the connection loop, so the session is never
+    recycled and nothing surfaces as an unretrieved task exception."""
+    broker = FakeBroker()
+    client = make_client(broker, username=ADMIN_USER)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    try:
+        broker.publish_errors = [aiomqtt.MqttError("broken pipe")]
+        with caplog.at_level(logging.ERROR, logger="asyncio"):
+            feed(client, ADMIN_MD5_DEVICES_TOPIC, "a" * 32)
+            feed(client, ADMIN_MD5_DEVICES_TOPIC, "b" * 32)
+            await asyncio.sleep(0.02)
+            gc.collect()  # a never-retrieved task exception logs on collection
+            await asyncio.sleep(0)
+        assert client.available is True
+        assert [r.getMessage() for r in caplog.records] == []
+    finally:
+        await client.disconnect()
+
+
+async def test_disconnect_cancels_a_pending_digest_trigger() -> None:
+    """A trigger still waiting on its PUBACK goes down with the session
+    rather than publishing into a connection the consumer closed."""
+    broker = FakeBroker()
+    client = make_client(broker, username=ADMIN_USER)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    broker.published.clear()
+    broker.publish_delay = 0.05
+    feed(client, ADMIN_MD5_DEVICES_TOPIC, "a" * 32)
+    feed(client, ADMIN_MD5_DEVICES_TOPIC, "b" * 32)
+    await asyncio.sleep(0)  # the trigger is now stalled in its publish
+    async with asyncio.timeout(1.0):
+        await client.disconnect()
+    await asyncio.sleep(0.1)
+    assert broker.published == []
+
+
+async def test_a_designer_save_surfaces_as_object_added_on_the_admin_tier() -> None:
+    """The pushed digest change, the re-request, and the reply's diff join
+    up: an object added in Designer reaches an admin session as
+    ObjectAdded with no reconnect and no refresh() call."""
+    broker = FakeBroker()
+    client = make_client(broker, username=ADMIN_USER)
+    events: list[ClientEvent] = []
+    client.subscribe(events.append, of=ObjectAdded)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    try:
+        feed(client, ADMIN_DETAILS_TOPIC, details({"id": 10}))
+        feed(client, ADMIN_MD5_DEVICES_TOPIC, "a" * 32)
+        broker.published.clear()
+        events.clear()
+        feed(client, ADMIN_MD5_DEVICES_TOPIC, "b" * 32)
+        await _published(broker, 2)
+        feed(client, ADMIN_DETAILS_TOPIC, details({"id": 10}, {"id": 11}))
+        assert [e.object.id for e in events] == [11]  # type: ignore[attr-defined]
     finally:
         await client.disconnect()

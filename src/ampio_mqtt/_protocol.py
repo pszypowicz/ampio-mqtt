@@ -11,6 +11,8 @@ Topics are namespaced by the connecting account:
              -> ampio/fromDB/<user>/config/devicesDetails = {"Status":0,"List":[...]}
   modules:   publish ampio/control/<user>/config = "devices"
              -> ampio/fromDB/<user>/config/devices = {"List":[...]}
+  digests:   ampio/fromDB/<user>/md5/<table> (retained) = MD5 of an app-sync
+             table's reply, rewritten by the M-SERV on a Designer save
 
 The same ampio/control/<user>/config topic carries every discovery request;
 the payload keyword selects what the server publishes back. The `config`
@@ -1051,6 +1053,17 @@ def ob_state_wildcard(user: str) -> str:
     return f"ampio/fromDB/{user}/ob/+/state"
 
 
+# The app-sync tables whose retained `md5/<keyword>` digest the M-SERV
+# rewrites when a Designer save changes them. The admin tier watches these
+# to learn that its `config` catalogues went stale (docs/discovery-flow.md).
+CATALOGUE_DIGEST_KEYWORDS = ("devices", "params_devices")
+
+
+def md5_topic(user: str, keyword: str) -> str:
+    """Retained topic holding the MD5 of an account's app-sync table reply."""
+    return f"ampio/fromDB/{user}/md5/{keyword}"
+
+
 # The raw `ampio/from/<MAC>/...` tree: global (not user-namespaced), retained,
 # admin-only. docs/raw-channel-bridge.md is the home for why only the two
 # on-change input prefixes are subscribed and the high-rate ones are not.
@@ -1138,6 +1151,14 @@ class DeviceList:
     devices: tuple[DeviceRecord, ...]
 
 
+@dataclass(slots=True, frozen=True)
+class CatalogueDigest:
+    """The retained MD5 of one app-sync table, as the M-SERV last published it."""
+
+    keyword: str
+    digest: str
+
+
 # Everything one MQTT message can classify into. `BusEventRaised` is the
 # public event class itself - for bus events the wire message IS the event.
 Inbound = (
@@ -1146,6 +1167,7 @@ Inbound = (
     | RawChannelEdge
     | DiagnosticsReport
     | DeviceList
+    | CatalogueDigest
     | BusEventRaised
 )
 
@@ -1186,6 +1208,17 @@ class Router:
         ):
             oid = to_int(parts[4])
             return None if oid is None else _parse_state_payload(oid, payload)
+        if (
+            len(parts) == 5
+            and parts[0] == "ampio"
+            and parts[1] == "fromDB"
+            and parts[2] == self._user
+            and parts[3] == "md5"
+            and parts[4] in CATALOGUE_DIGEST_KEYWORDS
+        ):
+            digest = payload.strip()
+            # An empty payload is a retained clear, not a digest.
+            return CatalogueDigest(keyword=parts[4], digest=digest) if digest else None
         if topic == DEVICE_API_LIST_TOPIC:
             devices = parse_device_list(payload)
             return None if devices is None else DeviceList(devices=devices)
