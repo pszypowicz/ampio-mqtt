@@ -25,14 +25,16 @@ the same push rewrites and re-requests its catalogues.
 ### Changed
 
 - **The admin client subscribes to `md5/devices` and `md5/params_devices`.** The
-  broker replays each retained digest on subscribe, and that replay seeds the
-  comparison. A digest that then differs re-requests `devicesDetails` and
-  `devices`, and the reply's diff fires `ObjectAdded`, `ObjectUpdated`,
-  `ObjectRemoved`, and the module events, so a Designer save surfaces on both
-  tiers without a reconnect. The re-request opens no snapshot cycle, so a live
-  value pushed since the last request keeps outranking the reply's `stan_json`.
-  `refresh_interval` stays as the fallback for a change the M-SERV pushes no
-  digest for.
+  two filters lead the SUBSCRIBE packet: the broker replays retained values in
+  filter order and caps its QoS 1 queue at 1000 messages, and the raw tree alone
+  exceeds that on a full install, so a digest listed after it would never seed.
+  The replay seeds the comparison. A digest that then differs re-requests
+  `devicesDetails` and `devices`, and the reply's diff fires `ObjectAdded`,
+  `ObjectUpdated`, `ObjectRemoved`, and the module events, so a Designer save
+  surfaces on both tiers without a reconnect. The re-request opens no snapshot
+  cycle, so a live value pushed since the last request keeps outranking the
+  reply's `stan_json`. `refresh_interval` stays as the fallback for a change the
+  M-SERV pushes no digest for.
 
 ### Documentation
 

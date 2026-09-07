@@ -925,16 +925,20 @@ async def test_refresh_interval_survives_a_publish_error_on_tick() -> None:
 async def test_only_the_admin_client_subscribes_to_the_md5_digests() -> None:
     """The M-SERV pushes the app-sync tables themselves into a restricted
     namespace, so that tier needs no digest. The admin catalogues are never
-    pushed, so the digest is what tells an admin session to re-ask."""
+    pushed, so the digest is what tells an admin session to re-ask. The two
+    filters lead the SUBSCRIBE packet: the broker replays retained values
+    in filter order and caps the queue, and the raw tree alone overflows
+    it, so a digest subscribed after the raw tree never seeds."""
     admin_broker, broker = FakeBroker(), FakeBroker()
     admin = make_client(admin_broker, username=ADMIN_USER)
     client = make_client(broker)
     await admin.connect(timeout=2.0, discovery_timeout=0.01)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
-        assert {ADMIN_MD5_DEVICES_TOPIC, ADMIN_MD5_PARAMS_DEVICES_TOPIC} <= set(
-            admin_broker.subscribed
-        )
+        assert admin_broker.subscribed[:2] == [
+            ADMIN_MD5_DEVICES_TOPIC,
+            ADMIN_MD5_PARAMS_DEVICES_TOPIC,
+        ]
         assert not any("/md5/" in t for t in broker.subscribed)
     finally:
         await admin.disconnect()

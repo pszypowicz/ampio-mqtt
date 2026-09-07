@@ -232,31 +232,47 @@ class AmpioClient:
         self._catalogue_tasks: set[asyncio.Task[None]] = set()
 
     def _subscriptions(self) -> list[str]:
-        """Every topic the client needs on each (re)connect."""
-        topics = [
-            *(response_topic(ep, self._username) for ep in self._served),
-            ob_state_wildcard(self._username),
-        ]
-        if self._tier is AccessTier.ADMIN:
-            # The raw tree is served to the admin login alone; any other
-            # client never asks, so a SUBACK rejection is always a fault.
-            topics += [
+        """Every topic the client needs on each (re)connect.
+
+        The order is the wire order: the broker replays retained values
+        filter by filter and caps its outgoing QoS 1 queue, and the admin
+        raw tree alone overflows that cap on a full install, so a filter
+        listed after it loses its replay. The digests lead and the raw
+        tree closes the list.
+        """
+        admin = self._tier is AccessTier.ADMIN
+        # The M-SERV never pushes the `config` catalogues; the retained
+        # digests of the app-sync tables are what reveal a Designer save
+        # to an admin session (#166). The restricted tier receives the
+        # tables themselves and needs no digest.
+        digests = (
+            [
+                _protocol.md5_topic(self._username, keyword)
+                for keyword in _protocol.CATALOGUE_DIGEST_KEYWORDS
+            ]
+            if admin
+            else []
+        )
+        # The raw tree is served to the admin login alone; any other
+        # client never asks, so a SUBACK rejection is always a fault.
+        raw = (
+            [
                 *RAW_INPUT_WILDCARDS,
                 RAW_OUTPUT_WILDCARD,
                 RAW_ANALOG_WILDCARD,
                 RAW_DIAGNOSTICS_WILDCARD,
                 RAW_EVENT_WILDCARD,
                 _protocol.DEVICE_API_LIST_TOPIC,
-                # The M-SERV never pushes the `config` catalogues; the
-                # retained digests of the app-sync tables are what reveal a
-                # Designer save to an admin session (#166). The restricted
-                # tier receives the tables themselves and needs no digest.
-                *(
-                    _protocol.md5_topic(self._username, keyword)
-                    for keyword in _protocol.CATALOGUE_DIGEST_KEYWORDS
-                ),
             ]
-        return topics
+            if admin
+            else []
+        )
+        return [
+            *digests,
+            *(response_topic(ep, self._username) for ep in self._served),
+            ob_state_wildcard(self._username),
+            *raw,
+        ]
 
     def _handle_message(self, topic: str, payload: str) -> None:
         """Apply one message, then dispatch what it changed.

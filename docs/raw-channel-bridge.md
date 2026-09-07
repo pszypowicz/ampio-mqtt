@@ -22,7 +22,11 @@ Once an object produced a raw message, it is **raw-owned**
 (`AmpioObject.raw_owned`). The store then ignores the slower per-object echo
 whole, and the bulk `states` snapshot skips the object. Its resync is the
 retained raw table itself. Every reconnect's subscribe re-delivers that table,
-and the index that persists across sessions routes it. On the first connect the
+and the index that persists across sessions routes it. That re-delivery is
+truncated on a full install: the broker caps its outgoing QoS 1 queue at 1000
+messages per client, the `f` prefix alone holds more retained values than that
+on the reference install, and the prefixes subscribed after it lose their
+replay. A QoS 0 subscription receives the whole table. On the first connect the
 retained tables arrive before the catalogues can build that index. Initial
 values thus come from the snapshot, and raw ownership begins with the object's
 first raw message. An input whose module publishes no raw table (the M-SERV's

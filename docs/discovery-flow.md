@@ -34,12 +34,15 @@ the `connect()` / `disconnect()` lifecycle that joins them.
    `stats.started_at`. Each subsequent one bumps `stats.reconnect_count`.
 2. **Subscribe** - the tier's topic set, sent as one QoS 1 SUBSCRIBE packet. The
    set is `ob/+/state`, the response topics of the tier's endpoints, and - on
-   the `admin` login only - the global raw-channel wildcards plus the retained
-   `md5/devices` and `md5/params_devices` digests (see below). It is decided at
-   construction from the authenticated username (see
-   [`account-tiers.md`](account-tiers.md)), so every filter must be granted. A
-   SUBACK rejection lands in `stats.subscribe_failures` and warns, because it
-   means a broken broker or ACL. See [`protocol.md`](protocol.md) and
+   the `admin` login only - the retained `md5/devices` and `md5/params_devices`
+   digests (see below) plus the global raw-channel wildcards. The digests lead
+   the packet and the raw tree closes it. The broker replays retained values
+   filter by filter and caps its outgoing QoS 1 queue at 1000 messages, and the
+   raw tree alone exceeds that on a full install, so a filter listed after it
+   loses its replay. It is decided at construction from the authenticated
+   username (see [`account-tiers.md`](account-tiers.md)), so every filter must
+   be granted. A SUBACK rejection lands in `stats.subscribe_failures` and warns,
+   because it means a broken broker or ACL. See [`protocol.md`](protocol.md) and
    [`raw-channel-bridge.md`](raw-channel-bridge.md) for the topics.
 3. **Publish the tier's auto-discovery keywords** on the matching control
    surfaces - four requests either way:
