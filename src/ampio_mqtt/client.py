@@ -23,6 +23,8 @@ from ._protocol import (
     ENDPOINTS,
     KEEP_POSITION,
     RAW_ANALOG_WILDCARD,
+    RAW_BUZZER_OFF,
+    RAW_BUZZER_SILENCE,
     RAW_DIAGNOSTICS_WILDCARD,
     RAW_EVENT_WILDCARD,
     RAW_INPUT_WILDCARDS,
@@ -33,6 +35,8 @@ from ._protocol import (
     command_topic,
     event_payload,
     ob_state_wildcard,
+    raw_buzzer_pattern_payload,
+    raw_buzzer_payload,
     raw_output_payload,
     raw_write_topic,
     request_topic,
@@ -1126,6 +1130,111 @@ class AmpioClient:
                 object_id, address, 0 if obj.is_on else 255, confirm
             )
         return await self.command(object_id, "switch", confirm=confirm)
+
+    # --- panel buzzer (the raw CAN write path) ---------------------------
+
+    def _buzzer_mac(self, module_id: int) -> int:
+        """The bus address the buzzer frames go to.
+
+        Admin tier only, like the rest of the CAN write tree. Dumb routing
+        by module, as the raw output frame is by leaf: any catalogued
+        module is a valid address, and M-DOT panels are the proven ones.
+        """
+        if self._tier is not AccessTier.ADMIN:
+            raise RuntimeError(
+                "the buzzer frames ride the CAN write tree, which answers "
+                "the reserved admin login only"
+            )
+        module = self._store.modules.get(module_id)
+        if module is None or module.mac is None:
+            raise ValueError(f"unknown module id {module_id}")
+        return module.mac
+
+    @staticmethod
+    def _buzz_ticks(name: str, seconds: float, limit: float) -> int:
+        if not 0 <= seconds <= limit:
+            raise ValueError(f"{name} must be within 0 and {limit} s, got {seconds}")
+        return round(seconds * 100)
+
+    @staticmethod
+    def _buzz_tone(name: str, tone: int, lowest: int) -> int:
+        if not lowest <= tone <= 31:
+            raise ValueError(f"{name} must be within {lowest} and 31, got {tone}")
+        return tone
+
+    async def buzz(
+        self, module_id: int, *, tone: int = 6, seconds: float = 0.5
+    ) -> None:
+        """Sound a panel's buzzer once.
+
+        ``module_id`` is :pyattr:`AmpioModule.id`. ``tone`` 1-31 sets the
+        pitch: the fundamental is 16576 Hz / (tone + 1), and 6, the
+        Designer default, is the loudest - the piezo resonates near 2.4
+        kHz, and no amplitude control exists. ``seconds`` 0.01-2.55 in
+        10 ms steps; 0 is refused, since a zero time latches the buzzer
+        on. Use :meth:`buzz_pattern` with ``cycles=0`` for a sound that
+        lasts until :meth:`buzz_stop`.
+
+        Admin tier only (``RuntimeError`` otherwise). ``ValueError`` for
+        an unknown module or an argument outside its range, before any
+        publish. No readback exists - the panel confirms nothing on the
+        bus - so there is no ``confirm``. docs/protocol.md ("Panel
+        buzzer") carries the frame and the tone table.
+        """
+        mac = self._buzzer_mac(module_id)
+        ticks = self._buzz_ticks("seconds", seconds, 2.55)
+        if ticks == 0:
+            raise ValueError(
+                "seconds must be at least 0.01 - a zero time latches the buzzer on"
+            )
+        payload = raw_buzzer_payload(True, self._buzz_tone("tone", tone, 1), ticks)
+        await self._connection.publish(raw_write_topic(mac), payload.encode())
+
+    async def buzz_pattern(
+        self,
+        module_id: int,
+        *,
+        tone: int,
+        seconds: float,
+        tone2: int = 0,
+        seconds2: float = 0.0,
+        cycles: int = 1,
+        delay: float = 0.0,
+    ) -> None:
+        """Play a two-tone pattern on a panel's buzzer.
+
+        Each cycle sounds ``tone`` for ``seconds``, then ``tone2`` for
+        ``seconds2``; tone 0 is a silent rest, so three short pips are
+        ``tone=6, seconds=0.3, seconds2=0.3, cycles=3``. ``cycles`` 0
+        repeats until :meth:`buzz_stop` or another pattern. ``delay``
+        postpones the start. Times take 0-655.35 s in 10 ms steps, tones
+        0-31, cycles 0-254. The same rules as :meth:`buzz` apply to the
+        tier, the errors, and the missing readback.
+        """
+        mac = self._buzzer_mac(module_id)
+        if not 0 <= cycles <= 254:
+            raise ValueError(f"cycles must be within 0 and 254, got {cycles}")
+        payload = raw_buzzer_pattern_payload(
+            self._buzz_tone("tone", tone, 0),
+            self._buzz_ticks("seconds", seconds, 655.35),
+            self._buzz_tone("tone2", tone2, 0),
+            self._buzz_ticks("seconds2", seconds2, 655.35),
+            cycles,
+            self._buzz_ticks("delay", delay, 655.35),
+        )
+        await self._connection.publish(raw_write_topic(mac), payload.encode())
+
+    async def buzz_stop(self, module_id: int) -> None:
+        """Silence a panel's buzzer.
+
+        Publishes a one-cycle silent sequence, which replaces a running
+        pattern within 100 ms, then the simple OFF, which ends a plain
+        beep. The same rules as :meth:`buzz` apply to the tier and the
+        errors.
+        """
+        topic = raw_write_topic(self._buzzer_mac(module_id))
+        await self._connection.publish(topic, RAW_BUZZER_SILENCE.encode())
+        await self._connection.publish(topic, RAW_BUZZER_OFF.encode())
 
     def _output_kind(self, object_id: int) -> OutputKind | None:
         """The object's kind when it is a known output, else None."""

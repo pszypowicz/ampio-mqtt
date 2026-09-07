@@ -823,3 +823,99 @@ async def test_flag_switch_verbs_ride_api_on_the_restricted_tier(
         (API_TOPIC, b"/api/set/70/switch"),
         (API_TOPIC, b"/api/set/70/turnOff"),
     ]
+
+
+# --- panel buzzer (the raw CAN write path) ----------------------------------
+
+
+async def _admin_with_panel() -> tuple[AmpioClient, FakeBroker]:
+    """Admin client whose module catalogue holds one M-DOT panel (id 7)."""
+    broker = FakeBroker()
+    client = AmpioClient(
+        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
+    )
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    feed(
+        client,
+        ADMIN_DEVICES_TOPIC,
+        devices(
+            {"id": 7, "mac": 0xCAFE, "typ_urzadzenia": 11, "nazwa_urzadzenia": "p"}
+        ),
+    )
+    broker.published.clear()
+    broker.published_qos.clear()
+    return client, broker
+
+
+async def test_buzz_rides_the_simple_buzzer_action() -> None:
+    """Sub-function ON, the tone, and the length in 10 ms ticks."""
+    client, broker = await _admin_with_panel()
+    try:
+        await client.buzz(7)
+        await client.buzz(7, tone=24, seconds=2.55)
+        assert broker.published == [
+            (PANEL_RAW_TOPIC, b"0c070370010632"),
+            (PANEL_RAW_TOPIC, b"0c0703700118ff"),
+        ]
+        assert broker.published_qos == [1, 1]
+    finally:
+        await client.disconnect()
+
+
+async def test_buzz_pattern_rides_the_sequence_buzzer_action() -> None:
+    """Two tones with little-endian 16-bit times, cycles 0 = until stopped."""
+    client, broker = await _admin_with_panel()
+    try:
+        await client.buzz_pattern(
+            7, tone=6, seconds=0.3, tone2=20, seconds2=0.3, cycles=3
+        )
+        await client.buzz_pattern(7, tone=6, seconds=4.0, cycles=0, delay=1.0)
+        assert broker.published == [
+            (PANEL_RAW_TOPIC, b"0c07037101000006001e0014001e0003"),
+            (PANEL_RAW_TOPIC, b"0c070371016400060090010000000000"),
+        ]
+    finally:
+        await client.disconnect()
+
+
+async def test_buzz_stop_sends_the_silent_sequence_then_the_off() -> None:
+    client, broker = await _admin_with_panel()
+    try:
+        await client.buzz_stop(7)
+        assert broker.published == [
+            (PANEL_RAW_TOPIC, b"0c070371010000000001000000000001"),
+            (PANEL_RAW_TOPIC, b"0c070370000600"),
+        ]
+    finally:
+        await client.disconnect()
+
+
+async def test_buzz_rejects_bad_arguments_without_a_publish() -> None:
+    """A zero length latches the buzzer on, so buzz() refuses it."""
+    client, broker = await _admin_with_panel()
+    try:
+        with pytest.raises(ValueError):
+            await client.buzz(7, seconds=0)
+        with pytest.raises(ValueError):
+            await client.buzz(7, seconds=2.56)
+        with pytest.raises(ValueError):
+            await client.buzz(7, tone=0)
+        with pytest.raises(ValueError):
+            await client.buzz_pattern(7, tone=6, seconds=1.0, cycles=255)
+        with pytest.raises(ValueError):
+            await client.buzz_pattern(7, tone=32, seconds=1.0)
+        with pytest.raises(ValueError):
+            await client.buzz(8)
+        assert broker.published == []
+    finally:
+        await client.disconnect()
+
+
+async def test_buzz_needs_the_admin_tier(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """The CAN write tree answers the admin login only."""
+    client, broker = connected
+    with pytest.raises(RuntimeError):
+        await client.buzz(7)
+    assert broker.published == []
