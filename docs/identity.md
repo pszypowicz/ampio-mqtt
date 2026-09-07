@@ -261,6 +261,10 @@ The library reads three of these bits. `DELETED` (bit 4) backs `hidden` and
 `visible`. `READ_ONLY` (bit 6) backs `read_only`. `OPTION1` (bit 15) backs
 `bell`, gated on the two component types the label applies to.
 
+`MAKE_SEMICOLON` (bit 5) is Designer's "Divide by" checkbox, and the `max`
+column holds the divider. The M-SERV applies the divider to the published state,
+so the library reads neither. See [`classification.md`](classification.md).
+
 A bell object is meant for a single press. The Ampio app renders it as a
 press-only button instead of a toggle. The checkbox is display intent: it sets
 bit 15 and nothing else, and whether the output auto-releases is the module's

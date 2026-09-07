@@ -70,6 +70,14 @@ class ObjectMetadata:
     # which the app-sync catalogue never does - the client then keeps
     # whatever `params_devices` supplied.
     czas: int | None
+    # Designer's "Unit" column, verbatim. None when the reply carried no such
+    # column: the app-sync catalogue omits it, and `data/params_devices`
+    # supplies it. `AmpioObject.unit` reads it.
+    url: str | None
+    # Designer's "String format" column (a printf conversion, optionally
+    # followed by a unit), verbatim; both catalogues carry it. Empty when
+    # unset. `AmpioObject.unit` and `AmpioObject.decimals` read it.
+    format: str
     stan_json: str | None  # raw seed for the initial value, applied by the client
 
 
@@ -197,10 +205,17 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
                 params=to_int(item.get("params")),
                 matter_device_type=to_int(item.get("type")),
                 czas=to_int(item.get("czas")),
+                url=_text(item.get("url")),
+                format=_text(item.get("format")) or "",
                 stan_json=item.get("stan_json") or None,
             )
         )
     return out
+
+
+def _text(value: Any) -> str | None:
+    """A text column as served; None when it is absent or not text."""
+    return value if isinstance(value, str) else None
 
 
 def _parse_leaf_id(value: Any) -> str:
@@ -252,6 +267,7 @@ class ParamsEntry:
 
     params: int
     czas: int
+    url: str
 
 
 def parse_params_devices(payload: str) -> dict[int, ParamsEntry] | None:
@@ -274,6 +290,7 @@ def parse_params_devices(payload: str) -> dict[int, ParamsEntry] | None:
         out[oid] = ParamsEntry(
             params=to_int(item.get("params")) or 0,
             czas=to_int(item.get("czas")) or 0,
+            url=_text(item.get("url")) or "",
         )
     return out
 

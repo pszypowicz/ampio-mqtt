@@ -156,6 +156,38 @@ def test_parse_params_devices_carries_czas(row: dict, params: int, czas: int) ->
 
 
 @pytest.mark.parametrize(
+    ("row", "url", "fmt"),
+    [
+        ({"id": 1, "url": "V", "format": "%.1f V"}, "V", "%.1f V"),
+        ({"id": 1, "url": "", "format": "%.3f A"}, "", "%.3f A"),  # the live shape
+        ({"id": 1, "url": " ", "format": ""}, " ", ""),  # "without unit" sentinel
+        ({"id": 1, "format": "%.1f"}, None, "%.1f"),  # app-sync row: no url column
+        ({"id": 1, "url": "V"}, "V", ""),  # absent format reads as empty
+        ({"id": 1, "url": 7, "format": 7}, None, ""),  # non-text is not a column
+    ],
+)
+def test_parse_details_url_and_format(row: dict, url: str | None, fmt: str) -> None:
+    items = parse_details(json.dumps({"List": [row]}))
+    assert items is not None
+    assert items[0].url == url
+    assert items[0].format == fmt
+
+
+@pytest.mark.parametrize(
+    ("row", "url"),
+    [
+        ({"id": 5, "params": 17, "url": "kWh"}, "kWh"),
+        ({"id": 5, "params": 17, "url": " "}, " "),  # the sentinel survives
+        ({"id": 5, "params": 17}, ""),  # the table is complete: absent = empty
+    ],
+)
+def test_parse_params_devices_carries_url(row: dict, url: str) -> None:
+    table = parse_params_devices(json.dumps({"List": [row]}))
+    assert table is not None
+    assert table[5].url == url
+
+
+@pytest.mark.parametrize(
     "parser",
     [
         parse_details,

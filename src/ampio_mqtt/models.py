@@ -11,6 +11,7 @@ from enum import Enum
 from .classification import (
     ObjectKind,
     OutputKind,
+    SensorKind,
     classify,
     is_system_type,
 )
@@ -70,6 +71,23 @@ _PULSE_TYPES = frozenset(
 # literal `0`, then the four fields the regex captures (docs/identity.md).
 # Strict on purpose - a half-parsed mac that is wrong is worse than None.
 _LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_([^_]+)_([^_]+)_([^_]+)")
+
+# One printf conversion in Designer's "String format" column, or the `%%`
+# escape (matched first so it never reads as a conversion). Designer's own
+# dropdown offers `%.1f`, `%.2f`, `%.0f`, `%6.2f`, `%06.2f`, `%+6.2f`,
+# `%.3e`, `%g`, `%.3g`, and `%#x`; a hand-typed format can hold any other.
+_FORMAT_CONVERSION_RE = re.compile(
+    r"%%|%[-+ 0#]*\d*(?:\.(?P<precision>\d+))?(?P<type>[diouxXeEfFgGcs])"
+)
+
+
+def _last_conversion(fmt: str) -> re.Match[str] | None:
+    """The last printf conversion in ``fmt``, or None when it has none."""
+    last: re.Match[str] | None = None
+    for match in _FORMAT_CONVERSION_RE.finditer(fmt):
+        if match.group("type") is not None:
+            last = match
+    return last
 
 
 def leaf_mac(leaf_id: str) -> int | None:
@@ -204,6 +222,15 @@ class AmpioObject:
     # the column, and `data/params_devices` supplies it unfiltered where the
     # app-sync catalogue omits it.
     czas: int = 0
+    # Designer's "Unit" column, verbatim. Served on both tiers the way
+    # `czas` is: `devicesDetails` carries it, and `data/params_devices`
+    # supplies it where the app-sync catalogue omits it. Designer writes a
+    # single space for "without unit". `unit` reads it.
+    url: str = ""
+    # Designer's "String format" column, verbatim: a printf conversion,
+    # optionally followed by a unit ("%.3f A"). Both catalogues carry it.
+    # `unit` and `decimals` read it.
+    format: str = ""
     # The object's description-record entry, admin sweep only; None on
     # the restricted tier and before a sweep covers the object.
     record: DesignerRecord | None = None
@@ -379,6 +406,45 @@ class AmpioObject:
         if self.typ_komponentu not in _PULSE_TYPES:
             return 0
         return self.czas * 10
+
+    @property
+    def unit(self) -> str | None:
+        """The unit Designer attaches to a measurement, or None.
+
+        The literal text after the last printf conversion in ``format``
+        when there is any (``"%.3f A"`` reads ``"A"``), else the stripped
+        ``url`` column. Designer's own editor says the format overwrites
+        the unit, so the tail wins when the two disagree. None when
+        neither yields text, which includes the single space Designer
+        writes for "without unit". None on every kind but a sensor: an
+        input, an output, or a thermostat has no measurement to label,
+        and the system objects carry a placeholder in the column.
+        """
+        if not isinstance(self.kind, SensorKind):
+            return None
+        conversion = _last_conversion(self.format)
+        if conversion is not None:
+            tail = self.format[conversion.end() :].replace("%%", "%").strip()
+            if tail:
+                return tail
+        return self.url.strip() or None
+
+    @property
+    def decimals(self) -> int | None:
+        """The display precision Designer's "String format" fixes, or None.
+
+        The explicit precision of a fixed-point conversion (``"%.3f A"``
+        reads 3, ``"%06.2f"`` reads 2). None for every other conversion
+        (``%g``, ``%.3e``, ``%#x``, a bare ``%f``), for an empty format,
+        and on every kind but a sensor, like :pyattr:`unit`.
+        """
+        if not isinstance(self.kind, SensorKind):
+            return None
+        conversion = _last_conversion(self.format)
+        if conversion is None or conversion.group("type") not in "fF":
+            return None
+        precision = conversion.group("precision")
+        return int(precision) if precision is not None else None
 
     @property
     def leaf_key(self) -> str | None:

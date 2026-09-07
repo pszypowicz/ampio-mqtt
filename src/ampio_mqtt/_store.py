@@ -74,9 +74,9 @@ class AmpioStore:
         # broadcasts. Ids, not instances: modules are frozen and replaced on
         # every change, so a cached instance would go stale.
         self._module_id_by_mac: dict[int, int] = {}
-        # Full-catalogue per-object config facts (`params`, `czas`) from
-        # `data/params_devices`, kept because the app-sync catalogue carries
-        # neither column and the two replies arrive in no fixed order.
+        # Full-catalogue per-object config facts (`params`, `czas`, `url`) from
+        # `data/params_devices`, kept because the app-sync catalogue omits
+        # `params` and `url` and the two replies arrive in no fixed order.
         self._params_by_id: dict[int, _protocol.ParamsEntry] = {}
         # `{object_id: DesignerRecord}` accumulated across resolve
         # sweeps (a sweep updates its joined ids and leaves the rest),
@@ -280,6 +280,8 @@ class AmpioStore:
             updates["params"] = entry.params if entry is not None else obj.params
         if updates["czas"] is None:
             updates["czas"] = entry.czas if entry is not None else obj.czas
+        if updates["url"] is None:
+            updates["url"] = entry.url if entry is not None else obj.url
         # The catalogue never carries the record entry, so the held table
         # re-applies it on every merge - including the re-creation after
         # an eviction.
@@ -399,9 +401,11 @@ class AmpioStore:
         for oid, entry in table.items():
             obj = self.objects.get(oid)
             if obj is not None and (
-                obj.params != entry.params or obj.czas != entry.czas
+                obj.params != entry.params
+                or obj.czas != entry.czas
+                or obj.url != entry.url
             ):
-                obj = replace(obj, params=entry.params, czas=entry.czas)
+                obj = replace(obj, params=entry.params, czas=entry.czas, url=entry.url)
                 self.objects[oid] = obj
                 self._record(obj, applied)
         return True
