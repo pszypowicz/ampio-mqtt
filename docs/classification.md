@@ -103,6 +103,16 @@ deliberately does not encode:
 | `cover_position` | cover with position               |
 | `cover_tilt`     | cover with position and slat tilt |
 
+`AmpioObject` carries five read helpers for the consumer side. `is_on` reads
+`state` as a boolean for inputs and outputs. It is off for None, an empty
+string, or `"0"`, and on otherwise. `numeric_value` reads `state` as a float for
+sensors. It is None for a missing, unparseable, or non-finite value. `position`
+is the travel percent of a position-capable cover, 0 closed to 100 open, and
+None elsewhere. `supports_tilt` says whether the object has a slat axis.
+`updated_at` is the epoch time of the report `state` came from. It is the
+M-SERV's own `on` stamp, or the local receive time for an undated raw edge. It
+is None until a report arrives.
+
 ## The kind-key vocabulary
 
 `SENSOR_KIND_KEYS`, `INPUT_KIND_KEYS`, `OUTPUT_KIND_KEYS`, and

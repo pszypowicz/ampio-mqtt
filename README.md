@@ -123,7 +123,7 @@ moves real devices.
 The M-SERV itself guarantees the safety of a standard account. The broker limits
 such an account to the objects granted in the Ampio app, and it denies the raw
 CAN surfaces on the wire. A defect in this library cannot widen that boundary.
-Bus events are the one exception, because any account can raise any event (see
+Bus events are the one exception (see
 [Choosing an account](#choosing-an-account)).
 
 ## License
