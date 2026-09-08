@@ -63,7 +63,10 @@ _PUBLISH_TIMEOUT = 5.0
 # but is unhashable.
 _AUTH_REASON_CODES = (134, 135)
 
-MessageHandler = Callable[[str, str], None]
+# (topic, payload, retained): the broker sets the retain flag on a message
+# it replays from its retained store at subscribe time and clears it on a
+# live push, whatever the publisher set, so the flag tells the two apart.
+MessageHandler = Callable[[str, str, bool], None]
 AvailabilityHandler = Callable[[bool], None]
 ConnectedHandler = Callable[[], Awaitable[None]]
 AuthFailureHandler = Callable[[str], None]
@@ -310,6 +313,7 @@ class Connection:
                         self._on_message(
                             str(message.topic),
                             message.payload.decode("utf-8", "replace"),
+                            message.retain,
                         )
             except (aiomqtt.MqttError, AmpioConnectionError) as err:
                 # AmpioConnectionError is publish()'s wrapped form: a failure

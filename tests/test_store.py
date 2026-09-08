@@ -78,13 +78,21 @@ _ROUTERS = {
 }
 
 
-def _apply(store: AmpioStore, topic: str, payload: str, *, user: str = USER) -> Applied:
+def _apply(
+    store: AmpioStore,
+    topic: str,
+    payload: str,
+    *,
+    user: str = USER,
+    retained: bool = False,
+) -> Applied:
     """Route a wire message and apply it, as the client dispatcher does.
 
     An unroutable topic applies nothing, exactly as the dispatcher drops it.
+    ``retained`` marks a broker replay from its retained store.
     """
     msg = _ROUTERS[user].route(topic, payload)
-    return store.apply(msg) if msg is not None else Applied()
+    return store.apply(msg, retained=retained) if msg is not None else Applied()
 
 
 def _store() -> AmpioStore:
@@ -586,6 +594,23 @@ def test_live_messages_touch_last_seen_snapshots_do_not() -> None:
     _apply(store, f"ampio/from/{0xCAFE:X}/state/f/3", "1")
     seen = store.modules[1].last_seen
     assert seen is not None and before <= seen <= time.time()
+
+
+def test_a_retained_raw_replay_sets_the_value_but_not_last_seen() -> None:
+    """The broker replays the raw table on every subscribe with the retain
+    flag set. The value lands and the object becomes raw-owned, but a replay
+    is stored state of unknown age, not evidence that the module is alive."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xCAFE))
+    _apply(store, DETAILS_TOPIC, _flaga_details((10, 1)))
+
+    _apply(store, f"ampio/from/{0xCAFE:X}/state/f/3", "1", retained=True)
+    assert store.objects[10].state == "1"
+    assert store.objects[10].raw_owned is True
+    assert store.modules[1].last_seen is None
+
+    _apply(store, f"ampio/from/{0xCAFE:X}/state/f/3", "0")
+    assert store.modules[1].last_seen is not None
 
 
 # --- catalogues, state pushes, and snapshots --------------------------------
@@ -1603,6 +1628,26 @@ def test_diagnostics_sets_voltage_and_temperature() -> None:
     assert module.supply_voltage == 12.6
     assert module.temperature == 42.0
     assert module.last_seen is not None
+    assert _mod_updated(applied) == [module]
+
+
+def test_a_retained_diagnostics_replay_sets_the_values_but_not_last_seen() -> None:
+    """The broker retains the last `b/4F` frame per module and replays it on
+    every subscribe. The values land and `ModuleUpdated` fires, but the
+    replay says nothing about whether the module is alive now."""
+    store = _diag_store()
+
+    applied = _apply(
+        store,
+        "ampio/from/CAFE/b/4F",
+        '{"d":[254,79,63,142],"m":51966}',
+        retained=True,
+    )
+
+    module = store.modules[7]
+    assert module.supply_voltage == 12.6
+    assert module.temperature == 42.0
+    assert module.last_seen is None
     assert _mod_updated(applied) == [module]
 
 

@@ -162,10 +162,16 @@ class FakeBroker:
         return await self._queue.get()
 
 
-def feed(client: AmpioClient, topic: str, payload: bytes | str) -> None:
-    """Inject one message into the client's dispatch synchronously."""
+def feed(
+    client: AmpioClient, topic: str, payload: bytes | str, *, retain: bool = False
+) -> None:
+    """Inject one message into the client's dispatch synchronously.
+
+    ``retain`` marks a broker replay from its retained store, the way the
+    broker flags one on the wire.
+    """
     raw = payload if isinstance(payload, str) else payload.decode("utf-8", "replace")
-    client._handle_message(topic, raw)
+    client._handle_message(topic, raw, retained=retain)
 
 
 def make_client(broker: FakeBroker, **kwargs: object) -> AmpioClient:

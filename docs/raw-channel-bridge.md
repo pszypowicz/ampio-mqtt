@@ -101,15 +101,16 @@ bytes decode as:
 | `d[3]` | Module temperature     | `− 100` → °C, `0` means the module has no sensor |
 
 The values land on `AmpioModule.supply_voltage` and `AmpioModule.temperature`.
-Each frame also refreshes the module's `last_seen`, so a module with no objects
-of its own still shows liveness. Subscribe to `ModuleUpdated` to know when a
-module updates.
+Each live frame also refreshes the module's `last_seen`, so a module with no
+objects of its own still shows liveness. Subscribe to `ModuleUpdated` to know
+when a module updates.
 
 The broker retains the last frame of each module, so the fields are present from
 the subscribe replay on every connect. The periodic broadcasts then refresh
-them. A replayed frame refreshes `last_seen` as well, so right after a connect
-the stamp says when the replay arrived, not when the module last spoke. Modules
-without a temperature sensor (relays, panels) report voltage only.
+them. A replayed frame updates the values but not `last_seen`, because a replay
+says nothing about whether the module is alive now. The same holds for a
+replayed raw channel value. Modules without a temperature sensor (relays,
+panels) report voltage only.
 
 ## What the library deliberately does NOT subscribe to
 

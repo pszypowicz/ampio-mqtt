@@ -161,10 +161,10 @@ async def test_poison_message_does_not_kill_the_connection(
     _establish(client, 5)
     original = client._store.apply
 
-    def fragile(msg: object) -> object:
+    def fragile(msg: object, *, retained: bool = False) -> object:
         if getattr(msg, "state", None) == "POISON":
             raise RuntimeError("simulated processing defect")
-        return original(msg)  # type: ignore[arg-type]
+        return original(msg, retained=retained)  # type: ignore[arg-type]
 
     client._store.apply = fragile  # type: ignore[method-assign]
     topic = f"ampio/fromDB/{USER}/ob/5/state"
