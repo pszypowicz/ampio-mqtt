@@ -1,10 +1,8 @@
 # LAN discovery facts
 
 This page lists what a Home Assistant config flow, or any other LAN-discovery
-consumer, can rely on in a search for an Ampio M-SERV broker. The facts come
-from a live mDNS and DHCP/ARP probe of the M-SERV's LAN presence. Nothing here
-is inferred from the protocol docs or the SDK source. Every claim is a direct
-observation from the probe, or is marked as inference from one.
+consumer, can rely on in a search for an Ampio M-SERV broker. Each inference is
+marked as one.
 
 Authoritative source for the discovery mechanics themselves:
 [`src/ampio_mqtt/discovery.py`](../src/ampio_mqtt/discovery.py) and
@@ -19,7 +17,7 @@ client gets. Nothing else on the LAN advertises a service type or TXT record
 that identifies that address as Ampio. There is no `_ampio._tcp` or equivalent,
 and no TXT key or value carries Ampio-specific data.
 
-Observed: two separate `_matter._tcp` service instances, each with its own
+Two separate `_matter._tcp` service instances, each with its own
 `_sub._matter._tcp` sub-type advertisement, resolve to the same address as
 `ampio.local`. Their TXT records carry only generic Matter operational-discovery
 keys (session idle/active interval, session active threshold), and nothing
@@ -43,27 +41,25 @@ usable discovery path for this integration.
 
 ## The DHCP matcher facts, and how weak they are
 
-A DHCP matcher has two candidate signals from this probe, and both are weak on
-their own:
+A DHCP matcher has two candidate signals, and both are weak on their own:
 
 - **OUI prefix `b8:27:eb`** (Raspberry Pi Foundation). This identifies the
   hardware vendor, not the M-SERV. It is the generic Raspberry Pi OUI block,
   shared by every Raspberry Pi on the same LAN. A DHCP matcher keyed on this OUI
   alone matches any Pi, not specifically an M-SERV.
-- **Hostname.** No hostname other than `ampio.local` was observed for the
-  broker's address. The probe did not read a DHCP lease, and `arp -n` only maps
-  an IP to a MAC. The DHCP client hostname is thus unknown. A matcher keyed on
-  it needs a read of the lease table first, and that read did not happen.
+- **Hostname.** The DHCP client hostname is unverified. ARP maps an IP to a MAC
+  only, and no lease table read exists. A matcher keyed on the hostname needs
+  that read first.
 
 Neither signal is strong enough to identify an M-SERV on its own. Both are
 weaker than the mDNS hostname resolution already in `discover()`.
 
 ## No mDNS record carries the server mac
 
-None of the observed records - the `ampio.local` A-record, or either
-`_matter._tcp` instance - carries the M-SERV's mac in any field. The Matter
-instance names are fabric and node identifiers from that co-located process,
-unrelated to the interface MAC. No ARP read exposes more than the OUI above.
+None of the records - the `ampio.local` A-record, or either `_matter._tcp`
+instance - carries the M-SERV's mac in any field. The Matter instance names are
+fabric and node identifiers from that co-located process, unrelated to the
+interface MAC. No ARP read exposes more than the OUI above.
 
 So a config flow cannot derive
 [`AmpioServerInfo.server_key`](../src/ampio_mqtt/models.py) (the mac-derived

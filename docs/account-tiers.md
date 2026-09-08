@@ -3,10 +3,9 @@
 Every Ampio account reaches the same broker, but the M-SERV serves two different
 surfaces. The reserved **`admin` login is the administrator**. Every app-created
 user is a standard account. The app offers no administrator toggle for its
-users, and it refuses to create a user named `admin` (both verified in the
-Designer web app). Per-user app permissions do not move an account between
-tiers. A standard account granted every permission in the app is still a
-standard account.
+users, and it refuses to create a user named `admin`. Per-user app permissions
+do not move an account between tiers. A standard account granted every
+permission in the app is still a standard account.
 
 The tier is the authenticated login name. The broker verifies the username at
 CONNACK, and the app cannot create another `admin`, so a held session under that
