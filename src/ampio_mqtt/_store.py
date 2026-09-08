@@ -178,8 +178,13 @@ class AmpioStore:
                 applied.events.append(ModuleUpdated(module))
         return applied
 
-    def apply(self, msg: _protocol.Inbound) -> Applied:
-        """Apply one typed message and report what it changed."""
+    def apply(self, msg: _protocol.Inbound, *, retained: bool = False) -> Applied:
+        """Apply one typed message and report what it changed.
+
+        ``retained`` marks a broker replay from its retained store. A
+        replay carries the value but says nothing about whether the
+        module is alive now, so it never touches ``last_seen``.
+        """
         applied = Applied()
         match msg:
             case _protocol.EndpointReply(endpoint=endpoint, payload=body):
@@ -189,9 +194,9 @@ class AmpioStore:
             case _protocol.StateUpdate() as update:
                 self._apply_state(update, applied)
             case _protocol.RawChannelEdge() as edge:
-                self._apply_raw_channel(edge, applied)
+                self._apply_raw_channel(edge, applied, retained=retained)
             case _protocol.DiagnosticsReport(mac=mac, diagnostics=diagnostics):
-                self._apply_diagnostics(mac, diagnostics, applied)
+                self._apply_diagnostics(mac, diagnostics, applied, retained=retained)
             case BusEventRaised() as event:
                 applied.events.append(event)
         return applied
@@ -486,7 +491,7 @@ class AmpioStore:
         self._record(obj, applied)
 
     def _apply_raw_channel(
-        self, edge: _protocol.RawChannelEdge, applied: Applied
+        self, edge: _protocol.RawChannelEdge, applied: Applied, *, retained: bool
     ) -> None:
         oid = self._input_index.get((edge.mac, edge.prefix, edge.channel))
         if oid is None:
@@ -500,20 +505,27 @@ class AmpioStore:
         self.objects[oid] = obj
         self._local_stamped.add(oid)
         self._guarded.add(oid)
-        self._touch_module(obj.id_urzadzenia)
+        if not retained:
+            self._touch_module(obj.id_urzadzenia)
         self._record(obj, applied)
 
     def _apply_diagnostics(
-        self, mac: int, diagnostics: _protocol.ModuleDiagnostics, applied: Applied
+        self,
+        mac: int,
+        diagnostics: _protocol.ModuleDiagnostics,
+        applied: Applied,
+        *,
+        retained: bool,
     ) -> None:
         mid = self._module_id_by_mac.get(mac)
         if mid is None:
             return  # a module the catalogue does not list
+        previous = self.modules[mid]
         module = replace(
-            self.modules[mid],
+            previous,
             supply_voltage=diagnostics.supply_voltage,
             temperature=diagnostics.temperature,
-            last_seen=time.time(),
+            last_seen=previous.last_seen if retained else time.time(),
         )
         self.modules[mid] = module
         applied.events.append(ModuleUpdated(module))

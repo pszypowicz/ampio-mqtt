@@ -12,6 +12,24 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.52.0
+
+`AmpioModule.last_seen` is documented as the local receive time of live
+evidence: a state push or raw edge for one of the module's objects, or its own
+diagnostics broadcast. The broker replays its retained store on every subscribe
+with the retain flag set, and the store applied that replay through the same two
+paths, so right after a connect every module with a retained raw value or
+diagnostics frame read as seen now, alive or not (#174).
+
+### Changed
+
+- **A retained replay never stamps `last_seen`.** The connection loop passes the
+  message's retain flag into the store. A replayed raw edge still sets the value
+  and raw ownership, and a replayed `b/4F` frame still sets the voltage and the
+  temperature and still emits `ModuleUpdated`. Neither counts as evidence that
+  the module is alive, so after a connect `last_seen` stays None until a real
+  push arrives, up to one broadcast period for a module with no object traffic.
+
 ## 0.51.0
 
 The M-SERV broker replays retained values into a QoS 1 subscription through a

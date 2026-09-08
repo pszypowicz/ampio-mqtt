@@ -279,13 +279,14 @@ class AmpioClient:
             *((t, _connection.RAW_STATE_QOS) for t in raw_state),
         ]
 
-    def _handle_message(self, topic: str, payload: str) -> None:
+    def _handle_message(self, topic: str, payload: str, retained: bool = False) -> None:
         """Apply one message, then dispatch what it changed.
 
-        Guarded per message: a processing bug costs the one message that
-        triggered it, never the connection. The traceback logs once per
-        topic and repeats at debug; bugs in the connection loop itself
-        remain terminal.
+        ``retained`` marks a broker replay from its retained store rather
+        than a live push. Guarded per message: a processing bug costs the
+        one message that triggered it, never the connection. The traceback
+        logs once per topic and repeats at debug; bugs in the connection
+        loop itself remain terminal.
         """
         self._stats.last_message_at = time.time()
         try:
@@ -315,7 +316,7 @@ class AmpioClient:
             if isinstance(msg, _protocol.CatalogueDigest):
                 self._note_digest(msg)
                 return
-            applied = self._store.apply(msg)
+            applied = self._store.apply(msg, retained=retained)
             if isinstance(msg, _protocol.EndpointReply):
                 self._channels[msg.endpoint.name].record(
                     _retained(msg.endpoint, payload), applied.parsed

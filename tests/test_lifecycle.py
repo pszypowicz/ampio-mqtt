@@ -805,6 +805,66 @@ async def test_the_raw_state_replay_survives_the_broker_queue_cap() -> None:
         await client.disconnect()
 
 
+async def test_a_retained_replay_never_stamps_last_seen() -> None:
+    """The broker flags a replay from its retained store on the wire, and
+    the flag rides the handler seam into the store: the replayed raw value
+    and diagnostics land, but only a live frame is evidence that the
+    module is alive (#174)."""
+    broker = FakeBroker()
+    broker.scripted_messages = [
+        Message(
+            ADMIN_DEVICES_TOPIC,
+            devices(
+                {
+                    "id": 7,
+                    "mac": 0xCAFE,
+                    "typ_urzadzenia": 11,
+                    "nazwa_urzadzenia": "panel",
+                }
+            ).encode(),
+        ),
+        Message(
+            ADMIN_DETAILS_TOPIC,
+            details(
+                {
+                    "id": 10,
+                    "id_urzadzenia": 7,
+                    "typ_komponentu": "flaga",
+                    "interpretacja": 1,
+                    "funkcja": 3,
+                    "opis_menu": "Flag",
+                }
+            ).encode(),
+        ),
+    ]
+    broker.retained = {
+        "ampio/from/CAFE/b/4F": b'{"d":[254,79,63,142],"m":51966}',
+        "ampio/from/CAFE/state/f/3": b"1",
+    }
+    client = make_client(broker, username=ADMIN_USER)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    try:
+
+        def landed() -> bool:
+            obj, module = client.objects.get(10), client.modules.get(7)
+            return (
+                obj is not None
+                and obj.state == "1"
+                and module is not None
+                and module.supply_voltage is not None
+            )
+
+        async with asyncio.timeout(1.0):
+            while not landed():
+                await asyncio.sleep(0)
+        assert client.modules[7].last_seen is None
+
+        feed(client, "ampio/from/CAFE/b/4F", '{"d":[254,79,63,142],"m":51966}')
+        assert client.modules[7].last_seen is not None
+    finally:
+        await client.disconnect()
+
+
 # --- auth-failure classification ------------------------------------------
 
 
