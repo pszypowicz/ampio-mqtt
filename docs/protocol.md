@@ -35,7 +35,7 @@ for every account.
 | `devicesDetails` | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devicesDetails` | `{Status, List: [{id, id_urzadzenia, typ_komponentu, interpretacja, funkcja, leafId, opis_menu, type, stan_json, ...}]}` - `type` is the Matter device type tag (see [`identity.md`](identity.md)).                                                                                                                                                                |
 | `devices`        | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devices`        | `{List: [{id, mac, mac_global, typ_urzadzenia, nazwa_urzadzenia, wersja_softu, wersja_pcb, ...}]}`                                                                                                                                                                                                                                                                 |
 | `locations`      | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/locations`      | `{List: [{id, opis_menu, opis_rozwiniety}]}` - Designer's "Lokalizacja" name table. The per-output pointer that resolves through it rides the `device_api` tree below (see [`identity.md`](identity.md)).                                                                                                                                                          |
-| `devices`        | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/devices`          | `{List: [...]}` - app-sync object catalogue: the `devicesDetails` row shape minus `params`/`stan_json`, filtered to the account's app grants.                                                                                                                                                                                                                      |
+| `devices`        | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/devices`          | `{List: [...]}` - app-sync object catalogue: the `devicesDetails` row shape minus `params`, `stan_json`, and `url`, filtered to the account's app grants.                                                                                                                                                                                                          |
 | `params_devices` | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/params_devices`   | `{List: [{id, params, param1, czas, powiazane, url}]}` - per-object `params` bitfields for the **full** catalogue (not grant-filtered).                                                                                                                                                                                                                            |
 | `groups`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/groups`           | `{List: [{id, id_rodzica, opis_menu}]}` - room tree.                                                                                                                                                                                                                                                                                                               |
 | `group_devices`  | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/group_devices`    | `{List: [{id_grupy, id_obiektu}]}` - object-to-room join.                                                                                                                                                                                                                                                                                                          |
@@ -43,34 +43,41 @@ for every account.
 | (empty)          | `ampio/control/<user>/states` | `ampio/fromDB/<user>/data/states`           | `{List: [{id, stan_json}]}` - bulk snapshot of the account's object states.                                                                                                                                                                                                                                                                                        |
 | (empty)          | `ampio/control/<user>/info`   | `ampio/fromDB/<user>/data/info`             | `{Results: {mac, userId, serverVersion, serverRevision, mqttVersion, local_ip, device_id, ...}}` - server self-report, retained in the account namespace. `userId` is the asking account's id (`-1` for the reserved `admin` login). `AmpioServerInfo.access_tier` surfaces it for config flows. A running client's tier is decided by its authenticated username. |
 
-## Per-module CAN records (`device_api`)
+## Module CAN records (`device_api`)
 
 A third topic pair sits next to the `config`/`data` request-response surfaces
-and the raw tree. `device_api/to/<machex>/get_data` (empty payload, mac
-lowercase hex) asks one module for its full CAN-resident description record. The
-reply lands on `device_api/from/<MACHEX>/info` (mac UPPERCASE hex on the wire).
-The reply's `descriptions` field carries, base64-encoded, the per-output entries
-behind both the Matter device type tag and the Designer "Lokalizacja" location
-pointer. The frame layout, the descType enum, and the join rule that resolves an
-object to its entry are in [`identity.md`](identity.md). The tree is admin-only,
-exactly like the raw tree. `AmpioClient.resolve_records()` drives this pair. A
-consumer never calls it directly.
+and the raw tree. `device_api/to/list` with the payload `0` asks the M-SERV for
+every module's CAN-resident record at once. The reply lands on
+`device_api/from/list` as `{devices: [...]}`. Each device carries `macUser` (the
+override), `macProd` (the factory id), `protocol`, `name` (base64), and
+`descriptions`, base64 of the per-output entries behind both the Matter device
+type tag and the Designer "Lokalizacja" location pointer. The frame layout, the
+descType enum, and the join rule that resolves an object to its entry are in
+[`identity.md`](identity.md). The tree is admin-only, exactly like the raw tree.
+`AmpioClient.resolve_records()` drives this pair. A consumer never calls it
+directly.
 
-The M-SERV serves these requests one module at a time. A request for a single
-module answers in about a second, but a burst of requests answers no faster in
-total: on the reference install 36 of 39 modules replied over 27 seconds, at a
-mean gap of 0.75 seconds. Three modules never replied. One of the three was the
-M-SERV's own catalogue row, which is not a CAN module and answers no `get_data`
-request. This is why `resolve_records()` bounds the silence between replies
-instead of the whole sweep.
+The per-module pair serves the same record for one module.
+`device_api/to/<machex>/get_data` (empty payload) answers on
+`device_api/from/<MACHEX>/info`. Both macs are the factory id, never the
+override. A module with a Designer override stays silent on its override mac,
+the M-SERV's own row included. The M-SERV serves those requests one module at a
+time, at a mean gap of 0.75 seconds on the reference install. The list reply
+carries the same blobs in one message, so the library reads the list.
 
 Each account namespace also carries a retained
 `ampio/fromDB/<user>/md5/<keyword>` topic per app-sync table (`devices`,
 `params_devices`, `groups`, `group_devices`, `scenes`, `resources`, `icons`,
 `logging`). Each holds the MD5 of the exact reply payload the account receives,
 per-account for the grant-filtered tables. The Designer SPA uses these to skip
-redundant refetches. The library does not: the hashes cover neither the `config`
-catalogues nor `states`, so the requests worth saving have no hash.
+redundant refetches. The hashes cover neither the `config` catalogues nor
+`states`, so the library saves no request with them. It reads two of them as
+change signals instead. A Designer save makes the M-SERV publish `data/devices`,
+`md5/devices`, and `data/params_devices` into every account namespace unasked, a
+few seconds after the save. Designer triggers that push with a `refresh` keyword
+on its `data` surface. The admin client watches the retained `md5/devices` and
+`md5/params_devices` digests and re-requests its `config` pair when one changes
+([`discovery-flow.md`](discovery-flow.md)).
 
 ## Commands (write)
 
@@ -239,30 +246,83 @@ The write that works is the raw CAN frame the SPA itself sends, captured live
 and replicated from a plain client:
 
 ```
-ampio/to/<machex>/raw      30f9<value:2><channel:2>     (ASCII hex)
+ampio/to/<machex>/raw      <fn>f9<value:2><channel:2>     (ASCII hex)
 ```
 
-`0x30` is the generic output-write function (the SPA's leaf command table maps
-every output leaf to it), and `0xF9` is the set-u8 command. `channel` is the
-0-based output index - `AmpioObject.leaf_io_no`, one below the 1-based raw state
-channel. The topic is admin-only like the rest of the `ampio/to` tree. The raw
-`state/o/<ch+1>` echo follows in ~30-50 ms and the per-object push in ~150 ms,
-so `confirm=` works unchanged. The frame is proven on panel LEDs and relay
-outputs alike.
+The first byte is the function the Designer sends the leaf's class: `0x30` for a
+binary output (leaf class 257, relays and panel LEDs) and `0x32` for an
+open-collector output (class 67, the M-INOC). A module drops `0x30` on a
+class-67 leaf, live-proven: the write returns, nothing moves, and no frame
+follows on the bus. `0xF9` is the set-u8 command. `channel` is the 0-based
+output index - `AmpioObject.leaf_io_no`, one below the 1-based raw state
+channel. The topic is admin-only like the rest of the `ampio/to` tree. A binary
+output echoes on `state/o/<ch+1>` in ~30-50 ms and on its object topic in ~150
+ms. An open-collector output echoes on `state/a/<ch+1>` as a u8 value and never
+on its object topic, on any write path, so the library bridges `a` for those
+objects. `confirm=` resolves on either edge.
 
-The library's routing is deliberately dumb. On the admin tier, every
-`przekaznik` on a CAN module rides this frame, addressed purely by its own leaf
-(mac and 0-based channel). There is no module-type table to maintain. Two writes
-stay on `/api`: the M-SERV's own virtual outputs (they live in the server's DB,
-not on the CAN bus) and every `pulse_ms` write. The raw frame has no timed form,
-so a panel output cannot pulse, and `confirm=` is what surfaces that. The
-restricted tier always publishes the `/api` form, which a panel output ignores.
+On the admin tier, a `przekaznik` on a CAN module rides this frame when its leaf
+class has a proven function byte, addressed purely by its own leaf (mac, 0-based
+channel, and class). A class outside that table, and a leafless object, stay on
+`/api`. There is no module-type table to maintain. Two more writes stay on
+`/api`: the M-SERV's own virtual outputs (they live in the server's DB, not on
+the CAN bus) and every `pulse_ms` write. The raw frame has no timed form, so a
+panel output cannot pulse, and `confirm=` is what surfaces that. The restricted
+tier always publishes the `/api` form, which a panel output ignores.
 
 A module condition bound to the LED overrides such writes eventually, not
 preventively. A live write to a condition-bound LED took effect and was
 re-asserted by the panel ~9 s later, with the bound source unchanged. Durable
 external control thus needs an LED that Designer logic does not drive. Create
 its app object in Designer - the same recipe as any other output object.
+
+## Panel buzzer
+
+The M-DOT panels carry a piezo buzzer. The Designer exposes it as a write-only
+leaf with no DB object, no `/api` verb, and no state topic. The panel confirms
+nothing on the bus. Two raw frames drive it, proven with microphone recordings
+on a M-DOT-9 (firmware 11529):
+
+```
+ampio/to/<machex>/raw   0c0703 70 <fn> <tone> <time>
+ampio/to/<machex>/raw   0c0703 71 <fn> <delay:2> <tone1> 00 <time1:2> <tone2> 00 <time2:2> <cycles>
+```
+
+`0c0703` is the prefix the Designer's "test condition" button puts before an
+action. `70` and `71` are the buzzer destination with the action function in the
+low nibble: simple and sequence. `fn` is 0 for OFF and 1 for ON. Two-byte fields
+are little-endian. Every time field counts 10 ms ticks. The simple form caps at
+2.55 s and the sequence fields at 655.35 s. The Designer widget's "[x100ms]"
+label is wrong.
+
+`tone` 1 to 31 sets the period. The fundamental is 16576 Hz / (tone + 1). Tone 0
+is a silent rest. Loudness follows the piezo resonance near 2.4 kHz, and no
+amplitude control exists:
+
+| Tone                  | Fundamental       | Loudness                      |
+| --------------------- | ----------------- | ----------------------------- |
+| 6                     | 2368 Hz           | loudest, the Designer default |
+| 4, 20                 | 3315 Hz, 789 Hz   | about 10 dB below tone 6      |
+| 8, 12, 16, 24, 28, 31 | 1842 Hz to 518 Hz | 16 to 22 dB below tone 6      |
+
+Tone 1 (8288 Hz) is barely audible and is not in the table.
+
+`cycles` 0 repeats the sequence until another frame replaces it. The speed bytes
+had no audible effect and stay 0. Cycles 255 is unproven.
+
+Stopping has three rules. A simple time of 0 latches the buzzer on, and the
+simple OFF frame ends it. The simple OFF does not end a running sequence,
+because the next step turns the buzzer back on. A new sequence replaces a
+running one, so a one-cycle sequence of tone 0 for 10 ms silences any pattern
+within 100 ms. `buzz_stop()` sends that silent sequence and then the simple OFF.
+When OFF cut a long single-tone sequence short, the panel emitted a 150 ms blip
+at the sequence's scheduled end.
+
+`buzz()`, `buzz_pattern()`, and `buzz_stop()` publish these frames on the admin
+tier, addressed by `AmpioModule.id`. Any catalogued module is a valid address,
+and the M-DOT panels are the proven targets. The touch-press beep length and its
+per-field mask live in the panel's flash parameters, a Designer write the
+library does not make.
 
 ## Legacy CAN bridge surfaces
 

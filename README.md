@@ -68,8 +68,9 @@ the API detail.
 - Replacement-stable identity for objects and modules, so a hardware swap keeps
   its entities ([`docs/identity.md`](docs/identity.md)).
 - Commands for relays, dimmers, RGBW lights, covers with stop and tilt, the
-  regulator setpoint, scenes, and bus events, plus a raw escape hatch for the
-  rest of the verb vocabulary ([`docs/protocol.md`](docs/protocol.md)).
+  regulator setpoint, scenes, bus events, and the M-DOT panel buzzer on the
+  admin tier, plus a raw escape hatch for the rest of the verb vocabulary
+  ([`docs/protocol.md`](docs/protocol.md)).
 - A low-latency input bridge from the raw per-channel topics on the admin tier
   ([`docs/raw-channel-bridge.md`](docs/raw-channel-bridge.md)).
 - Room mapping, per-module health, eviction events for server-side deletions,

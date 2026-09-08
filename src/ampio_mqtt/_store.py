@@ -31,6 +31,7 @@ from .models import (
     AmpioServerInfo,
     DesignerRecord,
     ModuleRecord,
+    leaf_mac,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,9 +74,9 @@ class AmpioStore:
         # broadcasts. Ids, not instances: modules are frozen and replaced on
         # every change, so a cached instance would go stale.
         self._module_id_by_mac: dict[int, int] = {}
-        # Full-catalogue per-object config facts (`params`, `czas`) from
-        # `data/params_devices`, kept because the app-sync catalogue carries
-        # neither column and the two replies arrive in no fixed order.
+        # Full-catalogue per-object config facts (`params`, `czas`, `url`) from
+        # `data/params_devices`, kept because the app-sync catalogue omits
+        # `params` and `url` and the two replies arrive in no fixed order.
         self._params_by_id: dict[int, _protocol.ParamsEntry] = {}
         # `{object_id: DesignerRecord}` accumulated across resolve
         # sweeps (a sweep updates its joined ids and leaves the rest),
@@ -208,9 +209,16 @@ class AmpioStore:
         if items is None:
             _LOGGER.warning("Could not parse Ampio %s catalogue", surface)
             return False
+        # One reply is the whole catalogue this tier holds, so its leafed
+        # rows are every sibling a leafless row can learn its module from.
+        sibling_macs: dict[int, int] = {}
+        for meta in items:
+            mac = leaf_mac(meta.leaf_id)
+            if meta.id_urzadzenia is not None and mac is not None:
+                sibling_macs[meta.id_urzadzenia] = mac
         touched = False
         for meta in items:
-            touched |= self._merge_metadata(meta, applied)
+            touched |= self._merge_metadata(meta, sibling_macs, applied)
         evicted = self._evict_missing_objects({meta.id for meta in items}, applied)
         if touched or evicted:
             self._rebuild_indexes(applied)
@@ -226,7 +234,7 @@ class AmpioStore:
         reply included (a full grant revocation empties the app-sync view).
         """
         # The same completeness proves a buffered push's id will never gain
-        # a catalogue row; without the prune, ghost-row pushes accumulate.
+        # a catalogue row; without the prune, pushes for such ids accumulate.
         for oid in list(self._pending_state):
             if oid not in present:
                 del self._pending_state[oid]
@@ -242,7 +250,12 @@ class AmpioStore:
             applied.events.append(ObjectRemoved(obj))
         return True
 
-    def _merge_metadata(self, meta: _protocol.ObjectMetadata, applied: Applied) -> bool:
+    def _merge_metadata(
+        self,
+        meta: _protocol.ObjectMetadata,
+        sibling_macs: Mapping[int, int],
+        applied: Applied,
+    ) -> bool:
         """Fold one catalogue row into its object; True when anything changed.
 
         Only a real change is reported, so re-requesting the catalogue on every
@@ -256,12 +269,19 @@ class AmpioStore:
         updates: dict[str, Any] = {
             name: getattr(meta, name) for name in _METADATA_FIELDS
         }
+        updates["sibling_module_mac"] = (
+            sibling_macs.get(meta.id_urzadzenia)
+            if meta.id_urzadzenia is not None
+            else None
+        )
         # A row without the column leaves the params_devices value standing.
         entry = self._params_by_id.get(meta.id)
         if updates["params"] is None:
             updates["params"] = entry.params if entry is not None else obj.params
-        if updates["pulse_ms"] is None:
-            updates["pulse_ms"] = entry.pulse_ms if entry is not None else obj.pulse_ms
+        if updates["czas"] is None:
+            updates["czas"] = entry.czas if entry is not None else obj.czas
+        if updates["url"] is None:
+            updates["url"] = entry.url if entry is not None else obj.url
         # The catalogue never carries the record entry, so the held table
         # re-applies it on every merge - including the re-creation after
         # an eviction.
@@ -381,9 +401,11 @@ class AmpioStore:
         for oid, entry in table.items():
             obj = self.objects.get(oid)
             if obj is not None and (
-                obj.params != entry.params or obj.pulse_ms != entry.pulse_ms
+                obj.params != entry.params
+                or obj.czas != entry.czas
+                or obj.url != entry.url
             ):
-                obj = replace(obj, params=entry.params, pulse_ms=entry.pulse_ms)
+                obj = replace(obj, params=entry.params, czas=entry.czas, url=entry.url)
                 self.objects[oid] = obj
                 self._record(obj, applied)
         return True
@@ -584,17 +606,20 @@ class AmpioStore:
         Both are keyed on the module's effective bus address (`mac`, the
         Designer override) - never `mac_global`, which diverges from the
         raw-topic MAC on replaced modules. `(mac, prefix, channel)` routes a
-        raw channel to its object: the bridgeable input types, plus binary
-        outputs (`przekaznik`) on the `o` prefix - a panel's status LEDs
-        have no other retained surface, and every module's outputs share
-        the channel shape. `mac` alone routes a module's own diagnostics
-        broadcast.
+        raw channel to its object: the bridgeable input types, plus
+        `przekaznik` outputs on the `o` prefix, or on `a` for an
+        open-collector leaf - a panel's status LEDs have no other retained
+        surface, an OC output never echoes on its object topic, and every
+        module's outputs share the channel shape. `mac` alone routes a
+        module's own diagnostics broadcast.
         """
         index: dict[tuple[int, str, int], int] = {}
         for obj in self.objects.values():
             prefix = input_channel_prefix(obj.typ_komponentu)
             if prefix is None and obj.typ_komponentu == "przekaznik":
-                prefix = "o"
+                # A binary output reports on `o`; an open-collector output
+                # (leaf class 67) reports a u8 on `a`, same 1-based channel.
+                prefix = "a" if obj.sf_id == _protocol.OC_OUTPUT_SF else "o"
             if prefix is None or obj.funkcja is None or obj.id_urzadzenia is None:
                 continue
             module = self.modules.get(obj.id_urzadzenia)

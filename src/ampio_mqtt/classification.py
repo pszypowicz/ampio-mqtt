@@ -153,7 +153,7 @@ class _Selector(Enum):
     time, so no instance can sit in the table."""
 
     ANALOG = auto()  # the interpretacja-keyed lin_wej map
-    NUMERIC = auto()  # generic value_<interpretacja> measurement
+    NUMERIC = auto()  # generic value_<interpretacja> measurement (integer slots)
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,8 +173,8 @@ class TypeProfile:
     # per-object topic.
     channel_prefix: str | None = None
     # System objects (presence simulation / detection) live outside the
-    # room/group hierarchy; the M-SERV always exposes them, so they read as
-    # visible even with an empty leafId and no group membership.
+    # room/group hierarchy, and the M-SERV lists them unconditionally.
+    # Backs `AmpioObject.is_system`.
     system: bool = False
 
 
@@ -193,7 +193,11 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
         OutputKind("cover_tilt", "Blind", cover=True, position=True, tilt=True)
     ),
     "reg": TypeProfile(ThermostatKind("thermostat", "Thermostat")),
+    # The four integer sensor slots an M-CON-485 lands a Modbus reading in:
+    # Designer's `bit 8`, `bit 16`, `sbit 16[+/-]`, and `bit 32` subtypes.
     "bit8": TypeProfile(_Selector.NUMERIC),
+    "bit16": TypeProfile(_Selector.NUMERIC),
+    "sbit16": TypeProfile(_Selector.NUMERIC),
     "flaga": TypeProfile(
         InputKind("flaga", "Flag", None, switchable=True), channel_prefix="f"
     ),
@@ -246,7 +250,7 @@ SENSOR_KIND_KEYS, INPUT_KIND_KEYS, OUTPUT_KIND_KEYS, THERMOSTAT_KIND_KEYS = _kin
 
 # The two open families: keys minted with the object's `interpretacja`
 # embedded (`analog_<n>` for a lin_wej measurement the map does not know,
-# `value_<n>` for the numeric bit8/bit32 channels), so they cannot be
+# `value_<n>` for the numeric bit8/bit16/sbit16/bit32 slots), so they cannot be
 # enumerated. A consumer treats each prefix as one mapping decision.
 SENSOR_KIND_KEY_PREFIXES: tuple[str, ...] = ("analog_", "value_")
 

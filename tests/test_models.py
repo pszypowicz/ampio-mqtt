@@ -74,39 +74,46 @@ def test_object_key_separates_views_of_one_output() -> None:
 
 
 def test_object_key_survives_an_empty_leaf_id() -> None:
-    """System objects and ghost rows carry no leaf, but do carry an id."""
+    """System objects and Matter-unchecked rows carry no leaf, but do carry an id."""
     assert AmpioObject(id=99, leaf_id="").object_key == "obj_99"
 
 
 @pytest.mark.parametrize(
-    ("typ", "leaf_id", "is_system", "visible"),
+    ("typ", "leaf_id", "params", "visible"),
     [
         # Real object with a non-empty leafId (the real-install shape).
-        ("temp", "0_cb8f_76_0_0", False, True),
-        # Ghost: empty leafId, not a system type.
-        ("temp", "", False, False),
-        # Named-output ghost on the M-SERV - the canonical Matter-leak case.
-        ("przekaznik", "", False, False),
-        # System objects are visible regardless of leafId.
-        ("symulacja", "", True, True),
-        ("detekcja", "", True, True),
-        # `flaga` is an input but NOT a system object, so it needs its leafId.
-        ("flaga", "", False, False),
-        ("flaga", "0_d09a_3_0_1", False, True),
-        # Unclassified / missing typ_komponentu - treat as non-system.
-        (None, "", False, False),
-        (None, "0_x_x_x_x", False, True),
+        ("temp", "0_cb8f_76_0_0", 0, True),
+        # A relay whose Matter box was unchecked: Designer clears leafId and
+        # the row keeps its type, its module, and its state.
+        ("przekaznik", "", 0, True),
+        # System objects carry no leafId either.
+        ("symulacja", "", 0, True),
+        ("detekcja", "", 0, True),
+        # The DELETED bit hides a row whatever its leafId says.
+        ("temp", "0_cb8f_76_0_0", 16, False),
+        ("przekaznik", "", 16, False),
+        ("symulacja", "", 16, False),
+        # A missing typ_komponentu reads like any other row.
+        (None, "", 0, True),
+        (None, "0_x_x_x_x", 16, False),
     ],
 )
 def test_visibility_predicate(
     typ: str | None,
     leaf_id: str,
-    is_system: bool,
+    params: int,
     visible: bool,
 ) -> None:
-    obj = AmpioObject(id=1, typ_komponentu=typ, leaf_id=leaf_id)
-    assert obj.is_system is is_system
+    obj = AmpioObject(id=1, typ_komponentu=typ, leaf_id=leaf_id, params=params)
     assert obj.visible is visible
+
+
+@pytest.mark.parametrize(
+    ("typ", "is_system"),
+    [("symulacja", True), ("detekcja", True), ("flaga", False), (None, False)],
+)
+def test_is_system_names_the_two_system_types(typ: str | None, is_system: bool) -> None:
+    assert AmpioObject(id=1, typ_komponentu=typ).is_system is is_system
 
 
 @pytest.mark.parametrize(
@@ -139,6 +146,88 @@ def test_params_flags(params: int, hidden: bool) -> None:
 def test_read_only_reads_params_bit_6(params: int, read_only: bool) -> None:
     obj = AmpioObject(id=1, params=params)
     assert obj.read_only is read_only
+
+
+@pytest.mark.parametrize(
+    ("typ", "czas", "pulse_ms"),
+    [
+        ("przekaznik", 500, 5000),  # 10 ms ticks -> ms, the live bell-relay value
+        ("flaga", 500, 5000),
+        ("led", 50, 500),
+        ("rgb", 500, 5000),  # on Designer's list, even with none on this install
+        ("ledww", 500, 5000),
+        ("flaga_liniowa16", 500, 5000),
+        ("przekaznik", 0, 0),
+        ("rgbw", 500, 0),  # not on the list: Designer offers no turn-on time
+        ("roleta_procenty", 500, 0),  # covers never get the field
+        ("kamera", 500, 0),  # the same column is a refresh time in ms there
+        (None, 500, 0),
+    ],
+)
+def test_pulse_ms_reads_czas_only_on_the_turn_on_time_types(
+    typ: str | None, czas: int, pulse_ms: int
+) -> None:
+    assert AmpioObject(id=1, typ_komponentu=typ, czas=czas).pulse_ms == pulse_ms
+
+
+@pytest.mark.parametrize(
+    ("typ", "url", "fmt", "unit"),
+    [
+        ("bit32", "", "%.3f A", "A"),  # the live meter: unit typed into the format
+        ("bit32", "V", "%.1f V", "V"),  # the dropdown-composed shape
+        ("bit32", "V", "%.3f", "V"),  # a format without a tail leaves the url
+        ("bit32", "V", "%.3f A", "A"),  # Designer: the format overwrites the unit
+        ("bit32", " ", "%.1f", None),  # the "without unit" sentinel
+        ("bit32", " ", "", None),
+        ("bit32", "%", "", "%"),  # Designer writes % when the box is unticked
+        ("bit32", "", "%.1f %%", "%"),  # the printf escape is one literal percent
+        ("bit32", "", "%d%%", "%"),
+        ("bit32", "", "abc", None),  # no conversion, no tail
+        ("bit32", "V", "abc", "V"),
+        ("bit32", "  A  ", "", "A"),  # stripped
+        ("lin_wej", "IAQ", "", "IAQ"),  # the live air-quality row
+        ("temp", "°C", "", "°C"),
+        ("no_such_type", "kWh", "", "kWh"),  # unknown types are the generic sensor
+        ("symulacja", "0", "", None),  # system objects carry "0": not a sensor
+        ("przekaznik", "V", "%.1f V", None),  # a unit applies to measurements only
+        ("reg", "°C", "", None),
+    ],
+)
+def test_unit_reads_the_format_tail_then_the_url_on_sensor_kinds(
+    typ: str, url: str, fmt: str, unit: str | None
+) -> None:
+    obj = AmpioObject(id=1, typ_komponentu=typ, interpretacja=1, url=url, format=fmt)
+    assert obj.unit == unit
+
+
+@pytest.mark.parametrize(
+    ("typ", "fmt", "decimals"),
+    [
+        ("bit32", "%.3f A", 3),  # the live meter shape
+        ("bit32", "%.1f", 1),  # the Designer dropdown, in its order
+        ("bit32", "%.2f", 2),
+        ("bit32", "%.0f", 0),
+        ("bit32", "%6.2f", 2),
+        ("bit32", "%06.2f", 2),
+        ("bit32", "%+6.2f", 2),
+        ("bit32", "%.3e", None),  # scientific notation has no fixed precision
+        ("bit32", "%g", None),
+        ("bit32", "%.3g", None),
+        ("bit32", "%#x", None),
+        ("bit32", "%.2F", 2),
+        ("bit32", "%.1f %%", 1),
+        ("bit32", "%f", None),  # only an explicit precision counts
+        ("bit32", "%d", None),
+        ("bit32", "", None),
+        ("bit32", "abc", None),
+        ("przekaznik", "%.1f", None),  # measurements only, like `unit`
+    ],
+)
+def test_decimals_reads_the_explicit_precision_of_a_fixed_point_format(
+    typ: str, fmt: str, decimals: int | None
+) -> None:
+    obj = AmpioObject(id=1, typ_komponentu=typ, interpretacja=1, format=fmt)
+    assert obj.decimals == decimals
 
 
 @pytest.mark.parametrize(
@@ -223,7 +312,7 @@ def test_reg_classifies_as_thermostat_and_surfaces_the_running_flag() -> None:
         ("0_cb8f_76_0_0", 0xCB8F),
         ("0_1_10_0_0", 1),  # the M-SERV's override mac, not its factory id
         ("0_D09A_5_1_2", 0xD09A),  # uppercase hex parses too
-        ("", None),  # system objects and ghost rows carry no leafId
+        ("", None),  # an empty leafId: system objects, Matter box unchecked
         ("0_cb8f_76_0", None),  # four segments
         ("0_cb8f_76_0_0_9", None),  # six segments
         ("1_cb8f_76_0_0", None),  # unexpected leading segment
@@ -242,7 +331,7 @@ def test_module_mac_parses_strictly(leaf_id: str, expected: int | None) -> None:
     [
         ("0_1_10_0_0", True),  # the M-SERV's override mac
         ("0_cb8f_76_0_0", False),  # another module's object
-        ("", False),  # system objects and ghost rows
+        ("", False),  # an empty leafId
     ],
 )
 def test_is_server_owned_reads_the_mserv_override_mac(
@@ -342,7 +431,7 @@ def test_sf_id_reads_none_for_a_malformed_leaf_id():
 
 
 def test_sf_id_reads_none_for_an_empty_leaf_id():
-    """System objects and ghost rows carry an empty leaf_id."""
+    """System objects and Matter-unchecked rows carry an empty leaf_id."""
     obj = AmpioObject(id=1, leaf_id="")
     assert obj.sf_id is None
     assert obj.sub_sf_id is None

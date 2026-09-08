@@ -22,15 +22,21 @@ from ._protocol import (
     ENDPOINT_BY_NAME,
     ENDPOINTS,
     KEEP_POSITION,
+    RAW_ANALOG_WILDCARD,
+    RAW_BUZZER_OFF,
+    RAW_BUZZER_SILENCE,
     RAW_DIAGNOSTICS_WILDCARD,
     RAW_EVENT_WILDCARD,
     RAW_INPUT_WILDCARDS,
+    RAW_OUTPUT_FUNCTION_BY_SF,
     RAW_OUTPUT_WILDCARD,
     Endpoint,
     command_payload,
     command_topic,
     event_payload,
     ob_state_wildcard,
+    raw_buzzer_pattern_payload,
+    raw_buzzer_payload,
     raw_output_payload,
     raw_write_topic,
     request_topic,
@@ -50,7 +56,6 @@ from .events import (
     ObjectUpdated,
 )
 from .models import (
-    MSERV_MAC,
     AccessTier,
     AmpioModule,
     AmpioObject,
@@ -174,6 +179,11 @@ class AmpioClient:
         )
         self._served = tuple(ep for ep in ENDPOINTS if ep.tier in (None, self._tier))
         self._initial_endpoints = tuple(ep.name for ep in self._served if ep.initial)
+        # The admin catalogue pair a pushed digest change re-requests (#166);
+        # empty on the restricted tier, which never subscribes to a digest.
+        self._catalogue_endpoints = tuple(
+            ep for ep in self._served if ep.initial and ep.tier is AccessTier.ADMIN
+        )
         self._router = _protocol.Router(username, self._served)
         self._store = AmpioStore()
         self._stats = ConnectionStats()
@@ -187,7 +197,7 @@ class AmpioClient:
             stats=self._stats,
             on_message=self._handle_message,
             on_availability=self._handle_availability,
-            on_connected=self.refresh,
+            on_connected=self._handle_connected,
             on_auth_failure=self._handle_auth_failure,
             on_fatal=self._handle_fatal,
             client_factory=mqtt_client_factory,
@@ -208,30 +218,61 @@ class AmpioClient:
         # poison payload logs its traceback once instead of per delivery.
         self._poisoned_topics: set[str] = set()
 
-        # Per-mac futures awaiting a device_api info reply; every waiter
-        # for a mac receives the same reply, exactly as endpoint fetches
-        # share one.
-        self._descriptions_waiters: dict[
-            int, list[asyncio.Future[tuple[_protocol.OutputDescription, ...]]]
-        ] = {}
+        # Futures awaiting the next device_api list reply; every waiter
+        # receives the same reply, exactly as endpoint fetches share one.
+        self._device_list_waiters: list[
+            asyncio.Future[tuple[_protocol.DeviceRecord, ...]]
+        ] = []
+
+        # Last digest per app-sync table from the retained `md5` topics the
+        # admin session subscribes to; the first value per table seeds. The
+        # tasks that answer a change with the catalogue requests are held
+        # so a pending one is never garbage-collected mid-publish.
+        self._digests: dict[str, str] = {}
+        self._catalogue_tasks: set[asyncio.Task[None]] = set()
 
     def _subscriptions(self) -> list[str]:
-        """Every topic the client needs on each (re)connect."""
-        topics = [
-            *(response_topic(ep, self._username) for ep in self._served),
-            ob_state_wildcard(self._username),
-        ]
-        if self._tier is AccessTier.ADMIN:
-            # The raw tree is served to the admin login alone; any other
-            # client never asks, so a SUBACK rejection is always a fault.
-            topics += [
+        """Every topic the client needs on each (re)connect.
+
+        The order is the wire order: the broker replays retained values
+        filter by filter and caps its outgoing QoS 1 queue, and the admin
+        raw tree alone overflows that cap on a full install, so a filter
+        listed after it loses its replay. The digests lead and the raw
+        tree closes the list.
+        """
+        admin = self._tier is AccessTier.ADMIN
+        # The M-SERV never pushes the `config` catalogues; the retained
+        # digests of the app-sync tables are what reveal a Designer save
+        # to an admin session (#166). The restricted tier receives the
+        # tables themselves and needs no digest.
+        digests = (
+            [
+                _protocol.md5_topic(self._username, keyword)
+                for keyword in _protocol.CATALOGUE_DIGEST_KEYWORDS
+            ]
+            if admin
+            else []
+        )
+        # The raw tree is served to the admin login alone; any other
+        # client never asks, so a SUBACK rejection is always a fault.
+        raw = (
+            [
                 *RAW_INPUT_WILDCARDS,
                 RAW_OUTPUT_WILDCARD,
+                RAW_ANALOG_WILDCARD,
                 RAW_DIAGNOSTICS_WILDCARD,
                 RAW_EVENT_WILDCARD,
-                _protocol.DEVICE_API_INFO_WILDCARD,
+                _protocol.DEVICE_API_LIST_TOPIC,
             ]
-        return topics
+            if admin
+            else []
+        )
+        return [
+            *digests,
+            *(response_topic(ep, self._username) for ep in self._served),
+            ob_state_wildcard(self._username),
+            *raw,
+        ]
 
     def _handle_message(self, topic: str, payload: str) -> None:
         """Apply one message, then dispatch what it changed.
@@ -260,9 +301,14 @@ class AmpioClient:
                     _retained(msg.endpoint, payload), parsed
                 )
                 return
-            if isinstance(msg, _protocol.DeviceDescriptions):
-                for future in self._descriptions_waiters.pop(msg.mac, []):
-                    future.set_result(msg.entries)
+            if isinstance(msg, _protocol.DeviceList):
+                waiters, self._device_list_waiters = self._device_list_waiters, []
+                for future in waiters:
+                    if not future.done():
+                        future.set_result(msg.devices)
+                return
+            if isinstance(msg, _protocol.CatalogueDigest):
+                self._note_digest(msg)
                 return
             applied = self._store.apply(msg)
             if isinstance(msg, _protocol.EndpointReply):
@@ -286,6 +332,56 @@ class AmpioClient:
 
     def _handle_availability(self, available: bool) -> None:
         self._dispatch(AvailabilityChanged(available))
+
+    async def _handle_connected(self) -> None:
+        """The connection loop's on-connect step: seed anew, then refresh.
+
+        The broker replays every retained digest after the subscribe, and
+        the refresh fetches the catalogues anyway, so the replay must seed
+        rather than count as a change against the previous session's value.
+        """
+        self._digests.clear()
+        await self.refresh()
+
+    def _note_digest(self, digest: _protocol.CatalogueDigest) -> None:
+        """Re-request the config catalogues when a pushed table digest changes.
+
+        The M-SERV rewrites the retained digest of an app-sync table on a
+        Designer save but never pushes the ``config`` catalogues, so the
+        change is what tells an admin session its catalogues went stale.
+        The store's diff then reports what the save changed as the usual
+        object and module events. The live-value guard is left alone: a
+        catalogue re-request is not a snapshot cycle, so a value pushed
+        since the last request keeps outranking the reply's ``stan_json``.
+        """
+        previous = self._digests.get(digest.keyword)
+        self._digests[digest.keyword] = digest.digest
+        if previous is None or previous == digest.digest:
+            return
+        task = asyncio.get_running_loop().create_task(self._request_catalogues())
+        self._catalogue_tasks.add(task)
+        task.add_done_callback(self._catalogue_tasks.discard)
+
+    async def _request_catalogues(self) -> None:
+        """Publish the admin catalogue requests from a digest-change task.
+
+        A publish failure ends this request only: the task runs outside
+        the connection loop, which handles the drop itself, and the next
+        (re)connect refreshes the catalogues anyway.
+        """
+        try:
+            for ep in self._catalogue_endpoints:
+                await self._publish(ep)
+        except AmpioConnectionError as err:
+            _LOGGER.debug("Ampio catalogue re-request did not go out: %s", err)
+
+    async def _cancel_catalogue_tasks(self) -> None:
+        tasks = list(self._catalogue_tasks)
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     def _handle_auth_failure(self, message: str) -> None:
         self._dispatch(AuthFailed(message))
@@ -368,13 +464,14 @@ class AmpioClient:
         return None
 
     def module_for(self, obj: AmpioObject) -> AmpioModule | None:
-        """The catalogue row of the module that owns ``obj``, mac-validated.
+        """The catalogue row of the module that owns ``obj``.
 
-        Joins ``obj.id_urzadzenia`` to the module list, gated on the row's
-        mac agreeing with the object's leaf-derived
-        :pyattr:`AmpioObject.module_mac` - DB ids are volatile across a
-        module replacement while the leaf mac is the stable identity
-        (docs/identity.md). None when either side is missing or they
+        Joins ``obj.id_urzadzenia`` to the module list. When the object
+        carries a leaf-derived :pyattr:`AmpioObject.module_mac`, the row's
+        mac must agree with it - DB ids are volatile across a module
+        replacement while the leaf mac is the stable identity
+        (docs/identity.md). A leafless object has no mac to gate on, so
+        its join stands as is. None when the join finds no row or the macs
         disagree, and always on the restricted tier, which never receives
         the module catalogue; tier-independent grouping reads
         ``module_mac`` directly.
@@ -382,7 +479,9 @@ class AmpioClient:
         if obj.id_urzadzenia is None:
             return None
         module = self._store.modules.get(obj.id_urzadzenia)
-        if module is None or module.mac is None or module.mac != obj.module_mac:
+        if module is None:
+            return None
+        if obj.module_mac is not None and module.mac != obj.module_mac:
             return None
         return module
 
@@ -699,6 +798,7 @@ class AmpioClient:
         an availability event.
         """
         await self._cancel_refresh_task()
+        await self._cancel_catalogue_tasks()
         await self._connection.close()
 
     async def _cancel_refresh_task(self) -> None:
@@ -795,39 +895,34 @@ class AmpioClient:
         return dict(cast("dict[int, str]", replies["locations"]))
 
     async def resolve_records(self, timeout: float = 10.0) -> RecordSweep:
-        """Sweep the CAN description records and return what the pass covered.
+        """Read every module's CAN description record and return what the pass covered.
 
-        Fetches the locations name table, asks each catalogued module
-        for its CAN-resident description record over the ``device_api``
-        tree, joins the entries to objects, and folds each joined
-        object's entry into :pyattr:`AmpioObject.record` - wholesale,
-        None fields included - with :class:`ObjectUpdated` dispatched on
-        change. The same reply's DEVICE_NAME entry folds into
-        :pyattr:`AmpioModule.record` with :class:`ModuleUpdated` (#114).
-        The catalogue facts (``matter_device_type``, ``opis_menu``) are
-        never touched: the record is the separate, admin-guarded fact
-        (#133).
+        Fetches the locations name table, reads the ``device_api`` list
+        reply - one message carrying every catalogued module's record,
+        the M-SERV's own included - joins the entries to objects, and
+        folds each joined object's entry into :pyattr:`AmpioObject.record`
+        - wholesale, None fields included - with :class:`ObjectUpdated`
+        dispatched on change. The same record's DEVICE_NAME entry folds
+        into :pyattr:`AmpioModule.record` with :class:`ModuleUpdated`
+        (#114). The catalogue facts (``matter_device_type``,
+        ``opis_menu``) are never touched: the record is the separate,
+        admin-guarded fact (#133).
 
         Returns a :class:`RecordSweep`. Its ``records`` map is
         ``{object_id: DesignerRecord}`` for what resolved, and its two
-        mac sets say which modules answered - a caller that reads
-        ``record`` None needs them to tell an empty entry from an unread
-        module. An object absent from a sweep keeps its previous
-        ``record`` until a later sweep covers it.
+        mac sets say which catalogued modules the reply listed - a caller
+        that reads ``record`` None needs them to tell an empty entry from
+        an unlisted module. An object absent from a pass keeps its
+        previous ``record`` until a later pass covers it.
 
-        The M-SERV answers the requests one module at a time, so
-        ``timeout`` bounds the silence between replies, not the sweep.
-        Every request goes out first, and the sweep ends once no further
-        reply arrives for ``timeout`` seconds. The whole call therefore
-        runs as long as the M-SERV needs, plus the ``timeout`` budget the
-        name table is fetched on. A caller that must finish by a deadline
-        applies its own ceiling.
+        ``timeout`` bounds each of the two replies, the name table and
+        the list, so the call ends within twice that.
 
         Admin tier only: the ``device_api`` tree answers no other
         account, and the call raises ``RuntimeError`` for one. Requires
         ``connect()`` to have completed. Raises ``AmpioConnectionError``
-        if the broker is not connected and ``AmpioTimeoutError`` if the
-        name table itself does not arrive.
+        if the broker is not connected and ``AmpioTimeoutError`` if
+        either reply does not arrive.
         """
         if self._tier is not AccessTier.ADMIN:
             raise RuntimeError(
@@ -835,62 +930,49 @@ class AmpioClient:
                 "device_api tree answers no other account"
             )
         names = await self.fetch_locations(timeout=timeout)
-        # The M-SERV's own row is a catalogue module with a mac, but it is
-        # not a CAN module and never answers a get_data request. Asking
-        # would put it in `silent_macs` on every sweep.
-        macs = sorted(
-            {
-                mod.mac
-                for mod in self._store.modules.values()
-                if mod.mac is not None and mod.mac != MSERV_MAC
-            }
-        )
         loop = asyncio.get_running_loop()
-        futures: dict[int, asyncio.Future[tuple[_protocol.OutputDescription, ...]]] = {}
-        for mac in macs:
-            future = loop.create_future()
-            futures[mac] = future
-            self._descriptions_waiters.setdefault(mac, []).append(future)
+        future: asyncio.Future[tuple[_protocol.DeviceRecord, ...]] = (
+            loop.create_future()
+        )
+        self._device_list_waiters.append(future)
         try:
-            for mac in macs:
+            async with asyncio.timeout(timeout):
                 await self._connection.publish(
-                    _protocol.device_api_request_topic(mac), b""
+                    _protocol.DEVICE_API_LIST_REQUEST,
+                    _protocol.DEVICE_API_LIST_PAYLOAD,
                 )
-            pending: set[asyncio.Future[tuple[_protocol.OutputDescription, ...]]] = set(
-                futures.values()
-            )
-            while pending:
-                # One idle window per pass: a pass that completes nothing
-                # means the M-SERV stopped answering, and the rest of the
-                # modules are the offline ones. asyncio.wait leaves the
-                # unfinished futures pending, so nothing races the
-                # unregister below.
-                done, pending = await asyncio.wait(
-                    pending, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
-                )
-                if not done:
-                    break
+                devices = await future
+        except TimeoutError as err:
+            raise AmpioTimeoutError(
+                "Timed out fetching the module records from the Ampio broker"
+            ) from err
         finally:
-            for mac, future in futures.items():
-                waiters = self._descriptions_waiters.get(mac)
-                if waiters is not None:
-                    waiters.remove(future)
-                    if not waiters:
-                        del self._descriptions_waiters[mac]
-        by_mac = {
-            mac: future.result()
-            for mac, future in futures.items()
-            if future.done() and not future.cancelled()
+            if future in self._device_list_waiters:
+                self._device_list_waiters.remove(future)
+        # Keyed by the override mac the reply carries: the id every leaf
+        # embeds, so the join needs no catalogue lookup.
+        by_mac = {device.mac: device.entries for device in devices}
+        catalogued = {
+            mod.mac for mod in self._store.modules.values() if mod.mac is not None
         }
-        silent = frozenset(futures) - frozenset(by_mac)
+        silent = frozenset(catalogued - by_mac.keys())
         if silent:
             _LOGGER.warning(
-                "Ampio modules %s did not answer the description sweep; their "
-                "objects keep whatever record an earlier sweep resolved",
+                "Ampio modules %s are missing from the device list; their "
+                "objects keep whatever record an earlier pass resolved",
                 sorted(silent),
             )
+        mac_by_device_id = {
+            mod.id: mod.mac
+            for mod in self._store.modules.values()
+            if mod.mac is not None
+        }
         resolved = _protocol.resolve_designer(
-            self._store.objects, by_mac, names, self._store.colliding_macs
+            self._store.objects,
+            by_mac,
+            names,
+            self._store.colliding_macs,
+            mac_by_device_id,
         )
         applied = self._store.apply_designer_records(resolved)
         module_applied = self._store.apply_module_records(
@@ -1013,17 +1095,20 @@ class AmpioClient:
         finally:
             unsubscribe()
 
-    def _raw_output_address(self, object_id: int) -> tuple[int, int] | None:
-        """The (module mac, frame channel) of a binary output the admin
-        session drives over the raw CAN write topic, or None.
+    def _raw_output_address(self, object_id: int) -> tuple[int, int, int] | None:
+        """The (module mac, frame channel, function byte) of an output the
+        admin session drives over the raw CAN write topic, or None.
 
         Admin-tier `przekaznik` objects on CAN modules, addressed by their
-        own leaf: mac from ``leaf_id`` (the replacement-stable override)
-        and the 0-based :pyattr:`AmpioObject.leaf_io_no` channel. The
-        M-SERV's own virtual outputs stay on `/api` - they live in its DB,
-        not on the CAN bus. The restricted tier always returns None: the
-        raw write tree is admin-only, so `/api` is all that tier has -
-        which a panel output ignores (docs/protocol.md, "Panel outputs").
+        own leaf: mac from ``leaf_id`` (the replacement-stable override),
+        the 0-based :pyattr:`AmpioObject.leaf_io_no` channel, and the
+        function byte the leaf class takes
+        (:data:`RAW_OUTPUT_FUNCTION_BY_SF`). A class outside that table,
+        and a leafless object, stay on `/api`. The M-SERV's own virtual
+        outputs stay on `/api` too - they live in its DB, not on the CAN
+        bus. The restricted tier always returns None: the raw write tree
+        is admin-only, so `/api` is all that tier has - which a panel
+        output ignores (docs/protocol.md, "Panel outputs").
         """
         if self._tier is not AccessTier.ADMIN:
             return None
@@ -1032,27 +1117,30 @@ class AmpioClient:
             return None
         mac = obj.module_mac
         channel = obj.leaf_io_no
-        if mac is None or channel is None:
+        function = (
+            RAW_OUTPUT_FUNCTION_BY_SF.get(obj.sf_id) if obj.sf_id is not None else None
+        )
+        if mac is None or channel is None or function is None:
             return None
-        return mac, channel
+        return mac, channel, function
 
     async def _raw_output(
         self,
         object_id: int,
-        address: tuple[int, int],
+        address: tuple[int, int, int],
         value: int,
         confirm: float | None,
     ) -> AmpioObject | None:
-        """Drive a binary output over the raw CAN write topic.
+        """Drive an output over the raw CAN write topic.
 
         The one write that reaches a panel's status LEDs, and equivalent
         to the `/api` switch verbs on relay outputs (docs/protocol.md,
         "Panel outputs"); admin-only, like the raw tree it echoes on.
         """
-        mac, channel = address
+        mac, channel, function = address
         return await self._publish_command(
             raw_write_topic(mac),
-            raw_output_payload(value, channel).encode(),
+            raw_output_payload(function, value, channel).encode(),
             object_id,
             "the raw output write",
             confirm,
@@ -1132,6 +1220,109 @@ class AmpioClient:
                 object_id, address, 0 if obj.is_on else 255, confirm
             )
         return await self.command(object_id, "switch", confirm=confirm)
+
+    # --- panel buzzer (the raw CAN write path) ---------------------------
+
+    def _buzzer_mac(self, module_id: int) -> int:
+        """The bus address the buzzer frames go to.
+
+        Admin tier only, like the rest of the CAN write tree. Dumb routing
+        by module, as the raw output frame is by leaf: any catalogued
+        module is a valid address, and M-DOT panels are the proven ones.
+        """
+        if self._tier is not AccessTier.ADMIN:
+            raise RuntimeError(
+                "the buzzer frames ride the CAN write tree, which answers "
+                "the reserved admin login only"
+            )
+        module = self._store.modules.get(module_id)
+        if module is None or module.mac is None:
+            raise ValueError(
+                f"module id {module_id} is not in the catalogue or has no mac"
+            )
+        return module.mac
+
+    @staticmethod
+    def _buzz_ticks(name: str, seconds: float, limit: float) -> int:
+        if not 0 <= seconds <= limit:
+            raise ValueError(f"{name} must be within 0 and {limit} s, got {seconds}")
+        return round(seconds * 100)
+
+    async def buzz(
+        self, module_id: int, *, tone: int = 6, seconds: float = 0.5
+    ) -> None:
+        """Sound a panel's buzzer once.
+
+        ``module_id`` is :pyattr:`AmpioModule.id`. ``tone`` 1-31 sets the
+        pitch: the fundamental is 16576 Hz / (tone + 1), and 6, the
+        Designer default, is the loudest - the piezo resonates near 2.4
+        kHz, and no amplitude control exists. ``seconds`` 0.01-2.55 in
+        10 ms steps; 0 is refused, since a zero time latches the buzzer
+        on. Use :meth:`buzz_pattern` with ``cycles=0`` for a sound that
+        lasts until :meth:`buzz_stop`.
+
+        Admin tier only (``RuntimeError`` otherwise). ``ValueError`` for
+        an unknown module or an argument outside its range, before any
+        publish. No readback exists - the panel confirms nothing on the
+        bus - so there is no ``confirm``. docs/protocol.md ("Panel
+        buzzer") carries the frame and the tone table.
+        """
+        mac = self._buzzer_mac(module_id)
+        ticks = self._buzz_ticks("seconds", seconds, 2.55)
+        if ticks == 0:
+            raise ValueError(
+                "seconds must be at least 0.01 - a zero time latches the buzzer on"
+            )
+        _check_range("tone", tone, 1, 31)
+        payload = raw_buzzer_payload(True, tone, ticks)
+        await self._connection.publish(raw_write_topic(mac), payload.encode())
+
+    async def buzz_pattern(
+        self,
+        module_id: int,
+        *,
+        tone: int,
+        seconds: float,
+        tone2: int = 0,
+        seconds2: float = 0.0,
+        cycles: int = 1,
+        delay: float = 0.0,
+    ) -> None:
+        """Play a two-tone pattern on a panel's buzzer.
+
+        Each cycle sounds ``tone`` for ``seconds``, then ``tone2`` for
+        ``seconds2``; tone 0 is a silent rest, so three short pips are
+        ``tone=6, seconds=0.3, seconds2=0.3, cycles=3``. ``cycles`` 0
+        repeats until :meth:`buzz_stop` or another pattern. ``delay``
+        postpones the start. Times take 0-655.35 s in 10 ms steps, tones
+        0-31, cycles 0-254. The same rules as :meth:`buzz` apply to the
+        tier, the errors, and the missing readback.
+        """
+        mac = self._buzzer_mac(module_id)
+        _check_range("tone", tone, 0, 31)
+        _check_range("tone2", tone2, 0, 31)
+        _check_range("cycles", cycles, 0, 254)
+        payload = raw_buzzer_pattern_payload(
+            tone,
+            self._buzz_ticks("seconds", seconds, 655.35),
+            tone2,
+            self._buzz_ticks("seconds2", seconds2, 655.35),
+            cycles,
+            self._buzz_ticks("delay", delay, 655.35),
+        )
+        await self._connection.publish(raw_write_topic(mac), payload.encode())
+
+    async def buzz_stop(self, module_id: int) -> None:
+        """Silence a panel's buzzer.
+
+        Publishes a one-cycle silent sequence, which replaces a running
+        pattern within 100 ms, then the simple OFF, which ends a plain
+        beep. The same rules as :meth:`buzz` apply to the tier and the
+        errors.
+        """
+        topic = raw_write_topic(self._buzzer_mac(module_id))
+        await self._connection.publish(topic, RAW_BUZZER_SILENCE.encode())
+        await self._connection.publish(topic, RAW_BUZZER_OFF.encode())
 
     def _output_kind(self, object_id: int) -> OutputKind | None:
         """The object's kind when it is a known output, else None."""

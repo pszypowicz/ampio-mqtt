@@ -11,6 +11,7 @@ from enum import Enum
 from .classification import (
     ObjectKind,
     OutputKind,
+    SensorKind,
     classify,
     is_system_type,
 )
@@ -47,11 +48,53 @@ _BELL_FLAG = 1 << 15
 # "Bell object" checkbox. On every other type the bit means something
 # else (slider layout, lamella step, ...), so it must not read as bell.
 _BELL_TYPES = frozenset({"przekaznik", "flaga"})
+# The component types whose Designer editor renders the `czas` column as
+# the "turn-on time" field - the Designer bundle's own list. A camera
+# reads the same column as a refresh time in milliseconds, and no other
+# type gets the field, so `AmpioObject.pulse_ms` gates on the type.
+_PULSE_TYPES = frozenset(
+    {
+        "flaga",
+        "flaga_l",
+        "flaga_p",
+        "przekaznik",
+        "led",
+        "flaga_liniowa",
+        "flaga_liniowa16",
+        "rgb",
+        "rgbww",
+        "ledww",
+    }
+)
 
 # The `leafId` shape: `0_<macHex>_<sfId>_<subSfId>_<ioNo>` - a leading
 # literal `0`, then the four fields the regex captures (docs/identity.md).
 # Strict on purpose - a half-parsed mac that is wrong is worse than None.
 _LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_([^_]+)_([^_]+)_([^_]+)")
+
+# One printf conversion in Designer's "String format" column, or the `%%`
+# escape (matched first so it never reads as a conversion). Designer's own
+# dropdown offers `%.1f`, `%.2f`, `%.0f`, `%6.2f`, `%06.2f`, `%+6.2f`,
+# `%.3e`, `%g`, `%.3g`, and `%#x`; a hand-typed format can hold any other.
+_FORMAT_CONVERSION_RE = re.compile(
+    r"%%|%[-+ 0#]*\d*(?:\.(?P<precision>\d+))?(?P<type>[diouxXeEfFgGcs])"
+)
+
+
+def _last_conversion(fmt: str) -> re.Match[str] | None:
+    """The last printf conversion in ``fmt``, or None when it has none."""
+    last: re.Match[str] | None = None
+    for match in _FORMAT_CONVERSION_RE.finditer(fmt):
+        if match.group("type") is not None:
+            last = match
+    return last
+
+
+def leaf_mac(leaf_id: str) -> int | None:
+    """The override mac a `leafId` embeds, or None for an empty or odd shape."""
+    match = _LEAF_ID_RE.fullmatch(leaf_id)
+    return int(match.group(1), 16) if match is not None else None
+
 
 # The M-SERV's Designer override mac: its objects' leafId embeds this value
 # (not the factory mac_global), and its own module row reports it as
@@ -103,9 +146,9 @@ class RecordSweep:
     ``records`` is the join result. The two mac sets separate the case a
     bare record map cannot: a module in ``answered_macs`` whose object
     still reads ``record`` None carries no entry for that output, while a
-    module in ``silent_macs`` was never read and says nothing either way.
-    The M-SERV's own row is not a CAN module and is never requested, so
-    it appears in neither set.
+    module in ``silent_macs`` is catalogued but missing from the device
+    list reply and says nothing either way. The M-SERV's own row is a
+    device like any other in both sets.
     """
 
     records: Mapping[int, DesignerRecord]
@@ -151,10 +194,16 @@ class AmpioObject:
     # replacement-stable but NOT unique - objects can share one. Routes raw
     # channel events to this object.
     funkcja: int | None = None
-    # `leafId`, identical on both discovery surfaces. Empty for ghost rows
-    # and system objects. Doubles as the visibility marker (`visible`) and
-    # the physical-output key (`leaf_key`) - docs/identity.md.
+    # `leafId`, identical on both discovery surfaces. Empty for system
+    # objects, and Designer clears it when an object's Matter box is
+    # unchecked. The physical-output key (`leaf_key`) and the parse source
+    # for `module_mac` - docs/identity.md.
     leaf_id: str = ""
+    # The override mac that leafed objects on the same `id_urzadzenia`
+    # embed, read out of the catalogue this tier holds - a leafless
+    # object's module on both tiers, None without such a sibling in the
+    # grant. `module_mac` stays the leaf-parsed fact - docs/identity.md.
+    sibling_module_mac: int | None = None
     # `params` bitfield (Designer config flags; see `hidden`/`visible`).
     # Defaults to 0 so a payload without the column reads "nothing hidden".
     params: int = 0
@@ -166,14 +215,22 @@ class AmpioObject:
     # consumer's choice. docs/identity.md holds the vocabulary and the
     # storage path.
     matter_device_type: int | None = None
-    # Designer's per-object time (the `czas` column), in milliseconds - the
-    # wire unit is 10 ms ticks. The app reads it as the default pulse length
-    # for a press; the M-SERV never applies it server-side, so a caller
-    # honors it by passing it to `AmpioClient.set_value(pulse_ms=...)`.
+    # The `czas` column as served, in the wire unit of 10 ms ticks. Its
+    # meaning follows the component type: Designer's "turn-on time" on the
+    # types `pulse_ms` reads, a refresh time in milliseconds on a camera.
     # 0 when not configured. Served on both tiers: `devicesDetails` carries
     # the column, and `data/params_devices` supplies it unfiltered where the
     # app-sync catalogue omits it.
-    pulse_ms: int = 0
+    czas: int = 0
+    # Designer's "Unit" column, verbatim. Served on both tiers the way
+    # `czas` is: `devicesDetails` carries it, and `data/params_devices`
+    # supplies it where the app-sync catalogue omits it. Designer writes a
+    # single space for "without unit". `unit` reads it.
+    url: str = ""
+    # Designer's "String format" column, verbatim: a printf conversion,
+    # optionally followed by a unit ("%.3f A"). Both catalogues carry it.
+    # `unit` and `decimals` read it.
+    format: str = ""
     # The object's description-record entry, admin sweep only; None on
     # the restricted tier and before a sweep covers the object.
     record: DesignerRecord | None = None
@@ -293,8 +350,7 @@ class AmpioObject:
 
         ``symulacja`` (presence-simulation) and ``detekcja`` (detection) live
         outside the room/group hierarchy by design; the M-SERV always exposes
-        them. Used by :pyattr:`visible` so consumers do not have to hardcode
-        the membership rule.
+        them.
         """
         return is_system_type(self.typ_komponentu)
 
@@ -336,6 +392,61 @@ class AmpioObject:
         return self.typ_komponentu in _BELL_TYPES and bool(self.params & _BELL_FLAG)
 
     @property
+    def pulse_ms(self) -> int:
+        """Designer's "turn-on time" in milliseconds, 0 where the field does not exist.
+
+        The ``czas`` column in 10 ms ticks, read on the component types
+        whose Designer editor offers the field (relays, flags, dimmers,
+        the RGB kinds). Every other type reads 0, a camera included, where
+        the same column is a refresh time. The app reads the value as the
+        default pulse length for a press; the M-SERV never applies it
+        server-side, so a caller honors it by passing it to
+        :meth:`AmpioClient.set_value` as ``pulse_ms``. See docs/identity.md.
+        """
+        if self.typ_komponentu not in _PULSE_TYPES:
+            return 0
+        return self.czas * 10
+
+    @property
+    def unit(self) -> str | None:
+        """The unit Designer attaches to a measurement, or None.
+
+        The literal text after the last printf conversion in ``format``
+        when there is any (``"%.3f A"`` reads ``"A"``), else the stripped
+        ``url`` column. Designer's own editor says the format overwrites
+        the unit, so the tail wins when the two disagree. None when
+        neither yields text, which includes the single space Designer
+        writes for "without unit". None on every kind but a sensor: an
+        input, an output, or a thermostat has no measurement to label,
+        and the system objects carry a placeholder in the column.
+        """
+        if not isinstance(self.kind, SensorKind):
+            return None
+        conversion = _last_conversion(self.format)
+        if conversion is not None:
+            tail = self.format[conversion.end() :].replace("%%", "%").strip()
+            if tail:
+                return tail
+        return self.url.strip() or None
+
+    @property
+    def decimals(self) -> int | None:
+        """The display precision Designer's "String format" fixes, or None.
+
+        The explicit precision of a fixed-point conversion (``"%.3f A"``
+        reads 3, ``"%06.2f"`` reads 2). None for every other conversion
+        (``%g``, ``%.3e``, ``%#x``, a bare ``%f``), for an empty format,
+        and on every kind but a sensor, like :pyattr:`unit`.
+        """
+        if not isinstance(self.kind, SensorKind):
+            return None
+        conversion = _last_conversion(self.format)
+        if conversion is None or conversion.group("type") not in "fF":
+            return None
+        precision = conversion.group("precision")
+        return int(precision) if precision is not None else None
+
+    @property
     def leaf_key(self) -> str | None:
         """The physical output this object drives (``leaf_<leaf_id>``), or None.
 
@@ -343,7 +454,8 @@ class AmpioObject:
         object row. Several Designer views of one output share one
         ``leafId``, so two objects can return the same key. The
         per-object identity is :pyattr:`object_key`. None for an empty
-        ``leaf_id`` (system objects, ghost rows). See docs/identity.md.
+        ``leaf_id`` (system objects, Matter box unchecked). See
+        docs/identity.md.
         """
         return f"leaf_{self.leaf_id}" if self.leaf_id else None
 
@@ -370,8 +482,7 @@ class AmpioObject:
         catalogue (docs/identity.md). None when ``leaf_id`` is empty or,
         on no observed install, has an unexpected shape.
         """
-        match = _LEAF_ID_RE.fullmatch(self.leaf_id)
-        return int(match.group(1), 16) if match is not None else None
+        return leaf_mac(self.leaf_id)
 
     def _leaf_segment(self, group: int) -> int | None:
         """One numeric `leaf_id` segment, or None when it does not parse."""
@@ -427,19 +538,13 @@ class AmpioObject:
 
     @property
     def visible(self) -> bool:
-        """Whether the object is one the user can see in Designer's tree.
+        """Whether the M-SERV means to surface this object: ``not hidden``.
 
-        ``hidden`` (``params`` bit 4) takes precedence: a hidden object is never
-        visible, even with a populated ``leaf_id`` - this is what drops the
-        phantom half of a duplicated Designer channel. Otherwise the wire-side
-        marker is ``leaf_id``, set for every real object and empty for ghost
-        rows and system objects, with the latter pulled back in by
-        ``is_system``. When ``params`` is absent (so ``hidden`` is False) the
-        ``leaf_id`` test alone decides.
+        The ``params`` DELETED bit is the one wire-side marker. ``leaf_id``
+        says nothing here: Designer clears it when an object's Matter box
+        is unchecked, and the row stays a real object. See docs/identity.md.
         """
-        if self.hidden:
-            return False
-        return bool(self.leaf_id) or self.is_system
+        return not self.hidden
 
 
 @dataclass(slots=True, frozen=True)

@@ -12,6 +12,241 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.50.0
+
+An M-CON-485 lands each Modbus reading in an integer sensor slot, and Designer
+turns the slot into a `bit8`, `bit16`, `sbit16`, or `bit32` object (#169). The
+library classified the 8-bit and 32-bit subtypes only, and nothing on
+`AmpioObject` said what the number means, so a consumer could give the entity
+neither a unit nor a device class. Designer carries both per object. The "Unit"
+field is the `url` column, and the "String format" field is the `format` column,
+a printf conversion the dropdown composes with the unit. Both reach the
+restricted tier. The library now serves the columns and derives the unit and the
+display precision from them.
+
+### Added
+
+- **`AmpioObject.url` and `AmpioObject.format`** - the two Designer columns,
+  verbatim, on both tiers. `format` rides both catalogues. `url` rides
+  `devicesDetails` and the unfiltered `data/params_devices` table, which
+  supplies it where the app-sync catalogue omits it, the way `czas` is served.
+- **`AmpioObject.unit`** - the literal text after the last printf conversion in
+  `format`, else the stripped `url`, else None. Designer's editor states that
+  the format overwrites the unit, so the format tail wins when the two disagree.
+  The single space Designer writes for "without unit" reads as None. None on
+  every kind but a sensor.
+- **`AmpioObject.decimals`** - the explicit precision of a fixed-point
+  conversion in `format` (`%.3f A` reads 3), else None. None on every kind but a
+  sensor.
+
+### Changed
+
+- **`bit16` and `sbit16` classify as numeric measurements.** They join `bit8`
+  and `bit32` in the open `value_<interpretacja>` family, so all four integer
+  slots mint `value_<n>` keys. Before, the two 16-bit subtypes classified as the
+  generic `value` sensor.
+
+### Documentation
+
+- `docs/classification.md` names the four-subtype family and the unit and
+  precision sources. It states where Designer's "Divide by" lives and that the
+  M-SERV applies the divider to the published state, so the library carries no
+  scale logic.
+
+## 0.49.0
+
+An object added in Designer reached an admin session only on a reconnect, a
+`refresh()` call, or a `refresh_interval` tick, while a standard account saw it
+at once (#166). The M-SERV pushes the app-sync tables into every account
+namespace a few seconds after a save, the admin one included, and the standard
+tier parses that push as its catalogue. It never pushes the `config` catalogues
+an admin session builds on. The admin client now watches the retained digests
+the same push rewrites and re-requests its catalogues.
+
+### Changed
+
+- **The admin client subscribes to `md5/devices` and `md5/params_devices`.** The
+  two filters lead the SUBSCRIBE packet: the broker replays retained values in
+  filter order and caps its QoS 1 queue at 1000 messages, and the raw tree alone
+  exceeds that on a full install, so a digest listed after it would never seed.
+  The replay seeds the comparison. A digest that then differs re-requests
+  `devicesDetails` and `devices`, and the reply's diff fires `ObjectAdded`,
+  `ObjectUpdated`, `ObjectRemoved`, and the module events, so a Designer save
+  surfaces on both tiers without a reconnect. The re-request opens no snapshot
+  cycle, so a live value pushed since the last request keeps outranking the
+  reply's `stan_json`. `refresh_interval` stays as the fallback for a change the
+  M-SERV pushes no digest for.
+
+### Documentation
+
+- `discovery-flow.md` describes the Designer-save push per tier, and
+  `protocol.md` records what the M-SERV publishes unasked on a save.
+
+## 0.48.0
+
+The M-DOT panels carry a piezo buzzer that the Designer drives through raw
+condition-action frames (#164). It has no DB object, no `/api` verb, and no
+state topic. The library had no way to reach it. Both frame forms were proven
+live with microphone recordings, and the client now wraps them on the admin
+tier.
+
+### Added
+
+- **`buzz()`, `buzz_pattern()`, and `buzz_stop()`** sound, pattern, and silence
+  a panel's buzzer, addressed by `AmpioModule.id`. A beep takes a tone (1 to 31)
+  and a length up to 2.55 s. A pattern takes two tones, their lengths, a cycle
+  count where 0 repeats until stopped, and a delay. The stop sends the silent
+  one-cycle sequence and then the simple OFF, which covers a running pattern and
+  a plain beep. No readback exists, so none takes `confirm=`.
+
+### Documentation
+
+- `docs/protocol.md` gains "Panel buzzer": the frames, the tone formula (16576
+  Hz / (tone + 1)), the loudness table, and the stop rules.
+  `docs/account-tiers.md` lists the buzzer write as admin-only.
+
+## 0.47.0
+
+The admin-tier raw output write sent function `0x30` to every relay object on a
+CAN module, and an open-collector output (leaf class 67, the M-INOC) drops that
+byte (#160). The write returned without an error and nothing moved. The Designer
+sends `0x32` to that class, live-proven on the reference install, and the output
+echoes on the raw `a` prefix instead of `o`, never on its object topic.
+
+### Changed
+
+- **The raw output frame takes its function byte from the leaf class.** Class
+  257 (relays, panel LEDs) keeps `0x30`, class 67 takes `0x32`. A relay object
+  on any other class, or without a leaf, takes `/api`. Server-owned outputs and
+  `pulse_ms` writes stay on `/api` as before.
+- **The `a` prefix is bridged for open-collector relays.** Such an object reads
+  the module's u8 report (`255` or `0`) as its state, `confirm=` resolves on
+  that edge, and the admin tier subscribes to `ampio/from/+/state/a/+`.
+
+### Documentation
+
+- `docs/protocol.md` states the byte per class and the OC echo.
+  `docs/raw-channel-bridge.md` marks `a` as bridged for class-67 relays.
+
+## 0.46.0
+
+`AmpioObject.pulse_ms` served the raw `czas` column on every component type,
+while the Designer editor offers that field, "turn-on time", on a fixed list of
+types only (#143). A camera reads the same column as a refresh time in
+milliseconds, so a consumer that treated a positive `pulse_ms` as "this object
+pulses" mislabeled it. `pulse_ms` now reads the column on Designer's own list
+and 0 elsewhere, and the raw column is served as `czas`.
+
+### Added
+
+- **`AmpioObject.czas`** - the `czas` column as served, in 10 ms ticks, on both
+  tiers. Its meaning follows the component type.
+
+### Changed
+
+- **`AmpioObject.pulse_ms` is a property gated by component type.** It reads
+  `czas` times ten on the types whose Designer editor renders the turn-on time
+  field (relays, flags, dimmers, the RGB kinds) and 0 on every other type, a
+  camera and a cover included. Before, it was a field that carried the column
+  for every type.
+
+### Documentation
+
+- `docs/identity.md` names Designer's type list as the gate and states the
+  camera meaning of the column.
+
+## 0.45.0
+
+An object whose Matter box was checked and unchecked in Designer keeps its type,
+its module id, its rooms, and its state, and loses its leaf. Since 0.43.0 it
+stays visible, but it still had no module on the restricted tier and no Designer
+record on any tier (#157, #158). Both now resolve from facts the catalogue
+already carries.
+
+### Added
+
+- **`AmpioObject.sibling_module_mac`** - the override mac that leafed objects on
+  the same `id_urzadzenia` embed, read out of each catalogue reply on both
+  tiers. None without such a sibling in the catalogue this tier holds.
+  `module_mac` stays the leaf-parsed fact, and no helper picks between the two.
+- **`flaga` resolves a record.** The binary-flag description class joins a flag
+  to its entry, so a flag reads its Designer location and Matter type like a
+  relay does.
+
+### Changed
+
+- **`resolve_records()` joins a leafless object through `funkcja`.** The module
+  comes from the object's `id_urzadzenia` row and the channel from `funkcja`
+  minus one, the relation every leafed object of the resolvable kinds holds on
+  the reference install. The leaf stays the key when present.
+
+### Documentation
+
+- `docs/identity.md` states the `funkcja` relation and its one exception, the
+  M-SENS analog inputs, adds the flag class to the proven table, and describes
+  `sibling_module_mac` next to `module_mac`.
+
+## 0.44.0
+
+`resolve_records()` asked each module for its record by the override mac, and
+the `device_api` tree answers on the factory id only (#154). Every module with a
+Designer override, the M-SERV's own row included, stayed silent on each pass,
+and its objects never got a record. The list reply of the same tree carries
+every module's record in one message, tagged with both ids. The pass now reads
+that one reply.
+
+### Changed
+
+- **`resolve_records()` reads `device_api/to/list` once** instead of a
+  per-module `get_data` pass. One reply in about a second replaces a serial pass
+  of about forty seconds on the reference install. The M-SERV's own record is
+  read like any other, so its virtual outputs resolve a location and a Matter
+  type.
+- **`RecordSweep.silent_macs`** now means a catalogued module missing from the
+  list reply. `answered_macs` is the reply's mac set, and the M-SERV's row
+  appears in one of the two like any other module.
+- **`timeout`** bounds each of the two replies, the name table and the list. A
+  list that never arrives raises `AmpioTimeoutError`, as a missing name table
+  already did. Before, silence produced an all-silent sweep.
+
+### Fixed
+
+- Modules with a Designer override mac resolve their records. The per-module
+  path keyed by the override never answered for them.
+
+### Documentation
+
+- `docs/identity.md` and `docs/protocol.md` describe the list pair, the
+  factory-id keying of `get_data`, and the new coverage semantics.
+
+## 0.43.0
+
+`AmpioObject.visible` read `leafId` as the visibility marker, and Designer
+clears that field when an object's Matter box is unchecked (#152). One click
+turned a real object, with its type, its module, its rooms, and its state, into
+an invisible row for every consumer, and `AmpioClient.module_for()` lost its
+module too. The `params` DELETED bit is the one wire-side visibility signal. A
+live join of the config catalogue against the app-sync catalogue shows that
+every row app-sync omits carries the bit, and that the unfiltered params table
+serves the bit for the hidden rows app-sync still lists. So `visible` now reads
+the bit alone.
+
+### Changed
+
+- **`AmpioObject.visible`** is `not hidden`. A row with an empty `leafId` and a
+  clear DELETED bit is visible. Before, such a row was invisible unless it was a
+  system object. `is_system` stays a public property but no longer enters the
+  predicate. A hidden system object reads exactly as before.
+- **`AmpioClient.module_for()`** gates on mac agreement only when the object
+  carries a leaf mac. A leafless object resolves to its `id_urzadzenia` row as
+  is. Before, it always returned None.
+
+### Documentation
+
+- `docs/identity.md` rewrites the visibility section around the DELETED bit,
+  records what Designer's Matter uncheck clears and what a leafless object still
+  carries, and states the app-sync membership rule observed live.
+
 ## 0.42.0
 
 `resolve_records()` lost the tail of every install it could not sweep inside one

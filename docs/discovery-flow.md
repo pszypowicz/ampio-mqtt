@@ -34,11 +34,15 @@ the `connect()` / `disconnect()` lifecycle that joins them.
    `stats.started_at`. Each subsequent one bumps `stats.reconnect_count`.
 2. **Subscribe** - the tier's topic set, sent as one QoS 1 SUBSCRIBE packet. The
    set is `ob/+/state`, the response topics of the tier's endpoints, and - on
-   the `admin` login only - the global raw-channel wildcards. It is decided at
-   construction from the authenticated username (see
-   [`account-tiers.md`](account-tiers.md)), so every filter must be granted. A
-   SUBACK rejection lands in `stats.subscribe_failures` and warns, because it
-   means a broken broker or ACL. See [`protocol.md`](protocol.md) and
+   the `admin` login only - the retained `md5/devices` and `md5/params_devices`
+   digests (see below) plus the global raw-channel wildcards. The digests lead
+   the packet and the raw tree closes it. The broker replays retained values
+   filter by filter and caps its outgoing QoS 1 queue at 1000 messages, and the
+   raw tree alone exceeds that on a full install, so a filter listed after it
+   loses its replay. It is decided at construction from the authenticated
+   username (see [`account-tiers.md`](account-tiers.md)), so every filter must
+   be granted. A SUBACK rejection lands in `stats.subscribe_failures` and warns,
+   because it means a broken broker or ACL. See [`protocol.md`](protocol.md) and
    [`raw-channel-bridge.md`](raw-channel-bridge.md) for the topics.
 3. **Publish the tier's auto-discovery keywords** on the matching control
    surfaces - four requests either way:
@@ -55,18 +59,45 @@ the `connect()` / `disconnect()` lifecycle that joins them.
    fired (and stays correct across reconnects).
 5. **Return.** The library does not refetch the catalogues on its own schedule.
    Live state arrives via push on the per-object topic (and, for inputs, the
-   raw-channel topics) unless the consumer opts into `refresh_interval` (see
-   below).
+   raw-channel topics). A Designer save reaches both tiers through the push
+   described below. A consumer that wants a periodic catalogue re-read on top
+   opts into `refresh_interval`.
 
 Every catalogue reply also evicts what it stopped listing, fired as
 `ObjectRemoved` / `ModuleRemoved`. The per-tier rules and the deletion-tool
 differences live on the event docstrings and in [`identity.md`](identity.md).
 Because catalogues are request/response, the next reply is what reveals a
-server-side deletion. That reply comes from the refresh a reconnect sends, an
-explicit `refresh()`, or a `refresh_interval` tick. A consumer that wants prompt
-removals thus refreshes on its own schedule, calls `refresh()` directly, or sets
-`refresh_interval` instead of its own timer. An empty reply is a complete reply
-that lists nothing, and it evicts like any other.
+server-side deletion. That reply comes from the Designer-save push, the refresh
+a reconnect sends, an explicit `refresh()`, or a `refresh_interval` tick. An
+empty reply is a complete reply that lists nothing, and it evicts like any
+other.
+
+### A Designer save
+
+A Designer save rewrites the account tables on the M-SERV. A few seconds later
+the M-SERV publishes three replies into every account namespace, the admin one
+included, with no request from the account: `data/devices`, `md5/devices`, and
+`data/params_devices`. Each tier learns of the save from a different one of
+them.
+
+- **Standard user.** The client subscribes to the two pushed tables as its
+  catalogue pair, so it parses each push like a reply. The save surfaces at once
+  as `ObjectAdded`, `ObjectUpdated`, or `ObjectRemoved`.
+- **Administrator.** The M-SERV never pushes the `config` catalogues. The client
+  subscribes to the retained `md5/devices` and `md5/params_devices` digests
+  instead. The broker replays each retained digest after every subscribe, and
+  that replay seeds the comparison, because the on-connect refresh already
+  fetched the catalogues. A later digest that differs from the seed makes the
+  client re-request `devicesDetails` and `devices`. The reply's diff then fires
+  the same object events, and the module events with them. The re-request opens
+  no snapshot cycle, so a value pushed since the last request keeps outranking
+  the reply's `stan_json`.
+
+The `md5/params_devices` digest covers the `params` table, which carries the
+hidden bit. The admin catalogue carries that bit inline, so a rewrite of either
+digest re-requests the same pair. A digest change that arrives while the
+connection is down costs nothing extra: the reconnect refreshes the catalogues,
+and the replay seeds again.
 
 ### Keeping the catalogue current without a reconnect: `refresh_interval`
 
@@ -76,9 +107,10 @@ the consumer. `connect()` schedules the periodic task and `disconnect()` cancels
 it. A tick while the connection is down skips silently. The reconnect path
 already refreshes on connect, so a periodic request adds nothing while the
 broker is unreachable. Each cycle re-publishes the same initial-discovery
-requests that `connect()` and `refresh()` send. The next tick thus surfaces a
-Designer addition or a server-side eviction as `ObjectAdded` / `ObjectRemoved`,
-with no reconnect needed.
+requests that `connect()` and `refresh()` send. The Designer-save push above
+covers the common case on both tiers, so the tick is the fallback for a change
+the M-SERV pushes no table or digest for. The next tick surfaces such a change
+as `ObjectAdded` / `ObjectRemoved`, with no reconnect needed.
 
 Each tick also runs `begin_refresh()`, which clears the live-value guard. An
 undated live value can then be re-seeded from the M-SERV's DB snapshot on the
@@ -97,14 +129,12 @@ when - and whether - to call them:
 - **`fetch_scenes()`** - the scene catalogue, driven with `run_scene()` /
   `off_scene()` / `undo_scene()`. Same rationale: a consumer that surfaces no
   scenes never pays for the fetch.
-- **`resolve_records()`** - sweeps every catalogued module over the `device_api`
-  tree and folds the per-output Designer record into `AmpioObject.record` (admin
-  tier only, see [`identity.md`](identity.md)). The per-module record folds into
-  `AmpioModule.record`. A consumer that does not surface per-object records
-  never pays for the sweep. The M-SERV answers the sweep one module at a time,
-  at roughly one module per second on the reference install, so a sweep of 40
-  modules runs for about half a minute. The returned `RecordSweep` names the
-  modules that answered and the modules that stayed silent.
+- **`resolve_records()`** - reads every module's record in one `device_api` list
+  reply and folds the per-output Designer record into `AmpioObject.record`
+  (admin tier only, see [`identity.md`](identity.md)). The per-module record
+  folds into `AmpioModule.record`. A consumer that does not surface per-object
+  records never pays for the read. The returned `RecordSweep` names the
+  catalogued modules the reply covered and the modules it left out.
 
 ## Finding the M-SERV on the LAN
 

@@ -200,6 +200,15 @@ def test_reg_is_a_thermostat() -> None:
     assert kind.key == "thermostat"
 
 
+@pytest.mark.parametrize("typ", ["bit16", "sbit16"])
+def test_16_bit_slots_are_numeric_measurements(typ: str) -> None:
+    """The M-CON-485 integer slots Designer names `bit 16` and `sbit 16[+/-]`:
+    the same open family as bit8 and bit32."""
+    kind = classify(typ, 3)
+    assert isinstance(kind, SensorKind)
+    assert (kind.key, kind.name) == ("value_3", "Measurement")
+
+
 def test_bit8_is_a_numeric_measurement() -> None:
     """Same treatment as its bit32 sibling: a generic numeric sensor keyed
     by interpretacja."""

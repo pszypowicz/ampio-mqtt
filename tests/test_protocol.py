@@ -15,12 +15,17 @@ from ampio_mqtt import (
 )
 from ampio_mqtt._protocol import (
     ENDPOINTS,
+    RAW_BUZZER_OFF,
+    RAW_BUZZER_SILENCE,
+    RAW_OUTPUT_FUNCTION_BY_SF,
     REDACTED,
+    CatalogueDigest,
     DiagnosticsReport,
     EndpointReply,
     RawChannelEdge,
     Router,
     StateUpdate,
+    md5_topic,
     parse_details,
     parse_devices,
     parse_params_devices,
@@ -28,6 +33,8 @@ from ampio_mqtt._protocol import (
     parse_server_info,
     parse_stan_json,
     parse_states_snapshot,
+    raw_buzzer_pattern_payload,
+    raw_buzzer_payload,
     raw_output_payload,
     raw_write_topic,
     redact_info_payload,
@@ -121,33 +128,63 @@ def test_parse_details_matter_device_type(raw: object, expected: int | None) -> 
 @pytest.mark.parametrize(
     ("row", "expected"),
     [
-        ({"id": 1, "czas": 500}, 5000),  # 10 ms wire ticks -> ms
-        ({"id": 1, "czas": "500"}, 5000),  # string coerced
+        ({"id": 1, "czas": 500}, 500),  # the raw 10 ms ticks
+        ({"id": 1, "czas": "500"}, 500),  # string coerced
         ({"id": 1, "czas": 0}, 0),  # configured off
         ({"id": 1}, None),  # absent column -> None, the client keeps what it has
         ({"id": 1, "czas": "junk"}, None),  # junk is indistinguishable from absent
     ],
 )
-def test_parse_details_pulse_ms(row: dict, expected: int | None) -> None:
+def test_parse_details_czas(row: dict, expected: int | None) -> None:
     items = parse_details(json.dumps({"List": [row]}))
-    assert items is not None and items[0].pulse_ms == expected
+    assert items is not None and items[0].czas == expected
 
 
 @pytest.mark.parametrize(
-    ("row", "params", "pulse_ms"),
+    ("row", "params", "czas"),
     [
-        ({"id": 5, "params": 17, "czas": 500}, 17, 5000),
+        ({"id": 5, "params": 17, "czas": 500}, 17, 500),
         ({"id": 5, "params": 17}, 17, 0),  # the table is complete: absent = off
-        ({"id": 5, "czas": 500}, 0, 5000),
+        ({"id": 5, "czas": 500}, 0, 500),
     ],
 )
-def test_parse_params_devices_carries_pulse_ms(
-    row: dict, params: int, pulse_ms: int
-) -> None:
+def test_parse_params_devices_carries_czas(row: dict, params: int, czas: int) -> None:
     table = parse_params_devices(json.dumps({"List": [row]}))
     assert table is not None
     assert table[5].params == params
-    assert table[5].pulse_ms == pulse_ms
+    assert table[5].czas == czas
+
+
+@pytest.mark.parametrize(
+    ("row", "url", "fmt"),
+    [
+        ({"id": 1, "url": "V", "format": "%.1f V"}, "V", "%.1f V"),
+        ({"id": 1, "url": "", "format": "%.3f A"}, "", "%.3f A"),  # the live shape
+        ({"id": 1, "url": " ", "format": ""}, " ", ""),  # "without unit" sentinel
+        ({"id": 1, "format": "%.1f"}, None, "%.1f"),  # app-sync row: no url column
+        ({"id": 1, "url": "V"}, "V", ""),  # absent format reads as empty
+        ({"id": 1, "url": 7, "format": 7}, None, ""),  # non-text is not a column
+    ],
+)
+def test_parse_details_url_and_format(row: dict, url: str | None, fmt: str) -> None:
+    items = parse_details(json.dumps({"List": [row]}))
+    assert items is not None
+    assert items[0].url == url
+    assert items[0].format == fmt
+
+
+@pytest.mark.parametrize(
+    ("row", "url"),
+    [
+        ({"id": 5, "params": 17, "url": "kWh"}, "kWh"),
+        ({"id": 5, "params": 17, "url": " "}, " "),  # the sentinel survives
+        ({"id": 5, "params": 17}, ""),  # the table is complete: absent = empty
+    ],
+)
+def test_parse_params_devices_carries_url(row: dict, url: str) -> None:
+    table = parse_params_devices(json.dumps({"List": [row]}))
+    assert table is not None
+    assert table[5].url == url
 
 
 @pytest.mark.parametrize(
@@ -641,6 +678,27 @@ def test_route_is_user_scoped_for_endpoint_replies() -> None:
     assert _route("ampio/fromDB/other/config/devicesDetails", "{}") is None
 
 
+@pytest.mark.parametrize("keyword", ["devices", "params_devices"])
+def test_digest_route_ok(keyword: str) -> None:
+    digest = _route(md5_topic("u", keyword), "0f343b0931126a20f133d67c2b018a3b\n")
+    assert digest == CatalogueDigest(
+        keyword=keyword, digest="0f343b0931126a20f133d67c2b018a3b"
+    )
+
+
+@pytest.mark.parametrize(
+    ("topic", "payload"),
+    [
+        ("ampio/fromDB/u/md5/scenes", "abc"),  # no catalogue behind it
+        ("ampio/fromDB/other/md5/devices", "abc"),  # another account
+        ("ampio/fromDB/u/md5/devices", ""),  # a retained clear, not a digest
+        ("ampio/fromDB/u/md5", "abc"),
+    ],
+)
+def test_digest_route_rejects(topic: str, payload: str) -> None:
+    assert _route(topic, payload) is None
+
+
 def test_diagnostics_three_element_frame_has_no_temperature() -> None:
     report = _route("ampio/from/cafe/b/4F", '{"d": [254, 79, 61]}')
     assert isinstance(report, DiagnosticsReport)
@@ -656,7 +714,37 @@ def test_raw_write_topic_is_lowercase_hex() -> None:
     assert raw_write_topic(1) == "ampio/to/1/raw"
 
 
-def test_raw_output_payload_encodes_value_and_channel() -> None:
-    assert raw_output_payload(255, 1) == "30f9ff01"
-    assert raw_output_payload(0, 0) == "30f90000"
-    assert raw_output_payload(128, 23) == "30f98017"
+def test_raw_output_payload_encodes_function_value_and_channel() -> None:
+    assert raw_output_payload(0x30, 255, 1) == "30f9ff01"
+    assert raw_output_payload(0x30, 0, 0) == "30f90000"
+    assert raw_output_payload(0x32, 128, 23) == "32f98017"
+
+
+def test_raw_output_function_is_mapped_per_proven_leaf_class() -> None:
+    """Binary outputs (257) take 0x30, open-collector outputs (67) take 0x32;
+    no other class has a proven byte."""
+    assert RAW_OUTPUT_FUNCTION_BY_SF == {257: 0x30, 67: 0x32}
+
+
+def test_raw_buzzer_payload_encodes_the_simple_action() -> None:
+    """Sub-function ON or OFF, tone, and the time byte in 10 ms ticks."""
+    assert raw_buzzer_payload(True, 6, 50) == "0c070370010632"
+    assert raw_buzzer_payload(False, 6, 0) == "0c070370000600"
+
+
+def test_raw_buzzer_pattern_payload_encodes_the_sequence_action() -> None:
+    """Two tones with 16-bit little-endian times, a cycle count, and a delay."""
+    assert raw_buzzer_pattern_payload(6, 30, 20, 30, 3, 0) == (
+        "0c07037101000006001e0014001e0003"
+    )
+    assert raw_buzzer_pattern_payload(6, 30, 6, 0, 1, 100) == (
+        "0c07037101640006001e000600000001"
+    )
+    assert raw_buzzer_pattern_payload(6, 400, 6, 0, 1, 0) == (
+        "0c070371010000060090010600000001"
+    )
+
+
+def test_raw_buzzer_stop_frames() -> None:
+    assert RAW_BUZZER_SILENCE == "0c070371010000000001000000000001"
+    assert RAW_BUZZER_OFF == "0c070370000600"

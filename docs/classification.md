@@ -24,9 +24,9 @@ surfaces, as the generic value sensor or the `analog_<n>` fallback.
 
 - `reg` state is the running flag. The rich climate readback (measured and
   target temperature, mode, cooling) is `AmpioObject.thermostat`.
-- `detekcja` and `symulacja` are system objects: the M-SERV always exposes them,
-  visible even with an empty `leafId` (unless hidden). `symulacja`'s raw-channel
-  prefix is not yet bridged.
+- `detekcja` and `symulacja` are system objects: the M-SERV lists them
+  unconditionally, with an empty `leafId`. `symulacja`'s raw-channel prefix is
+  not yet bridged.
 - `wej` is the per-channel physical-input object the Designer creates for a
   wired button. Its per-object payload is 255 pressed / 0 released. Its
   `interpretacja` mirrors `funkcja` (the channel number), so it refines nothing.
@@ -42,11 +42,53 @@ surfaces, as the generic value sensor or the `analog_<n>` fallback.
 - `rgbw` is the one output that ignores the `turnOn`/`turnOff`/`switch` family.
   The replay pattern Ampio's own consumers use for on/off is in
   [`protocol.md`](protocol.md).
+- `bit8`, `bit16`, `sbit16`, and `bit32` are the integer sensor slots an
+  M-CON-485 lands a Modbus reading in. Designer names them `bit 8`, `bit 16`,
+  `sbit 16[+/-]`, and `bit 32`. All four classify into the open
+  `value_<interpretacja>` family. The kind carries no unit and no device class,
+  because what a slot holds is the installer's choice. `AmpioObject.unit` and
+  `AmpioObject.decimals` serve what Designer stores for the object (see below).
 - Ampio's vocabulary also carries `rgb`, `rgbww`, `ledww`, `ac`, `radio`,
   `ip_radio`, and `satel_alarm` - types absent from `TYPE_PROFILES` that
   classify as the generic value sensor. `satel_alarm` is the armed/alarmed flag
   pair of an alarm integration (a Jablotron behind an M-CON, so the prefix is
   not Satel-specific).
+
+## Units and display precision
+
+The kind tables fix a unit for the known measurements only (`temp` and the
+`lin_wej` map). The open `value_<n>` family carries none. Designer stores the
+installer's choice per object, and the library serves it on two columns and two
+derived properties.
+
+- `AmpioObject.url` is Designer's "Unit" field, verbatim. The Dictionary
+  dialog's "Add unit to description" writes the same column. Designer writes a
+  single space for "without unit".
+- `AmpioObject.format` is Designer's "String format" field, verbatim. It is a
+  printf conversion, and the dropdown appends the unit after it (`%.1f V`). A
+  hand-typed format can hold the unit while the "Unit" field stays empty.
+- `AmpioObject.unit` is the text after the last conversion in `format`, else the
+  stripped `url`, else None. Designer's editor states that the format overwrites
+  the unit, so the format tail wins when the two disagree.
+- `AmpioObject.decimals` is the explicit precision of a fixed-point conversion
+  (`%.3f` reads 3). Every other conversion reads None.
+
+Both properties read None on every kind but a sensor. An output has no
+measurement to label, and the system objects carry a placeholder in the `url`
+column. Both columns reach the restricted tier. `format` rides `data/devices`,
+and `url` rides the unfiltered `data/params_devices` table.
+
+The unit a kind fixes and the unit Designer stores are separate facts. On a
+`lin_wej` air-quality object the kind says no unit, and Designer can say `IAQ`.
+A consumer picks which one it shows.
+
+Designer's "Divide by" checkbox lives in the Dictionary dialog, not on the main
+form. It sets `params` bit 5 (`MAKE_SEMICOLON` in the Designer enum) and stores
+the divider in the `max` column. The M-SERV applies the divider to the published
+state. A slot that holds 37 with "Divide by" 100 arrives as
+`"state": "0.370000"`. The library needs no scale logic of its own, and it reads
+neither the bit nor the divider. The same mechanism explains the float noise on
+linear inputs, which Designer creates with "Divide by" 10.
 
 ## Platform shapes
 
@@ -109,8 +151,7 @@ should_surface = obj.visible          # classify() always yields a kind
 platform = obj.kind    # SensorKind | InputKind | OutputKind | ThermostatKind
 ```
 
-A ghost row (`leaf_id == ""`, not a system object) is still classifiable,
-because the type field is intact - but it must not become an entity. The two
-checks stay separate so that a future consumer can use one without the other.
-For example, a diagnostics report wants the ghost classified, so it can show
-"ghosts of type X".
+A hidden row is still classifiable, because the type field is intact, but it
+must not become an entity. The two checks stay separate so that a consumer can
+use one without the other. For example, a diagnostics report wants the hidden
+row classified, so it can show "hidden objects of type X".

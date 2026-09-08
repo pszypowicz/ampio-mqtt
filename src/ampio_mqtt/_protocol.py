@@ -11,6 +11,8 @@ Topics are namespaced by the connecting account:
              -> ampio/fromDB/<user>/config/devicesDetails = {"Status":0,"List":[...]}
   modules:   publish ampio/control/<user>/config = "devices"
              -> ampio/fromDB/<user>/config/devices = {"List":[...]}
+  digests:   ampio/fromDB/<user>/md5/<table> (retained) = MD5 of an app-sync
+             table's reply, rewritten by the M-SERV on a Designer save
 
 The same ampio/control/<user>/config topic carries every discovery request;
 the payload keyword selects what the server publishes back. The `config`
@@ -53,7 +55,7 @@ class ObjectMetadata:
     opis_menu: str | None
     interpretacja: int | None
     funkcja: int | None  # physical channel index within the module
-    leaf_id: str  # `leafId`; empty for ghost rows and for system objects
+    leaf_id: str  # `leafId`; empty for system objects, and after a Matter uncheck
     # `params` bitfield; bit 4 = hidden/stub, bit 37 = matter-exposed. None
     # when the reply carried no such column, which the app-sync catalogue never
     # does - the client then keeps whatever `params_devices` supplied.
@@ -63,11 +65,19 @@ class ObjectMetadata:
     # null when the object has no tag - both read as None. docs/identity.md
     # holds the vocabulary.
     matter_device_type: int | None
-    # `czas` column converted to milliseconds (the wire unit is 10 ms ticks):
-    # Designer's per-object time, the app's default pulse length. None when
-    # the reply carried no such column, which the app-sync catalogue never
-    # does - the client then keeps whatever `params_devices` supplied.
-    pulse_ms: int | None
+    # `czas` column as served, in 10 ms ticks; `AmpioObject.pulse_ms` reads
+    # it by component type. None when the reply carried no such column,
+    # which the app-sync catalogue never does - the client then keeps
+    # whatever `params_devices` supplied.
+    czas: int | None
+    # Designer's "Unit" column, verbatim. None when the reply carried no such
+    # column: the app-sync catalogue omits it, and `data/params_devices`
+    # supplies it. `AmpioObject.unit` reads it.
+    url: str | None
+    # Designer's "String format" column (a printf conversion, optionally
+    # followed by a unit), verbatim; both catalogues carry it. Empty when
+    # unset. `AmpioObject.unit` and `AmpioObject.decimals` read it.
+    format: str
     stan_json: str | None  # raw seed for the initial value, applied by the client
 
 
@@ -194,29 +204,29 @@ def parse_details(payload: str) -> list[ObjectMetadata] | None:
                 # 37), which Python ints handle natively.
                 params=to_int(item.get("params")),
                 matter_device_type=to_int(item.get("type")),
-                pulse_ms=_czas_to_pulse_ms(item.get("czas")),
+                czas=to_int(item.get("czas")),
+                url=_text(item.get("url")),
+                format=_text(item.get("format")) or "",
                 stan_json=item.get("stan_json") or None,
             )
         )
     return out
 
 
-def _czas_to_pulse_ms(value: Any) -> int | None:
-    """The `czas` column in milliseconds, or None when absent / not a number."""
-    czas = to_int(value)
-    return czas * 10 if czas is not None else None
+def _text(value: Any) -> str | None:
+    """A text column as served; None when it is absent or not text."""
+    return value if isinstance(value, str) else None
 
 
 def _parse_leaf_id(value: Any) -> str:
     """Coerce the `leafId` field to a string.
 
-    The M-SERV emits an empty string for ghost rows (object removed from the
-    Designer tree, DB row still returned) and for system objects (presence
-    simulation / detection types). For everything else the value is a short
+    The M-SERV emits an empty string or null for system objects (presence
+    simulation / detection types) and for an object whose Matter box was
+    unchecked in Designer. For everything else the value is a short
     underscored token like ``0_cb8f_76_0_0``, which the Designer reads as
     ``macGroup``, ``mac``, ``sfId``, ``subSfId``, and ``ioNo``. This parse
-    keeps the raw string, which the library also uses as the binary
-    visibility marker.
+    keeps the raw string.
     """
     return value if isinstance(value, str) else ""
 
@@ -256,7 +266,8 @@ class ParamsEntry:
     """One object's row in the ``data/params_devices`` table."""
 
     params: int
-    pulse_ms: int
+    czas: int
+    url: str
 
 
 def parse_params_devices(payload: str) -> dict[int, ParamsEntry] | None:
@@ -278,7 +289,8 @@ def parse_params_devices(payload: str) -> dict[int, ParamsEntry] | None:
             continue
         out[oid] = ParamsEntry(
             params=to_int(item.get("params")) or 0,
-            pulse_ms=_czas_to_pulse_ms(item.get("czas")) or 0,
+            czas=to_int(item.get("czas")) or 0,
+            url=_text(item.get("url")) or "",
         )
     return out
 
@@ -420,20 +432,22 @@ def parse_descriptions_blob(blob: bytes) -> tuple[OutputDescription, ...]:
     return tuple(out)
 
 
-def parse_device_info(payload: str) -> tuple[OutputDescription, ...] | None:
-    """The description entries of a ``device_api/from/<mac>/info`` reply.
+@dataclass(slots=True, frozen=True)
+class DeviceRecord:
+    """One device of a ``device_api/from/list`` reply with its record.
 
-    A record without a ``descriptions`` field reads as empty - a module
-    with no descriptions written. None when the payload is not a JSON
-    object or the base64 is unreadable.
+    ``mac`` is the override (``macUser``): the id every leaf embeds and
+    ``AmpioModule.mac`` carries. ``mac_global`` is the factory id
+    (``macProd``): the id the device_api tree itself is keyed by.
     """
-    try:
-        data = json.loads(payload)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    raw = data.get("descriptions")
+
+    mac: int
+    mac_global: int
+    entries: tuple[OutputDescription, ...]
+
+
+def _decode_descriptions(raw: object) -> tuple[OutputDescription, ...] | None:
+    """The decoded ``descriptions`` field: empty when absent, None when unreadable."""
     if raw in (None, ""):
         return ()
     if not isinstance(raw, str):
@@ -443,6 +457,33 @@ def parse_device_info(payload: str) -> tuple[OutputDescription, ...] | None:
     except (binascii.Error, ValueError):
         return None
     return parse_descriptions_blob(blob)
+
+
+def parse_device_list(payload: str) -> tuple[DeviceRecord, ...] | None:
+    """Every device of a ``device_api/from/list`` reply, with its record.
+
+    None when the payload is not a JSON object with a ``devices`` list. A
+    device without a ``descriptions`` field reads empty - no descriptions
+    written. A device whose ids do not parse or whose blob is unreadable
+    is left out, so it counts as unlisted.
+    """
+    try:
+        data = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("devices"), list):
+        return None
+    out: list[DeviceRecord] = []
+    for item in data["devices"]:
+        if not isinstance(item, dict):
+            continue
+        mac = to_int(item.get("macUser"))
+        mac_global = to_int(item.get("macProd"))
+        entries = _decode_descriptions(item.get("descriptions"))
+        if mac is None or mac_global is None or entries is None:
+            continue
+        out.append(DeviceRecord(mac=mac, mac_global=mac_global, entries=entries))
+    return tuple(out)
 
 
 # Designer's cleared-entry form, live-proven: a clear never deletes the
@@ -469,15 +510,19 @@ def resolve_designer(
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
     location_names: Mapping[int, str],
     colliding_macs: frozenset[int],
+    mac_by_device_id: Mapping[int, int],
 ) -> dict[int, DesignerRecord]:
     """Join each object to its module's description entry.
 
     The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], leaf_io_no)`` within
-    the module record of ``module_mac``. Objects on a colliding mac are
-    skipped - the reply cannot be attributed to one module. ``out_loc`` 0
-    or 16383 reads unassigned and ``out_type`` 0 untagged, so none
-    produces a value. A ``desc`` that is empty or the ``.`` placeholder
-    reads as None, like the other two fields.
+    the module record of ``module_mac``. A leafless object joins through
+    ``mac_by_device_id[id_urzadzenia]`` and ``funkcja - 1`` instead: its
+    module row's mac, and the channel every leafed object of these kinds
+    embeds as ``leaf_io_no`` (docs/identity.md). Objects on a colliding
+    mac are skipped - the reply cannot be attributed to one module.
+    ``out_loc`` 0 or 16383 reads unassigned and ``out_type`` 0 untagged,
+    so none produces a value. A ``desc`` that is empty or the ``.``
+    placeholder reads as None, like the other two fields.
     """
     entries_by_key = {
         mac: {(e.desc_type, e.out_no): e for e in entries}
@@ -486,9 +531,19 @@ def resolve_designer(
     out: dict[int, DesignerRecord] = {}
     for obj in objects.values():
         desc_type = DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "")
-        mac = obj.module_mac
-        out_no = obj.leaf_io_no
-        if desc_type is None or mac is None or out_no is None:
+        if desc_type is None:
+            continue
+        if obj.leaf_id:
+            mac = obj.module_mac
+            out_no = obj.leaf_io_no
+        else:
+            mac = (
+                mac_by_device_id.get(obj.id_urzadzenia)
+                if obj.id_urzadzenia is not None
+                else None
+            )
+            out_no = obj.funkcja - 1 if obj.funkcja is not None else None
+        if mac is None or out_no is None:
             continue
         if mac in colliding_macs:
             continue
@@ -921,16 +976,23 @@ def scene_payload(scene_id: int, verb: str) -> str:
 KEEP_POSITION = 101
 
 
-# --- Raw CAN writes --------------------------------------------------------
-#
-# The admin-only `ampio/to/<machex>/raw` topic broadcasts a raw CAN frame
-# from the M-SERV. Frame `[0x30, 0xF9, value, channel]` sets a module's
-# output: 0x30 is the generic output-write function (the Designer SPA maps
-# every output leaf to it) and 0xF9 the set-u8 command. It is the ONLY
-# write that reaches a classic panel's binary outputs (status LEDs) - the
-# `/api` verbs and the per-channel `o/<ch>/cmd` form are silently dropped
-# for those, while a relay module answers all three. docs/protocol.md
-# ("Panel outputs") carries the live evidence.
+# The raw CAN write frame `<fn> F9 <value> <channel>`: 0xF9 is the set-u8
+# command and the first byte the per-class function the Designer sends
+# from its SF table. It is the ONLY write that reaches a classic panel's
+# binary outputs (status LEDs) - the `/api` verbs and the per-channel
+# `o/<ch>/cmd` form are silently dropped for those, while a relay module
+# answers all three. docs/protocol.md ("Panel outputs") carries the live
+# evidence.
+
+# The first frame byte per leaf class, live-proven pairs only: binary
+# outputs (sfId 257: relays and panel LEDs) take the generic 0x30, the
+# open-collector output (sfId 67, M-INOC) takes 0x32. A module drops 0x30
+# on a class-67 leaf. A class outside the table stays on `/api`.
+RAW_OUTPUT_FUNCTION_BY_SF: dict[int, int] = {257: 0x30, 67: 0x32}
+
+# The leaf class whose outputs report on the raw `a` prefix as a u8 value
+# instead of the binary `o` prefix; the same 1-based channel numbering.
+OC_OUTPUT_SF = 67
 
 
 def raw_write_topic(mac: int) -> str:
@@ -938,13 +1000,59 @@ def raw_write_topic(mac: int) -> str:
     return f"ampio/to/{mac:x}/raw"
 
 
-def raw_output_payload(value: int, channel: int) -> str:
+def raw_output_payload(function: int, value: int, channel: int) -> str:
     """The set-output frame as the wire's ASCII hex form.
 
-    ``channel`` is the 0-based output index - :pyattr:`AmpioObject.leaf_io_no`,
-    one below the 1-based raw state channel.
+    ``function`` is the leaf class's first byte
+    (:data:`RAW_OUTPUT_FUNCTION_BY_SF`). ``channel`` is the 0-based output
+    index - :pyattr:`AmpioObject.leaf_io_no`, one below the 1-based raw
+    state channel.
     """
-    return f"30f9{value:02x}{channel:02x}"
+    return f"{function:02x}f9{value:02x}{channel:02x}"
+
+
+# The M-DOT buzzer rides the condition-action frames the Designer's "test
+# condition" button sends: the `0c0703` prefix, then the action. The
+# action's first byte is the buzzer destination 0x70 with the action
+# function in its low nibble (0 simple, 1 sequence). Every time field
+# counts 10 ms ticks, 16-bit fields are little-endian, and the sequence
+# form's speed bytes stay 0, since they had no audible effect.
+# docs/protocol.md ("Panel buzzer") carries the wire facts.
+_BUZZER_ACTION_PREFIX = "0c0703"
+
+
+def raw_buzzer_payload(on: bool, tone: int, ticks: int) -> str:
+    """The simple buzzer action as the wire's ASCII hex form.
+
+    ``on`` selects the ON sub-function, else OFF. ``ticks`` is the length
+    in 10 ms ticks; 0 with ON latches the buzzer on.
+    """
+    return f"{_BUZZER_ACTION_PREFIX}70{int(on):02x}{tone:02x}{ticks:02x}"
+
+
+def raw_buzzer_pattern_payload(
+    tone1: int, ticks1: int, tone2: int, ticks2: int, cycles: int, delay_ticks: int
+) -> str:
+    """The sequence buzzer action, sub-function ON, as ASCII hex.
+
+    Tone 0 is a silent rest. ``cycles`` 0 repeats until another frame
+    replaces the sequence.
+    """
+    return (
+        f"{_BUZZER_ACTION_PREFIX}7101"
+        f"{delay_ticks & 0xFF:02x}{delay_ticks >> 8:02x}"
+        f"{tone1:02x}00{ticks1 & 0xFF:02x}{ticks1 >> 8:02x}"
+        f"{tone2:02x}00{ticks2 & 0xFF:02x}{ticks2 >> 8:02x}"
+        f"{cycles:02x}"
+    )
+
+
+# The stop pair. A one-cycle silent sequence replaces a running pattern
+# within 100 ms; the simple OFF (tone at the Designer default 6) ends a
+# plain beep or a latched ON, which a sequence step would otherwise
+# re-assert.
+RAW_BUZZER_SILENCE = raw_buzzer_pattern_payload(0, 1, 0, 0, 1, 0)
+RAW_BUZZER_OFF = raw_buzzer_payload(False, 6, 0)
 
 
 def request_topic(ep: Endpoint, user: str) -> str:
@@ -962,6 +1070,17 @@ def ob_state_wildcard(user: str) -> str:
     return f"ampio/fromDB/{user}/ob/+/state"
 
 
+# The app-sync tables whose retained `md5/<keyword>` digest the M-SERV
+# rewrites when a Designer save changes them. The admin tier watches these
+# to learn that its `config` catalogues went stale (docs/discovery-flow.md).
+CATALOGUE_DIGEST_KEYWORDS = ("devices", "params_devices")
+
+
+def md5_topic(user: str, keyword: str) -> str:
+    """Retained topic holding the MD5 of an account's app-sync table reply."""
+    return f"ampio/fromDB/{user}/md5/{keyword}"
+
+
 # The raw `ampio/from/<MAC>/...` tree: global (not user-namespaced), retained,
 # admin-only. docs/raw-channel-bridge.md is the home for why only the two
 # on-change input prefixes are subscribed and the high-rate ones are not.
@@ -971,6 +1090,10 @@ RAW_INPUT_WILDCARDS = ("ampio/from/+/state/f/+", "ampio/from/+/state/i/+")
 # panel's status LEDs have no other retained surface, and every module's
 # binary outputs share the channel shape (docs/raw-channel-bridge.md).
 RAW_OUTPUT_WILDCARD = "ampio/from/+/state/o/+"
+# Analog output channels, bridged for the `przekaznik` objects on an
+# open-collector leaf (class 67): the module reports those as a u8 on `a`,
+# and the object topic never echoes them on any write path.
+RAW_ANALOG_WILDCARD = "ampio/from/+/state/a/+"
 
 # Per-module diagnostics broadcasts (CAN supply voltage, own temperature).
 RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
@@ -980,16 +1103,14 @@ RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
 RAW_EVENT_WILDCARD = "ampio/from/+/event"
 
 
-# The admin-only device_api tree: get_data asks the M-SERV for a module's
-# full CAN-resident record; the info reply carries the description
-# entries. Request macs are lowercase hex, reply macs uppercase - the
-# router parses the segment numerically.
-DEVICE_API_INFO_WILDCARD = "device_api/from/+/info"
-
-
-def device_api_request_topic(mac: int) -> str:
-    """The get_data request topic for one module's CAN-resident record."""
-    return f"device_api/to/{mac:x}/get_data"
+# The admin-only device_api tree. One `list` request returns every
+# module's CAN-resident record in a single reply, the M-SERV's own
+# included, each device tagged with both of its ids. The per-module
+# get_data pair is keyed by the factory id and answers nothing on an
+# override mac - docs/identity.md.
+DEVICE_API_LIST_REQUEST = "device_api/to/list"
+DEVICE_API_LIST_PAYLOAD = b"0"
+DEVICE_API_LIST_TOPIC = "device_api/from/list"
 
 
 # typ_komponentu -> description class (descType), live-proven pairs only
@@ -1001,6 +1122,7 @@ DESC_TYPE_BY_KIND: dict[str, int] = {
     "roleta_lamelki": 26,  # ROLLER
     "led": 16,  # OUT_OC_U8
     "rgbw": 34,  # RGBW output class; no symbolic name in the recovered enum
+    "flaga": 6,  # FLAG_BIN
 }
 
 
@@ -1040,11 +1162,18 @@ class DiagnosticsReport:
 
 
 @dataclass(slots=True, frozen=True)
-class DeviceDescriptions:
-    """A module's parsed description record from a device_api info reply."""
+class DeviceList:
+    """Every device's parsed record from a device_api list reply."""
 
-    mac: int
-    entries: tuple[OutputDescription, ...]
+    devices: tuple[DeviceRecord, ...]
+
+
+@dataclass(slots=True, frozen=True)
+class CatalogueDigest:
+    """The retained MD5 of one app-sync table, as the M-SERV last published it."""
+
+    keyword: str
+    digest: str
 
 
 # Everything one MQTT message can classify into. `BusEventRaised` is the
@@ -1054,7 +1183,8 @@ Inbound = (
     | StateUpdate
     | RawChannelEdge
     | DiagnosticsReport
-    | DeviceDescriptions
+    | DeviceList
+    | CatalogueDigest
     | BusEventRaised
 )
 
@@ -1096,21 +1226,19 @@ class Router:
             oid = to_int(parts[4])
             return None if oid is None else _parse_state_payload(oid, payload)
         if (
-            len(parts) == 4
-            and parts[0] == "device_api"
-            and parts[1] == "from"
-            and parts[3] == "info"
+            len(parts) == 5
+            and parts[0] == "ampio"
+            and parts[1] == "fromDB"
+            and parts[2] == self._user
+            and parts[3] == "md5"
+            and parts[4] in CATALOGUE_DIGEST_KEYWORDS
         ):
-            try:
-                mac = int(parts[2], 16)
-            except ValueError:
-                return None
-            entries = parse_device_info(payload)
-            return (
-                None
-                if entries is None
-                else DeviceDescriptions(mac=mac, entries=entries)
-            )
+            digest = payload.strip()
+            # An empty payload is a retained clear, not a digest.
+            return CatalogueDigest(keyword=parts[4], digest=digest) if digest else None
+        if topic == DEVICE_API_LIST_TOPIC:
+            devices = parse_device_list(payload)
+            return None if devices is None else DeviceList(devices=devices)
         if len(parts) < 4 or parts[0] != "ampio" or parts[1] != "from":
             return None
         try:

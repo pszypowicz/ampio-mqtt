@@ -19,19 +19,22 @@ from conftest import (
 
 from ampio_mqtt import (
     AmpioClient,
+    AmpioTimeoutError,
     DesignerRecord,
     ModuleRecord,
     ModuleUpdated,
     ObjectUpdated,
 )
 from ampio_mqtt._protocol import (
+    DEVICE_API_LIST_PAYLOAD,
+    DEVICE_API_LIST_REQUEST,
+    DEVICE_API_LIST_TOPIC,
     ENDPOINTS,
-    DeviceDescriptions,
+    DeviceList,
     OutputDescription,
     Router,
-    device_api_request_topic,
     parse_descriptions_blob,
-    parse_device_info,
+    parse_device_list,
     resolve_designer,
     resolve_module_records,
 )
@@ -50,6 +53,22 @@ def frame(desc_type: int, out_no: int, out_loc: int, out_type: int, desc: str) -
         )
         + body
     )
+
+
+def _device(
+    mac_prod: int, mac_user: int, *frames: bytes, blob: str | None = None
+) -> dict:
+    """One `device_api/from/list` device entry; `blob` overrides the encoding."""
+    row: dict = {"macProd": mac_prod, "macUser": mac_user}
+    if blob is not None:
+        row["descriptions"] = blob
+    elif frames:
+        row["descriptions"] = base64.b64encode(b"".join(frames)).decode()
+    return row
+
+
+def _list(*devs: object) -> str:
+    return json.dumps({"devices": list(devs)})
 
 
 def test_blob_decodes_frames_in_order() -> None:
@@ -90,47 +109,61 @@ def test_blob_decodes_zero_body_frame_at_length_boundary() -> None:
     )
 
 
-def test_device_info_extracts_descriptions() -> None:
-    payload = json.dumps(
-        {
-            "macProd": 52105,
-            "descriptions": base64.b64encode(frame(12, 0, 14, 256, "L")).decode(),
-        }
+def test_device_list_keys_each_device_by_both_ids() -> None:
+    devs = parse_device_list(
+        _list(
+            _device(0xBAE6, 1, frame(12, 0, 1, 266, "kropelki")),
+            _device(0xCB89, 0xCB89, frame(12, 0, 14, 256, "L")),
+        )
     )
-    entries = parse_device_info(payload)
-    assert entries is not None and entries[0].out_loc == 14
+    assert devs is not None
+    assert [(d.mac, d.mac_global) for d in devs] == [(1, 0xBAE6), (0xCB89, 0xCB89)]
+    assert devs[0].entries[0].out_loc == 1
+    assert devs[1].entries[0].desc == "L"
 
 
-def test_device_info_without_descriptions_reads_empty() -> None:
-    assert parse_device_info(json.dumps({"macProd": 1})) == ()
-    assert parse_device_info(json.dumps({"descriptions": ""})) == ()
+def test_device_list_without_descriptions_reads_empty() -> None:
+    devs = parse_device_list(_list(_device(1, 1), _device(2, 2, blob="")))
+    assert devs is not None
+    assert [d.entries for d in devs] == [(), ()]
 
 
-def test_device_info_rejects_garbage() -> None:
-    assert parse_device_info("not-json") is None
-    assert parse_device_info(json.dumps({"descriptions": "!!!not-base64"})) is None
-    assert parse_device_info(json.dumps({"descriptions": 5})) is None
+def test_device_list_skips_unreadable_devices() -> None:
+    devs = parse_device_list(
+        _list(
+            _device(1, 1, blob="!!!not-base64"),
+            {"macProd": 2, "descriptions": ""},
+            {"macProd": 3, "macUser": "zz"},
+            "not-a-device",
+            _device(4, 4, frame(12, 0, 14, 256, "L")),
+        )
+    )
+    assert devs is not None
+    assert [(d.mac, d.mac_global) for d in devs] == [(4, 4)]
 
 
-def test_device_info_rejects_non_object_json() -> None:
-    assert parse_device_info(json.dumps([1, 2])) is None
+def test_device_list_rejects_garbage() -> None:
+    assert parse_device_list("not-json") is None
+    assert parse_device_list(json.dumps([1, 2])) is None
+    assert parse_device_list(json.dumps({"devices": 5})) is None
+    assert parse_device_list(json.dumps({})) is None
 
 
-def test_router_routes_info_reply_case_insensitively() -> None:
+def test_router_routes_the_list_reply() -> None:
     router = Router("admin", ENDPOINTS)
-    payload = json.dumps(
-        {"descriptions": base64.b64encode(frame(12, 2, 3, 0, "x")).decode()}
+    msg = router.route(
+        DEVICE_API_LIST_TOPIC, _list(_device(0xCB89, 0xCB89, frame(12, 2, 3, 0, "x")))
     )
-    msg = router.route("device_api/from/CB89/info", payload)
-    assert isinstance(msg, DeviceDescriptions)
-    assert msg.mac == 0xCB89
-    assert msg.entries[0].out_no == 2
-    assert router.route("device_api/from/zz/info", payload) is None
-    assert router.route("device_api/from/CB89/info", "not-json") is None
+    assert isinstance(msg, DeviceList)
+    assert msg.devices[0].mac == 0xCB89
+    assert msg.devices[0].entries[0].out_no == 2
+    assert router.route(DEVICE_API_LIST_TOPIC, "not-json") is None
 
 
-def test_request_topic_uses_lowercase_hex() -> None:
-    assert device_api_request_topic(0xCB89) == "device_api/to/cb89/get_data"
+def test_list_request_pair_is_the_designer_s() -> None:
+    assert DEVICE_API_LIST_REQUEST == "device_api/to/list"
+    assert DEVICE_API_LIST_PAYLOAD == b"0"
+    assert DEVICE_API_LIST_TOPIC == "device_api/from/list"
 
 
 def _entries(*specs: tuple[int, int, int, int, str]) -> tuple[OutputDescription, ...]:
@@ -147,7 +180,7 @@ def test_resolve_designer_joins_location_and_type() -> None:
     by_mac = {
         0xCB89: _entries((12, 0, 14, 256, "Lampa"), (26, 1, 0, 0, "Roleta")),
     }
-    resolved = resolve_designer(objects, by_mac, {14: "Potter"}, frozenset())
+    resolved = resolve_designer(objects, by_mac, {14: "Potter"}, frozenset(), {})
     assert resolved == {
         64: DesignerRecord(location="Potter", matter_device_type=256, desc="Lampa"),
         48: DesignerRecord(location=None, matter_device_type=None, desc="Roleta"),
@@ -162,7 +195,7 @@ def test_resolve_designer_skips_the_unjoinable() -> None:
         4: AmpioObject(id=4, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_9"),
     }
     by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
-    assert resolve_designer(objects, by_mac, {14: "P"}, frozenset()) == {}
+    assert resolve_designer(objects, by_mac, {14: "P"}, frozenset(), {}) == {}
 
 
 def test_resolve_designer_skips_colliding_macs() -> None:
@@ -170,7 +203,7 @@ def test_resolve_designer_skips_colliding_macs() -> None:
         64: AmpioObject(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
     }
     by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
-    assert resolve_designer(objects, by_mac, {14: "P"}, frozenset({0xCB89})) == {}
+    assert resolve_designer(objects, by_mac, {14: "P"}, frozenset({0xCB89}), {}) == {}
 
 
 def test_resolve_designer_reads_empty_desc_as_none() -> None:
@@ -178,7 +211,7 @@ def test_resolve_designer_reads_empty_desc_as_none() -> None:
         64: AmpioObject(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
     }
     by_mac = {0xCB89: _entries((12, 0, 0, 0, ""))}
-    assert resolve_designer(objects, by_mac, {}, frozenset()) == {
+    assert resolve_designer(objects, by_mac, {}, frozenset(), {}) == {
         64: DesignerRecord(location=None, matter_device_type=None, desc=None)
     }
 
@@ -190,9 +223,55 @@ def test_resolve_designer_reads_clear_sentinels_as_none() -> None:
         64: AmpioObject(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
     }
     by_mac = {0xCB89: _entries((12, 0, 16383, 0, "."))}
-    assert resolve_designer(objects, by_mac, {16383: "Bogus"}, frozenset()) == {
+    assert resolve_designer(objects, by_mac, {16383: "Bogus"}, frozenset(), {}) == {
         64: DesignerRecord(location=None, matter_device_type=None, desc=None)
     }
+
+
+def test_resolve_designer_joins_a_flag_on_the_binary_flag_class() -> None:
+    objects = {152: AmpioObject(id=152, typ_komponentu="flaga", leaf_id="0_1_3_0_0")}
+    by_mac = {1: _entries((6, 0, 19, 21, "flag"), (12, 0, 1, 266, "relay"))}
+    assert resolve_designer(objects, by_mac, {19: "Testowe"}, frozenset(), {}) == {
+        152: DesignerRecord(location="Testowe", matter_device_type=21, desc="flag")
+    }
+
+
+def test_resolve_designer_joins_a_leafless_object_through_funkcja() -> None:
+    """No leaf: the module comes from id_urzadzenia and the channel from
+    funkcja - 1, the relation every leafed object of the table kinds holds."""
+    objects = {
+        153: AmpioObject(
+            id=153, typ_komponentu="flaga", id_urzadzenia=1, funkcja=2, leaf_id=""
+        ),
+        143: AmpioObject(
+            id=143, typ_komponentu="przekaznik", id_urzadzenia=3, funkcja=1, leaf_id=""
+        ),
+    }
+    by_mac = {
+        1: _entries((6, 1, 19, 21, "test2")),
+        0xBE82: _entries((12, 0, 19, 266, "Test Switch")),
+    }
+    resolved = resolve_designer(
+        objects, by_mac, {19: "Testowe"}, frozenset(), {1: 1, 3: 0xBE82}
+    )
+    assert resolved == {
+        153: DesignerRecord(location="Testowe", matter_device_type=21, desc="test2"),
+        143: DesignerRecord(
+            location="Testowe", matter_device_type=266, desc="Test Switch"
+        ),
+    }
+
+
+def test_resolve_designer_skips_a_leafless_object_without_a_module() -> None:
+    objects = {
+        153: AmpioObject(
+            id=153, typ_komponentu="flaga", id_urzadzenia=9, funkcja=2, leaf_id=""
+        ),
+        154: AmpioObject(id=154, typ_komponentu="flaga", funkcja=2, leaf_id=""),
+        155: AmpioObject(id=155, typ_komponentu="flaga", id_urzadzenia=1, leaf_id=""),
+    }
+    by_mac = {1: _entries((6, 1, 19, 21, "test2"))}
+    assert resolve_designer(objects, by_mac, {19: "Testowe"}, frozenset(), {1: 1}) == {}
 
 
 def test_resolve_module_records_reads_the_device_name_entry() -> None:
@@ -242,7 +321,7 @@ async def _deliver_causally(
     client: AmpioClient,
     broker: FakeBroker,
     locations_payload: str,
-    info_replies: list[tuple[str, str]],
+    list_payload: str | None,
 ) -> None:
     """Feed each reply only after its request was published, as the broker would."""
     async with asyncio.timeout(1.0):
@@ -252,20 +331,23 @@ async def _deliver_causally(
         ) not in broker.published:
             await asyncio.sleep(0)
         feed(client, LOCATIONS_TOPIC, locations_payload)
-        while ("device_api/to/cb89/get_data", b"") not in broker.published:
+        while (
+            DEVICE_API_LIST_REQUEST,
+            DEVICE_API_LIST_PAYLOAD,
+        ) not in broker.published:
             await asyncio.sleep(0)
-        for topic, payload in info_replies:
-            feed(client, topic, payload)
+        if list_payload is not None:
+            feed(client, DEVICE_API_LIST_TOPIC, list_payload)
 
 
-async def test_admin_subscribes_the_device_api_wildcard() -> None:
+async def test_admin_subscribes_the_device_api_list_topic() -> None:
     broker = FakeBroker()
     client = AmpioClient(
         "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
     )
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
-        assert "device_api/from/+/info" in broker.subscribed
+        assert DEVICE_API_LIST_TOPIC in broker.subscribed
     finally:
         await client.disconnect()
     restricted_broker = FakeBroker()
@@ -274,25 +356,18 @@ async def test_admin_subscribes_the_device_api_wildcard() -> None:
     )
     await restricted.connect(timeout=2.0, discovery_timeout=0.01)
     try:
-        assert "device_api/from/+/info" not in restricted_broker.subscribed
+        assert DEVICE_API_LIST_TOPIC not in restricted_broker.subscribed
     finally:
         await restricted.disconnect()
 
 
-async def test_resolve_records_sweeps_joins_and_merges() -> None:
+async def test_resolve_records_reads_the_list_joins_and_merges() -> None:
     client, broker = await _admin_client_with_catalogue()
     try:
         events: list[ObjectUpdated] = []
         client.subscribe(events.append, of=ObjectUpdated, object_id=64)
         module_events: list[ModuleUpdated] = []
         client.subscribe(module_events.append, of=ModuleUpdated)
-        info_payload = json.dumps(
-            {
-                "descriptions": base64.b64encode(
-                    frame(1, 0, 19, 0, "Modul") + frame(12, 0, 14, 256, "L")
-                ).decode()
-            }
-        )
         delivery = asyncio.create_task(
             _deliver_causally(
                 client,
@@ -305,7 +380,14 @@ async def test_resolve_records_sweeps_joins_and_merges() -> None:
                         ]
                     }
                 ),
-                [("device_api/from/CB89/info", info_payload)],
+                _list(
+                    _device(
+                        0xCB89,
+                        0xCB89,
+                        frame(1, 0, 19, 0, "Modul"),
+                        frame(12, 0, 14, 256, "L"),
+                    )
+                ),
             )
         )
         try:
@@ -321,7 +403,7 @@ async def test_resolve_records_sweeps_joins_and_merges() -> None:
             location="Potter", matter_device_type=256, desc="L"
         )
         assert client.objects[64].matter_device_type is None
-        assert ("device_api/to/cb89/get_data", b"") in broker.published
+        assert (DEVICE_API_LIST_REQUEST, DEVICE_API_LIST_PAYLOAD) in broker.published
         assert [e.object.record.location for e in events] == ["Potter"]
         assert client.modules[16].record == ModuleRecord(
             location="Rozdzielnia", desc="Modul"
@@ -331,7 +413,7 @@ async def test_resolve_records_sweeps_joins_and_merges() -> None:
         await client.disconnect()
 
 
-async def test_resolve_records_tolerates_silent_modules() -> None:
+async def test_resolve_records_reports_catalogue_modules_absent_from_the_list() -> None:
     client, broker = await _admin_client_with_catalogue()
     try:
         feed(
@@ -339,15 +421,12 @@ async def test_resolve_records_tolerates_silent_modules() -> None:
             ADMIN_DEVICES_TOPIC,
             devices({"id": 16, "mac": 0xCB89}, {"id": 17, "mac": 0xBEEF}),
         )
-        info_payload = json.dumps(
-            {"descriptions": base64.b64encode(frame(12, 0, 14, 256, "L")).decode()}
-        )
         delivery = asyncio.create_task(
             _deliver_causally(
                 client,
                 broker,
                 json.dumps({"List": [{"id": 14, "opis_menu": "Potter"}]}),
-                [("device_api/from/CB89/info", info_payload)],
+                _list(_device(0xCB89, 0xCB89, frame(12, 0, 14, 256, "L"))),
             )
         )
         try:
@@ -363,8 +442,9 @@ async def test_resolve_records_tolerates_silent_modules() -> None:
         await client.disconnect()
 
 
-async def test_resolve_records_restarts_the_window_on_every_reply() -> None:
-    """Both replies land although the sweep runs longer than `timeout`."""
+async def test_resolve_records_joins_by_the_override_mac_the_reply_carries() -> None:
+    """The M-SERV shape: factory id and override differ, and the leaf embeds
+    the override."""
     client, broker = await _admin_client_with_catalogue()
     try:
         feed(
@@ -372,42 +452,76 @@ async def test_resolve_records_restarts_the_window_on_every_reply() -> None:
             ADMIN_DETAILS_TOPIC,
             details(
                 {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"},
-                {"id": 65, "typ_komponentu": "przekaznik", "leafId": "0_beef_257_2_0"},
+                {"id": 113, "typ_komponentu": "przekaznik", "leafId": "0_1_257_2_0"},
             ),
         )
         feed(
             client,
             ADMIN_DEVICES_TOPIC,
-            devices({"id": 16, "mac": 0xCB89}, {"id": 17, "mac": 0xBEEF}),
+            devices(
+                {"id": 16, "mac": 0xCB89, "mac_global": 0xCB89},
+                {"id": 1, "mac": 1, "mac_global": 0xBAE6},
+            ),
         )
-        payload = json.dumps(
-            {"descriptions": base64.b64encode(frame(12, 0, 14, 256, "L")).decode()}
+        delivery = asyncio.create_task(
+            _deliver_causally(
+                client,
+                broker,
+                json.dumps({"List": [{"id": 1, "opis_menu": "Ogrod"}]}),
+                _list(
+                    _device(0xCB89, 0xCB89),
+                    _device(0xBAE6, 1, frame(12, 0, 1, 266, "kropelki")),
+                ),
+            )
         )
-
-        async def deliver() -> None:
-            async with asyncio.timeout(3.0):
-                while (
-                    f"ampio/control/{ADMIN_USER}/config",
-                    b"locations",
-                ) not in broker.published:
-                    await asyncio.sleep(0)
-                feed(client, LOCATIONS_TOPIC, json.dumps({"List": []}))
-                while ("device_api/to/beef/get_data", b"") not in broker.published:
-                    await asyncio.sleep(0)
-                # Each gap is shorter than the window, their sum is longer:
-                # a whole-sweep budget would drop the second reply.
-                await asyncio.sleep(0.4)
-                feed(client, "device_api/from/CB89/info", payload)
-                await asyncio.sleep(0.4)
-                feed(client, "device_api/from/BEEF/info", payload)
-
-        delivery = asyncio.create_task(deliver())
         try:
-            result = await client.resolve_records(timeout=0.6)
+            result = await client.resolve_records(timeout=0.2)
         finally:
             await delivery
-        assert result.answered_macs == frozenset({0xCB89, 0xBEEF})
+        assert result.records == {
+            113: DesignerRecord(
+                location="Ogrod", matter_device_type=266, desc="kropelki"
+            )
+        }
+        assert result.answered_macs == frozenset({0xCB89, 1})
         assert result.silent_macs == frozenset()
+        assert client.modules[1].record == ModuleRecord()
+    finally:
+        await client.disconnect()
+
+
+async def test_resolve_records_joins_a_leafless_object_through_the_catalogue() -> None:
+    client, broker = await _admin_client_with_catalogue()
+    try:
+        feed(
+            client,
+            ADMIN_DETAILS_TOPIC,
+            details(
+                {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"},
+                {
+                    "id": 65,
+                    "typ_komponentu": "przekaznik",
+                    "id_urzadzenia": 16,
+                    "funkcja": 2,
+                },
+            ),
+        )
+        delivery = asyncio.create_task(
+            _deliver_causally(
+                client,
+                broker,
+                json.dumps({"List": [{"id": 14, "opis_menu": "Potter"}]}),
+                _list(_device(0xCB89, 0xCB89, frame(12, 1, 14, 256, "Second"))),
+            )
+        )
+        try:
+            result = await client.resolve_records(timeout=0.2)
+        finally:
+            await delivery
+        assert result.records == {
+            65: DesignerRecord(location="Potter", matter_device_type=256, desc="Second")
+        }
+        assert client.objects[65].record is not None
     finally:
         await client.disconnect()
 
@@ -420,7 +534,7 @@ async def test_resolve_records_counts_an_empty_record_as_answered() -> None:
                 client,
                 broker,
                 json.dumps({"List": []}),
-                [("device_api/from/CB89/info", json.dumps({"descriptions": ""}))],
+                _list(_device(0xCB89, 0xCB89, blob="")),
             )
         )
         try:
@@ -435,28 +549,18 @@ async def test_resolve_records_counts_an_empty_record_as_answered() -> None:
         await client.disconnect()
 
 
-async def test_resolve_records_never_asks_the_mserv_row() -> None:
+async def test_resolve_records_raises_when_the_list_never_answers() -> None:
     client, broker = await _admin_client_with_catalogue()
     try:
-        feed(
-            client,
-            ADMIN_DEVICES_TOPIC,
-            devices({"id": 16, "mac": 0xCB89}, {"id": 1, "mac": 1}),
-        )
         delivery = asyncio.create_task(
-            _deliver_causally(
-                client,
-                broker,
-                json.dumps({"List": []}),
-                [("device_api/from/CB89/info", json.dumps({"descriptions": ""}))],
-            )
+            _deliver_causally(client, broker, json.dumps({"List": []}), None)
         )
         try:
-            result = await client.resolve_records(timeout=0.2)
+            with pytest.raises(AmpioTimeoutError, match="module records"):
+                await client.resolve_records(timeout=0.2)
         finally:
             await delivery
-        assert ("device_api/to/1/get_data", b"") not in broker.published
-        assert result.silent_macs == frozenset()
+        assert client.objects[64].record is None
     finally:
         await client.disconnect()
 

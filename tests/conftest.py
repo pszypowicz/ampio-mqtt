@@ -28,6 +28,8 @@ ADMIN_DETAILS_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/devicesDetails"
 ADMIN_DEVICES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/devices"
 ADMIN_STATES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/data/states"
 ADMIN_INFO_TOPIC = f"ampio/fromDB/{ADMIN_USER}/data/info"
+ADMIN_MD5_DEVICES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/md5/devices"
+ADMIN_MD5_PARAMS_DEVICES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/md5/params_devices"
 
 DETAILS_TOPIC = f"ampio/fromDB/{USER}/config/devicesDetails"
 DEVICES_TOPIC = f"ampio/fromDB/{USER}/config/devices"

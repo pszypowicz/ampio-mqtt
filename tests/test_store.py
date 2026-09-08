@@ -815,9 +815,57 @@ def test_states_snapshot_does_not_overwrite_live_value() -> None:
     assert store.objects[41].state == "fresh"
 
 
+def test_sibling_module_mac_comes_from_leafed_rows_on_the_same_module() -> None:
+    """A leafless row reads the mac its leafed siblings embed, a row without
+    a leafed sibling reads None, and a leafed row reads its own module's mac."""
+    store = _store()
+    _apply(
+        store,
+        DATA_DEVICES_TOPIC,
+        details(
+            {
+                "id": 1,
+                "typ_komponentu": "przekaznik",
+                "id_urzadzenia": 3,
+                "leafId": "0_be82_257_2_1",
+            },
+            {"id": 2, "typ_komponentu": "przekaznik", "id_urzadzenia": 3},
+            {"id": 3, "typ_komponentu": "flaga", "id_urzadzenia": 7},
+        ),
+    )
+    assert store.objects[1].sibling_module_mac == 0xBE82
+    assert store.objects[2].sibling_module_mac == 0xBE82
+    assert store.objects[3].sibling_module_mac is None
+
+
+def test_sibling_module_mac_follows_the_next_catalogue() -> None:
+    store = _store()
+    _apply(
+        store,
+        DETAILS_TOPIC,
+        details({"id": 2, "typ_komponentu": "przekaznik", "id_urzadzenia": 3}),
+    )
+    assert store.objects[2].sibling_module_mac is None
+    applied = _apply(
+        store,
+        DETAILS_TOPIC,
+        details(
+            {
+                "id": 1,
+                "typ_komponentu": "przekaznik",
+                "id_urzadzenia": 3,
+                "leafId": "0_be82_257_2_1",
+            },
+            {"id": 2, "typ_komponentu": "przekaznik", "id_urzadzenia": 3},
+        ),
+    )
+    assert store.objects[2].sibling_module_mac == 0xBE82
+    assert 2 in [o.id for o in _updated(applied)]
+
+
 def test_states_snapshot_creates_nothing_for_unknown_ids() -> None:
     """Only the catalogues decide which objects exist. The snapshot replays
-    DB rows, ghost rows included - creating from it would later evict an
+    DB rows, unlisted ids included - creating from it would later evict an
     object no consumer was ever told existed."""
     store = _store()
     _apply(
@@ -1023,7 +1071,7 @@ def test_a_buffered_push_loses_to_a_newer_dated_stan_json_seed() -> None:
     assert fresh.objects[93].state == "newer"
 
 
-def test_a_buffered_push_for_a_ghost_id_is_pruned_by_a_complete_catalogue() -> None:
+def test_a_buffered_push_for_an_unlisted_id_is_pruned() -> None:
     """A catalogue that does not list the pushed id proves it will never
     gain a row; the buffered value must not resurface if the id later
     appears (a DB id reassignment, not the same object)."""
@@ -1287,7 +1335,7 @@ def test_symulacja_classifies_but_is_not_bridged() -> None:
 
 
 def _app_row(oid: int, leaf: str, name: str = "Air quality", interp: int = 5) -> dict:
-    """One `data/devices` row: the devicesDetails shape minus params/stan_json."""
+    """One `data/devices` row: the devicesDetails shape minus params/stan_json/url."""
     return {
         "id": oid,
         "id_urzadzenia": 20,
@@ -1343,28 +1391,68 @@ def test_params_table_after_catalogue_updates_objects_and_notifies() -> None:
     assert 999 not in store.objects
 
 
-def test_details_row_czas_lands_as_pulse_ms() -> None:
+def test_details_row_czas_lands_raw_and_pulse_ms_reads_it_by_type() -> None:
     store = _store()
-    _apply(store, DETAILS_TOPIC, details({"id": 41, "czas": 500}))
+    _apply(
+        store,
+        DETAILS_TOPIC,
+        details(
+            {"id": 41, "typ_komponentu": "przekaznik", "czas": 500},
+            {"id": 42, "typ_komponentu": "roleta_procenty", "czas": 500},
+        ),
+    )
+    assert store.objects[41].czas == 500
     assert store.objects[41].pulse_ms == 5000
+    assert store.objects[42].czas == 500
+    assert store.objects[42].pulse_ms == 0
 
 
-def test_params_table_supplies_pulse_ms_when_catalogue_lacks_the_column() -> None:
+def test_params_table_supplies_czas_when_catalogue_lacks_the_column() -> None:
     store = _store()
     _apply(store, PARAMS_DEVICES_TOPIC, devices({"id": 24, "params": 1, "czas": 500}))
     _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1")))
-    assert store.objects[24].pulse_ms == 5000
+    assert store.objects[24].czas == 500
 
 
-def test_params_table_after_catalogue_updates_pulse_ms_and_notifies() -> None:
+def test_params_table_after_catalogue_updates_czas_and_notifies() -> None:
     store = _store()
     _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1")))
-    assert store.objects[24].pulse_ms == 0
+    assert store.objects[24].czas == 0
 
     applied = _apply(
         store, PARAMS_DEVICES_TOPIC, devices({"id": 24, "params": 1, "czas": 500})
     )
-    assert store.objects[24].pulse_ms == 5000
+    assert store.objects[24].czas == 500
+    assert _updated(applied) == [store.objects[24]]
+
+
+def test_details_row_url_and_format_land_on_the_object() -> None:
+    store = _store()
+    _apply(
+        store,
+        DETAILS_TOPIC,
+        details({"id": 128, "typ_komponentu": "bit32", "url": "", "format": "%.3f A"}),
+    )
+    assert store.objects[128].url == ""
+    assert store.objects[128].format == "%.3f A"
+
+
+def test_params_table_supplies_url_when_catalogue_lacks_the_column() -> None:
+    store = _store()
+    _apply(store, PARAMS_DEVICES_TOPIC, devices({"id": 24, "params": 1, "url": "IAQ"}))
+    _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1")))
+    assert store.objects[24].url == "IAQ"
+
+
+def test_params_table_after_catalogue_updates_url_and_notifies() -> None:
+    store = _store()
+    _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1")))
+    assert store.objects[24].url == ""
+
+    applied = _apply(
+        store, PARAMS_DEVICES_TOPIC, devices({"id": 24, "params": 1, "url": "IAQ"})
+    )
+    assert store.objects[24].url == "IAQ"
     assert _updated(applied) == [store.objects[24]]
 
 
@@ -1835,6 +1923,34 @@ def test_o_channel_of_a_relay_module_is_bridged_too() -> None:
     obj = store.objects[91]
     assert obj.state == "1" and obj.raw_owned is True
     assert _updated(applied) == [obj]
+
+
+_INOC_MODULE = {"id": 9, "mac": 0x1A2B, "typ_urzadzenia": 14, "nazwa_urzadzenia": "oc"}
+
+
+def test_a_channel_routes_to_an_open_collector_relay() -> None:
+    """A przekaznik on leaf class 67 reports on the `a` prefix, not `o`."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_INOC_MODULE))
+    _apply(store, DETAILS_TOPIC, details(_przekaznik_row(93, 8, 9, "0_1a2b_67_0_7")))
+
+    ignored = _apply(store, "ampio/from/1A2B/state/o/8", "1")
+    assert _updated(ignored) == []
+
+    applied = _apply(store, "ampio/from/1A2B/state/a/8", "255")
+    obj = store.objects[93]
+    assert obj.state == "255" and obj.is_on is True and obj.raw_owned is True
+    assert _updated(applied) == [obj]
+
+
+def test_a_channel_does_not_route_a_binary_output_relay() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_RELAY_MODULE))
+    _apply(store, DETAILS_TOPIC, details(_przekaznik_row(91, 1, 8, "0_b0b0_257_2_0")))
+
+    applied = _apply(store, "ampio/from/B0B0/state/a/1", "255")
+    assert _updated(applied) == []
+    assert store.objects[91].raw_owned is False
 
 
 def test_panel_output_per_object_echo_is_dropped_once_raw_owned() -> None:

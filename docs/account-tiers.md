@@ -31,13 +31,15 @@ example is `modules`/`mserv`, which the standard tier never receives.
 | Scenes (`fetch_scenes`, scene commands)                                                      | yes           | yes                                   |
 | `resources` / `icons` tables (`data` surface)                                                | yes           | yes                                   |
 | `logging` config table (`data` surface)                                                      | yes           | yes (the table is not grant-filtered) |
-| md5 change-detection tree                                                                    | yes           | yes                                   |
+| md5 change-detection tree (the admin client watches `devices` and `params_devices`)          | yes           | yes                                   |
 | Commands                                                                                     | all objects   | granted objects                       |
 | Designer per-output record (the `device_api` tree, `resolve_records()`, `fetch_locations()`) | yes           | no                                    |
+| Sibling module mac (`sibling_module_mac`)                                                    | yes           | yes, bounded by the grant             |
 | **Module list** (`modules`, `mserv`)                                                         | yes           | **no**                                |
 | **Raw channel tree** (`ampio/from/#`)                                                        | yes           | **no**                                |
 | **Module diagnostics** (voltage, temperature)                                                | yes           | **no**                                |
 | **CAN write tree** (`ampio/to/#`)                                                            | yes           | **no**                                |
+| **Panel buzzer** (`buzz`, `buzz_pattern`, `buzz_stop`)                                       | yes           | **no**                                |
 
 The SUBACK enforces the raw-tree denial. A standard account's subscription to
 the `ampio/from/...` filters comes back with reason code 128, even over MQTT
@@ -49,9 +51,11 @@ enforcement, not to convention.
 Two of the gaps are narrower than the table suggests. The `data/devices` rows
 carry `id_urzadzenia`, so a standard account still learns the module ids that
 own its granted objects. That is enough to group entities by physical module,
-but without names, macs, or models. And the M-SERV's own identity needs no
-module list at all. Both tiers receive `server_info` fully, so a consumer can
-anchor its hub device on `AmpioServerInfo.mac` instead of `mserv`.
+but without names, macs, or models. `AmpioObject.sibling_module_mac` turns that
+id into the module's override mac whenever one leafed object on the same module
+is in the grant. And the M-SERV's own identity needs no module list at all. Both
+tiers receive `server_info` fully, so a consumer can anchor its hub device on
+`AmpioServerInfo.mac` instead of `mserv`.
 
 Grants bound reads and object writes alike. The M-SERV drops a command for an
 object outside a standard account's grant, with no effect and no reply. No state
@@ -139,9 +143,9 @@ Prefer an administrator account when the install needs:
   with a temperature sensor their temperature, as `AmpioModule.supply_voltage` /
   `temperature`. This is useful to find a sagging bus or a hot module before it
   misbehaves.
-- **Panel outputs and the CAN vocabulary** - the raw write frame for panel
-  status LEDs, and the device classes `/api` cannot express (CCT, DALI, display
-  text). See [`protocol.md`](protocol.md) and
+- **Panel outputs, the panel buzzer, and the CAN vocabulary** - the raw write
+  frames for panel status LEDs and the buzzer, and the device classes `/api`
+  cannot express (CCT, DALI, display text). See [`protocol.md`](protocol.md) and
   [`untapped-surfaces.md`](untapped-surfaces.md).
 - **Per-object Designer records** for area assignment - `resolve_records()` and
   `fetch_locations()` answer no other account.
