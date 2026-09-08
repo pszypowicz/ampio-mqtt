@@ -17,6 +17,7 @@ import asyncio
 import gc
 import json
 import logging
+import sys
 import threading
 
 import aiomqtt
@@ -59,7 +60,7 @@ from ampio_mqtt import (
     ObjectAdded,
     ObjectUpdated,
 )
-from ampio_mqtt._connection import _is_auth_error
+from ampio_mqtt._connection import _is_auth_error, _mqtt_client
 from ampio_mqtt.errors import AmpioAuthError
 
 # The retained raw state tree, hardcoded so the QoS split cannot recompute
@@ -715,6 +716,16 @@ async def test_wait_for_initial_discovery_returns_false_on_timeout() -> None:
         assert await client.wait_for_initial_discovery(timeout=0.1) is False
     finally:
         await client.disconnect()
+
+
+# --- session object --------------------------------------------------------
+
+
+async def test_session_object_turns_off_the_pending_calls_warning() -> None:
+    """The real aiomqtt client comes out with its pending-calls warning off,
+    so a burst of concurrent publishes logs nothing."""
+    client = _mqtt_client("h", 1883, "u", None, "id")
+    assert client.pending_calls_threshold == sys.maxsize
 
 
 # --- subscription verdicts -------------------------------------------------

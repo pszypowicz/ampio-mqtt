@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import sys
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
@@ -408,7 +409,7 @@ def _mqtt_client(
     host: str, port: int, username: str, password: str | None, identifier: str
 ) -> aiomqtt.Client:
     """One session object, however the library connects (loop or probe)."""
-    return aiomqtt.Client(
+    client = aiomqtt.Client(
         hostname=host,
         port=port,
         username=username,
@@ -416,6 +417,14 @@ def _mqtt_client(
         identifier=identifier,
         timeout=10,
     )
+    # aiomqtt warns once per publish above this many in-flight QoS 1 calls
+    # (default 10). Every publish here carries its own PUBACK deadline in
+    # `publish()`, so a pile-up surfaces as AmpioTimeoutError and the count
+    # itself warns about nothing. A multi-entity Home Assistant service call
+    # fires one publish per entity at once and would otherwise log a burst
+    # of warnings for a burst that completes.
+    client.pending_calls_threshold = sys.maxsize
+    return client
 
 
 def _is_auth_error(err: BaseException) -> bool:
