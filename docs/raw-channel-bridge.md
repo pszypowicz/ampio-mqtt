@@ -81,9 +81,9 @@ Only the `admin` login subscribes to the tree. The SUBACK enforcement is in
 
 ## Module diagnostics (`b/4F`)
 
-Next to the per-channel `state/` topics, each module periodically broadcasts a
-frame on `ampio/from/<MAC>/b/<type>`, keyed by the CAN frame type. Type `4F` is
-the diagnostics frame:
+Next to the per-channel `state/` topics, a module broadcasts frames on
+`ampio/from/<MAC>/b/<type>`, keyed by the CAN frame type. Type `4F` is the
+diagnostics frame:
 
 ```json
 { "d": [254, 79, 63, 142], "m": 51966 }
@@ -98,16 +98,62 @@ bytes decode as:
 | `d[3]` | Module temperature     | `− 100` → °C, `0` means the module has no sensor |
 
 The values land on `AmpioModule.supply_voltage` and `AmpioModule.temperature`.
-Each live frame also refreshes the module's `last_seen`, so a module with no
-objects of its own still shows liveness. Subscribe to `ModuleUpdated` to know
-when a module updates.
+Each live frame also refreshes the module's `last_seen`. Subscribe to
+`ModuleUpdated` to know when a module updates. Modules without a temperature
+sensor (relays, panels) report voltage only.
 
-The broker retains the last frame of each module, so the fields are present from
-the subscribe replay on every connect. The periodic broadcasts then refresh
+The broker retains the last frame of each sending module, so the fields are
+present from the subscribe replay on every connect. The broadcasts then refresh
 them. A replayed frame updates the values but not `last_seen`, because a replay
 says nothing about whether the module is alive now. The same holds for a
-replayed raw channel value. Modules without a temperature sensor (relays,
-panels) report voltage only.
+replayed raw channel value.
+
+### Which modules send the frame
+
+Not every module sends the frame. The sender set on the baseline install, by
+module type and firmware (`AmpioModule.wersja_softu`):
+
+| Type code | Model     | Firmware | Modules | Sends `b/4F` |
+| --------- | --------- | -------- | ------- | ------------ |
+| 3         | M-ROL-4s  | 10401    | 4       | no           |
+| 4         | M-REL-8s  | 11703    | 6       | yes          |
+| 8         | M-DOT-4   | 11529    | 3       | yes          |
+| 9         | M-DOT-18  | 11529    | 2       | yes          |
+| 10        | M-SERV-s  | 11639    | 1       | no           |
+| 11        | M-DOT-9   | 11529    | 6       | yes          |
+| 12        | M-OC-4s   | 11701    | 2       | yes          |
+| 14        | M-INOC-8s | 11705    | 3       | yes          |
+| 24        | M-REL-2   | 11703    | 2       | yes          |
+| 25        | M-CON-s   | 908      | 1       | no           |
+| 25        | M-CON-s   | 7007     | 1       | yes          |
+| 26        | M-INOC-4p | 11703    | 1       | yes          |
+| 33        | M-DOT-2   | 11529    | 1       | yes          |
+| 44        | M-SENS    | 63       | 6       | no           |
+
+After more than 100 days of broker uptime, the retained store held no frame from
+a module marked "no". Those modules sent none in that time. They are alive on
+other topics: an M-SENS pushes a sensor value every few seconds, and the M-SERV
+and the older M-CON-s push bus frames. The two M-CON-s modules differ in
+firmware alone, and only the newer one sends the frame.
+
+A module that sends no frame keeps `supply_voltage` and `temperature` at None.
+Its `last_seen` moves on object traffic alone: a state push or a raw edge for
+one of its objects. After a connect, an empty `last_seen` is expected on a
+roller module until one of its covers moves. On the M-SERV it stays empty until
+one of its own objects pushes. A diagnostics reader must not take that empty
+value as a dead module. A module that sends the frame shows liveness through it
+even with no objects of its own.
+
+### Timing
+
+A sending module puts a frame on the topic on a 10 s grid. The frame appears
+only when the voltage byte or the temperature byte differs from the previous
+frame. A 30-minute capture on the baseline install holds 2082 live frames. No
+module repeated a payload, and every gap was a multiple of 10 s. A module with a
+steady reading stays silent between changes. The longest gap per module ranged
+from 50 s to 410 s. The first frame after a connect came between 1 s and 183 s.
+`last_seen` on a sending module with no object traffic can therefore lag by
+minutes.
 
 ## What the library does not bridge
 

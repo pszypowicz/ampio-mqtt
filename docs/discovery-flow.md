@@ -188,4 +188,8 @@ touches only `last_message_at`.
 The `modules` list holds one row per known module, sorted by id. Each row
 carries the module's `id`, `mac`, `typ_urzadzenia`, `model`, `last_seen`,
 `supply_voltage`, and `temperature`. A bug report about a quiet module reads its
-`last_seen` from this list. The user-given module name stays out of the row.
+`last_seen` from this list. The user-given module name stays out of the row. A
+module that sends no `b/4F` frame keeps `last_seen`, `supply_voltage`, and
+`temperature` empty after a connect. Its `last_seen` moves on the first push
+from one of its objects. The modules that send the frame are listed in
+[`raw-channel-bridge.md`](raw-channel-bridge.md).
