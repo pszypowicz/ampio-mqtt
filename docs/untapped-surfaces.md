@@ -20,7 +20,7 @@ updates through the per-object topic. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/26).
 
 **CAN write tree device classes.** The raw write frames for binary outputs and
-the panel buzzer are documented in [`protocol.md`](protocol.md) ("Panel
+the panel buzzer are documented in [`panel-writes.md`](panel-writes.md) ("Panel
 outputs", "Panel buzzer"). The CCT, DALI, blind-calibration, panel LCD page, and
 alarm writes on the same `ampio/to` tree remain unexplored. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/60).

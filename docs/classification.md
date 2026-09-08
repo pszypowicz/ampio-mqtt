@@ -26,21 +26,21 @@ classifies, as the generic value sensor or the `analog_<n>` fallback.
 - `reg` state is the running flag. The rich climate readback (measured and
   target temperature, mode, cooling) is `AmpioObject.thermostat`.
 - `detekcja` and `symulacja` are system objects (`is_system`, see
-  [`identity.md`](identity.md)). `symulacja` has no bridged raw prefix.
+  [`visibility.md`](visibility.md)). `symulacja` has no bridged raw prefix.
 - `wej` is the per-channel physical-input object the Designer creates for a
   wired button. Its per-object payload is 255 pressed / 0 released. Its
   `interpretacja` mirrors `funkcja` (the channel number), so it refines nothing.
-  It is read-only, so `switchable` is False (see [`protocol.md`](protocol.md)).
+  It is read-only, so `switchable` is False (see [`commands.md`](commands.md)).
 - `flaga` is the one input that answers the switch verbs, so `switchable` is
   True. A consumer can model a writable flag as a switch. See
-  [`protocol.md`](protocol.md).
+  [`commands.md`](commands.md).
 - `roleta_lamelki` is what the Ampio app writes when a cover's type is set to
   "blinds - slats". The same cover reads back as `roleta_procenty` while it is
   set to "blinds - percentage". Only the slats variant reports a `lammel` angle
   in its state payload, exposed as `AmpioObject.lammel`.
 - `rgbw` is the one output that ignores the `turnOn`/`turnOff`/`switch` family.
   The replay pattern Ampio's own consumers use for on/off is in
-  [`protocol.md`](protocol.md).
+  [`commands.md`](commands.md).
 - `bit8`, `bit16`, `sbit16`, and `bit32` are the integer sensor slots an
   M-CON-485 lands a Modbus reading in. Designer names them `bit 8`, `bit 16`,
   `sbit 16[+/-]`, and `bit 32`. All four classify into the open
@@ -146,7 +146,7 @@ mislabels temperature as humidity.
 ## Why classification is split from visibility
 
 Classification answers "what kind of thing is this row". Visibility (see
-[`identity.md`](identity.md)) answers "surface it or not". They compose:
+[`visibility.md`](visibility.md)) answers "surface it or not". They compose:
 
 ```python
 should_surface = obj.visible          # classify() always yields a kind

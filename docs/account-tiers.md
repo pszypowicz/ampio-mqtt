@@ -63,13 +63,13 @@ for that object reaches the account's namespace. The drop is silent on the wire,
 but the library can observe it. The `confirm=` option on the command methods
 awaits the state echo and times out when none arrives. The timeout is how a
 consumer tells a landed command from a discarded one (see the confirmation note
-in [`protocol.md`](protocol.md)).
+in [`commands.md`](commands.md)).
 
 **Bus events are the exception.** Neither the object grants nor the per-event
 rights in the app limit who can raise an event. The logic bound to an event runs
 with full authority. A dedicated standard account is thus a real boundary for
 direct object control only, and not against anything reachable through Ampio's
-own event logic. The gating detail is in [`protocol.md`](protocol.md).
+own event logic. The gating detail is in [`bus-events.md`](bus-events.md).
 
 ## How the model marks the tiers
 
@@ -118,9 +118,9 @@ path.
 **Write latency is not affected by the tier.** A flag write over `/api` echoes
 in a median 40 ms. The one CAN route that carries a flag frame, `hw/out`, needs
 six frames and echoes in a median 68 ms. See the flag entry in
-[`protocol.md`](protocol.md). The library keeps `/api` for flags on both tiers.
-On writes an admin account gains reach (the panel LEDs and the buzzer) and no
-speed.
+[`designer-surfaces.md`](designer-surfaces.md). The library keeps `/api` for
+flags on both tiers. On writes an admin account gains reach (the panel LEDs and
+the buzzer) and no speed.
 
 ## Choosing a tier
 
@@ -145,7 +145,8 @@ Prefer an administrator account when the install needs:
   misbehaves.
 - **Panel outputs, the panel buzzer, and the CAN vocabulary** - the raw write
   frames for panel status LEDs and the buzzer. Also the device classes `/api`
-  cannot express (CCT, DALI, display text). See [`protocol.md`](protocol.md) and
+  cannot express (CCT, DALI, display text). See
+  [`panel-writes.md`](panel-writes.md) and
   [`untapped-surfaces.md`](untapped-surfaces.md).
 - **Per-object description records** for area assignment - `resolve_records()`
   and `fetch_locations()` answer no other account.

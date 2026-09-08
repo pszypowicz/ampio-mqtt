@@ -1134,7 +1134,7 @@ class AmpioClient:
         outputs stay on `/api` too - they live in its DB, not on the CAN
         bus. The restricted tier always returns None: the raw write tree
         is admin-only, so `/api` is all that tier has - which a panel
-        output ignores (docs/protocol.md, "Panel outputs").
+        output ignores (docs/panel-writes.md, "Panel outputs").
         """
         if self._tier is not AccessTier.ADMIN:
             return None
@@ -1188,7 +1188,7 @@ class AmpioClient:
         replay pattern in docs/protocol.md). On the admin tier a binary
         output on a CAN module is driven over the raw CAN write topic
         instead - the one write that also reaches a panel's status LEDs,
-        which ignore `/api` on every tier (docs/protocol.md, "Panel
+        which ignore `/api` on every tier (docs/panel-writes.md, "Panel
         outputs"). A flag never takes that path: the raw frame addresses a
         module's output channels, which a flag index does not index.
         ``confirm`` awaits the state echo exactly as :meth:`command`
@@ -1290,7 +1290,7 @@ class AmpioClient:
         Admin tier only (``RuntimeError`` otherwise). ``ValueError`` for
         an unknown module or an argument outside its range, before any
         publish. No readback exists - the panel confirms nothing on the
-        bus - so there is no ``confirm``. docs/protocol.md ("Panel
+        bus - so there is no ``confirm``. docs/panel-writes.md ("Panel
         buzzer") carries the frame and the tone table.
         """
         mac = self._buzzer_mac(module_id)
@@ -1383,7 +1383,7 @@ class AmpioClient:
         pulse of 500 ms is ``pulse_ms=500``. A pulse always rides `/api` -
         the raw write frame has no timed form - so a panel output, which
         ignores `/api`, cannot pulse; ``confirm`` is what surfaces that
-        (docs/protocol.md, "Panel outputs"). Otherwise an admin session's
+        (docs/panel-writes.md, "Panel outputs"). Otherwise an admin session's
         binary outputs ride the raw CAN write topic, exactly as
         :meth:`turn_on` documents. ``confirm`` awaits the state echo as
         :meth:`command` documents - for a pulse that is the set edge, not

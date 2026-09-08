@@ -92,7 +92,7 @@ objects and loses all but one of them.
 
 `leafId` is empty for system objects, and Designer clears it on any object whose
 Matter box is unchecked, so `leaf_key` reads None for both. An empty `leafId`
-says nothing about visibility, which the section below covers.
+says nothing about visibility, which [`visibility.md`](visibility.md) covers.
 
 One further collision exists and is unrelated to the Designer views above. A
 hidden phantom stub can share its labeled twin's `leaf_id` on M-SENS analog
@@ -189,4 +189,4 @@ only. A leaf of class 67 reports on the `a` prefix and takes the write byte
 `0x32`. A leaf of class 257 reports on `o` and takes `0x30`. Any other class
 reports on `o` and writes through `/api`. See
 [`raw-channel-bridge.md`](raw-channel-bridge.md) and
-[`protocol.md`](protocol.md).
+[`panel-writes.md`](panel-writes.md).

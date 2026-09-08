@@ -26,7 +26,7 @@ carries state only for granted objects, including ones it just commanded.
 
 **Designer's read-only checkbox drops writes the same way.** An object with
 `AmpioObject.read_only` set accepts no `/api` write on any tier, admin included.
-The marker and its consumer contract are in [`identity.md`](identity.md).
+The marker and its consumer contract are in [`visibility.md`](visibility.md).
 
 **The state echo is the only confirmation.** The library's `confirm=` option on
 `command()` and the typed wrappers arms a waiter before the publish. The waiter
@@ -46,7 +46,7 @@ own MQTT API note. It has per-channel `cmd` topics and a `raw` hex channel that
 covers CCT, DALI, blind angles, and display text. It is **admin-only** - the
 broker drops a standard account's publishes there. The library uses the `/api`
 surface, which works on both tiers, except for the binary-output writes
-described below.
+described in [`panel-writes.md`](panel-writes.md).
 
 | Verb                               | Args                        | Notes                                                                                                                                                                                                                                                                                                                                        |
 | ---------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -61,7 +61,7 @@ described below.
 | `setRollerPos`                     | `<position>/<lamella>`      | Percent each. `101` omits an axis (see the slat-drag note below), so one command moves either axis alone or both together.                                                                                                                                                                                                                   |
 | `setColor`                         | 24-bit `R \| G<<8 \| B<<16` | Dead on the baseline install: in the spec enum, but it has no effect and no reply on an `rgbw` object. Use `setColors`.                                                                                                                                                                                                                      |
 | `setColorW`                        | `<rgb24>/<white>`           | Dead on the baseline install, exactly as `setColor`. Use `setColors`.                                                                                                                                                                                                                                                                        |
-| `setTemperature`                   | `<°C>`                      | Regulator (`reg`) setpoint, echoed as `setTemperature` in the reg state push (see Live state). Absent from the spec enum (Ampio's MQTT API note only), yet it works.                                                                                                                                                                         |
+| `setTemperature`                   | `<°C>`                      | Regulator (`reg`) setpoint, echoed as `setTemperature` in the reg state push (see Live state in [`protocol.md`](protocol.md)). Absent from the spec enum (Ampio's MQTT API note only), yet it works.                                                                                                                                         |
 | `setHeatingMode`                   | mode letter                 | All four letters in `HEATING_MODES` (`A`, `S`, `M`, `H`) write and echo on the baseline install. Each letter echoes in the state push's `mode` within the confirm window. `ThermostatState.mode` carries the letter verbatim.                                                                                                                |
 | `arm`, `disarm`                    | `<pin>`                     | Flip a `satel_alarm` object's armed state, with a ~1 s echo. The `satel_` types cover alarm integrations generally, a Jablotron behind an M-CON included. Absent from the spec enum, yet it works. The paired "alarmed" object also reads 1 while the panel is in its exit-delay `arming` phase - on its own it is not a siren indicator.    |
 | `setVolume`, `setInput`, `setSeek` | radio module                | In the spec enum. Untestable here - no radio module.                                                                                                                                                                                                                                                                                         |

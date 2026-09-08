@@ -37,7 +37,7 @@ leafless object is a real object without leaf-derived facts. `leaf_key`,
 `is_server_owned` reads False. `sibling_module_mac` names its module when a
 leafed sibling is in the catalogue. `AmpioClient.module_for()` resolves the
 module row on the admin tier, and the record join falls back to `funkcja` (see
-the join rule below).
+the join rule in [`description-records.md`](description-records.md)).
 
 `is_system` (`typ_komponentu in {symulacja, detekcja}`) names the
 presence-simulation and detection objects. They live outside the room tree, and

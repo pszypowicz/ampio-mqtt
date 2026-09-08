@@ -34,8 +34,8 @@ descTypes 12, 13, 16, 17 for outputs, 6 for flags, and 21 for IR. It indexes
 descTypes 11, 13, 15, 17 from 256. On the baseline install the surface is
 **dead**: no reply and nothing retained, for either mac case, an empty payload,
 and a wildcard reply subscription. Read names through the `device_api` record
-instead (see [`identity.md`](identity.md)). The palette's contract is recorded
-here for older bridge firmware only.
+instead (see [`description-records.md`](description-records.md)). The palette's
+contract is recorded here for older bridge firmware only.
 
 ## The Designer's own surfaces
 
@@ -59,7 +59,7 @@ OpenAPI spec. It works on:
 - Config reads and saves: `ampio/control/admin/config/...`, with replies on
   `ampio/fromDB/admin/config/#`. This includes the `save/leaves` table that maps
   every output leaf to command function 48 = `0x30` - the frame documented under
-  Panel outputs.
+  Panel outputs in [`panel-writes.md`](panel-writes.md).
 - The `device_api` tree: `get_data`, `name_wr`, `descriptions_wr`,
   `firmware_wr`, `mac_user_wr`, `ow_search`, plus the broadcast helpers (`list`,
   `discover`, `version`, `alive`, `devices_log`).
@@ -80,10 +80,11 @@ OpenAPI spec. It works on:
   parts 0 to 5 of `[0x16, part, b, b]`. The parts reassemble to a header, a
   32-bit flag mask, and one value byte (`FF` on, `00` off). The mask bit is the
   0-based flag index, one below the 1-based raw `f` channel, the same rule
-  outputs follow (see Panel outputs). A verbatim replay of those frames drives
-  the flag, but only through `hw/out`, because `ampio/to/<machex>/raw` and
-  `rawf` drop function `0x16` while they accept `0x30`. The replay is also
-  slower than `/api`, with six publishes against one and a median state echo of
-  68 ms against 40 ms. The library therefore keeps `/api` for flags.
+  outputs follow (see Panel outputs in [`panel-writes.md`](panel-writes.md)). A
+  verbatim replay of those frames drives the flag, but only through `hw/out`,
+  because `ampio/to/<machex>/raw` and `rawf` drop function `0x16` while they
+  accept `0x30`. The replay is also slower than `/api`, with six publishes
+  against one and a median state echo of 68 ms against 40 ms. The library
+  therefore keeps `/api` for flags.
 - Raw feeds: `fc` / `fcocb`, `ampio/from/+/raw`, and the same `ampio/from` state
   tree this library consumes.

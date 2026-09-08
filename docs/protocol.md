@@ -40,9 +40,9 @@ for every account.
 
 | Keyword          | Control surface               | Response topic                              | Shape                                                                                                                                                                                                                                                                                                                                                             |
 | ---------------- | ----------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `devicesDetails` | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devicesDetails` | `{Status, List: [{id, id_urzadzenia, typ_komponentu, interpretacja, funkcja, leafId, opis_menu, type, stan_json, ...}]}` - `type` is the Matter device type tag (see [`identity.md`](identity.md)).                                                                                                                                                               |
+| `devicesDetails` | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devicesDetails` | `{Status, List: [{id, id_urzadzenia, typ_komponentu, interpretacja, funkcja, leafId, opis_menu, type, stan_json, ...}]}` - `type` is the Matter device type tag (see [`description-records.md`](description-records.md)).                                                                                                                                         |
 | `devices`        | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devices`        | `{List: [{id, mac, mac_global, typ_urzadzenia, nazwa_urzadzenia, wersja_softu, wersja_pcb, ...}]}`                                                                                                                                                                                                                                                                |
-| `locations`      | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/locations`      | `{List: [{id, opis_menu, opis_rozwiniety}]}` - Designer's "Lokalizacja" name table. The per-output pointer that resolves through it rides the `device_api` tree below (see [`identity.md`](identity.md)).                                                                                                                                                         |
+| `locations`      | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/locations`      | `{List: [{id, opis_menu, opis_rozwiniety}]}` - Designer's "Lokalizacja" name table. The per-output pointer that resolves through it rides the `device_api` tree below (see [`description-records.md`](description-records.md)).                                                                                                                                   |
 | `devices`        | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/devices`          | `{List: [...]}` - app-sync object catalogue: the `devicesDetails` row shape minus `params`, `stan_json`, and `url`, filtered to the account's app grants.                                                                                                                                                                                                         |
 | `params_devices` | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/params_devices`   | `{List: [{id, params, param1, czas, powiazane, url}]}` - per-object `params` bitfields for the **full** catalogue (not grant-filtered).                                                                                                                                                                                                                           |
 | `groups`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/groups`           | `{List: [{id, id_rodzica, opis_menu}]}` - room tree.                                                                                                                                                                                                                                                                                                              |
@@ -61,9 +61,10 @@ every module's description record at once. The reply lands on
 (base64), and `descriptions`. The last is base64 of the per-output entries
 behind both the Matter device type tag and the Designer "Lokalizacja" location
 pointer. The frame layout, the descType enum, and the join rule that resolves an
-object to its entry are in [`identity.md`](identity.md). The tree is admin-only,
-exactly like the raw tree. `AmpioClient.resolve_records()` drives this pair. A
-consumer calls that method and never publishes on the pair itself.
+object to its entry are in [`description-records.md`](description-records.md).
+The tree is admin-only, exactly like the raw tree.
+`AmpioClient.resolve_records()` drives this pair. A consumer calls that method
+and never publishes on the pair itself.
 
 The per-module pair serves the same record for one module.
 `device_api/to/<machex>/get_data` (empty payload) answers on
@@ -98,5 +99,7 @@ re-request rule are in [`discovery-flow.md`](discovery-flow.md).
 ## Where the method map lives
 
 Which `AmpioClient` method drives which surface is API documentation, and it
-lives on the client docstrings. [`discovery-flow.md`](discovery-flow.md) maps
-the automatic bring-up sequence against the on-demand fetches.
+lives on the client docstrings. The verb table in [`commands.md`](commands.md)
+names the method behind each `/api` verb.
+[`discovery-flow.md`](discovery-flow.md) maps the automatic bring-up sequence
+against the on-demand fetches.
