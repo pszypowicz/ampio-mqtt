@@ -70,11 +70,13 @@ OpenAPI spec. It works on:
   `devices_status` notifications.
 - Raw CAN writes: `ampio/to/<machex>/raw` and `rawf`, hex-encoded frames. The
   live-control vocabulary: the generic output write
-  `[0x30, 0xF9, value, channel]` and DALI set `[57, 0xF9, ch, val]`.
-  MLED-capable panels add an MLED family `[54, 0xDF, 1|2|3, ...]`, and flash
-  config transfer is `[dst, 0xFB|0xFC, blockLo, blockHi, ...]`. The Designer
-  also sends raw CAN frames to `hw/out` (first byte the send-with-id opcode,
-  then `0x80|len`, a 32-bit CAN id, and the data).
+  `[0x30, 0xF9, value, channel]`, DALI set `[57, 0xF9, ch, val]`, and the module
+  identify pair `[0x7E, 1|0]` behind the Devices tab's "Identify device" button
+  (Module identify in [`panel-writes.md`](panel-writes.md)). MLED-capable panels
+  add an MLED family `[54, 0xDF, 1|2|3, ...]`, and flash config transfer is
+  `[dst, 0xFB|0xFC, blockLo, blockHi, ...]`. The Designer also sends raw CAN
+  frames to `hw/out` (first byte the send-with-id opcode, then `0x80|len`, a
+  32-bit CAN id, and the data).
 - Flag writes carry their own function, `0x16`. An `/api` flag write makes the
   M-SERV emit six `hw/out` frames to the module that owns the flag. They are
   parts 0 to 5 of `[0x16, part, b, b]`. The parts reassemble to a header, a

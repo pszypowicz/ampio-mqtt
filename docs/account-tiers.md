@@ -40,6 +40,7 @@ example is `modules`/`mserv`, which the standard tier never receives.
 | **Module diagnostics** (voltage, temperature)                                                | yes           | **no**                                                   |
 | **CAN write tree** (`ampio/to/#`)                                                            | yes           | **no**                                                   |
 | **Panel buzzer** (`buzz`, `buzz_pattern`, `buzz_stop`)                                       | yes           | **no**                                                   |
+| **Module identify** (`identify`, `identify_stop`)                                            | yes           | **no**                                                   |
 
 The SUBACK enforces the raw-tree denial. A standard account's subscription to
 the `ampio/from/...` filters comes back with reason code 128. This holds even
@@ -144,9 +145,9 @@ Prefer an administrator account when the install needs:
   `temperature`. This is useful to find a sagging bus or a hot module before it
   misbehaves. The modules that send the frame are listed in
   [`raw-channel-bridge.md`](raw-channel-bridge.md).
-- **Panel outputs, the panel buzzer, and the CAN vocabulary** - the raw write
-  frames for panel status LEDs and the buzzer. Also the device classes `/api`
-  cannot express (CCT, DALI, display text). See
+- **Panel outputs, the panel buzzer, module identify, and the CAN vocabulary** -
+  the raw write frames for panel status LEDs, the buzzer, and the identify LED.
+  Also the device classes `/api` cannot express (CCT, DALI, display text). See
   [`panel-writes.md`](panel-writes.md) and
   [`untapped-surfaces.md`](untapped-surfaces.md).
 - **Per-object description records** for area assignment - `resolve_records()`

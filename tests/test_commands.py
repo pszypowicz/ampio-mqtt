@@ -923,3 +923,51 @@ async def test_buzz_needs_the_admin_tier(
     with pytest.raises(RuntimeError):
         await client.buzz(7)
     assert broker.published == []
+
+
+# --- module identify (the raw CAN write path) ------------------------------
+
+
+async def test_identify_sends_the_start_frame() -> None:
+    """The Designer's identify start, `[0x7E, 1]`, on the module's raw topic."""
+    client, broker = await _admin_with_panel_module()
+    try:
+        await client.identify(7)
+        assert broker.published == [(PANEL_RAW_TOPIC, b"7e01")]
+        assert broker.published_qos == [1]
+    finally:
+        await client.disconnect()
+
+
+async def test_identify_stop_sends_the_stop_frame() -> None:
+    """`[0x7E, 0]` ends identify; the library never schedules it by itself."""
+    client, broker = await _admin_with_panel_module()
+    try:
+        await client.identify_stop(7)
+        assert broker.published == [(PANEL_RAW_TOPIC, b"7e00")]
+    finally:
+        await client.disconnect()
+
+
+async def test_identify_rejects_an_unknown_module_without_a_publish() -> None:
+    client, broker = await _admin_with_panel_module()
+    try:
+        with pytest.raises(ValueError):
+            await client.identify(8)
+        with pytest.raises(ValueError):
+            await client.identify_stop(8)
+        assert broker.published == []
+    finally:
+        await client.disconnect()
+
+
+async def test_identify_needs_the_admin_tier(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """The CAN write tree answers the admin login only."""
+    client, broker = connected
+    with pytest.raises(RuntimeError):
+        await client.identify(7)
+    with pytest.raises(RuntimeError):
+        await client.identify_stop(7)
+    assert broker.published == []

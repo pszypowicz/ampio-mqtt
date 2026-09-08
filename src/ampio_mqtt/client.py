@@ -27,6 +27,8 @@ from ._protocol import (
     RAW_BUZZER_SILENCE,
     RAW_DIAGNOSTICS_WILDCARD,
     RAW_EVENT_WILDCARD,
+    RAW_IDENTIFY_OFF,
+    RAW_IDENTIFY_ON,
     RAW_INPUT_WILDCARDS,
     RAW_OUTPUT_FUNCTION_BY_SF,
     RAW_OUTPUT_WILDCARD,
@@ -1247,18 +1249,19 @@ class AmpioClient:
             )
         return await self.command(object_id, "switch", confirm=confirm)
 
-    # --- panel buzzer (the raw CAN write path) ---------------------------
+    # --- module writes (the raw CAN write path) --------------------------
 
-    def _buzzer_mac(self, module_id: int) -> int:
-        """The bus address the buzzer frames go to.
+    def _raw_write_mac(self, module_id: int) -> int:
+        """The bus address a raw frame addressed to one module goes to.
 
         Admin tier only, like the rest of the CAN write tree. Dumb routing
         by module, as the raw output frame is by leaf: any catalogued
-        module is a valid address, and M-DOT panels are the proven ones.
+        module is a valid address. The buzzer frames are proven on M-DOT
+        panels, the identify frames on panels and DIN-rail modules.
         """
         if self._tier is not AccessTier.ADMIN:
             raise RuntimeError(
-                "the buzzer frames ride the CAN write tree, which answers "
+                "raw module writes ride the CAN write tree, which answers "
                 "the reserved admin login only"
             )
         module = self._store.modules.get(module_id)
@@ -1293,7 +1296,7 @@ class AmpioClient:
         bus - so there is no ``confirm``. docs/panel-writes.md ("Panel
         buzzer") carries the frame and the tone table.
         """
-        mac = self._buzzer_mac(module_id)
+        mac = self._raw_write_mac(module_id)
         ticks = self._buzz_ticks("seconds", seconds, 2.55)
         if ticks == 0:
             raise ValueError(
@@ -1324,7 +1327,7 @@ class AmpioClient:
         0-31, cycles 0-254. The same rules as :meth:`buzz` apply to the
         tier, the errors, and the missing readback.
         """
-        mac = self._buzzer_mac(module_id)
+        mac = self._raw_write_mac(module_id)
         _check_range("tone", tone, 0, 31)
         _check_range("tone2", tone2, 0, 31)
         _check_range("cycles", cycles, 0, 254)
@@ -1346,9 +1349,35 @@ class AmpioClient:
         beep. The same rules as :meth:`buzz` apply to the tier and the
         errors.
         """
-        topic = raw_write_topic(self._buzzer_mac(module_id))
+        topic = raw_write_topic(self._raw_write_mac(module_id))
         await self._connection.publish(topic, RAW_BUZZER_SILENCE.encode())
         await self._connection.publish(topic, RAW_BUZZER_OFF.encode())
+
+    async def identify(self, module_id: int) -> None:
+        """Light a module's CAN LED steadily so it can be found by eye.
+
+        The Designer's "Identify device" button. ``module_id`` is
+        :pyattr:`AmpioModule.id`. A DIN-rail module lights its CAN LED
+        steadily (red on the M-ROL-4s); a M-DOT panel lights the LED on
+        its back and shows nothing on the front. The LED stays on until
+        :meth:`identify_stop`. The library schedules no stop by itself;
+        the Designer's 30 s auto-stop is its own timer.
+
+        Admin tier only (``RuntimeError`` otherwise). ``ValueError`` for
+        an unknown module, before any publish. No readback exists - the
+        module confirms nothing on the bus - so there is no ``confirm``.
+        docs/panel-writes.md ("Module identify") carries the frame.
+        """
+        topic = raw_write_topic(self._raw_write_mac(module_id))
+        await self._connection.publish(topic, RAW_IDENTIFY_ON.encode())
+
+    async def identify_stop(self, module_id: int) -> None:
+        """Return a module's CAN LED to its normal blink after :meth:`identify`.
+
+        The same rules as :meth:`identify` apply to the tier and the errors.
+        """
+        topic = raw_write_topic(self._raw_write_mac(module_id))
+        await self._connection.publish(topic, RAW_IDENTIFY_OFF.encode())
 
     def _output_kind(self, object_id: int) -> OutputKind | None:
         """The object's kind when it is a known output, else None."""

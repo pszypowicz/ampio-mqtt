@@ -17,6 +17,8 @@ from ampio_mqtt._protocol import (
     ENDPOINTS,
     RAW_BUZZER_OFF,
     RAW_BUZZER_SILENCE,
+    RAW_IDENTIFY_OFF,
+    RAW_IDENTIFY_ON,
     RAW_OUTPUT_FUNCTION_BY_SF,
     REDACTED,
     CatalogueDigest,
@@ -748,3 +750,9 @@ def test_raw_buzzer_pattern_payload_encodes_the_sequence_action() -> None:
 def test_raw_buzzer_stop_frames() -> None:
     assert RAW_BUZZER_SILENCE == "0c070371010000000001000000000001"
     assert RAW_BUZZER_OFF == "0c070370000600"
+
+
+def test_raw_identify_frames_are_the_designer_pair() -> None:
+    """`[0x7E, flag]` as ASCII hex: 1 starts identify, 0 stops it."""
+    assert RAW_IDENTIFY_ON == "7e01"
+    assert RAW_IDENTIFY_OFF == "7e00"
