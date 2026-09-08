@@ -1160,7 +1160,7 @@ class AmpioClient:
         """Drive an output over the raw CAN write topic.
 
         The one write that reaches a panel's status LEDs, and equivalent
-        to the `/api` switch verbs on relay outputs (docs/protocol.md,
+        to the `/api` switch verbs on relay outputs (docs/panel-writes.md,
         "Panel outputs"); admin-only, like the raw tree it echoes on.
         """
         mac, channel, function = address
