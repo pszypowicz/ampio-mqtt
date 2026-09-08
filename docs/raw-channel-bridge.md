@@ -86,8 +86,12 @@ Only the `admin` login subscribes to the tree. The SUBACK enforcement is in
 ## Module diagnostics (`b/4F`)
 
 Next to the per-channel `state/` topics, a module broadcasts frames on
-`ampio/from/<MAC>/b/<type>`, keyed by the CAN frame type. Type `4F` is the
-diagnostics frame:
+`ampio/from/<MAC>/b/<type>`, keyed by the CAN frame type. Every frame on that
+topic starts with the broadcast byte `0xFE`. A frame with another first byte
+lands on `ampio/from/<MAC>/raw` as ASCII hex instead, at QoS 1 and not retained.
+The library does not subscribe to that leaf (see
+[`untapped-surfaces.md`](untapped-surfaces.md)). Type `4F` is the diagnostics
+frame:
 
 ```json
 { "d": [254, 79, 63, 142], "m": 51966 }

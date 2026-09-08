@@ -26,6 +26,16 @@ identify"). The CCT, DALI, blind-calibration, panel LCD page, and alarm writes
 on the same `ampio/to` tree remain unexplored. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/60).
 
+**`ampio/from/<MAC>/raw` leaf.** The M-SERV mirrors a CAN frame whose first byte
+is not the broadcast byte `0xFE` onto this leaf as ASCII hex, at QoS 1 and not
+retained. On the baseline install, two modules emit one. The M-SERV sends a
+three-byte frame every 5 s, of the family that Designer names `mqtt`. The
+M-CON-s on firmware 908 sends one every 10 s. Designer feeds the leaf to its CAN
+packet monitor and decodes only a module's IPv4 report and MLED events. The
+library does not subscribe. A subscription would add about 0.3 messages per
+second and would give `last_seen` to the M-SERV row and to that one module.
+Probe notes: [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/188).
+
 Picking one up takes three steps.
 
 1. Find the topic. The M-SERV serves the Designer at its own root. That bundle

@@ -89,4 +89,8 @@ OpenAPI spec. It works on:
   against one and a median state echo of 68 ms against 40 ms. The library
   therefore keeps `/api` for flags.
 - Raw feeds: `fc` / `fcocb`, `ampio/from/+/raw`, and the same `ampio/from` state
-  tree this library consumes.
+  tree this library consumes. The `raw` leaf feeds the Designer CAN packet
+  monitor. Designer decodes two of its frames: the family-9 subtype-1 frame that
+  carries a module's IPv4 address, and the MLED events (family 54, second byte
+  `0xDF`). The leaf itself is described in
+  [`raw-channel-bridge.md`](raw-channel-bridge.md).
