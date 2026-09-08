@@ -24,6 +24,7 @@ import asyncio
 import contextlib
 import os
 import time
+import uuid
 from collections.abc import Callable
 
 import aiomqtt
@@ -84,6 +85,11 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def client_id() -> str:
+    """A client id unique per run, so two captures at once do not kick each other."""
+    return f"ampio_mqtt_dump_{uuid.uuid4().hex[:8]}"
+
+
 async def run(
     a: argparse.Namespace,
     client_factory: Callable[[], aiomqtt.Client] | None = None,
@@ -95,7 +101,7 @@ async def run(
             port=a.port,
             username=a.username,
             password=a.password,
-            identifier="ampio_mqtt_dump",
+            identifier=client_id(),
             timeout=10,
         )
     )

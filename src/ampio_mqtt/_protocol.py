@@ -1055,6 +1055,16 @@ RAW_BUZZER_SILENCE = raw_buzzer_pattern_payload(0, 1, 0, 0, 1, 0)
 RAW_BUZZER_OFF = raw_buzzer_payload(False, 6, 0)
 
 
+# Module identify, the Designer's "Identify device" button: `[0x7E, flag]`
+# addressed to the module. 1 lights the module's CAN LED steadily (a M-DOT
+# lights the LED on its back), 0 returns it to its blink. The module holds
+# identify until the stop frame; the Designer's 30 s auto-stop is its own
+# timer. No echo follows on any topic. docs/panel-writes.md ("Module
+# identify") carries the wire facts.
+RAW_IDENTIFY_ON = "7e01"
+RAW_IDENTIFY_OFF = "7e00"
+
+
 def request_topic(ep: Endpoint, user: str) -> str:
     """Control topic an endpoint's request keyword is published to."""
     return f"ampio/control/{user}/{ep.req_surface}"

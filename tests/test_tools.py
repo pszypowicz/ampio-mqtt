@@ -61,6 +61,13 @@ def _discovery(*rows: dict) -> list[Message]:
 # --- dump.py ----------------------------------------------------------------
 
 
+def test_dump_client_ids_differ_per_run() -> None:
+    """Two captures at once must not share a client id: the broker kicks one."""
+    first, second = dump.client_id(), dump.client_id()
+    assert first != second
+    assert first.startswith("ampio_mqtt_dump")
+
+
 async def test_dump_subscribes_before_it_publishes_the_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

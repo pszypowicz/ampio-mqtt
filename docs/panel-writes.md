@@ -1,7 +1,8 @@
 # Panel writes
 
 This page continues [`protocol.md`](protocol.md) with the raw CAN output frame
-for panel status LEDs, relays, and open-collector outputs, and the panel buzzer.
+for panel status LEDs, relays, and open-collector outputs, the panel buzzer, and
+the module identify LED.
 
 ## Panel outputs
 
@@ -96,3 +97,30 @@ tier, addressed by `AmpioModule.id`. Any catalogued module is a valid address,
 and the M-DOT panels are the proven targets. The touch-press beep length and its
 per-field mask live in the panel's flash parameters, a Designer write the
 library does not make.
+
+## Module identify
+
+The Designer's Devices tab has an "Identify device" button in the Location
+column. It sends a two-byte frame to the module, and the module lights its CAN
+LED steadily until the stop frame:
+
+```
+ampio/to/<machex>/raw   7e01     start
+ampio/to/<machex>/raw   7e00     stop
+```
+
+The first byte is the identify function `0x7E`. The second byte is the flag. The
+module holds identify until the stop frame. The Designer sends its own stop 30 s
+after the start. That timer is client-side, and the library has none, so a
+consumer sends `identify_stop()` itself. A hold longer than about a minute is
+unverified.
+
+What lights up depends on the module family. A DIN-rail module lights its CAN
+LED steadily (red on the M-ROL-4s) and returns to its blink on the stop frame. A
+M-DOT-9 panel lights the LED on its back and shows nothing on the front. Its
+backlight does not cycle, and the Designer's own button behaves the same, so a
+wall-mounted panel gives no visible sign of identify.
+
+No readback exists. The module confirms nothing on any topic, so `identify()`
+and `identify_stop()` take no `confirm=`. Both publish on the admin tier,
+addressed by `AmpioModule.id`, and any catalogued module is a valid address.

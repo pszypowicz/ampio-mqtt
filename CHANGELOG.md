@@ -12,6 +12,33 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.54.0
+
+The Designer's Devices tab has an "Identify device" button that lights a
+module's CAN LED steadily, so an installer can find the module in the cabinet
+(#187). The library had no way to send it. The frame pair was proven live on a
+M-ROL-4s and a M-DOT-9, and the client now wraps it on the admin tier.
+
+### Added
+
+- **`identify()` and `identify_stop()`** light and release a module's CAN LED,
+  addressed by `AmpioModule.id`. The module holds identify until the stop, and
+  the library schedules no stop by itself. No readback exists, so neither takes
+  `confirm=`.
+
+### Documentation
+
+- `docs/panel-writes.md` gains "Module identify": the frames, the LED per module
+  family (a M-DOT-9 lights the LED on its back and nothing on the front), and
+  the no-readback rule. `docs/account-tiers.md` lists the write as admin-only.
+  `docs/raw-channel-bridge.md` notes that the `from` tree spells the mac in
+  uppercase hex and the `to` tree in lowercase.
+
+### Tools
+
+- `tools/dump.py` takes a client id unique per run, so two captures at once no
+  longer kick each other off the broker.
+
 ## 0.53.0
 
 `AmpioModule.last_seen` is the per-module liveness signal that 0.51.0 and 0.52.0

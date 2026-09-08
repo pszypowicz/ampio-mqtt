@@ -18,7 +18,7 @@ The rest of this area is on its own pages.
 | Page                                           | Subject                                                                                                                     |
 | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | [`commands.md`](commands.md)                   | The `/api` verb vocabulary, the client method behind each verb, the state-echo confirmation, and the cover and scene notes. |
-| [`panel-writes.md`](panel-writes.md)           | The raw CAN output frame for panel status LEDs, relays, and open-collector outputs, and the panel buzzer.                   |
+| [`panel-writes.md`](panel-writes.md)           | The raw CAN output frame for panel status LEDs, relays, and open-collector outputs, the panel buzzer, and module identify.  |
 | [`designer-surfaces.md`](designer-surfaces.md) | The legacy CAN bridge endpoints and every surface the Designer itself uses, the flag write frames included.                 |
 | [`bus-events.md`](bus-events.md)               | Bus events: how to raise one, how to receive one, and which tier gets which.                                                |
 

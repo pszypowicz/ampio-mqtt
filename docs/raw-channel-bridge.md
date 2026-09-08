@@ -66,6 +66,10 @@ The four state wildcards ask for QoS 0. The broker retains every channel, and a
 QoS 1 replay of that many values overflows its queue (see above). The
 diagnostics and event filters keep QoS 1, the acknowledged leg for a live push.
 
+The `from` tree spells the mac in uppercase hex (`ampio/from/CFFE/...`), and the
+`to` tree in lowercase (`ampio/to/cffe/raw`). A topic filter must match the
+case. The library parses the mac as a number, so it reads either form.
+
 The channel wildcards are bridged to the owning `AmpioObject`, so listeners see
 the same push as for any other update. The `o` prefix covers every `przekaznik`
 on a binary-output leaf. The `a` prefix covers the ones on an open-collector
