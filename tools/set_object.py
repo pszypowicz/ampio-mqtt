@@ -19,6 +19,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+from collections.abc import Callable
+
+import aiomqtt
 
 from ampio_mqtt import AmpioClient, AmpioObject, ObjectUpdated
 
@@ -93,8 +96,18 @@ async def send(client: AmpioClient, a: argparse.Namespace) -> None:
         await client.command(oid, a.verb, *a.arg)
 
 
-async def run(a: argparse.Namespace) -> int:
-    client = AmpioClient(a.host, a.username, a.password, port=a.port)
+async def run(
+    a: argparse.Namespace,
+    client_factory: Callable[[], aiomqtt.Client] | None = None,
+) -> int:
+    """Drive the run; ``client_factory`` is the test seam for the session."""
+    client = AmpioClient(
+        a.host,
+        a.username,
+        a.password,
+        port=a.port,
+        mqtt_client_factory=client_factory,
+    )
 
     def on_object(obj: AmpioObject) -> None:
         if obj.id == a.object_id:

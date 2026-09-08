@@ -17,6 +17,9 @@ import argparse
 import asyncio
 import logging
 import os
+from collections.abc import Callable
+
+import aiomqtt
 
 from ampio_mqtt import (
     AmpioClient,
@@ -55,8 +58,18 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-async def run(args: argparse.Namespace) -> int:
-    client = AmpioClient(args.host, args.username, args.password, port=args.port)
+async def run(
+    args: argparse.Namespace,
+    client_factory: Callable[[], aiomqtt.Client] | None = None,
+) -> int:
+    """Drive the run; ``client_factory`` is the test seam for the session."""
+    client = AmpioClient(
+        args.host,
+        args.username,
+        args.password,
+        port=args.port,
+        mqtt_client_factory=client_factory,
+    )
 
     def on_object(obj: AmpioObject) -> None:
         if isinstance(obj.kind, SensorKind) and obj.state is not None:

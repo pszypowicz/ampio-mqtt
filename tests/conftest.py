@@ -44,9 +44,10 @@ API_TOPIC = f"ampio/control/{USER}/api"
 class Message:
     """Minimal stand-in for `aiomqtt.Message`."""
 
-    def __init__(self, topic: str, payload: bytes) -> None:
+    def __init__(self, topic: str, payload: bytes, retain: bool = False) -> None:
         self.topic = topic
         self.payload = payload
+        self.retain = retain
 
 
 class FakeBroker:
@@ -75,6 +76,10 @@ class FakeBroker:
         self.published_qos: list[int] = []
         self.subscribed: list[str] = []
         self.subscribed_qos: list[int] = []
+        # Every subscribe and publish in wire order, as ("subscribe", filter)
+        # and ("publish", topic), for tests that assert the order between
+        # the two.
+        self.log: list[tuple[str, str]] = []
         # Per-topic SUBACK reason codes; topics absent here are granted (0).
         self.suback_codes: dict[str, int] = {}
         # The broker's retained store, topic to payload.
@@ -112,6 +117,7 @@ class FakeBroker:
         for t, q in entries:
             self.subscribed.append(t)
             self.subscribed_qos.append(q)
+            self.log.append(("subscribe", t))
             for retained_topic, payload in self.retained.items():
                 if not topic_matches_sub(t, retained_topic):
                     continue
@@ -120,7 +126,7 @@ class FakeBroker:
                         self.dropped += 1
                         continue
                     budget -= 1
-                self._queue.put_nowait(Message(retained_topic, payload))
+                self._queue.put_nowait(Message(retained_topic, payload, retain=True))
         # aiomqtt's VERSION2 callbacks deliver ReasonCodes, never plain
         # ints - the fake hands over the same shape, with the int knob in
         # `suback_codes` mapped onto real verdicts.
@@ -137,6 +143,7 @@ class FakeBroker:
             raise error
         self.published.append((topic, payload))
         self.published_qos.append(qos)
+        self.log.append(("publish", topic))
 
     @property
     def messages(self) -> Self:
