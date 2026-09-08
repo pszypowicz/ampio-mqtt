@@ -6,14 +6,12 @@ The M-SERV speaks two parallel topic trees on the same MQTT broker:
   User-scoped. It carries the discovery RPC pattern: publish a keyword on one of
   the control surfaces, and the matching `fromDB` topic gets a JSON response.
   Per-object live state arrives on `.../ob/<id>/state`.
-- **Raw tree** - `ampio/from/#`. Global, not user-scoped, and keyed by the
-  module's effective bus MAC. Its branches are the retained decoded-CAN
-  per-channel state under `state/<prefix>/<ch>`, the diagnostics broadcasts
-  under `b/<type>`, and the bus events under `event`. The broker holds every
-  state channel's last value and replays it on each subscribe. The M-SERV serves
-  the tree only to administrator accounts (the broker ACL returns nothing on it
-  for standard accounts). The library uses the state branch as a low-latency,
-  self-resyncing bridge - see [`raw-channel-bridge.md`](raw-channel-bridge.md).
+- **Raw tree** - `ampio/from/#`. Global, not user-scoped, keyed by the module's
+  effective bus MAC, and served to administrator accounts only. Its branches are
+  the retained decoded-CAN per-channel state under `state/<prefix>/<ch>`, the
+  diagnostics broadcasts under `b/<type>`, and the bus events under `event`. The
+  retained state branch is the library's low-latency bridge - see
+  [`raw-channel-bridge.md`](raw-channel-bridge.md).
 
 All topic helpers live in
 [`src/ampio_mqtt/_protocol.py`](../src/ampio_mqtt/_protocol.py). Treat the
@@ -31,54 +29,51 @@ accounts get silence there (no error, no reply, independent of the account's app
 permissions). Everything on the `data`, `states`, and `info` surfaces answers
 for every account.
 
-| Keyword          | Control surface               | Response topic                              | Shape                                                                                                                                                                                                                                                                                                                                                              |
-| ---------------- | ----------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `devicesDetails` | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devicesDetails` | `{Status, List: [{id, id_urzadzenia, typ_komponentu, interpretacja, funkcja, leafId, opis_menu, type, stan_json, ...}]}` - `type` is the Matter device type tag (see [`identity.md`](identity.md)).                                                                                                                                                                |
-| `devices`        | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devices`        | `{List: [{id, mac, mac_global, typ_urzadzenia, nazwa_urzadzenia, wersja_softu, wersja_pcb, ...}]}`                                                                                                                                                                                                                                                                 |
-| `locations`      | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/locations`      | `{List: [{id, opis_menu, opis_rozwiniety}]}` - Designer's "Lokalizacja" name table. The per-output pointer that resolves through it rides the `device_api` tree below (see [`identity.md`](identity.md)).                                                                                                                                                          |
-| `devices`        | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/devices`          | `{List: [...]}` - app-sync object catalogue: the `devicesDetails` row shape minus `params`, `stan_json`, and `url`, filtered to the account's app grants.                                                                                                                                                                                                          |
-| `params_devices` | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/params_devices`   | `{List: [{id, params, param1, czas, powiazane, url}]}` - per-object `params` bitfields for the **full** catalogue (not grant-filtered).                                                                                                                                                                                                                            |
-| `groups`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/groups`           | `{List: [{id, id_rodzica, opis_menu}]}` - room tree.                                                                                                                                                                                                                                                                                                               |
-| `group_devices`  | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/group_devices`    | `{List: [{id_grupy, id_obiektu}]}` - object-to-room join.                                                                                                                                                                                                                                                                                                          |
-| `scenes`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/scenes`           | `{List: [{id, parentId, sceneName, active, Actions, Infos, Schedules}]}` - scene catalogue. `Actions` are wire command strings, `Infos` their structured form.                                                                                                                                                                                                     |
-| (empty)          | `ampio/control/<user>/states` | `ampio/fromDB/<user>/data/states`           | `{List: [{id, stan_json}]}` - bulk snapshot of the account's object states.                                                                                                                                                                                                                                                                                        |
-| (empty)          | `ampio/control/<user>/info`   | `ampio/fromDB/<user>/data/info`             | `{Results: {mac, userId, serverVersion, serverRevision, mqttVersion, local_ip, device_id, ...}}` - server self-report, retained in the account namespace. `userId` is the asking account's id (`-1` for the reserved `admin` login). `AmpioServerInfo.access_tier` surfaces it for config flows. A running client's tier is decided by its authenticated username. |
+| Keyword          | Control surface               | Response topic                              | Shape                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------- | ----------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `devicesDetails` | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devicesDetails` | `{Status, List: [{id, id_urzadzenia, typ_komponentu, interpretacja, funkcja, leafId, opis_menu, type, stan_json, ...}]}` - `type` is the Matter device type tag (see [`identity.md`](identity.md)).                                                                                                                                                               |
+| `devices`        | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devices`        | `{List: [{id, mac, mac_global, typ_urzadzenia, nazwa_urzadzenia, wersja_softu, wersja_pcb, ...}]}`                                                                                                                                                                                                                                                                |
+| `locations`      | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/locations`      | `{List: [{id, opis_menu, opis_rozwiniety}]}` - Designer's "Lokalizacja" name table. The per-output pointer that resolves through it rides the `device_api` tree below (see [`identity.md`](identity.md)).                                                                                                                                                         |
+| `devices`        | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/devices`          | `{List: [...]}` - app-sync object catalogue: the `devicesDetails` row shape minus `params`, `stan_json`, and `url`, filtered to the account's app grants.                                                                                                                                                                                                         |
+| `params_devices` | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/params_devices`   | `{List: [{id, params, param1, czas, powiazane, url}]}` - per-object `params` bitfields for the **full** catalogue (not grant-filtered).                                                                                                                                                                                                                           |
+| `groups`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/groups`           | `{List: [{id, id_rodzica, opis_menu}]}` - room tree.                                                                                                                                                                                                                                                                                                              |
+| `group_devices`  | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/group_devices`    | `{List: [{id_grupy, id_obiektu}]}` - object-to-room join.                                                                                                                                                                                                                                                                                                         |
+| `scenes`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/scenes`           | `{List: [{id, parentId, sceneName, active, Actions, Infos, Schedules}]}` - scene catalogue. `Actions` are wire command strings, `Infos` their structured form.                                                                                                                                                                                                    |
+| (empty)          | `ampio/control/<user>/states` | `ampio/fromDB/<user>/data/states`           | `{List: [{id, stan_json}]}` - bulk snapshot of the account's object states.                                                                                                                                                                                                                                                                                       |
+| (empty)          | `ampio/control/<user>/info`   | `ampio/fromDB/<user>/data/info`             | `{Results: {mac, userId, serverVersion, serverRevision, mqttVersion, local_ip, device_id, ...}}` - server self-report, retained in the account namespace. `userId` is the asking account's id (`-1` for the reserved `admin` login). `AmpioServerInfo.access_tier` exposes it for config flows. A running client's tier is decided by its authenticated username. |
 
-## Module CAN records (`device_api`)
+## Module description records (`device_api`)
 
 A third topic pair sits next to the `config`/`data` request-response surfaces
 and the raw tree. `device_api/to/list` with the payload `0` asks the M-SERV for
-every module's CAN-resident record at once. The reply lands on
-`device_api/from/list` as `{devices: [...]}`. Each device carries `macUser` (the
-override), `macProd` (the factory id), `protocol`, `name` (base64), and
-`descriptions`. The last is base64 of the per-output entries behind both the
-Matter device type tag and the Designer "Lokalizacja" location pointer. The
-frame layout, the descType enum, and the join rule that resolves an object to
-its entry are in [`identity.md`](identity.md). The tree is admin-only, exactly
-like the raw tree. `AmpioClient.resolve_records()` drives this pair. A consumer
-calls that method and never publishes on the pair itself.
+every module's description record at once. The reply lands on
+`device_api/from/list` as `{devices: [...]}`. Each module entry carries
+`macUser` (the override), `macProd` (the factory id), `protocol`, `name`
+(base64), and `descriptions`. The last is base64 of the per-output entries
+behind both the Matter device type tag and the Designer "Lokalizacja" location
+pointer. The frame layout, the descType enum, and the join rule that resolves an
+object to its entry are in [`identity.md`](identity.md). The tree is admin-only,
+exactly like the raw tree. `AmpioClient.resolve_records()` drives this pair. A
+consumer calls that method and never publishes on the pair itself.
 
 The per-module pair serves the same record for one module.
 `device_api/to/<machex>/get_data` (empty payload) answers on
 `device_api/from/<MACHEX>/info`. Both macs are the factory id, never the
-override. A module with a Designer override stays silent on its override mac,
-the M-SERV's own row included. The M-SERV serves those requests one module at a
-time, at a mean gap of 0.75 seconds on the reference install. The list reply
-carries the same blobs in one message, so the library reads the list.
+override, lowercase hex on the request and uppercase on the reply. A module with
+a Designer override stays silent on its override mac, the M-SERV's own row
+included. The M-SERV serves those requests one module at a time, at a mean gap
+of 0.75 seconds on the baseline install. The list reply carries the same blobs
+in one message, so the library reads the list.
 
 Each account namespace also carries a retained
 `ampio/fromDB/<user>/md5/<keyword>` topic per app-sync table (`devices`,
 `params_devices`, `groups`, `group_devices`, `scenes`, `resources`, `icons`,
 `logging`). Each holds the MD5 of the exact reply payload the account receives,
-per-account for the grant-filtered tables. The Designer SPA uses these to skip
+per-account for the grant-filtered tables. The Designer uses these to skip
 redundant refetches. The hashes cover neither the `config` catalogues nor
-`states`, so the library saves no request with them. It reads two of them as
-change signals instead. A Designer save makes the M-SERV publish `data/devices`,
-`md5/devices`, and `data/params_devices` into every account namespace unasked, a
-few seconds after the save. Designer triggers that push with a `refresh` keyword
-on its `data` surface. The admin client watches the retained `md5/devices` and
-`md5/params_devices` digests and re-requests its `config` pair when one changes
-([`discovery-flow.md`](discovery-flow.md)).
+`states`, so the library saves no request with them. It reads `md5/devices` and
+`md5/params_devices` as change signals instead. The Designer-save push and the
+re-request rule are in [`discovery-flow.md`](discovery-flow.md).
 
 ## Commands (write)
 
@@ -94,20 +89,17 @@ The OpenAPI spec embedded in the M-SERV web app bundle
 directions. `setColor`/`setColorW` are listed yet ignored on the wire, while
 `setColors` and `setFakeValue` work without a listing. There is no reply topic.
 The object's normal state topic reports the result, typically within ~200 ms,
-and an unknown verb is silently ignored. Where the reference install lacks the
+and an unknown verb is silently ignored. Where the baseline install lacks the
 hardware to exercise a verb, the row says so.
 
-**Commands are grant-scoped.** The per-user grant bounds writes exactly as it
-bounds reads. The M-SERV drops a command for an object outside the account's
-grant, with no effect and no reply. The identical command from an administrator
-succeeds. The account's namespace likewise carries state only for granted
-objects, including ones it just commanded.
+**Commands are grant-scoped.** The M-SERV drops a command for an object outside
+the account's grant, with no effect and no reply (see
+[`account-tiers.md`](account-tiers.md)). The account's namespace likewise
+carries state only for granted objects, including ones it just commanded.
 
 **Designer's read-only checkbox drops writes the same way.** An object with
-`params` bit 6 set (`AmpioObject.read_only`) accepts no `/api` write on any
-tier, admin included. The M-SERV emits no CAN frames for it, so the drop is
-server-side and silent. Reads are unaffected. The marker and its consumer
-contract are in [`identity.md`](identity.md).
+`AmpioObject.read_only` set accepts no `/api` write on any tier, admin included.
+The marker and its consumer contract are in [`identity.md`](identity.md).
 
 **The state echo is the only confirmation.** The library's `confirm=` option on
 `command()` and the typed wrappers arms a waiter before the publish. The waiter
@@ -125,7 +117,7 @@ and offer no per-object echo.
 The `ampio/to/<mac>/...` CAN tree is the other write path, documented in Ampio's
 own MQTT API note. It has per-channel `cmd` topics and a `raw` hex channel that
 covers CCT, DALI, blind angles, and display text. It is **admin-only** - the
-broker drops a non-admin account's publishes there. The library uses the `/api`
+broker drops a standard account's publishes there. The library uses the `/api`
 surface, which works on both tiers, except for the binary-output writes
 described below.
 
@@ -140,10 +132,10 @@ described below.
 | `setValue`                         | `<0-255>[/<time>]`          | `time` is in 10 ms units and **reverts** the object afterwards - a timed pulse, not a fade. `rgbw` objects ignore it, with or without `time` (no effect, no reply) - see `setColors`.                                                                                                                                                        |
 | `setColors`                        | `<R>/<G>/<B>/<W>`           | Also accepts one packed int (`R \| G<<8 \| B<<16 \| W<<24`), which is what object state reports back. Absent from the spec enum - undocumented but real. A fifth argument (a `time` in the `setValue` style) makes the M-SERV drop the whole command (no effect, no reply).                                                                  |
 | `setRollerPos`                     | `<position>/<lamella>`      | Percent each. `101` omits an axis (see the slat-drag note below), so one command moves either axis alone or both together.                                                                                                                                                                                                                   |
-| `setColor`                         | 24-bit `R \| G<<8 \| B<<16` | Dead on the baseline server: in the spec enum, but it has no effect and no reply on an `rgbw` object. Use `setColors`.                                                                                                                                                                                                                       |
-| `setColorW`                        | `<rgb24>/<white>`           | Dead on the baseline server, exactly as `setColor`. Use `setColors`.                                                                                                                                                                                                                                                                         |
+| `setColor`                         | 24-bit `R \| G<<8 \| B<<16` | Dead on the baseline install: in the spec enum, but it has no effect and no reply on an `rgbw` object. Use `setColors`.                                                                                                                                                                                                                      |
+| `setColorW`                        | `<rgb24>/<white>`           | Dead on the baseline install, exactly as `setColor`. Use `setColors`.                                                                                                                                                                                                                                                                        |
 | `setTemperature`                   | `<°C>`                      | Regulator (`reg`) setpoint, echoed as `setTemperature` in the reg state push (see Live state). Absent from the spec enum (Ampio's MQTT API note only), yet it works.                                                                                                                                                                         |
-| `setHeatingMode`                   | mode letter                 | All four claimed letters `A,S,M,H` write and echo on the baseline server. Each letter echoes in the state push's `mode` within the confirm window. `ThermostatState.mode` carries the letter verbatim.                                                                                                                                       |
+| `setHeatingMode`                   | mode letter                 | All four letters in `HEATING_MODES` (`A`, `S`, `M`, `H`) write and echo on the baseline install. Each letter echoes in the state push's `mode` within the confirm window. `ThermostatState.mode` carries the letter verbatim.                                                                                                                |
 | `arm`, `disarm`                    | `<pin>`                     | Flip a `satel_alarm` object's armed state, with a ~1 s echo. The `satel_` types cover alarm integrations generally, a Jablotron behind an M-CON included. Absent from the spec enum, yet it works. The paired "alarmed" object also reads 1 while the panel is in its exit-delay `arming` phase - on its own it is not a siren indicator.    |
 | `setVolume`, `setInput`, `setSeek` | radio module                | In the spec enum. Untestable here - no radio module.                                                                                                                                                                                                                                                                                         |
 | `setText`                          | `<text>`                    | Sets the `desc` field of the object's state push (`state` unchanged), fanned out to every user namespace.                                                                                                                                                                                                                                    |
@@ -155,15 +147,15 @@ described below.
 `rgbw` as a type that ignores `turnOn`, `turnOff`, `switch`, and `setValue`. The
 Ampio app remembers the light's last color client-side. It re-sends that color
 via `setColors` for "on", and sends `setColors 0` for "off". The M-SERV's Matter
-bridge does the same server-side. A Matter On/Off from Home Assistant surfaces
-on the bus as `setColors` with the bridge's remembered color (or `0`). The
-publish goes to the **admin** account's `/api` topic. The bridge is an ordinary
-MQTT client of this same surface, so its writes are observable and
-grant-equivalent to admin. The bridge sends the packed form as a signed 32-bit
-int (negative values), which the M-SERV accepts. State echoes report the
-unsigned form. A consumer that wants "on" for an `rgbw` object must follow the
-same pattern. Remember the last non-zero state value (the packed color, decoded
-as `AmpioObject.rgbw`), and replay it with `setColors`.
+bridge does the same server-side. A Matter On/Off from Home Assistant appears on
+the bus as `setColors` with the bridge's remembered color (or `0`). The publish
+goes to the **admin** account's `/api` topic. The bridge is an ordinary MQTT
+client of this same surface, so its writes are observable and grant-equivalent
+to admin. The bridge sends the packed form as a signed 32-bit int (negative
+values), which the M-SERV accepts. State echoes report the unsigned form. A
+consumer that wants "on" for an `rgbw` object must follow the same pattern.
+Remember the last non-zero state value (the packed color, decoded as
+`AmpioObject.rgbw`), and replay it with `setColors`.
 
 **No command carries a fade time.** No verb on this surface ramps an output. The
 `setValue` `time` argument reverts the object after the delay, which makes it a
@@ -186,7 +178,7 @@ are available only as device-side `fadeTime` configuration.
 
 **Flags answer the switch verbs. Physical inputs do not.** The switch family
 reaches more than outputs. A `flaga` object answers `turnOn`, `turnOff`, and
-`switch` over `/api`. This works on the admin tier and on the restricted tier. A
+`switch` over `/api`. This works on the admin tier and on the standard tier. A
 consumer can therefore model a writable flag as a switch entity. The library
 reports this as `InputKind.switchable`.
 
@@ -235,7 +227,7 @@ beside it. These outputs are unreachable through every documented command form.
 The `/api` verbs (`turnOn`, `setValue`, `switch`) and the per-channel
 `ampio/to/<MAC>/o/<ch>/cmd` topic are all silently dropped for them, with a DB
 object present or not. A relay module answers the identical commands. The
-Designer SPA does not use `/api` for these leaves either. This is an Ampio
+Designer does not use `/api` for these leaves either. This is an Ampio
 limitation: a standard account holds no surface that reaches a panel output at
 all.
 
@@ -265,8 +257,8 @@ leafless object, stay on `/api`. There is no module-type table to maintain. Two
 more writes stay on `/api`: the M-SERV's own virtual outputs, and every
 `pulse_ms` write. The virtual outputs live in the server's DB, not on the CAN
 bus. The raw frame has no timed form, so a panel output cannot pulse, and
-`confirm=` is what surfaces that. The restricted tier always publishes the
-`/api` form, which a panel output ignores.
+`confirm=` is what shows that. The standard tier always publishes the `/api`
+form, which a panel output ignores.
 
 A module condition bound to the LED overrides such writes eventually, not
 preventively. A write to a condition-bound LED takes effect, and the panel
@@ -306,7 +298,7 @@ amplitude control exists:
 Tone 1 (8288 Hz) is barely audible and is not in the table.
 
 `cycles` 0 repeats the sequence until another frame replaces it. The speed bytes
-had no audible effect and stay 0. Cycles 255 is unproven.
+had no audible effect and stay 0. Cycles 255 is unverified.
 
 Stopping has three rules. A simple time of 0 latches the buzzer on, and the
 simple OFF frame ends it. The simple OFF does not end a running sequence,
@@ -328,7 +320,7 @@ Two request/response endpoints predate the `fromDB` catalogues. The Node-RED
 palette (`node-red-contrib-ampio`) is their public consumer. Both are
 admin-gated like the rest of the `ampio/to` tree.
 
-**Module discovery** - it still answers on the baseline server. Publish `1` to
+**Module discovery** - it still answers on the baseline install. Publish `1` to
 `ampio/to/can/dev/list`. The reply arrives, not retained, on
 `ampio/from/can/dev/list`:
 
@@ -350,7 +342,7 @@ surface, usable as a resolver cross-check.
 `ampio/to/<MAC>/description`, answered on `ampio/from/<MAC>/description` with a
 JSON object keyed `<descType>_<index>` (base64 names). The palette reads
 descTypes 12, 13, 16, 17 for outputs, 6 for flags, and 21 for IR. It indexes
-descTypes 11, 13, 15, 17 from 256. On the baseline server the surface is
+descTypes 11, 13, 15, 17 from 256. On the baseline install the surface is
 **dead**: no reply and nothing retained, for either mac case, an empty payload,
 and a wildcard reply subscription. Read names through the `device_api` record
 instead (see [`identity.md`](identity.md)). The palette's contract is recorded
@@ -453,16 +445,16 @@ as user intent.
 
 ## Live state
 
-| Topic                                  | Payload                           | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| -------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ampio/fromDB/<user>/ob/<id>/state`    | `{state, desc, on}`               | One per object. `state` is the value (string), `desc` is the M-SERV's pretty form, `on` is server-side ms epoch. Cover (`roleta*`) pushes carry a `block` field in place of `desc`. Regulator (`reg`) objects push a richer shape instead: `{state, cooling, mode, measureTemp, setTemperature, on}`, every field a string, surfaced as `AmpioObject.thermostat`. The library surfaces `state`, `lammel`, and the reg readback from these. |
-| `ampio/from/<MAC>/state/f/<ch>`        | plain text (`"0"`/`"1"`)          | Flag channel, bridged to the owning object.                                                                                                                                                                                                                                                                                                                                                                                                |
-| `ampio/from/<MAC>/state/i/<ch>`        | plain text (`"0"`/`"1"`)          | Digital input channel, bridged to the owning object.                                                                                                                                                                                                                                                                                                                                                                                       |
-| `ampio/from/<MAC>/state/o/<ch>`        | plain text (`"0"`/`"1"`)          | Binary output channel, bridged to the owning `przekaznik` object on a binary-output leaf, class 257 (a panel status LED, or a relay output).                                                                                                                                                                                                                                                                                               |
-| `ampio/from/<MAC>/state/a/<ch>`        | plain text (u8, `"0"` to `"255"`) | Analog output channel, subscribed on the admin tier and bridged to the owning `przekaznik` object on an open-collector leaf (class 67). Every other `a` channel drops at the index lookup.                                                                                                                                                                                                                                                 |
-| `ampio/from/<MAC>/state/{t,rgbw}/<ch>` | varies                            | NOT subscribed by the library - the per-object topic is sufficient for these prefixes.                                                                                                                                                                                                                                                                                                                                                     |
+| Topic                                  | Payload                           | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ampio/fromDB/<user>/ob/<id>/state`    | `{state, desc, on}`               | One per object. `state` is the value (string), `desc` is the M-SERV's pretty form, `on` is server-side ms epoch. Cover (`roleta*`) pushes carry a `block` field in place of `desc`. Regulator (`reg`) objects push a richer shape instead: `{state, cooling, mode, measureTemp, setTemperature, on}`, every field a string, exposed as `AmpioObject.thermostat`. The library exposes `state`, `lammel`, and the reg readback from these. |
+| `ampio/from/<MAC>/state/f/<ch>`        | plain text (`"0"`/`"1"`)          | Flag channel, bridged to the owning object.                                                                                                                                                                                                                                                                                                                                                                                              |
+| `ampio/from/<MAC>/state/i/<ch>`        | plain text (`"0"`/`"1"`)          | Digital input channel, bridged to the owning object.                                                                                                                                                                                                                                                                                                                                                                                     |
+| `ampio/from/<MAC>/state/o/<ch>`        | plain text (`"0"`/`"1"`)          | Binary output channel, bridged to the owning `przekaznik` object on a binary-output leaf, class 257 (a panel status LED, or a relay output).                                                                                                                                                                                                                                                                                             |
+| `ampio/from/<MAC>/state/a/<ch>`        | plain text (u8, `"0"` to `"255"`) | Analog output channel, subscribed on the admin tier and bridged to the owning `przekaznik` object on an open-collector leaf (class 67). Every other `a` channel drops at the index lookup.                                                                                                                                                                                                                                               |
+| `ampio/from/<MAC>/state/{t,rgbw}/<ch>` | varies                            | NOT subscribed by the library - the per-object topic is sufficient for these prefixes.                                                                                                                                                                                                                                                                                                                                                   |
 
-## Library helpers
+## Where the method map lives
 
 Which `AmpioClient` method drives which surface is API documentation, and it
 lives on the client docstrings. [`discovery-flow.md`](discovery-flow.md) maps

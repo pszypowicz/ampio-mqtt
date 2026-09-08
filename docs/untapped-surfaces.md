@@ -15,7 +15,7 @@ is unexplored. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/23).
 
 **`symulacja` raw prefix.** The presence-simulation object classifies as an
-input, but its raw-channel prefix is unconfirmed on the wire. The object still
+input, but its raw-channel prefix is unverified on the wire. The object still
 updates through the per-object topic. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/26).
 
@@ -27,10 +27,9 @@ alarm writes on the same `ampio/to` tree remain unexplored. Probe notes:
 
 Picking one up takes three steps.
 
-1. Find the topic. The M-SERV serves the Designer web application at its own
-   root. That bundle contains the literal topic string for every surface the
-   vendor's own app uses. Read the topics out of the bundle instead of guessing
-   keywords.
+1. Find the topic. The M-SERV serves the Designer at its own root. That bundle
+   contains the literal topic string for every surface the vendor's own app
+   uses. Read the topics out of the bundle instead of guessing keywords.
 2. Verify the wire shape live. `tools/dump.py` subscribes to a filter, publishes
    one request, and prints the replies:
 

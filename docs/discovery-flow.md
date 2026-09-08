@@ -9,16 +9,16 @@ that point on.
 
 Some consumers **depend** on populated collections before they do anything else.
 The canonical case resolves `mserv` to pre-register the M-SERV device, so other
-modules' `via_device` parents resolve. Such a consumer must not rely on
-`connect()`'s wait as an implementation detail. It must call
-`await client.wait_for_initial_discovery()` (default `timeout=8.0`) explicitly.
-That method returns `True` once discovery is complete for the account's tier,
+modules' `via_device` parents resolve. `wait_for_initial_discovery()` (default
+`timeout=8.0`) returns `True` once discovery is complete for the account's tier,
 and `False` if the timeout elapses. It never raises. `connect()` delegates its
 discovery wait to this method and returns its result, so the two share one
-definition of "discovery is done." The explicit dependency keeps `connect()`
-free to return earlier in a future revision without a silent break of that
-ordering. The library's own accessors degrade gracefully when nothing is known
-yet, so this guarantee exists for consumers, not for the library.
+definition of "discovery is done." The library's own accessors degrade
+gracefully when nothing is known yet, so this guarantee exists for consumers,
+not for the library. Such a consumer must not rely on `connect()`'s wait as an
+implementation detail. It must call `await client.wait_for_initial_discovery()`
+explicitly. The explicit call keeps `connect()` free to return earlier in a
+future revision without a silent break of that ordering.
 
 Authoritative sources:
 [`src/ampio_mqtt/_connection.py`](../src/ampio_mqtt/_connection.py) owns the
@@ -39,14 +39,12 @@ the `connect()` / `disconnect()` lifecycle that joins them.
    login adds the retained `md5/devices` and `md5/params_devices` digests (see
    below), the global raw-channel wildcards, and the `device_api/from/list`
    reply topic. Every filter asks for QoS 1 except the four raw state wildcards,
-   which ask for QoS 0. The broker replays retained values into a QoS 1
-   subscription through a queue of 1000 messages per client. The raw state tree
-   alone exceeds that on a full install. A QoS 0 subscription takes no queue
-   slot, so its replay is complete. The set is decided at construction from the
-   authenticated username (see [`account-tiers.md`](account-tiers.md)), so every
-   filter must be granted. A SUBACK rejection lands in
-   `stats.subscribe_failures` and warns, because it means a broken broker or
-   ACL. See [`protocol.md`](protocol.md) and
+   which ask for QoS 0. The retained replay then arrives whole (see
+   [`raw-channel-bridge.md`](raw-channel-bridge.md)). The set is decided at
+   construction from the authenticated username (see
+   [`account-tiers.md`](account-tiers.md)), so every filter must be granted. A
+   SUBACK rejection lands in `stats.subscribe_failures` and warns, because it
+   means a broken broker or ACL. See [`protocol.md`](protocol.md) and
    [`raw-channel-bridge.md`](raw-channel-bridge.md) for the topics.
 3. **Publish the tier's auto-discovery keywords** on the matching control
    surfaces - four requests either way:
@@ -63,9 +61,9 @@ the `connect()` / `disconnect()` lifecycle that joins them.
    fired (and stays correct across reconnects).
 5. **Return.** The library does not refetch the catalogues on its own schedule.
    Live state arrives via push on the per-object topic (and, for inputs and the
-   bridged `przekaznik` outputs, the raw-channel topics). A Designer save
-   reaches both tiers through the push described below. A consumer that wants a
-   periodic catalogue re-read on top opts into `refresh_interval`.
+   bridged `przekaznik` outputs, the raw tree). A Designer save reaches both
+   tiers through the push described below. A consumer that wants a periodic
+   catalogue re-read on top opts into `refresh_interval`.
 
 Every catalogue reply also evicts what it stopped listing, fired as
 `ObjectRemoved` / `ModuleRemoved`. The per-tier rules and the deletion-tool
@@ -82,11 +80,11 @@ A Designer save rewrites the account tables on the M-SERV. A few seconds later
 the M-SERV publishes three messages into every account namespace, the admin one
 included. No account requested them: `data/devices`, `md5/devices`, and
 `data/params_devices`. Each tier learns of the save from a different one of
-them.
+them. Designer triggers the push with a `refresh` keyword on its `data` surface.
 
 - **Standard user.** The client subscribes to the two pushed tables as its
-  catalogue pair, so it parses each push like a reply. The save surfaces at once
-  as `ObjectAdded`, `ObjectUpdated`, or `ObjectRemoved`.
+  catalogue pair, so it parses each push like a reply. The save shows at once as
+  `ObjectAdded`, `ObjectUpdated`, or `ObjectRemoved`.
 - **Administrator.** The M-SERV never pushes the `config` catalogues. The client
   subscribes to the retained `md5/devices` and `md5/params_devices` digests
   instead. The broker replays each retained digest after every subscribe, and
@@ -113,14 +111,28 @@ already refreshes on connect, so a periodic request adds nothing while the
 broker is unreachable. Each cycle re-publishes the same initial-discovery
 requests that `connect()` and `refresh()` send. The Designer-save push above
 covers the common case on both tiers. The tick is the fallback for a change the
-M-SERV pushes no table or digest for. The next tick surfaces such a change as
+M-SERV pushes no table or digest for. The next tick reports such a change as
 `ObjectAdded` / `ObjectRemoved`, with no reconnect needed.
 
 Each tick also runs `begin_refresh()`, which clears the live-value guard. An
 undated live value can then be re-seeded from the M-SERV's DB snapshot on the
 next reply. A raw-owned object is exempt, because its resync is the broker's
-retained raw table, not the DB snapshot. Each cycle re-fetches the full
+retained raw state tree, not the DB snapshot. Each cycle re-fetches the full
 catalogue, so `refresh_interval` is sized in minutes, not seconds.
+
+## Errors
+
+Every error the library raises subclasses `AmpioError`. `connect()` raises
+`AmpioAuthError` when the broker rejects the credentials on the first CONNACK,
+and `AmpioConnectionError` when the broker is unreachable within `timeout`. A
+publish while the broker is disconnected raises `AmpioConnectionError` too.
+`check_connection()`, the fetch helpers, `resolve_records()`, and a command with
+`confirm=` raise `AmpioTimeoutError` when an expected reply does not arrive.
+`AmpioTimeoutError` subclasses `AmpioConnectionError`, so a handler that treats
+every connection problem alike keeps working. A rejection after a successful
+`connect()` arrives as the `AuthFailed` event instead (see
+[`events.md`](events.md)). A bad argument raises `ValueError`, and an admin-only
+call on a standard account raises `RuntimeError`.
 
 ## What runs on demand, not automatically
 
@@ -130,28 +142,25 @@ when - and whether - to call them:
 - **`fetch_rooms()`** - the `groups` + `group_devices` join. The HA integration
   calls it once at setup to seed `DeviceInfo.suggested_area`. A non-HA consumer
   can skip it.
-- **`fetch_scenes()`** - the scene catalogue, driven with `run_scene()` /
-  `off_scene()` / `undo_scene()`. Same rationale: a consumer that surfaces no
-  scenes never pays for the fetch.
+- **`fetch_scenes()`** - the scene catalogue (`AmpioScene` rows), driven with
+  `run_scene()` / `off_scene()` / `undo_scene()`. Same rationale: a consumer
+  that exposes no scenes never pays for the fetch.
 - **`fetch_locations()`** - the Designer location name table, admin tier only.
   `resolve_records()` fetches it itself, so a consumer that runs the sweep never
   calls it directly.
-- **`resolve_records()`** - reads every module's record in one `device_api` list
-  reply and folds the per-output Designer record into `AmpioObject.record`
-  (admin tier only, see [`identity.md`](identity.md)). The per-module record
-  folds into `AmpioModule.record`. A consumer that does not surface per-object
-  records never pays for the read. The returned `RecordSweep` names every module
-  the reply listed and the catalogued modules it left out.
+- **`resolve_records()`** - reads every module's description record in one
+  `device_api` list reply, admin tier only. What it folds into
+  `AmpioObject.record` and `AmpioModule.record`, and what the returned
+  `RecordSweep` reports, are in [`identity.md`](identity.md). A consumer that
+  does not expose records never pays for the read.
 
 ## Finding the M-SERV on the LAN
 
 `discover()` resolves `ampio.local` with an explicit multicast DNS A-record
 query driven by `python-zeroconf` (the `ampio-mqtt[discovery]` extra). Then it
-TCP-probes the resolved address on the broker port. No service type or TXT
-record on the LAN identifies that address as Ampio. That is why the lookup
-targets the well-known hostname instead of a browse. See
-[`lan-discovery.md`](lan-discovery.md) for the full probe facts, and for the
-generic Matter records that share the address. Because the query runs inside the
+TCP-probes the resolved address on the broker port. The lookup targets the
+well-known hostname because no LAN record identifies the M-SERV (see
+[`lan-discovery.md`](lan-discovery.md)). Because the query runs inside the
 process, it behaves the same on macOS, HAOS, plain Linux, and Docker, without
 host-side `nss-mdns`/avahi configuration. A Home Assistant integration passes
 its shared `AsyncZeroconf` via `discover(zeroconf=...)` instead of a second
@@ -168,5 +177,9 @@ endpoint's verbatim last reply. The `info` entry is the exception. Its reply
 carries the account's address, coordinates, cloud endpoint, and public key, and
 a key-based redactor cannot reach inside one retained string. The snapshot
 therefore masks every info value outside a safe-key set and withholds an
-unparseable info reply. The counters are cheap to update - the dispatch hot path
+unparseable info reply. The `connection` entry carries five keys. `started_at`
+and `reconnect_count` cover the current `connect()` run, so a deliberate restart
+never reads as a flapping connection. `last_error` and `last_message_at` roll
+across runs, and `subscribe_failures` maps each topic the latest SUBACK rejected
+to its reason code. The counters are cheap to update - the dispatch hot path
 touches only `last_message_at`.

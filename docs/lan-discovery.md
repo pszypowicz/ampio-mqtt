@@ -59,7 +59,8 @@ weaker than the mDNS hostname resolution already in `discover()`.
 None of the records - the `ampio.local` A-record, or either `_matter._tcp`
 instance - carries the M-SERV's mac in any field. The Matter instance names are
 fabric and node identifiers from that co-located process, unrelated to the
-interface MAC. No ARP read exposes more than the OUI above.
+interface MAC. No ARP read exposes more than the OUI above. The server mac
+behind `server_key` is the M-SERV's CAN bus mac, not its Ethernet address.
 
 So a config flow cannot derive
 [`AmpioServerInfo.server_key`](../src/ampio_mqtt/models.py) (the mac-derived
@@ -70,9 +71,9 @@ host, port, and credentials, requests the server info, and returns an
 
 ## `discover()` is the manual-flow fallback
 
-`discover()` resolves `ampio.local` with an explicit mDNS A-record query and
-confirms a listener on the broker port with a TCP probe. It returns a
-`DiscoveryResult` hint, not a confirmed identity. The manual flow uses it to
-find a candidate host on the LAN before credentials are known.
-`check_connection()` still confirms that the candidate is an Ampio M-SERV, and
-it produces the unique id.
+`discover()` returns a `DiscoveryResult` (`host`, `port`, `address`), a hint and
+not a confirmed identity. Its mechanics are in
+[`discovery-flow.md`](discovery-flow.md). The manual flow uses it to find a
+candidate host on the LAN before credentials are known. `check_connection()`
+still confirms that the candidate is an Ampio M-SERV, and it produces the unique
+id.

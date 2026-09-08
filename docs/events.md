@@ -3,8 +3,8 @@
 One stream carries everything the library learns, in the order the library
 produced it. Every event is a frozen dataclass that carries immutable model
 instances. What an event announced stays true, no matter how late a listener
-processes it. When you want current state, read `client.objects` and
-`client.modules` instead. Listeners are consumer code. A listener that raises is
+processes it. Current state is in `client.objects` and `client.modules`.
+Listeners are consumer code. A listener whose call fails with an exception is
 logged, and the other listeners still run. A message whose processing fails is
 dropped, and the connection stays up.
 
@@ -25,12 +25,13 @@ unsubscribe = client.subscribe(on_object, of=ObjectUpdated)
 unsubscribe()                                       # deregister
 ```
 
-`of` narrows the subscription and, for a single class, types the callback
-parameter precisely. `object_id` narrows further, to one object's events, and
-dispatches in O(1) of the count of such registrations. This shape fits a
-consumer with one listener per object. It applies only to the classes that carry
-`.object` (`ObjectUpdated`, its `ObjectAdded` subclass, and `ObjectRemoved`).
-Any other combination raises `ValueError` at registration time.
+A bare subscription receives every `ClientEvent`. `of` narrows the subscription
+and, for a single class, types the callback parameter precisely. `object_id`
+narrows further, to one object's events, and dispatches in O(1) of the count of
+such registrations. This shape fits a consumer with one listener per object. It
+applies only to the classes that carry `.object` (`ObjectUpdated`, its
+`ObjectAdded` subclass, and `ObjectRemoved`). Any other combination fails with
+`ValueError` at registration time.
 
 ## What arrives
 
@@ -40,10 +41,10 @@ Any other combination raises `ValueError` at registration time.
 | `ObjectAdded`         | An object's first event: initial discovery, a later catalogue addition, or re-creation after eviction. It subclasses `ObjectUpdated`, so `of=ObjectUpdated` subscriptions receive it too. `of=ObjectAdded` narrows to appearances alone. | both       | no       |
 | `ObjectRemoved`       | The account's authoritative catalogue stopped listing an object.                                                                                                                                                                         | both       | no       |
 | `ModuleUpdated`       | A module's catalogue row changed, its diagnostics broadcast arrived, or a `resolve_records()` sweep changed its `record`.                                                                                                                | admin only | no       |
-| `ModuleRemoved`       | The module list stopped listing a module.                                                                                                                                                                                                | admin only | no       |
+| `ModuleRemoved`       | The module catalogue stopped listing a module.                                                                                                                                                                                           | admin only | no       |
 | `BusEventRaised`      | Ampio logic raised a bus event (1-65535).                                                                                                                                                                                                | admin only | no       |
-| `AvailabilityChanged` | The broker connection came up or went down (never for a `disconnect()`).                                                                                                                                                                 | both       | no       |
-| `AuthFailed`          | The broker rejected the credentials after `connect()`. Reauthenticate.                                                                                                                                                                   | both       | yes      |
+| `AvailabilityChanged` | The broker connection came up or went down (never for a `disconnect()`). `AmpioClient.available` holds the current value.                                                                                                                | both       | no       |
+| `AuthFailed`          | The broker rejected the credentials after `connect()`. The signal to run a reauthentication flow.                                                                                                                                        | both       | yes      |
 | `ConnectionDied`      | The connection loop crashed. Only a fresh `connect()` recovers.                                                                                                                                                                          | both       | yes      |
 
 `ObjectAdded` subclasses `ObjectUpdated`. A `match` statement that destructures

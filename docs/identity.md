@@ -24,8 +24,8 @@ form-factor class: `cabinet` (DIN rail), `wall` (panels, sensors, outdoor field
 devices), or `flush` (in-box `-p` modules). It reads None for virtual,
 bridge-only, handheld, and unknown codes. The classification follows Ampio's
 naming convention, which no official source asserts, so it is a hand-curated
-table (`device_types.MODULE_MOUNTING`). Both fields decorate device info only.
-The device topology must never branch on them.
+table (`device_types.MODULE_MOUNTING`). Both fields decorate the HA device info
+only. The HA device topology must never branch on them.
 
 ## Objects
 
@@ -58,7 +58,7 @@ Three properties make the object id the right source:
   not depend on it.
 - **Available on both account tiers.** The id is the key of every catalogue
   surface. A standard account and an administrator account agree on it.
-- **Stable.** Designer soft-deletes. The `params` `DELETED` bit marks a removed
+- **Stable.** Designer soft-deletes. The `params` hidden bit marks a removed
   object, and the row stays. The autoincrement therefore never has to renumber.
   Every id stayed unchanged across years of configuration uploads, module
   replacements, and deletions.
@@ -98,7 +98,7 @@ before grouping by output.
 (`0_<macHex>_...`), exposed as `AmpioObject.module_mac`. The embedded value
 equals `AmpioModule.mac`, the M-SERV included, whose override (`1`) diverges
 from its factory id. A consumer can thus group entities by physical module even
-on the restricted tier, which never receives the module catalogue. An entry
+on the standard tier, which never receives the module catalogue. An entry
 created with a standard account and later switched to an administrator keeps its
 entity-to-device mapping and only gains metadata. The parse is strict: any shape
 other than `0_<macHex>_<sfId>_<subSfId>_<ioNo>` reads as None, exactly like an
@@ -124,14 +124,14 @@ leafed sibling is in the catalogue this tier holds. The field is separate from
 `module_mac` on purpose. `module_mac` is the leaf-parsed fact, identical on both
 tiers. `sibling_module_mac` depends on the grant, so the two can disagree
 between tiers when the grant lacks a leafed sibling. The consumer picks which
-one drives its topology. On the reference install every module id maps to one
+one drives its topology. On the baseline install every module id maps to one
 leaf mac, with no conflict on either tier.
 
 ## The leaf-id segments (`0_<macHex>_<sfId>_<subSfId>_<ioNo>`)
 
-The Designer names all five segments. Its web bundle builds the token, and it
-parses the token back into `macGroup`, `mac`, `sfId`, `subSfId`, and `ioNo`.
-Earlier revisions of this page called the last three `F2`, `F3`, and `F4`.
+The Designer names all five segments. Its bundle builds the token, and it parses
+the token back into `macGroup`, `mac`, `sfId`, `subSfId`, and `ioNo`. Earlier
+revisions of this page called the last three `F2`, `F3`, and `F4`.
 
 The library parses the mac, the `sfId`, the `subSfId`, and the trailing `ioNo`.
 `AmpioObject.leaf_io_no` reads the last segment. It covers inputs as well as
@@ -174,13 +174,13 @@ sub-function 1 as input, 2 as output, 3 as armed, and 4 as alarmed. The rows
 above show the same pattern.
 
 `sfId` thus carries a tier-independent function-class signal (it rides the
-app-sync catalogue the restricted tier receives), but it cannot replace the
-module type code. Both tables are coverage, not a specification, so an unlisted
-code proves nothing. The library keeps its classification on `typ_komponentu`
-alone. `sf_id` does not enter `kind`. The raw bridge reads it for `przekaznik`
-objects only. A leaf of class 67 reports on the `a` prefix and takes the write
-byte `0x32`. A leaf of class 257 reports on `o` and takes `0x30`. Any other
-class reports on `o` and writes through `/api`. See
+app-sync catalogue the standard tier receives), but it cannot replace the module
+type code. Both tables are coverage, not a specification, so an unlisted code
+proves nothing. The library keeps its classification on `typ_komponentu` alone.
+`sf_id` does not enter `kind`. The raw bridge reads it for `przekaznik` objects
+only. A leaf of class 67 reports on the `a` prefix and takes the write byte
+`0x32`. A leaf of class 257 reports on `o` and takes `0x30`. Any other class
+reports on `o` and writes through `/api`. See
 [`raw-channel-bridge.md`](raw-channel-bridge.md) and
 [`protocol.md`](protocol.md).
 
@@ -197,8 +197,8 @@ visible = not hidden
 visibility signal. It marks the rows the user deleted or hid, and the phantom
 stubs that duplicate a real Designer channel (same `leaf_id`, no value). It is a
 Designer config flag, so unlike `id_urzadzenia` it is replacement-stable. Every
-account tier receives `params` on a baseline server, through `devicesDetails` or
-`data/params_devices`. A row without a received value reads `0`, so it is
+account tier receives `params` on a baseline install, through `devicesDetails`
+or `data/params_devices`. A row without a received value reads `0`, so it is
 visible. This is the same gate the M-SERV's Matter bridge uses
 (`(params & 2**37) && !(params & 16)`) - see the section on the bit semantics
 below. Bit 37 is a Matter-only opt-in. The library deliberately does not filter
@@ -207,8 +207,8 @@ on it and does not surface it.
 Every config row that the app-sync catalogue omits carries the bit. Rows that
 app-sync still lists can carry it too, such as a hidden object or a phantom
 stub. The unfiltered params table serves the bit for those on both tiers. So
-`not hidden` selects the same set on the admin tier that a restricted client
-with a full grant sees.
+`not hidden` selects the same set on the admin tier that a standard client with
+a full grant sees.
 
 `leaf_id` is not a visibility marker. Designer clears it when an object's Matter
 box is unchecked, and the row keeps its type, its module, its rooms, and its
@@ -229,8 +229,8 @@ Treat `visible` as the discovery filter.
 
 ## Where the `params` bit semantics come from
 
-The Designer web bundle embeds the enum that names every bit of the object
-`params` integer:
+The Designer bundle embeds the enum that names every bit of the object `params`
+integer:
 
 ```text
 SHOW_ACTIVE:1             DALI_OBJECT:2              DALI_GROUP:4
@@ -266,9 +266,8 @@ The library reads three of these bits. `DELETED` (bit 4) backs `hidden` and
 `visible`. `READ_ONLY` (bit 6) backs `read_only`. `OPTION1` (bit 15) backs
 `bell`, gated on the two component types the label applies to.
 
-`MAKE_SEMICOLON` (bit 5) is Designer's "Divide by" checkbox, and the `max`
-column holds the divider. The M-SERV applies the divider to the published state,
-so the library reads neither. See [`classification.md`](classification.md).
+`MAKE_SEMICOLON` (bit 5) is Designer's "Divide by" checkbox. The library reads
+neither the bit nor the divider (see [`classification.md`](classification.md)).
 
 A bell object is meant for a single press. The Ampio app renders it as a
 press-only button instead of a toggle. The checkbox is display intent: it sets
@@ -283,9 +282,8 @@ meaning follows the component type. The Designer editor renders the column as
 `flaga_p`, `przekaznik`, `led`, `flaga_liniowa`, `flaga_liniowa16`, `rgb`,
 `rgbww`, and `ledww`. A camera reads the same column as a refresh time in
 milliseconds. No other type gets the field, so a cover never carries a value.
-The library surfaces the turn-on time as `AmpioObject.pulse_ms`, in
-milliseconds, on the listed types only. Every other type reads 0, whatever the
-column holds.
+The library exposes the turn-on time as `AmpioObject.pulse_ms`, in milliseconds,
+on the listed types only. Every other type reads 0, whatever the column holds.
 
 The M-SERV never applies the value server-side: a plain `turnOn` or `setValue`
 latches the object even when `czas` is set. Only an explicit time argument
@@ -309,7 +307,7 @@ likewise the structure the bridge's own classifier reads. The bridge also shows
 why a dedicated integration is the right path for sensors. It types objects
 through a registry with known gaps (no `lin_wej` branch, and loudness has no
 Matter device type at all). And it exposes only the channels hand-flagged for
-Matter - a dozen on the reference install, with humidity, pressure, illuminance,
+Matter - a dozen on the baseline install, with humidity, pressure, illuminance,
 and CO2 on zero modules.
 
 ## The read-only marker (`AmpioObject.read_only`)
@@ -322,10 +320,10 @@ and nothing else. The marker has these effects:
   during the write shows why. The M-SERV emits zero CAN frames for the read-only
   object. The same write to a writable flag emits the normal frame set. Reads
   are unaffected on every surface.
-- The marker never reaches the module. The CAN description record is identical
-  for a read-only flag and a writable one, so only the catalogue `params` field
+- The marker never reaches the module. The description record is identical for a
+  read-only flag and a writable one, so only the catalogue `params` field
   announces it.
-- The restricted tier can detect it. `data/params_devices` is served unfiltered,
+- The standard tier can detect it. `data/params_devices` is served unfiltered,
   so `params` is available even for objects outside the grant.
 
 The checkbox can change at any time in Designer. While `read_only` is True, a
@@ -336,24 +334,24 @@ history, and every automation on each checkbox change.
 
 ## Deletion on the wire
 
-Deletion behaves as follows on the wire, on the baseline server. A **module**
+Deletion behaves as follows on the wire, on the baseline install. A **module**
 delete hard-removes its row from the `devices` list, and the library evicts it
 and dispatches `ModuleRemoved`. The delete does not cascade to the module's
 objects. An **object** delete in the Ampio app is two-stage: the object first
 moves to "Ungrouped", and a second delete purges it. On the `config` catalogue
 the purge is soft. The row stays, `leaf_id` intact, with the `params` hidden bit
 set, so it drops out through `visible`. The app-sync surfaces (`data/devices`,
-`data/params_devices`) hard-remove it, and that is what lets the restricted tier
-evict for real. On the reference install the app-sync catalogue lists exactly
-the objects with a room, plus the two system objects.
+`data/params_devices`) hard-remove it, and that is what lets the standard tier
+evict for real. On the baseline install the app-sync catalogue lists exactly the
+objects with a room, plus the two system objects.
 
 ## The Matter device type tag (the `type` column)
 
 The Designer "Description in device" panel lets the installer tag an output with
 a Matter device type. Examples are "Lighting - On-off light" and "Plugs - Pump".
-The tag lives in the module itself, as one entry of the per-output description
-record `{descType, outNo, outLoc, outType, desc}`. Designer writes that record
-over `device_api/to/<macHex>/descriptions_wr` (base64 frames of
+The tag lives in the module itself, as one per-output entry of the module's
+description record: `{descType, outNo, outLoc, outType, desc}`. Designer writes
+that record over `device_api/to/<macHex>/descriptions_wr` (base64 frames of
 `[len:2][descType:2][outNo:2][outLoc:2][outType:2][utf8 desc]`, little-endian).
 It also mirrors `outType` into the object row's `type` column on both
 catalogues, as a decimal string (`"256"` = 0x0100). The library parses that
@@ -368,7 +366,7 @@ is also opt-in per output: untagged rows read `None`, so `kind` (from
 `typ_komponentu`) stays the fallback classification.
 
 The vocabulary is the standard Matter device type table, exactly as the Designer
-web bundle embeds it:
+bundle embeds it:
 
 | Group                 | Device types                                                                                                                                            |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -379,42 +377,34 @@ web bundle embeds it:
 | Closures              | 0x000A Door lock, 0x000B Door lock controller, 0x0202 Window covering, 0x0203 Window covering controller                                                |
 | HVAC                  | 0x0300 Heating/cooling unit, 0x0301 Thermostat, 0x002B Fan, 0x002D Air purifier, 0x002C Air quality sensor                                              |
 
-The CAN-resident description record is authoritative for the tag. The `type`
-column mirror lags it. An output tagged 256 (0x0100) on the CAN record can still
-show an empty `type` column. `AmpioClient.resolve_records()` reads the CAN
-record into `AmpioObject.record`: the tag lands in `record.matter_device_type`,
-the location pointer in `record.location`, and the entry's own description
-string in `record.desc`. The column mirror stays in `matter_device_type`,
-identical on both tiers. The two fields are separate facts. The consumer picks
-which one to trust.
+The description record in the module is authoritative for the tag. The `type`
+column mirror lags it. An output tagged 256 (0x0100) in the description record
+can still show an empty `type` column. `AmpioClient.resolve_records()` reads the
+description record into `AmpioObject.record`, a `DesignerRecord`. The tag lands
+in `record.matter_device_type`, the location pointer in `record.location`, and
+the entry's own description string in `record.desc`. The column mirror stays in
+`matter_device_type`, identical on both tiers. The two fields are separate
+facts. The consumer picks which one to trust.
 
 ## The Designer location (per-output `outLoc`)
 
 The Designer "Lokalizacja" dropdown sits on an output's "Description in device"
-panel. It writes a second pointer into the same per-output description record as
-the Matter tag above: `{descType, outNo, outLoc, outType, desc}`. `outLoc`
-indexes the locations name table (request keyword `locations` on the admin
-`config` surface, `{id, opis_menu, opis_rozwiniety}` rows), and 0 means
-unassigned. A read-back needs the same CAN-resident record the Matter tag lives
-in, because Designer does not mirror `outLoc` to the object catalogue. The DB
-row's `lokalizacja` column reads 0 for every object on the reference install.
-`outType` differs: the `type` column does mirror it, with the lag noted above.
+panel. It writes a second pointer into the same per-output entry as the Matter
+tag above: `{descType, outNo, outLoc, outType, desc}`. `outLoc` indexes the
+locations name table (request keyword `locations` on the admin `config` surface,
+`{id, opis_menu, opis_rozwiniety}` rows), and 0 means unassigned. A read-back
+needs the same description record the Matter tag lives in, because Designer does
+not mirror `outLoc` to the object catalogue. The DB row's `lokalizacja` column
+reads 0 for every object on the baseline install. `outType` differs: the `type`
+column does mirror it, with the lag noted above.
 
 ### The list request/reply pair
 
-Request: the payload `0` to `device_api/to/list`. Reply: JSON on
-`device_api/from/list`, `{devices: [...]}` with one entry per module, the
-M-SERV's own row included. Each entry carries `macUser` (the override, the id
-every leaf embeds), `macProd` (the factory id), `protocol`, `name` (base64), and
-`descriptions`. The last is base64 of the module's full description record.
-
-The per-module pair serves the same blob for one module. Request: an empty
-payload to `device_api/to/<machex>/get_data`. Reply: JSON on
-`device_api/from/<MACHEX>/info`. Both macs are the factory id, lowercase hex on
-the request and uppercase on the reply. A module with a Designer override
-answers on `mac_global` only and stays silent on `mac`, the M-SERV included. On
-the reference install the list blob and the `get_data` blob were identical for
-every module right after a Designer edit. The library therefore reads the list.
+The request and reply topics, the reply shape, and the per-module `get_data`
+pair are in [`protocol.md`](protocol.md). The reply's `descriptions` field is
+base64 of the module's full description record, and `macUser` is the override
+every leaf embeds. The library reads the list reply, which carries every
+module's blob in one message.
 
 The blob decodes into repeated little-endian frames:
 
@@ -454,19 +444,19 @@ bundle's enum):
 | 26    | ROLLER                                                               |
 | 34    | (the RGBW output class - no symbolic name recovered from the bundle) |
 
-### The module-level record (`AmpioModule.record`)
+### The module-level record (`AmpioModule.record`, a `ModuleRecord`)
 
 The record's one DEVICE_NAME frame (descType 1) describes the module itself. Its
 `desc` is the module name, and its `outLoc` is the module-level "Lokalizacja" -
 where the module is mounted, not where its loads are. `resolve_records()` reads
 it from the same reply and sets `AmpioModule.record`, with a `ModuleUpdated`
 dispatch on change. `record.location` is the mounting location and `record.desc`
-the CAN-resident module name. A record without the frame, or with `outLoc` 0,
-reads unassigned (None). The module answered, so None is authoritative. A module
-the sweep did not cover keeps its previous value, exactly like the per-object
-side. On the reference install the installer tagged the wall devices this way,
-and left the cabinet modules untagged. An M-SENS and three M-DOT panels carry
-room names.
+the module name from the description record. A record without the frame, or with
+`outLoc` 0, reads unassigned (None). The module answered, so None is
+authoritative. A module the sweep did not cover keeps its previous value,
+exactly like the per-object side. On the baseline install the installer tagged
+the wall devices this way, and left the cabinet modules untagged. An M-SENS and
+three M-DOT panels carry room names.
 
 ### The join rule
 
@@ -484,15 +474,15 @@ only these pairs:
 
 A channel index repeats across classes by design, so a frame at the right index
 in another class proves nothing on its own. The object name is the proof. Every
-leafed flag on the reference install has a class-6 frame at its channel. That
+leafed flag on the baseline install has a class-6 frame at its channel. That
 frame carries the object's own name wherever a name is set. A kind outside the
 table (`bit32`, `lin_wej`, `satel_alarm`, `temp` among them) resolves no
 location, because no class was proven for it.
 
 A leafless object has no `leaf_io_no`. The join then uses the module that
 `id_urzadzenia` resolves to and `funkcja` minus one as the channel. On the
-reference install `funkcja` minus one equals `leaf_io_no` for every leafed
-object of every kind except `lin_wej`. The M-SENS analog channels follow another
+baseline install `funkcja` minus one equals `leaf_io_no` for every leafed object
+of every kind except `lin_wej`. The M-SENS analog channels follow another
 numbering. The read is admin-only, so the module catalogue is present for the
 join.
 
@@ -513,7 +503,7 @@ reply that never arrives raises `AmpioTimeoutError`.
 
 ### Tier gate
 
-The whole `device_api` tree is admin-only, exactly like the raw tree. A
-restricted account gets silence on both the subscribe and the request.
+The whole `device_api` tree is admin-only, exactly like the raw tree. A standard
+account gets silence on both the subscribe and the request.
 `AmpioClient.resolve_records()` raises `RuntimeError` at once, instead of a hang
 on a reply that never comes.

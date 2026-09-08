@@ -38,7 +38,7 @@ async def main() -> None:
         lambda e: print(e.object.id, e.object.kind, e.object.state),
         of=ObjectUpdated,
     )
-    await client.connect()  # connect, subscribe, run discovery
+    await client.connect()  # connect, subscribe, request the catalogues
 
     rooms = await client.fetch_rooms()
     for obj_id, room in rooms.items():
@@ -83,9 +83,10 @@ the API detail.
 
 A dedicated standard account is the recommended shape for Home Assistant. It
 sees exactly the objects granted in the Ampio app and can command only those. An
-administrator account adds the module list and the low-latency raw input topics.
-Bus events are the exception on both tiers. Any account can raise any event
-number, and the logic behind an event runs with full authority.
+administrator account adds the module catalogue, the low-latency raw tree, the
+module diagnostics, and the CAN write surfaces (panel LEDs and the buzzer). Bus
+events are the exception on both tiers. Any account can raise any event number,
+and the logic behind an event runs with full authority.
 [`docs/account-tiers.md`](docs/account-tiers.md) has the capability table and
 the measured latency difference.
 
@@ -97,17 +98,21 @@ baseline is the compatibility floor. Wire behavior documented in this repo is
 verified against that install unless marked otherwise in place - an open claim
 says exactly what is unverified. Older servers are not supported, and the
 library logs a warning when the connected server reports a lower or missing
-`serverVersion`. If something misbehaves on an older server, upgrade the M-SERV
-first.
+`serverVersion`.
 
 Ampio does not guarantee the stability of these wire surfaces. A server update
 or a module firmware update can change or remove behavior this library depends
 on, without notice. Breaking changes by Ampio are a known pattern. The author of
 an earlier Ampio integration
 [stopped maintenance for exactly this reason](https://github.com/kstaniek/ampio-hacc/issues/2).
-If your install meets the baseline and works, stay on your current versions. Do
-not chase the latest ones. If you decide to update anyway, make a full backup
-first - ideally a full image of the M-SERV's microSD card.
+
+### Upgrade rules
+
+- If something misbehaves on an older server, upgrade the M-SERV first.
+- If your install meets the baseline and works, stay on your current versions.
+  Do not chase the latest ones.
+- If you decide to update anyway, make a full backup first - ideally a full
+  image of the M-SERV's microSD card.
 
 ## Disclaimer
 

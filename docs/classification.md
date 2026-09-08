@@ -4,12 +4,12 @@ The `devicesDetails` payload returns one row per logical object. The library
 classifies each row into exactly one kind. The kinds are `SensorKind`
 (sensor-side platforms), `InputKind` (binary or boolean platforms), `OutputKind`
 (controllable platforms), and `ThermostatKind` (the `reg` temperature
-controllers, climate platform). `classify(typ_komponentu, interpretacja)`
-returns it. The key is the object type (the wire's `typ_komponentu`) plus
-`interpretacja` (a refinement for analog inputs and the integer slots). A
-component type is a measurement, a boolean input, something controllable, or a
-thermostat, and never two of these. The four kinds are thus alternatives, not
-optional slots on the object.
+controllers, climate platform). `classify(typ_komponentu, interpretacja)` in
+`ampio_mqtt.classification` returns it. The lookup input is the object type (the
+wire's `typ_komponentu`) plus `interpretacja` (a refinement for analog inputs
+and the integer slots). A component type is a measurement, a boolean input,
+something controllable, or a thermostat, and never two of these. The four kinds
+are thus alternatives, not optional slots on the object.
 
 The tables themselves live in
 [`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py) and
@@ -19,27 +19,25 @@ its kind, its raw-bridge channel prefix, and its system flag.
 measurement. The `OutputKind` flags say which command verbs an output answers,
 and `InputKind.switchable` says the same for an input. A type absent from
 `TYPE_PROFILES` (or an `interpretacja` absent from the analog map) still
-surfaces, as the generic value sensor or the `analog_<n>` fallback.
+classifies, as the generic value sensor or the `analog_<n>` fallback.
 
 ## Wire notes the tables cannot carry
 
 - `reg` state is the running flag. The rich climate readback (measured and
   target temperature, mode, cooling) is `AmpioObject.thermostat`.
-- `detekcja` and `symulacja` are system objects: the M-SERV lists them
-  unconditionally, with an empty `leafId`. `symulacja`'s raw-channel prefix is
-  not yet bridged.
+- `detekcja` and `symulacja` are system objects (`is_system`, see
+  [`identity.md`](identity.md)). `symulacja` has no bridged raw prefix.
 - `wej` is the per-channel physical-input object the Designer creates for a
   wired button. Its per-object payload is 255 pressed / 0 released. Its
   `interpretacja` mirrors `funkcja` (the channel number), so it refines nothing.
-  It is read-only: the M-SERV drops every write verb for it on both account
-  tiers, so `switchable` is False.
-- `flaga` is the one input that answers the `turnOn`/`turnOff`/`switch` family,
-  over `/api` on both account tiers, so `switchable` is True. A consumer can
-  model a writable flag as a switch. See [`protocol.md`](protocol.md).
+  It is read-only, so `switchable` is False (see [`protocol.md`](protocol.md)).
+- `flaga` is the one input that answers the switch verbs, so `switchable` is
+  True. A consumer can model a writable flag as a switch. See
+  [`protocol.md`](protocol.md).
 - `roleta_lamelki` is what the Ampio app writes when a cover's type is set to
   "blinds - slats". The same cover reads back as `roleta_procenty` while it is
   set to "blinds - percentage". Only the slats variant reports a `lammel` angle
-  in its state payload, surfaced as `AmpioObject.lammel`.
+  in its state payload, exposed as `AmpioObject.lammel`.
 - `rgbw` is the one output that ignores the `turnOn`/`turnOff`/`switch` family.
   The replay pattern Ampio's own consumers use for on/off is in
   [`protocol.md`](protocol.md).
@@ -76,8 +74,8 @@ derived properties.
 
 Both properties read None on every kind but a sensor. An output has no
 measurement to label, and the system objects carry a placeholder in the `url`
-column. Both columns reach the restricted tier. `format` rides `data/devices`,
-and `url` rides the unfiltered `data/params_devices` table.
+column. Both columns reach the standard tier. `format` rides `data/devices`, and
+`url` rides the unfiltered `data/params_devices` table.
 
 The unit a kind fixes and the unit Designer stores are separate facts. On a
 `lin_wej` air-quality object the kind says no unit, and Designer can say `IAQ`.
@@ -139,11 +137,11 @@ It does **not** use:
   kind. It is not part of the object identity key. Use `object_key` for identity
   (see [`identity.md`](identity.md)).
 
-`typ_komponentu` must be the primary key. On an M-SENS the **temperature**
-object and the **humidity** object both carry `interpretacja=1`. Only
-`typ_komponentu` tells them apart (`temp` is a fixed temperature kind, `lin_wej`
-with `interpretacja=1` is humidity). A key on `interpretacja` alone mislabels
-temperature as humidity.
+`typ_komponentu` must be the primary discriminator. On an M-SENS the
+**temperature** object and the **humidity** object both carry `interpretacja=1`.
+Only `typ_komponentu` tells them apart (`temp` is a fixed temperature kind,
+`lin_wej` with `interpretacja=1` is humidity). A lookup on `interpretacja` alone
+mislabels temperature as humidity.
 
 ## Why classification is split from visibility
 
@@ -152,7 +150,7 @@ Classification answers "what kind of thing is this row". Visibility (see
 
 ```python
 should_surface = obj.visible          # classify() always yields a kind
-platform = obj.kind    # SensorKind | InputKind | OutputKind | ThermostatKind
+platform = obj.kind    # ObjectKind = SensorKind | InputKind | OutputKind | ThermostatKind
 ```
 
 A hidden row is still classifiable, because the type field is intact, but it

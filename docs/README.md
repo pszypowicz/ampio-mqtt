@@ -2,7 +2,7 @@
 
 These notes are for the reader who needs more than the source comments. They
 answer "what shape comes back", "which id is replacement-stable", and "what else
-is reachable". Each file is one screen.
+is reachable". Each file covers one subject.
 
 Wire behavior documented here is verified against the baseline install (see the
 README's supported versions). Claims that are still open are the marked case -
