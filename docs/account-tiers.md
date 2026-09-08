@@ -139,10 +139,11 @@ Prefer an administrator account when the install needs:
   the admin tier. A standard account can still raise events (see the exception
   above), so automation _into_ Ampio works on either tier. Only reactions _to_
   Ampio's own events need admin.
-- **Module health** - each module broadcasts its CAN supply voltage, and those
+- **Module health** - most modules broadcast their CAN supply voltage, and those
   with a temperature sensor their temperature, as `AmpioModule.supply_voltage` /
   `temperature`. This is useful to find a sagging bus or a hot module before it
-  misbehaves.
+  misbehaves. The modules that send the frame are listed in
+  [`raw-channel-bridge.md`](raw-channel-bridge.md).
 - **Panel outputs, the panel buzzer, and the CAN vocabulary** - the raw write
   frames for panel status LEDs and the buzzer. Also the device classes `/api`
   cannot express (CCT, DALI, display text). See
