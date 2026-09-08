@@ -79,7 +79,7 @@ class ModuleUpdated:
 
 @dataclass(frozen=True, slots=True)
 class ModuleRemoved:
-    """The module list stopped listing a module.
+    """The module catalogue stopped listing a module.
 
     Carries the final state, after the store has dropped it. The module
     list is administrator-only, so this never fires on a standard account.
