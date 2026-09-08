@@ -183,3 +183,8 @@ never reads as a flapping connection. `last_error` and `last_message_at` roll
 across runs, and `subscribe_failures` maps each topic the latest SUBACK rejected
 to its reason code. The counters are cheap to update - the dispatch hot path
 touches only `last_message_at`.
+
+The `modules` list holds one row per known module, sorted by id. Each row
+carries the module's `id`, `mac`, `typ_urzadzenia`, `model`, `last_seen`,
+`supply_voltage`, and `temperature`. A bug report about a quiet module reads its
+`last_seen` from this list. The user-given module name stays out of the row.
