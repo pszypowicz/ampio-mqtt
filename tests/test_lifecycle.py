@@ -39,6 +39,7 @@ from conftest import (
     FakeBroker,
     Message,
     details,
+    devices,
     feed,
     make_client,
 )
@@ -60,6 +61,15 @@ from ampio_mqtt import (
 )
 from ampio_mqtt._connection import _is_auth_error
 from ampio_mqtt.errors import AmpioAuthError
+
+# The retained raw state tree, hardcoded so the QoS split cannot recompute
+# its own expectation from the wildcard constants.
+RAW_STATE_FILTERS = {
+    "ampio/from/+/state/f/+",
+    "ampio/from/+/state/i/+",
+    "ampio/from/+/state/o/+",
+    "ampio/from/+/state/a/+",
+}
 
 
 def _auth_rejection(name: str = "Not authorized") -> aiomqtt.MqttCodeError:
@@ -352,9 +362,11 @@ async def test_connect_drives_full_discovery_through_mocked_broker() -> None:
             ADMIN_INFO_TOPIC,
             f"ampio/fromDB/{ADMIN_USER}/ob/+/state",
         }.issubset(set(broker.subscribed))
-        # Every runtime subscription asks for QoS 1 (#65), and every
-        # discovery request publish goes out at QoS 1 (#68).
-        assert set(broker.subscribed_qos) == {1}
+        # Every runtime subscription asks for QoS 1 (#65) except the raw
+        # state tree, which is retained and subscribes at QoS 0 (#168);
+        # every discovery request publish goes out at QoS 1 (#68).
+        qos_by_filter = dict(zip(broker.subscribed, broker.subscribed_qos, strict=True))
+        assert {t for t, q in qos_by_filter.items() if q == 0} == RAW_STATE_FILTERS
         assert set(broker.published_qos) == {1}
         # connect() publishes exactly the tier's initial request set, once -
         # hardcoded so a wrong tier/initial flag in the endpoint table
@@ -745,6 +757,54 @@ async def test_granted_subscriptions_leave_no_failures() -> None:
         await client.disconnect()
 
 
+async def test_the_raw_state_replay_survives_the_broker_queue_cap() -> None:
+    """The broker replays retained values filter by filter through a QoS 1
+    queue capped per client, and the raw state tree alone exceeds the cap on
+    a full install. Its four wildcards subscribe at QoS 0, which the queue
+    never holds, so every retained raw value lands (#168)."""
+    broker = FakeBroker()
+    broker.max_queued_messages = 4
+    broker.scripted_messages = [
+        Message(
+            ADMIN_DEVICES_TOPIC,
+            devices(
+                {
+                    "id": 7,
+                    "mac": 0xCAFE,
+                    "typ_urzadzenia": 11,
+                    "nazwa_urzadzenia": "panel",
+                }
+            ).encode(),
+        ),
+        Message(
+            ADMIN_DETAILS_TOPIC,
+            details(
+                *(
+                    {
+                        "id": 10 + n,
+                        "id_urzadzenia": 7,
+                        "typ_komponentu": "flaga",
+                        "interpretacja": 1,
+                        "funkcja": n,
+                        "opis_menu": f"Flag {n}",
+                    }
+                    for n in range(1, 7)
+                )
+            ).encode(),
+        ),
+    ]
+    broker.retained = {f"ampio/from/CAFE/state/f/{n}": b"1" for n in range(1, 7)}
+    client = make_client(broker, username=ADMIN_USER)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    try:
+        async with asyncio.timeout(1.0):
+            while [o.state for o in client.objects.values()] != ["1"] * 6:
+                await asyncio.sleep(0)
+        assert broker.dropped == 0
+    finally:
+        await client.disconnect()
+
+
 # --- auth-failure classification ------------------------------------------
 
 
@@ -925,20 +985,16 @@ async def test_refresh_interval_survives_a_publish_error_on_tick() -> None:
 async def test_only_the_admin_client_subscribes_to_the_md5_digests() -> None:
     """The M-SERV pushes the app-sync tables themselves into a restricted
     namespace, so that tier needs no digest. The admin catalogues are never
-    pushed, so the digest is what tells an admin session to re-ask. The two
-    filters lead the SUBSCRIBE packet: the broker replays retained values
-    in filter order and caps the queue, and the raw tree alone overflows
-    it, so a digest subscribed after the raw tree never seeds."""
+    pushed, so the digest is what tells an admin session to re-ask."""
     admin_broker, broker = FakeBroker(), FakeBroker()
     admin = make_client(admin_broker, username=ADMIN_USER)
     client = make_client(broker)
     await admin.connect(timeout=2.0, discovery_timeout=0.01)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
-        assert admin_broker.subscribed[:2] == [
-            ADMIN_MD5_DEVICES_TOPIC,
-            ADMIN_MD5_PARAMS_DEVICES_TOPIC,
-        ]
+        assert {ADMIN_MD5_DEVICES_TOPIC, ADMIN_MD5_PARAMS_DEVICES_TOPIC} <= set(
+            admin_broker.subscribed
+        )
         assert not any("/md5/" in t for t in broker.subscribed)
     finally:
         await admin.disconnect()

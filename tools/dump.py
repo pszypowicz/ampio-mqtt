@@ -4,7 +4,8 @@
 Subscribes to a topic filter and prints every message received for a duration.
 Optionally publishes one or more requests (e.g. the device-list request) after
 subscribing. Every printed line carries the seconds elapsed since the first
-request, so a slow or missing reply is visible.
+request, so a slow or missing reply is visible, and an `R` marks a message the
+broker replayed from its retained store rather than a live push.
 
 Usage:
   python tools/dump.py --host ampio.lan --username U --password P --topic '#'
@@ -13,6 +14,7 @@ Usage:
       --request-payload devices --duration 15
   python tools/dump.py --topic 'device_api/from/list' \
       --request device_api/to/list --request-payload 0 --duration 15
+  python tools/dump.py --topic 'ampio/from/+/state/f/+' --qos 0 --duration 5
 """
 
 from __future__ import annotations
@@ -44,6 +46,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--password", default=os.environ.get("AMPIO_PASSWORD"))
     p.add_argument("--topic", default="#", help="Topic filter (default '#')")
     p.add_argument(
+        "--qos",
+        type=int,
+        choices=(0, 1, 2),
+        default=1,
+        help="Subscription QoS (default 1, the library's). The broker caps a "
+        "QoS 1 retained replay at its queue limit; QoS 0 receives it whole",
+    )
+    p.add_argument(
         "--request",
         action="append",
         default=None,
@@ -63,7 +73,9 @@ def parse_args() -> argparse.Namespace:
         help="Stop after this many messages. 0 means no limit (default)",
     )
     p.add_argument(
-        "--outfile", default=None, help="Append full topic\\tpayload lines to this file"
+        "--outfile",
+        default=None,
+        help="Append full flag\\ttopic\\tpayload lines to this file",
     )
     args = p.parse_args()
     if not args.host:
@@ -73,6 +85,7 @@ def parse_args() -> argparse.Namespace:
 
 async def run(a: argparse.Namespace) -> int:
     count = 0
+    retained = 0
     try:
         async with aiomqtt.Client(
             hostname=a.host,
@@ -82,9 +95,10 @@ async def run(a: argparse.Namespace) -> int:
             identifier="ampio_mqtt_dump",
             timeout=10,
         ) as client:
-            # QoS 1 keeps the broker's at-least-once leg, matching the library.
-            await client.subscribe(a.topic, qos=1)
-            print(f"Subscribed to {a.topic!r}. Listening {a.duration}s ...")
+            await client.subscribe(a.topic, qos=a.qos)
+            print(
+                f"Subscribed to {a.topic!r} at QoS {a.qos}. Listening {a.duration}s ..."
+            )
             started = time.monotonic()
             for request in a.request or ():
                 await client.publish(request, a.request_payload.encode(), qos=1)
@@ -93,15 +107,17 @@ async def run(a: argparse.Namespace) -> int:
             captured: list[str] = []
 
             async def reader() -> None:
-                nonlocal count
+                nonlocal count, retained
                 async for message in client.messages:
                     count += 1
+                    retained += message.retain
+                    flag = "R" if message.retain else " "
                     payload = message.payload.decode("utf-8", "replace")
                     topic = str(message.topic)
                     elapsed = time.monotonic() - started
-                    print(f"  +{elapsed:7.3f}s  {topic}  =  {payload[:200]}")
+                    print(f"  +{elapsed:7.3f}s {flag} {topic}  =  {payload[:200]}")
                     if a.outfile:
-                        captured.append(f"{topic}\t{payload}\n")
+                        captured.append(f"{flag}\t{topic}\t{payload}\n")
                     if a.max > 0 and count >= a.max:
                         return
 
@@ -112,7 +128,7 @@ async def run(a: argparse.Namespace) -> int:
     except aiomqtt.MqttError as err:
         print(f"MQTT error: {err}")
         return 1
-    print(f"\nTotal messages received: {count}")
+    print(f"\nTotal messages received: {count} ({retained} retained)")
     return 0
 
 

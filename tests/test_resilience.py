@@ -131,7 +131,10 @@ def test_backoff_stays_finite_and_capped(attempt: int) -> None:
     base = 5.0
     client = AmpioClient("host", username=USER, reconnect_interval=base)
     backoff = client._connection._backoff_seconds(attempt)
-    assert base <= backoff <= 60.0 + base
+    # Designer reconnects on a flat 2 s loop, so the M-SERV tolerates far
+    # more than a 15 s cap; the cap bounds how stale a consumer stays
+    # after the broker is back (#69).
+    assert base <= backoff <= 15.0 + base
 
 
 def test_updated_at_tracks_the_report_a_value_came_from() -> None:

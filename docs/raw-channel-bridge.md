@@ -21,17 +21,19 @@ raw form is the right source.
 Once an object produced a raw message, it is **raw-owned**
 (`AmpioObject.raw_owned`). The store then ignores the slower per-object echo
 whole, and the bulk `states` snapshot skips the object. Its resync is the
-retained raw table itself. Every reconnect's subscribe re-delivers that table,
-and the index that persists across sessions routes it. That re-delivery is
-truncated on a full install: the broker caps its outgoing QoS 1 queue at 1000
-messages per client, the `f` prefix alone holds more retained values than that
-on the reference install, and the prefixes subscribed after it lose their
-replay. A QoS 0 subscription receives the whole table. On the first connect the
-retained tables arrive before the catalogues can build that index. Initial
-values thus come from the snapshot, and raw ownership begins with the object's
-first raw message. An input whose module publishes no raw table (the M-SERV's
-own virtual objects) never becomes raw-owned. It lives on the per-object path
-with snapshot resync, unchanged.
+retained raw table itself. Every reconnect's subscribe re-delivers that table
+whole, and the index that persists across sessions routes it. The library
+subscribes to the four state wildcards at QoS 0 for that reason. The broker
+replays retained values into a QoS 1 subscription through a queue of 1000
+messages per client, and the `f` prefix alone holds more values than that on the
+reference install. A QoS 0 subscription takes no queue slot, so its replay is
+complete. A raw edge lost on a socket drop returns with the next replay, because
+every channel is retained. On the first connect the retained tables arrive
+before the catalogues can build that index. Initial values thus come from the
+snapshot, and raw ownership begins with the object's first raw message. An input
+whose module publishes no raw table (the M-SERV's own virtual objects) never
+becomes raw-owned. It lives on the per-object path with snapshot resync,
+unchanged.
 
 The M-SERV serves the raw tree only to **administrator** accounts. The broker
 ACL delivers nothing on `ampio/from/#` to a standard account, retained or live,
@@ -52,13 +54,17 @@ the `channel_prefix` field on the `TYPE_PROFILES` rows. The store's
 ## What the library subscribes to
 
 ```
-ampio/from/+/state/f/+   # flags  ("flaga")
-ampio/from/+/state/i/+   # digital inputs  ("detekcja", "wej")
-ampio/from/+/state/o/+   # binary outputs ("przekaznik")
-ampio/from/+/state/a/+   # analog outputs ("przekaznik" on an open-collector leaf)
-ampio/from/+/b/4F        # per-module diagnostics broadcast
-ampio/from/+/event       # bus events
+ampio/from/+/state/f/+   # flags  ("flaga")                                      QoS 0
+ampio/from/+/state/i/+   # digital inputs  ("detekcja", "wej")                   QoS 0
+ampio/from/+/state/o/+   # binary outputs ("przekaznik")                         QoS 0
+ampio/from/+/state/a/+   # analog outputs ("przekaznik" on an open-collector leaf) QoS 0
+ampio/from/+/b/4F        # per-module diagnostics broadcast                      QoS 1
+ampio/from/+/event       # bus events                                            QoS 1
 ```
+
+The four state wildcards ask for QoS 0, because the broker retains every channel
+and a QoS 1 replay of that many values overflows its queue (see above). The
+diagnostics and event filters keep QoS 1, the acknowledged leg for a live push.
 
 The channel wildcards are bridged to the owning `AmpioObject`, so listeners see
 the same push as for any other update. The `o` prefix covers every `przekaznik`
@@ -99,9 +105,11 @@ Each frame also refreshes the module's `last_seen`, so a module with no objects
 of its own still shows liveness. Subscribe to `ModuleUpdated` to know when a
 module updates.
 
-The broadcasts are periodic, not retained, so the fields fill in over the first
-minute of a session. Modules without a temperature sensor (relays, panels)
-report voltage only.
+The broker retains the last frame of each module, so the fields are present from
+the subscribe replay on every connect. The periodic broadcasts then refresh
+them. A replayed frame refreshes `last_seen` as well, so right after a connect
+the stamp says when the replay arrived, not when the module last spoke. Modules
+without a temperature sensor (relays, panels) report voltage only.
 
 ## What the library deliberately does NOT subscribe to
 

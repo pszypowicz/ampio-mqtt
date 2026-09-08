@@ -12,6 +12,37 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.51.0
+
+The M-SERV broker replays retained values into a QoS 1 subscription through a
+queue of 1000 messages per client and drops the surplus (#168). The admin raw
+state tree holds more retained values than that on a full install, so every
+prefix subscribed after the overflow point lost its replay on each connect. The
+reconnect resync that the raw-bridge page promised was partial.
+
+### Changed
+
+- **The four raw state wildcards subscribe at QoS 0.** The broker delivers QoS 0
+  without a queue slot, so the retained replay arrives whole. Live-proven on the
+  reference install: the client receives every `f`, `i`, `o`, and `a` value
+  within five seconds of a connect, where the QoS 1 subscription received part
+  of `f` and nothing after it. Every other filter keeps QoS 1. A raw edge lost
+  on a socket drop returns with the next replay, because every channel is
+  retained.
+- **The reconnect backoff caps at 15 s** instead of 60 s (#69). Designer
+  reconnects on a flat 2 s loop, so the M-SERV tolerates far more. The cap
+  bounds how long a consumer stays stale once the broker is back. The
+  exponential shape and the jitter stay.
+- **`tools/dump.py`** takes `--qos` and marks each message the broker replayed
+  from its retained store with an `R`.
+
+### Fixed
+
+- **The raw-bridge page** said the `b/4F` diagnostics broadcasts are not
+  retained. The broker retains the last frame per module, so the values are
+  present from the subscribe replay. The page now also states that a replayed
+  frame refreshes `last_seen`.
+
 ## 0.50.0
 
 An M-CON-485 lands each Modbus reading in an integer sensor slot, and Designer

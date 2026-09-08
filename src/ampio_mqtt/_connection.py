@@ -27,13 +27,23 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-_RECONNECT_BACKOFF_MAX = 60.0
+# Designer reconnects on a flat 2 s loop, so the M-SERV tolerates far more
+# than this; the cap bounds how long a consumer stays stale once the
+# broker is back (#69).
+_RECONNECT_BACKOFF_MAX = 15.0
 _AUTH_REJECTED = "Authentication rejected by Ampio broker"
 # The M-SERV publishes everything at QoS 1, and per-object state topics are
 # not retained, so a push lost in transit is gone until the next change.
 # Subscribing at QoS 1 keeps the broker's at-least-once delivery leg; the
 # default QoS 0 would downgrade it to at-most-once (#65).
-_SUBSCRIBE_QOS = 1
+SUBSCRIBE_QOS = 1
+# The raw state tree is retained, and the broker (mosquitto) replays
+# retained values into a per-client QoS 1 queue of `max_queued_messages`
+# (1000 by default), dropping the surplus. The tree exceeds that on a full
+# install, so its filters subscribe at QoS 0, which the broker delivers
+# without a queue slot. A raw edge lost on a socket drop returns with the
+# next connect's replay, because every channel is retained (#168).
+RAW_STATE_QOS = 0
 # Publishes go out at QoS 1 too: the awaited publish then completes on the
 # broker's PUBACK, so a returned command means "the broker accepted it"
 # rather than "the payload left the socket" (#68). Every publish rides the
@@ -75,7 +85,7 @@ class Connection:
         password: str | None,
         *,
         reconnect_interval: float,
-        topics: Sequence[str],
+        topics: Sequence[tuple[str, int]],
         stats: ConnectionStats,
         on_message: MessageHandler,
         on_availability: AvailabilityHandler,
@@ -272,13 +282,11 @@ class Connection:
                     # aiomqtt floor exists to rule out (pyproject).
                     codes = cast(
                         "list[ReasonCode]",
-                        await client.subscribe(
-                            [(t, _SUBSCRIBE_QOS) for t in self._topics]
-                        ),
+                        await client.subscribe(list(self._topics)),
                     )
                     self._stats.subscribe_failures = {
                         topic: code.value
-                        for topic, code in zip(self._topics, codes, strict=True)
+                        for (topic, _), code in zip(self._topics, codes, strict=True)
                         if code.is_failure
                     }
                     # The subscribe set is tier-shaped, so every filter must
@@ -376,7 +384,7 @@ async def probe(
     )
     try:
         async with factory() as client:
-            await client.subscribe(reply_topic, qos=_SUBSCRIBE_QOS)
+            await client.subscribe(reply_topic, qos=SUBSCRIBE_QOS)
             await client.publish(
                 request_topic, request_payload.encode(), qos=_PUBLISH_QOS
             )
