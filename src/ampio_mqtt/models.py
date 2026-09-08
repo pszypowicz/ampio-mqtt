@@ -99,8 +99,7 @@ def leaf_mac(leaf_id: str) -> int | None:
 # The M-SERV's Designer override mac: its objects' leafId embeds this value
 # (not the factory mac_global), and its own module row reports it as
 # `AmpioModule.mac`. The one place the rule lives - consumers read
-# `AmpioObject.is_server_owned` instead of comparing macs themselves, and
-# the record sweep reads this name to skip the server's own row.
+# `AmpioObject.is_server_owned` instead of comparing macs themselves.
 MSERV_MAC = 1
 
 

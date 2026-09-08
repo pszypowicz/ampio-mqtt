@@ -28,7 +28,7 @@ alarm writes on the same `ampio/to` tree remain unexplored. Probe notes:
 Picking one up takes three steps.
 
 1. Find the topic. The M-SERV serves the Designer web application at its own
-   root, and that bundle contains the literal topic string for every surface the
+   root. That bundle contains the literal topic string for every surface the
    vendor's own app uses. Read the topics out of the bundle instead of guessing
    keywords.
 2. Verify the wire shape live. `tools/dump.py` subscribes to a filter, publishes

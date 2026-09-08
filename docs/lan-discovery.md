@@ -33,11 +33,11 @@ broker.
 A Home Assistant integration manifest's `zeroconf` matcher keys on a service
 type plus a TXT `properties` filter. Neither is available here. No service type
 on the LAN is Ampio-specific, so there is nothing to name in the matcher's type
-field. The one TXT content that resolves to the M-SERV's address (the
-SII/SAI/SAT keys of the co-located Matter instances) is generic Matter data, not
-an Ampio marker. A match on it fires equally for any other Matter or Thread
-device or border router on the same LAN. A manifest `zeroconf` matcher is not a
-usable discovery path for this integration.
+field. The one TXT content that resolves to the M-SERV's address is the
+SII/SAI/SAT keys of the co-located Matter instances. That is generic Matter
+data, not an Ampio marker. A match on it fires equally for any other Matter or
+Thread device or border router on the same LAN. A manifest `zeroconf` matcher is
+not a usable discovery path for this integration.
 
 ## The DHCP matcher facts, and how weak they are
 

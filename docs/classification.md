@@ -1,14 +1,15 @@
 # Object classification
 
 The `devicesDetails` payload returns one row per logical object. The library
-classifies each row into exactly one kind: a `SensorKind` (sensor-side
-platforms), an `InputKind` (binary or boolean platforms), an `OutputKind`
-(controllable platforms), or a `ThermostatKind` (the `reg` temperature
-controllers, climate platform). `classify(typ, interpretacja)` returns it. The
-key is the object type (the wire's `typ_komponentu`) plus `interpretacja` (a
-refinement for analog inputs). A component type is a measurement, a boolean
-input, something controllable, or a thermostat, and never two of these. The four
-kinds are thus alternatives, not optional slots on the object.
+classifies each row into exactly one kind. The kinds are `SensorKind`
+(sensor-side platforms), `InputKind` (binary or boolean platforms), `OutputKind`
+(controllable platforms), and `ThermostatKind` (the `reg` temperature
+controllers, climate platform). `classify(typ_komponentu, interpretacja)`
+returns it. The key is the object type (the wire's `typ_komponentu`) plus
+`interpretacja` (a refinement for analog inputs and the integer slots). A
+component type is a measurement, a boolean input, something controllable, or a
+thermostat, and never two of these. The four kinds are thus alternatives, not
+optional slots on the object.
 
 The tables themselves live in
 [`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py) and
@@ -115,15 +116,18 @@ drift. Two key families embed `interpretacja` and stay open.
 exported key is either mapped or deliberately excluded. Each open prefix counts
 as one decision. Then a library upgrade that adds a kind fails a test instead of
 a silent drop of entities. That silent drop is the failure mode of every prior
-Ampio consumer, from the M-SERV's own Matter bridge (unmapped objects return
-`undefined` and vanish) to the config-driven predecessors.
+Ampio consumer, from the config-driven predecessors to the M-SERV's own Matter
+bridge. The bridge returns `undefined` for an unmapped object, and the object
+vanishes.
 
 ## What classification keys on (and what it ignores)
 
 Classification uses exactly two wire fields:
 
 - **`typ_komponentu`** - the object type, the primary discriminator.
-- **`interpretacja`** - a refinement, used only for `lin_wej` analog inputs.
+- **`interpretacja`** - a refinement. For `lin_wej` it selects the measurement,
+  or names the `analog_<n>` fallback. For `bit8`, `bit16`, `sbit16`, and `bit32`
+  it names the `value_<n>` key.
 
 It does **not** use:
 

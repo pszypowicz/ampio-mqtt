@@ -1082,8 +1082,8 @@ def md5_topic(user: str, keyword: str) -> str:
 
 
 # The raw `ampio/from/<MAC>/...` tree: global (not user-namespaced), retained,
-# admin-only. docs/raw-channel-bridge.md is the home for why only the two
-# on-change input prefixes are subscribed and the high-rate ones are not.
+# admin-only. docs/raw-channel-bridge.md is the home for which prefixes are
+# subscribed and bridged, and which stay on the per-object topic.
 RAW_INPUT_WILDCARDS = ("ampio/from/+/state/f/+", "ampio/from/+/state/i/+")
 
 # Binary output channels, bridged for `przekaznik` objects. A touch

@@ -25,7 +25,7 @@ retained raw table itself. Every reconnect's subscribe re-delivers that table
 whole, and the index that persists across sessions routes it. The library
 subscribes to the four state wildcards at QoS 0 for that reason. The broker
 replays retained values into a QoS 1 subscription through a queue of 1000
-messages per client, and the `f` prefix alone holds more values than that on the
+messages per client. The `f` prefix alone holds more values than that on the
 reference install. A QoS 0 subscription takes no queue slot, so its replay is
 complete. A raw edge lost on a socket drop returns with the next replay, because
 every channel is retained. On the first connect the retained tables arrive
@@ -44,9 +44,9 @@ are in [`account-tiers.md`](account-tiers.md).
 
 Authoritative sources:
 [`src/ampio_mqtt/_protocol.py`](../src/ampio_mqtt/_protocol.py) holds
-`RAW_INPUT_WILDCARDS`, `RAW_OUTPUT_WILDCARD`, `RAW_DIAGNOSTICS_WILDCARD`, and
-`RAW_EVENT_WILDCARD` - together the five raw-tree subscriptions - plus the
-router.
+`RAW_INPUT_WILDCARDS`, `RAW_OUTPUT_WILDCARD`, `RAW_ANALOG_WILDCARD`,
+`RAW_DIAGNOSTICS_WILDCARD`, and `RAW_EVENT_WILDCARD` - together the six raw-tree
+subscriptions - plus the router.
 [`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py) holds
 the `channel_prefix` field on the `TYPE_PROFILES` rows. The store's
 `_apply_raw_channel` applies a routed edge.
@@ -62,18 +62,18 @@ ampio/from/+/b/4F        # per-module diagnostics broadcast                     
 ampio/from/+/event       # bus events                                            QoS 1
 ```
 
-The four state wildcards ask for QoS 0, because the broker retains every channel
-and a QoS 1 replay of that many values overflows its queue (see above). The
+The four state wildcards ask for QoS 0. The broker retains every channel, and a
+QoS 1 replay of that many values overflows its queue (see above). The
 diagnostics and event filters keep QoS 1, the acknowledged leg for a live push.
 
 The channel wildcards are bridged to the owning `AmpioObject`, so listeners see
 the same push as for any other update. The `o` prefix covers every `przekaznik`
-on a binary-output leaf, and `a` the ones on an open-collector leaf (class 67),
-which report a u8 there and never on their object topic. A touch panel's
-per-field status LEDs have no other retained surface, and a relay's outputs
-share the channel shape, so both gain the raw-first path. The event wildcard
-feeds `BusEventRaised` subscribers - a different surface with its own semantics,
-described in [`protocol.md`](protocol.md).
+on a binary-output leaf. The `a` prefix covers the ones on an open-collector
+leaf (class 67). Those report a u8 there and never on their object topic. A
+touch panel's per-field status LEDs have no other retained surface, and a
+relay's outputs share the channel shape, so both gain the raw-first path. The
+event wildcard feeds `BusEventRaised` subscribers - a different surface with its
+own semantics, described in [`protocol.md`](protocol.md).
 
 The whole tree is administrator-only (the broker rejects the filters for any
 other account in the SUBACK with reason code 128). Only the `admin` login
@@ -112,7 +112,7 @@ says nothing about whether the module is alive now. The same holds for a
 replayed raw channel value. Modules without a temperature sensor (relays,
 panels) report voltage only.
 
-## What the library deliberately does NOT subscribe to
+## What the library does not bridge
 
 | Prefix                           | Why excluded                                                                                                                                                                                                                            |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -145,11 +145,11 @@ that publish each:
 
 Two companion claims from a third-party integration stay unverified: `rsdn/<n>`
 (day/night setpoints) and `rm/<n>` (operating mode, 0=calendar 1=manual-day
-2=manual-night 3=holidays 4=block), with `<prefix>/<n>/cmd` as their write leaf.
-The reference install retains neither prefix and has no M-RT hardware to produce
-them. The mode names match known Ampio heating semantics, so the claims stay
-plausible and unproven. The bridge scope above does not change. This inventory
-exists so that classification work starts from the real set.
+2=manual-night 3=holidays 4=block). Both use `<prefix>/<n>/cmd` as their write
+leaf. The reference install retains neither prefix and has no M-RT hardware to
+produce them. The mode names match known Ampio heating semantics, so the claims
+stay plausible and unproven. The bridge scope above does not change. This
+inventory exists so that classification work starts from the real set.
 
 ## Routing key
 

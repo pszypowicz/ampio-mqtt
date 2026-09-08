@@ -1,11 +1,11 @@
 # Discovery flow
 
 `AmpioClient.connect()` runs the bring-up sequence: connect, subscribe, publish
-the auto-discovery keywords, wait for the responses, return. By the time
-`connect()` returns - unless the `discovery_timeout` elapsed first -
-`client.objects` and `client.server_info` are populated and ready to consult
-(`client.modules` too on the admin tier - see below). Live state arrives via
-push from that point on.
+the auto-discovery keywords, wait for the responses, return. When `connect()`
+returns, `client.objects` and `client.server_info` are populated and ready to
+consult, unless the `discovery_timeout` elapsed first. On the admin tier
+`client.modules` is populated too (see below). Live state arrives via push from
+that point on.
 
 Some consumers **depend** on populated collections before they do anything else.
 The canonical case resolves `mserv` to pre-register the M-SERV device, so other
@@ -29,21 +29,24 @@ the `connect()` / `disconnect()` lifecycle that joins them.
 
 ## Sequence
 
-1. **Connect** - TCP to the broker, then authenticate, then start the
-   capped-exponential reconnect loop. The run's first successful connect stamps
-   `stats.started_at`. Each subsequent one bumps `stats.reconnect_count`.
+1. **Connect** - start the session loop. Its first pass connects over TCP and
+   authenticates, and `connect()` waits for that pass. Each later pass
+   reconnects with capped-exponential backoff. The run's first successful
+   connect stamps `stats.started_at`. Each subsequent one bumps
+   `stats.reconnect_count`.
 2. **Subscribe** - the tier's topic set, sent as one SUBSCRIBE packet. The set
-   is `ob/+/state`, the response topics of the tier's endpoints, and - on the
-   `admin` login only - the retained `md5/devices` and `md5/params_devices`
-   digests (see below) plus the global raw-channel wildcards. Every filter asks
-   for QoS 1 except the four raw state wildcards, which ask for QoS 0. The
-   broker replays retained values into a QoS 1 subscription through a queue of
-   1000 messages per client, and the raw state tree alone exceeds that on a full
-   install. A QoS 0 subscription takes no queue slot, so its replay is complete.
-   The set is decided at construction from the authenticated username (see
-   [`account-tiers.md`](account-tiers.md)), so every filter must be granted. A
-   SUBACK rejection lands in `stats.subscribe_failures` and warns, because it
-   means a broken broker or ACL. See [`protocol.md`](protocol.md) and
+   is `ob/+/state` and the response topics of the tier's endpoints. The `admin`
+   login adds the retained `md5/devices` and `md5/params_devices` digests (see
+   below), the global raw-channel wildcards, and the `device_api/from/list`
+   reply topic. Every filter asks for QoS 1 except the four raw state wildcards,
+   which ask for QoS 0. The broker replays retained values into a QoS 1
+   subscription through a queue of 1000 messages per client. The raw state tree
+   alone exceeds that on a full install. A QoS 0 subscription takes no queue
+   slot, so its replay is complete. The set is decided at construction from the
+   authenticated username (see [`account-tiers.md`](account-tiers.md)), so every
+   filter must be granted. A SUBACK rejection lands in
+   `stats.subscribe_failures` and warns, because it means a broken broker or
+   ACL. See [`protocol.md`](protocol.md) and
    [`raw-channel-bridge.md`](raw-channel-bridge.md) for the topics.
 3. **Publish the tier's auto-discovery keywords** on the matching control
    surfaces - four requests either way:
@@ -59,10 +62,10 @@ the `connect()` / `disconnect()` lifecycle that joins them.
    a later `wait_for_initial_discovery()` call returns immediately once its set
    fired (and stays correct across reconnects).
 5. **Return.** The library does not refetch the catalogues on its own schedule.
-   Live state arrives via push on the per-object topic (and, for inputs, the
-   raw-channel topics). A Designer save reaches both tiers through the push
-   described below. A consumer that wants a periodic catalogue re-read on top
-   opts into `refresh_interval`.
+   Live state arrives via push on the per-object topic (and, for inputs and the
+   bridged `przekaznik` outputs, the raw-channel topics). A Designer save
+   reaches both tiers through the push described below. A consumer that wants a
+   periodic catalogue re-read on top opts into `refresh_interval`.
 
 Every catalogue reply also evicts what it stopped listing, fired as
 `ObjectRemoved` / `ModuleRemoved`. The per-tier rules and the deletion-tool
@@ -76,8 +79,8 @@ other.
 ### A Designer save
 
 A Designer save rewrites the account tables on the M-SERV. A few seconds later
-the M-SERV publishes three replies into every account namespace, the admin one
-included, with no request from the account: `data/devices`, `md5/devices`, and
+the M-SERV publishes three messages into every account namespace, the admin one
+included. No account requested them: `data/devices`, `md5/devices`, and
 `data/params_devices`. Each tier learns of the save from a different one of
 them.
 
@@ -109,9 +112,9 @@ it. A tick while the connection is down skips silently. The reconnect path
 already refreshes on connect, so a periodic request adds nothing while the
 broker is unreachable. Each cycle re-publishes the same initial-discovery
 requests that `connect()` and `refresh()` send. The Designer-save push above
-covers the common case on both tiers, so the tick is the fallback for a change
-the M-SERV pushes no table or digest for. The next tick surfaces such a change
-as `ObjectAdded` / `ObjectRemoved`, with no reconnect needed.
+covers the common case on both tiers. The tick is the fallback for a change the
+M-SERV pushes no table or digest for. The next tick surfaces such a change as
+`ObjectAdded` / `ObjectRemoved`, with no reconnect needed.
 
 Each tick also runs `begin_refresh()`, which clears the live-value guard. An
 undated live value can then be re-seeded from the M-SERV's DB snapshot on the
@@ -121,7 +124,7 @@ catalogue, so `refresh_interval` is sized in minutes, not seconds.
 
 ## What runs on demand, not automatically
 
-Three helpers are not part of the auto sequence, because the consumer decides
+Four helpers are not part of the auto sequence, because the consumer decides
 when - and whether - to call them:
 
 - **`fetch_rooms()`** - the `groups` + `group_devices` join. The HA integration
@@ -130,12 +133,15 @@ when - and whether - to call them:
 - **`fetch_scenes()`** - the scene catalogue, driven with `run_scene()` /
   `off_scene()` / `undo_scene()`. Same rationale: a consumer that surfaces no
   scenes never pays for the fetch.
+- **`fetch_locations()`** - the Designer location name table, admin tier only.
+  `resolve_records()` fetches it itself, so a consumer that runs the sweep never
+  calls it directly.
 - **`resolve_records()`** - reads every module's record in one `device_api` list
   reply and folds the per-output Designer record into `AmpioObject.record`
   (admin tier only, see [`identity.md`](identity.md)). The per-module record
   folds into `AmpioModule.record`. A consumer that does not surface per-object
-  records never pays for the read. The returned `RecordSweep` names the
-  catalogued modules the reply covered and the modules it left out.
+  records never pays for the read. The returned `RecordSweep` names every module
+  the reply listed and the catalogued modules it left out.
 
 ## Finding the M-SERV on the LAN
 
@@ -155,10 +161,12 @@ credentials are known, confirm identity with `check_connection()`.
 ## Liveness counters
 
 `client.diagnostics_snapshot()` returns the one credential-free dict a
-diagnostics platform emits as-is. It holds the connection counters, the SUBACK
-rejections, the mac collisions, and each endpoint's verbatim last reply. The
-`info` entry is the exception. Its reply carries the account's address,
-coordinates, cloud endpoint, and public key, and a key-based redactor cannot
-reach inside one retained string. The snapshot therefore masks every info value
-outside a safe-key set and withholds an unparseable info reply. The counters are
-cheap to update - the dispatch hot path touches only `last_message_at`.
+diagnostics platform emits as-is. It holds the tier, the availability flag, the
+auth-failure reason, and the safe server-info subset. It also holds the
+connection counters, the SUBACK rejections, the mac collisions, and each
+endpoint's verbatim last reply. The `info` entry is the exception. Its reply
+carries the account's address, coordinates, cloud endpoint, and public key, and
+a key-based redactor cannot reach inside one retained string. The snapshot
+therefore masks every info value outside a safe-key set and withholds an
+unparseable info reply. The counters are cheap to update - the dispatch hot path
+touches only `last_message_at`.
