@@ -141,8 +141,8 @@ described below.
 | `open`                             | -                           | Cover to 100.                                                                                                                                                                                                                                                                                                                                      |
 | `close`                            | -                           | Cover to 0.                                                                                                                                                                                                                                                                                                                                        |
 | `stop`                             | -                           | Halts a cover on either axis. Mid-travel, the position stream freezes at the halt point, and the commanded target is never reached. A slat rotation caught mid-turn freezes at an intermediate angle the same way. During the pre-travel slat phase it also cancels the pending move. Stationary, it is a silent no-op. Exposed as `stop()`.       |
-| `setValue`                         | `<0-255>[/<time>]`          | `time` is in 10 ms units and **reverts** the object afterwards - a timed pulse, not a fade.                                                                                                                                                                                                                                                        |
-| `setColors`                        | `<R>/<G>/<B>/<W>`           | Also accepts one packed int (`R \| G<<8 \| B<<16 \| W<<24`), which is what object state reports back. Absent from the spec enum - undocumented but real.                                                                                                                                                                                           |
+| `setValue`                         | `<0-255>[/<time>]`          | `time` is in 10 ms units and **reverts** the object afterwards - a timed pulse, not a fade. `rgbw` objects ignore it, with or without `time` (no effect, no reply) - see `setColors`.                                                                                                                                                              |
+| `setColors`                        | `<R>/<G>/<B>/<W>`           | Also accepts one packed int (`R \| G<<8 \| B<<16 \| W<<24`), which is what object state reports back. Absent from the spec enum - undocumented but real. A fifth argument (a `time` in the `setValue` style) makes the M-SERV drop the whole command (no effect, no reply).                                                                        |
 | `setRollerPos`                     | `<position>/<lamella>`      | Percent each. `101` omits an axis (see the slat-drag note below), so one command moves either axis alone or both together.                                                                                                                                                                                                                         |
 | `setColor`                         | 24-bit `R \| G<<8 \| B<<16` | Dead on the baseline server: in the spec enum, but a live send to an `rgbw` object had no effect and no reply. Use `setColors`.                                                                                                                                                                                                                    |
 | `setColorW`                        | `<rgb24>/<white>`           | Dead on the baseline server, same observation as `setColor`. Use `setColors`.                                                                                                                                                                                                                                                                      |
@@ -155,26 +155,29 @@ described below.
 | `setVirtualValue`                  | `<0-255>`                   | Drives a virtual sensor channel, echoed as state. It works from the standard tier on a granted object.                                                                                                                                                                                                                                             |
 | `setFakeValue`                     | `<0-255>`                   | Undocumented alias of `setVirtualValue`: absent from the spec enum (the server changelog names it), it drives the virtual channel identically.                                                                                                                                                                                                     |
 
-**`rgbw` on/off is a consumer-side color replay.** The switch-verb rows above
-mark `rgbw` as a type that ignores `turnOn` / `turnOff` / `switch`. Live
-observation shows how Ampio's own consumers handle that. The Ampio app remembers
-the light's last color client-side. It re-sends that color via `setColors` for
-"on", and sends `setColors 0` for "off". The M-SERV's Matter bridge does the
-same server-side. A Matter On/Off from Home Assistant surfaces on the bus as
-`setColors` with the bridge's remembered color (or `0`). The publish goes to the
-**admin** account's `/api` topic. The bridge is an ordinary MQTT client of this
-same surface, so its writes are observable and grant-equivalent to admin. The
-bridge sends the packed form as a signed 32-bit int (negative values), which the
-M-SERV accepts. State echoes report the unsigned form. A consumer that wants
-"on" for an `rgbw` object must follow the same pattern. Remember the last
-non-zero state value (the packed color, decoded as `AmpioObject.rgbw`), and
-replay it with `setColors`.
+**`rgbw` on/off is a consumer-side color replay.** The verb rows above mark
+`rgbw` as a type that ignores `turnOn`, `turnOff`, `switch`, and `setValue`.
+Live observation shows how Ampio's own consumers handle that. The Ampio app
+remembers the light's last color client-side. It re-sends that color via
+`setColors` for "on", and sends `setColors 0` for "off". The M-SERV's Matter
+bridge does the same server-side. A Matter On/Off from Home Assistant surfaces
+on the bus as `setColors` with the bridge's remembered color (or `0`). The
+publish goes to the **admin** account's `/api` topic. The bridge is an ordinary
+MQTT client of this same surface, so its writes are observable and
+grant-equivalent to admin. The bridge sends the packed form as a signed 32-bit
+int (negative values), which the M-SERV accepts. State echoes report the
+unsigned form. A consumer that wants "on" for an `rgbw` object must follow the
+same pattern. Remember the last non-zero state value (the packed color, decoded
+as `AmpioObject.rgbw`), and replay it with `setColors`.
 
 **No command carries a fade time.** No verb on this surface ramps an output. The
 `setValue` `time` argument reverts the object after the delay, which makes it a
-timed pulse. `setColors` accepts no time argument. The object catalogue carries
-a per-object `fadeTime` column. That column is device-side configuration, and it
-applies to every change of the object rather than to one command.
+timed pulse. A dimmable `led` output pulses the same way: the new value, then
+the revert, with no intermediate value in the state stream. `setColors` accepts
+no time argument, and a fifth argument makes the M-SERV drop the command. The
+object catalogue carries a per-object `fadeTime` column. That column is
+device-side configuration, and it applies to every change of the object rather
+than to one command.
 
 The M-SERV Matter bridge advertises a per-command transition on its dimmable
 outputs, and it does not honor the value. A live test drove one dimmable output
