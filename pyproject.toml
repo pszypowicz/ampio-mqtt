@@ -95,6 +95,8 @@ ignore = ["ASYNC109"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# The scripts in tools/ import as top-level modules in tests/test_tools.py.
+pythonpath = ["tools"]
 
 # Strict in config, not only as a CI flag, so a local `mypy src/ampio_mqtt`
 # checks exactly what CI checks.

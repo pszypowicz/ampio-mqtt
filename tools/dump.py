@@ -24,6 +24,7 @@ import asyncio
 import contextlib
 import os
 import time
+from collections.abc import Callable
 
 import aiomqtt
 
@@ -83,18 +84,25 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-async def run(a: argparse.Namespace) -> int:
-    count = 0
-    retained = 0
-    try:
-        async with aiomqtt.Client(
+async def run(
+    a: argparse.Namespace,
+    client_factory: Callable[[], aiomqtt.Client] | None = None,
+) -> int:
+    """Drive the run; ``client_factory`` is the test seam for the session."""
+    factory = client_factory or (
+        lambda: aiomqtt.Client(
             hostname=a.host,
             port=a.port,
             username=a.username,
             password=a.password,
             identifier="ampio_mqtt_dump",
             timeout=10,
-        ) as client:
+        )
+    )
+    count = 0
+    retained = 0
+    try:
+        async with factory() as client:
             await client.subscribe(a.topic, qos=a.qos)
             print(
                 f"Subscribed to {a.topic!r} at QoS {a.qos}. Listening {a.duration}s ..."
