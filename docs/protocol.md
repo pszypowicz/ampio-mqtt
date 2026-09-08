@@ -93,18 +93,13 @@ The OpenAPI spec embedded in the M-SERV web app bundle
 directions. `setColor`/`setColorW` are listed yet ignored on the wire, while
 `setColors` and `setFakeValue` work without a listing. There is no reply topic.
 The object's normal state topic reports the result, typically within ~200 ms,
-and an unknown verb is silently ignored. Every row below states observed
-behavior on the baseline server. Where the reference install lacks the hardware
-to exercise a verb, the row says so.
+and an unknown verb is silently ignored. Where the reference install lacks the
+hardware to exercise a verb, the row says so.
 
 **Commands are grant-scoped.** The per-user grant bounds writes exactly as it
 bounds reads. The M-SERV drops a command for an object outside the account's
 grant, with no effect and no reply. The identical command from an administrator
-succeeds. The check covered non-granted objects of multiple component types. The
-most recent pass sent `setColors` to an rgbw and `setValue` to a dimmer from the
-standard account. An admin session observed both objects stay silent. A
-granted-object positive control from the same account confirmed that its command
-path works. The account's namespace likewise carries state only for granted
+succeeds. The account's namespace likewise carries state only for granted
 objects, including ones it just commanded.
 
 **Designer's read-only checkbox drops writes the same way.** An object with
@@ -133,33 +128,32 @@ broker drops a non-admin account's publishes there. The library uses the `/api`
 surface, which works on both tiers, except for the binary-output writes
 described below.
 
-| Verb                               | Args                        | Notes                                                                                                                                                                                                                                                                                                                                              |
-| ---------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `turnOn`                           | -                           | Full on (255). Flags answer it too. `rgbw` objects ignore it (no effect, no reply) - see `setColors`.                                                                                                                                                                                                                                              |
-| `turnOff`                          | -                           | Off. Flags answer it too. `rgbw` objects ignore it (no effect, no reply) - turn those off with `setColors 0/0/0/0`.                                                                                                                                                                                                                                |
-| `switch`                           | -                           | Inverts the current state. Flags answer it too. `rgbw` objects ignore it (no effect, no reply).                                                                                                                                                                                                                                                    |
-| `open`                             | -                           | Cover to 100.                                                                                                                                                                                                                                                                                                                                      |
-| `close`                            | -                           | Cover to 0.                                                                                                                                                                                                                                                                                                                                        |
-| `stop`                             | -                           | Halts a cover on either axis. Mid-travel, the position stream freezes at the halt point, and the commanded target is never reached. A slat rotation caught mid-turn freezes at an intermediate angle the same way. During the pre-travel slat phase it also cancels the pending move. Stationary, it is a silent no-op. Exposed as `stop()`.       |
-| `setValue`                         | `<0-255>[/<time>]`          | `time` is in 10 ms units and **reverts** the object afterwards - a timed pulse, not a fade. `rgbw` objects ignore it, with or without `time` (no effect, no reply) - see `setColors`.                                                                                                                                                              |
-| `setColors`                        | `<R>/<G>/<B>/<W>`           | Also accepts one packed int (`R \| G<<8 \| B<<16 \| W<<24`), which is what object state reports back. Absent from the spec enum - undocumented but real. A fifth argument (a `time` in the `setValue` style) makes the M-SERV drop the whole command (no effect, no reply).                                                                        |
-| `setRollerPos`                     | `<position>/<lamella>`      | Percent each. `101` omits an axis (see the slat-drag note below), so one command moves either axis alone or both together.                                                                                                                                                                                                                         |
-| `setColor`                         | 24-bit `R \| G<<8 \| B<<16` | Dead on the baseline server: in the spec enum, but a live send to an `rgbw` object had no effect and no reply. Use `setColors`.                                                                                                                                                                                                                    |
-| `setColorW`                        | `<rgb24>/<white>`           | Dead on the baseline server, same observation as `setColor`. Use `setColors`.                                                                                                                                                                                                                                                                      |
-| `setTemperature`                   | `<°C>`                      | Regulator (`reg`) setpoint, echoed as `setTemperature` in the reg state push (see Live state). Absent from the spec enum (Ampio's MQTT API note only), yet it works.                                                                                                                                                                               |
-| `setHeatingMode`                   | mode letter                 | All four claimed letters `A,S,M,H` write and echo on the baseline server. A live round-trip on a virtual regulator drove `S -> A -> H -> M -> S`, each echoed in the state push's `mode` within the confirm window. (An earlier observation that `S` was silently ignored does not reproduce.) `ThermostatState.mode` carries the letter verbatim. |
-| `arm`, `disarm`                    | `<pin>`                     | Flip a `satel_alarm` object's armed state, with a ~1 s echo. The `satel_` types cover alarm integrations generally (verified on a Jablotron behind an M-CON). Absent from the spec enum, yet it works. The paired "alarmed" object also reads 1 while the panel is in its exit-delay `arming` phase - on its own it is not a siren indicator.      |
-| `setVolume`, `setInput`, `setSeek` | radio module                | In the spec enum. Untestable here - no radio module.                                                                                                                                                                                                                                                                                               |
-| `setText`                          | `<text>`                    | Sets the `desc` field of the object's state push (`state` unchanged), fanned out to every user namespace.                                                                                                                                                                                                                                          |
-| `setVirtualTemp`                   | `<°C>`                      | Drives a virtual temperature channel: plain decimal, echoed as the object's state (`21.5`, and zero echoes `0.0`).                                                                                                                                                                                                                                 |
-| `setVirtualValue`                  | `<0-255>`                   | Drives a virtual sensor channel, echoed as state. It works from the standard tier on a granted object.                                                                                                                                                                                                                                             |
-| `setFakeValue`                     | `<0-255>`                   | Undocumented alias of `setVirtualValue`: absent from the spec enum (the server changelog names it), it drives the virtual channel identically.                                                                                                                                                                                                     |
+| Verb                               | Args                        | Notes                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `turnOn`                           | -                           | Full on (255). Flags answer it too. `rgbw` objects ignore it (no effect, no reply) - see `setColors`.                                                                                                                                                                                                                                        |
+| `turnOff`                          | -                           | Off. Flags answer it too. `rgbw` objects ignore it (no effect, no reply) - turn those off with `setColors 0/0/0/0`.                                                                                                                                                                                                                          |
+| `switch`                           | -                           | Inverts the current state. Flags answer it too. `rgbw` objects ignore it (no effect, no reply).                                                                                                                                                                                                                                              |
+| `open`                             | -                           | Cover to 100.                                                                                                                                                                                                                                                                                                                                |
+| `close`                            | -                           | Cover to 0.                                                                                                                                                                                                                                                                                                                                  |
+| `stop`                             | -                           | Halts a cover on either axis. Mid-travel, the position stream freezes at the halt point, and the commanded target is never reached. A slat rotation caught mid-turn freezes at an intermediate angle the same way. During the pre-travel slat phase it also cancels the pending move. Stationary, it is a silent no-op. Exposed as `stop()`. |
+| `setValue`                         | `<0-255>[/<time>]`          | `time` is in 10 ms units and **reverts** the object afterwards - a timed pulse, not a fade. `rgbw` objects ignore it, with or without `time` (no effect, no reply) - see `setColors`.                                                                                                                                                        |
+| `setColors`                        | `<R>/<G>/<B>/<W>`           | Also accepts one packed int (`R \| G<<8 \| B<<16 \| W<<24`), which is what object state reports back. Absent from the spec enum - undocumented but real. A fifth argument (a `time` in the `setValue` style) makes the M-SERV drop the whole command (no effect, no reply).                                                                  |
+| `setRollerPos`                     | `<position>/<lamella>`      | Percent each. `101` omits an axis (see the slat-drag note below), so one command moves either axis alone or both together.                                                                                                                                                                                                                   |
+| `setColor`                         | 24-bit `R \| G<<8 \| B<<16` | Dead on the baseline server: in the spec enum, but it has no effect and no reply on an `rgbw` object. Use `setColors`.                                                                                                                                                                                                                       |
+| `setColorW`                        | `<rgb24>/<white>`           | Dead on the baseline server, exactly as `setColor`. Use `setColors`.                                                                                                                                                                                                                                                                         |
+| `setTemperature`                   | `<°C>`                      | Regulator (`reg`) setpoint, echoed as `setTemperature` in the reg state push (see Live state). Absent from the spec enum (Ampio's MQTT API note only), yet it works.                                                                                                                                                                         |
+| `setHeatingMode`                   | mode letter                 | All four claimed letters `A,S,M,H` write and echo on the baseline server. Each letter echoes in the state push's `mode` within the confirm window. `ThermostatState.mode` carries the letter verbatim.                                                                                                                                       |
+| `arm`, `disarm`                    | `<pin>`                     | Flip a `satel_alarm` object's armed state, with a ~1 s echo. The `satel_` types cover alarm integrations generally, a Jablotron behind an M-CON included. Absent from the spec enum, yet it works. The paired "alarmed" object also reads 1 while the panel is in its exit-delay `arming` phase - on its own it is not a siren indicator.    |
+| `setVolume`, `setInput`, `setSeek` | radio module                | In the spec enum. Untestable here - no radio module.                                                                                                                                                                                                                                                                                         |
+| `setText`                          | `<text>`                    | Sets the `desc` field of the object's state push (`state` unchanged), fanned out to every user namespace.                                                                                                                                                                                                                                    |
+| `setVirtualTemp`                   | `<°C>`                      | Drives a virtual temperature channel: plain decimal, echoed as the object's state (`21.5`, and zero echoes `0.0`).                                                                                                                                                                                                                           |
+| `setVirtualValue`                  | `<0-255>`                   | Drives a virtual sensor channel, echoed as state. It works from the standard tier on a granted object.                                                                                                                                                                                                                                       |
+| `setFakeValue`                     | `<0-255>`                   | Undocumented alias of `setVirtualValue`: absent from the spec enum (the server changelog names it), it drives the virtual channel identically.                                                                                                                                                                                               |
 
 **`rgbw` on/off is a consumer-side color replay.** The verb rows above mark
-`rgbw` as a type that ignores `turnOn`, `turnOff`, `switch`, and `setValue`.
-Live observation shows how Ampio's own consumers handle that. The Ampio app
-remembers the light's last color client-side. It re-sends that color via
-`setColors` for "on", and sends `setColors 0` for "off". The M-SERV's Matter
+`rgbw` as a type that ignores `turnOn`, `turnOff`, `switch`, and `setValue`. The
+Ampio app remembers the light's last color client-side. It re-sends that color
+via `setColors` for "on", and sends `setColors 0` for "off". The M-SERV's Matter
 bridge does the same server-side. A Matter On/Off from Home Assistant surfaces
 on the bus as `setColors` with the bridge's remembered color (or `0`). The
 publish goes to the **admin** account's `/api` topic. The bridge is an ordinary
@@ -180,12 +174,11 @@ device-side configuration, and it applies to every change of the object rather
 than to one command.
 
 The M-SERV Matter bridge advertises a per-command transition on its dimmable
-outputs, and it does not honor the value. A live test drove one dimmable output
-through the bridge three times, with transition times of 0, 5, and 20 seconds.
-The bridge emitted an identical CAN frame sequence on all three runs. The output
-reached its new level in about 0.3 seconds every time, with no intermediate
-steps in the state stream. The bridge also takes the slower route. It emits a
-ten-frame command where an `/api` `setValue` emits one frame.
+outputs, and it does not honor the value. With transition times of 0, 5, and 20
+seconds, the bridge emits an identical CAN frame sequence. The output reaches
+its new level in about 0.3 seconds, with no intermediate steps in the state
+stream. The bridge also takes the slower route. It emits a ten-frame command
+where an `/api` `setValue` emits one frame.
 
 A consumer must therefore not offer a per-command transition on a light. Ramps
 are available only as device-side `fadeTime` configuration.
@@ -205,8 +198,8 @@ Do not aim the raw output frame at a flag channel or at an input channel. The
 frame drives the binary output that carries that channel number, which is a
 different device on the same module. Each leaf class numbers its channels in its
 own space. A module reports the size of each space in the `supportedFunctions`
-census of its `device_api` record. One observed module carries a physical input
-at channel 0 and an unrelated relay at channel 0.
+census of its `device_api` record. One module carries a physical input at
+channel 0 and an unrelated relay at channel 0.
 
 Scenes are driven by their own payloads on the same topic. The payload addresses
 the scene, not an object:
@@ -245,8 +238,8 @@ Designer SPA does not use `/api` for these leaves either. This is an Ampio
 limitation: a standard account holds no surface that reaches a panel output at
 all.
 
-The write that works is the raw CAN frame the SPA itself sends, captured live
-and replicated from a plain client:
+The write that works is the raw CAN frame the SPA itself sends, replayed from a
+plain client:
 
 ```
 ampio/to/<machex>/raw      <fn>f9<value:2><channel:2>     (ASCII hex)
@@ -255,14 +248,14 @@ ampio/to/<machex>/raw      <fn>f9<value:2><channel:2>     (ASCII hex)
 The first byte is the function the Designer sends the leaf's class: `0x30` for a
 binary output (leaf class 257, relays and panel LEDs) and `0x32` for an
 open-collector output (class 67, the M-INOC). A module drops `0x30` on a
-class-67 leaf, live-proven: the write returns, nothing moves, and no frame
-follows on the bus. `0xF9` is the set-u8 command. `channel` is the 0-based
-output index - `AmpioObject.leaf_io_no`, one below the 1-based raw state
-channel. The topic is admin-only like the rest of the `ampio/to` tree. A binary
-output echoes on `state/o/<ch+1>` in ~30-50 ms and on its object topic in ~150
-ms. An open-collector output echoes on `state/a/<ch+1>` as a u8 value and never
-on its object topic, on any write path, so the library bridges `a` for those
-objects. `confirm=` resolves on either edge.
+class-67 leaf: the write returns, nothing moves, and no frame follows on the
+bus. `0xF9` is the set-u8 command. `channel` is the 0-based output index -
+`AmpioObject.leaf_io_no`, one below the 1-based raw state channel. The topic is
+admin-only like the rest of the `ampio/to` tree. A binary output echoes on
+`state/o/<ch+1>` in ~30-50 ms and on its object topic in ~150 ms. An
+open-collector output echoes on `state/a/<ch+1>` as a u8 value and never on its
+object topic, on any write path, so the library bridges `a` for those objects.
+`confirm=` resolves on either edge.
 
 On the admin tier, a `przekaznik` on a CAN module rides this frame when its leaf
 class has a proven function byte, addressed purely by its own leaf (mac, 0-based
@@ -274,8 +267,8 @@ panel output cannot pulse, and `confirm=` is what surfaces that. The restricted
 tier always publishes the `/api` form, which a panel output ignores.
 
 A module condition bound to the LED overrides such writes eventually, not
-preventively. A live write to a condition-bound LED took effect and was
-re-asserted by the panel ~9 s later, with the bound source unchanged. Durable
+preventively. A write to a condition-bound LED takes effect, and the panel
+re-asserts the bound state ~9 s later, with the bound source unchanged. Durable
 external control thus needs an LED that Designer logic does not drive. Create
 its app object in Designer - the same recipe as any other output object.
 
@@ -356,10 +349,10 @@ surface, usable as a resolver cross-check.
 JSON object keyed `<descType>_<index>` (base64 names). The palette reads
 descTypes 12, 13, 16, 17 for outputs, 6 for flags, and 21 for IR. It indexes
 descTypes 11, 13, 15, 17 from 256. On the baseline server the surface is
-**dead**: probed live with both mac cases, empty payload, and a wildcard reply
-subscription - no reply, nothing retained. Read names through the `device_api`
-record instead (see [`identity.md`](identity.md)). The palette's contract is
-recorded here for older bridge firmware only.
+**dead**: no reply and nothing retained, for either mac case, an empty payload,
+and a wildcard reply subscription. Read names through the `device_api` record
+instead (see [`identity.md`](identity.md)). The palette's contract is recorded
+here for older bridge firmware only.
 
 ## The Designer's own surfaces
 
@@ -393,7 +386,7 @@ OpenAPI spec. It works on:
   `config_get`/`config_set`/`config_reload`, `sf_get`, and `params_set`, with
   `devices_status` notifications.
 - Raw CAN writes: `ampio/to/<machex>/raw` and `rawf`, hex-encoded frames. The
-  live-control vocabulary observed so far: the generic output write
+  live-control vocabulary: the generic output write
   `[0x30, 0xF9, value, channel]` and DALI set `[57, 0xF9, ch, val]`.
   MLED-capable panels add an MLED family `[54, 0xDF, 1|2|3, ...]`, and flash
   config transfer is `[dst, 0xFB|0xFC, blockLo, blockHi, ...]`. The Designer

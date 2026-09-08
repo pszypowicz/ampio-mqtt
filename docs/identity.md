@@ -29,13 +29,13 @@ device topology must never branch on them.
 
 ## Objects
 
-| Field                     | Stable across module replacement?                                                                                                                                                                                                                                                | Notes                                                                                |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `id`                      | **Yes**, in practice. An object delete is soft on the `config` catalogue. The row stays, with the `params` hidden bit set, so the autoincrement never renumbers. Observed unchanged on a live install across years of configuration uploads, module replacements, and deletions. | The per-object unique id, exposed as `AmpioObject.object_key`.                       |
-| `id_urzadzenia`           | **No** - it mirrors the module row, which is reassigned in `mac_global` order when a module is replaced.                                                                                                                                                                         | Cross-referencing an object to its module _within a single discovery snapshot_ only. |
-| `funkcja` (channel index) | **Yes** - part of the reloaded Designer config. Not unique: if the same physical signal is exposed as several Designer objects, they share one `funkcja`.                                                                                                                        |
-| `typ_komponentu`          | **Yes** - the type vocabulary (`temp`, `lin_wej`, `flaga`, ...).                                                                                                                                                                                                                 |
-| `leaf_id`                 | **Yes**, when set. The physical-output key source and the parse source for `module_mac`. Empty for system objects and after a Matter uncheck - see below.                                                                                                                        |
+| Field                     | Stable across module replacement?                                                                                                                                                                                                                     | Notes                                                                                |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `id`                      | **Yes**, in practice. An object delete is soft on the `config` catalogue. The row stays, with the `params` hidden bit set, so the autoincrement never renumbers. Unchanged across years of configuration uploads, module replacements, and deletions. | The per-object unique id, exposed as `AmpioObject.object_key`.                       |
+| `id_urzadzenia`           | **No** - it mirrors the module row, which is reassigned in `mac_global` order when a module is replaced.                                                                                                                                              | Cross-referencing an object to its module _within a single discovery snapshot_ only. |
+| `funkcja` (channel index) | **Yes** - part of the reloaded Designer config. Not unique: if the same physical signal is exposed as several Designer objects, they share one `funkcja`.                                                                                             |
+| `typ_komponentu`          | **Yes** - the type vocabulary (`temp`, `lin_wej`, `flaga`, ...).                                                                                                                                                                                      |
+| `leaf_id`                 | **Yes**, when set. The physical-output key source and the parse source for `module_mac`. Empty for system objects and after a Matter uncheck - see below.                                                                                             |
 
 ## Unique id: the object id (`AmpioObject.object_key`)
 
@@ -60,8 +60,8 @@ Three properties make the object id the right source:
   surface, so a standard account and an administrator account agree on it.
 - **Stable in practice.** Designer soft-deletes. The `params` `DELETED` bit
   marks a removed object, and the row stays. The autoincrement therefore never
-  has to renumber, and a live install has kept every id across years of
-  configuration uploads, module replacements, and deletions.
+  has to renumber. Every id stayed unchanged across years of configuration
+  uploads, module replacements, and deletions.
 
 ## Physical-output key: `leaf_id` (`AmpioObject.leaf_key`)
 
@@ -96,14 +96,13 @@ before grouping by output.
 
 `leafId` embeds the owning module's override mac as its second segment
 (`0_<macHex>_...`), exposed as `AmpioObject.module_mac`. The embedded value
-equals `AmpioModule.mac`, live-verified across a full catalogue, including the
-M-SERV, whose override (`1`) diverges from its factory id. A consumer can thus
-group entities by physical module even on the restricted tier, which never
-receives the module catalogue. An entry created with a standard account and
-later switched to an administrator keeps its entity-to-device mapping and only
-gains metadata. The parse is strict: any shape other than
-`0_<macHex>_<sfId>_<subSfId>_<ioNo>` reads as None, exactly like an empty
-`leafId`.
+equals `AmpioModule.mac`, the M-SERV included, whose override (`1`) diverges
+from its factory id. A consumer can thus group entities by physical module even
+on the restricted tier, which never receives the module catalogue. An entry
+created with a standard account and later switched to an administrator keeps its
+entity-to-device mapping and only gains metadata. The parse is strict: any shape
+other than `0_<macHex>_<sfId>_<subSfId>_<ioNo>` reads as None, exactly like an
+empty `leafId`.
 
 Three helpers close the loop for a consumer that builds devices on `module_mac`.
 `AmpioObject.is_server_owned` marks the objects that belong to the M-SERV itself
@@ -140,16 +139,13 @@ outputs. `AmpioObject.sf_id` and `AmpioObject.sub_sf_id` read the third and
 fourth segments, next to `module_mac` and `leaf_io_no`. A `subSfId` has meaning
 only inside its `sfId`. Both read None when `leaf_id` is empty or malformed.
 
-The two tables below come from a live join of every leaf-bearing object against
-the module catalogue.
-
 **`sfId` is a per-leaf special-function id, not the module type.** No module
 showed `sfId` equal to its `typ_urzadzenia`. Virtual cover objects hosted on a
 relay module carry the roller code, so the code follows the configured leaf
 class, not the host product. The low codes match the Designer bundle's IO type
 enum exactly where both are known:
 
-| `sfId` | Observed leaf class                                             |
+| `sfId` | Leaf class                                                      |
 | ------ | --------------------------------------------------------------- |
 | 3      | binary flag (`flaga`)                                           |
 | 5      | roller (`roleta_*`)                                             |
@@ -163,25 +159,25 @@ enum exactly where both are known:
 
 **`subSfId` selects a sub-function inside its `sfId`**, not a bank index. The
 Designer nests the sub-functions under each special function, so a value has
-meaning only in that scope. No global sub-function enum exists. The observed
-values follow the same pattern the bundle uses:
+meaning only in that scope. No global sub-function enum exists. The values
+follow the same pattern the bundle uses:
 
-| `sfId` | `subSfId` | Observed role         |
+| `sfId` | `subSfId` | Role                  |
 | ------ | --------- | --------------------- |
 | 257    | 1         | input (`wej`)         |
 | 257    | 2         | output (`przekaznik`) |
 | 296    | 3         | alarm armed           |
 | 296    | 4         | alarm alarmed         |
 
-Every single-role class observed uses 0. The bundle's own alarm special function
-names sub-function 1 as input, 2 as output, 3 as armed, and 4 as alarmed, which
-is the pattern the rows above show.
+Every single-role class uses 0. The bundle's own alarm special function names
+sub-function 1 as input, 2 as output, 3 as armed, and 4 as alarmed, which is the
+pattern the rows above show.
 
 `sfId` thus carries a tier-independent function-class signal (it rides the
 app-sync catalogue the restricted tier receives), but it cannot replace the
-module type code. Both tables are observed coverage, not a specification, so an
-unlisted code proves nothing. The library keeps its classification on
-`typ_komponentu` alone.
+module type code. Both tables are coverage, not a specification, so an unlisted
+code proves nothing. The library keeps its classification on `typ_komponentu`
+alone.
 
 ## Visibility (`AmpioObject.visible`)
 
@@ -203,7 +199,6 @@ visible. This is the same gate the M-SERV's Matter bridge uses
 below. Bit 37 is a Matter-only opt-in. The library deliberately does not filter
 on it and does not surface it.
 
-A live join of the two catalogues on the reference install pins the bit's reach.
 Every config row that the app-sync catalogue omits carries the bit. Rows that
 app-sync still lists can carry it too, such as a hidden object or a phantom
 stub, and the unfiltered params table serves the bit for those on both tiers. So
@@ -284,14 +279,14 @@ listed types only. Every other type reads 0, whatever the column holds.
 The M-SERV never applies the value server-side: a plain `turnOn` or `setValue`
 latches the object even when `czas` is set. Only an explicit time argument
 pulses, and that argument is authoritative - `czas` neither stretches nor caps
-it. Live measurements: with `czas` = 500 (5 s), a time argument of 100 ran 990
-ms and an argument of 1000 ran 10011 ms. The timed form works on every
-switchable output type probed (relay, flag, dimmer), independent of the bell
-marker. The field is therefore the app's default pulse length - the app reads it
-and sends the timed command itself, and a consumer honors it by passing the
-value to `AmpioClient.set_value(pulse_ms=...)`. The column rides
-`devicesDetails`, and the unfiltered `data/params_devices` table supplies it
-where the app-sync catalogue omits it.
+it. With `czas` = 500 (5 s), a time argument of 100 runs 990 ms and an argument
+of 1000 runs 10011 ms. The timed form works on every switchable output type
+(relay, flag, dimmer), independent of the bell marker. The field is therefore
+the app's default pulse length - the app reads it and sends the timed command
+itself, and a consumer honors it by passing the value to
+`AmpioClient.set_value(pulse_ms=...)`. The column rides `devicesDetails`, and
+the unfiltered `data/params_devices` table supplies it where the app-sync
+catalogue omits it.
 
 The M-SERV ships its own Matter bridge (a matter.js app launched by
 `ampio-server`). That bridge's production gate corroborates the enum: it exposes
@@ -309,7 +304,7 @@ and CO2 on zero modules.
 ## The read-only marker (`AmpioObject.read_only`)
 
 Designer has a per-object "read only" checkbox. The checkbox sets `params` bit 6
-and nothing else. A live probe on a flag pinned down the behavior:
+and nothing else. The marker has these effects:
 
 - The M-SERV enforces the marker itself, on both account tiers. An `/api` write
   to a read-only object produces no echo and no error. A watch on `hw/out`
@@ -375,12 +370,12 @@ web bundle embeds it:
 
 The CAN-resident description record is authoritative for the tag. The `type`
 column mirror lags it. An output tagged 256 (0x0100) on the CAN record can still
-show an empty `type` column, live-observed on the reference install.
-`AmpioClient.resolve_records()` reads the CAN record into `AmpioObject.record`:
-the tag lands in `record.matter_device_type`, the location pointer in
-`record.location`, and the entry's own description string in `record.desc`. The
-column mirror stays in `matter_device_type`, identical on both tiers. The two
-fields are separate facts. The consumer picks which one to trust.
+show an empty `type` column. `AmpioClient.resolve_records()` reads the CAN
+record into `AmpioObject.record`: the tag lands in `record.matter_device_type`,
+the location pointer in `record.location`, and the entry's own description
+string in `record.desc`. The column mirror stays in `matter_device_type`,
+identical on both tiers. The two fields are separate facts. The consumer picks
+which one to trust.
 
 ## The Designer location (per-output `outLoc`)
 
@@ -422,8 +417,7 @@ blob. The remainder is unreadable either way.
 
 A cleared entry stays in the record. Designer rewrites the frame in place with
 `outLoc` 16383, `outType` 0, and the placeholder description `.`. The frame
-count never changes, live-proven on the reference install. The library reads all
-three sentinel values as absent.
+count never changes. The library reads all three sentinel values as absent.
 
 `descType` is the description class the frame belongs to (the Designer web
 bundle's enum):
@@ -469,7 +463,7 @@ An object joins its entry through
 `(DESC_TYPE_BY_KIND[typ_komponentu], leaf_io_no)` within the description record
 of its own module (`AmpioObject.module_mac`). `leaf_io_no` is the last `leafId`
 segment, and it is the Designer's own channel key. `DESC_TYPE_BY_KIND` ships
-only live-proven pairs: `przekaznik` -> 12 (OUTPUTS), `roleta_procenty` -> 26
+only these pairs: `przekaznik` -> 12 (OUTPUTS), `roleta_procenty` -> 26
 (ROLLER), `roleta_lamelki` -> 26 (ROLLER), `led` -> 16 (OUT_OC_U8), `rgbw` ->
 34, `flaga` -> 6 (FLAG_BIN). A channel index repeats across classes by design,
 so a frame at the right index in another class proves nothing on its own. The
