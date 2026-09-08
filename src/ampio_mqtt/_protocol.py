@@ -62,8 +62,8 @@ class ObjectMetadata:
     params: int | None
     # `type` column: the Matter device type ID assigned in Designer, carried
     # as a decimal string on the wire ("256" = 0x0100 On/Off Light). Empty or
-    # null when the object has no tag - both read as None. docs/identity.md
-    # holds the vocabulary.
+    # null when the object has no tag - both read as None.
+    # docs/description-records.md holds the vocabulary.
     matter_device_type: int | None
     # `czas` column as served, in 10 ms ticks; `AmpioObject.pulse_ms` reads
     # it by component type. None when the reply carried no such column,
@@ -943,7 +943,7 @@ BASELINE_SERVER_VERSION = (1865,)
 #
 # Writes go to one control topic per account as plain text:
 # ``/api/set/<object_id>/<verb>[/<arg>...]``. The verb vocabulary is the
-# M-SERV's own HTTP API, re-exposed over MQTT; see docs/protocol.md for
+# M-SERV's own HTTP API, re-exposed over MQTT; see docs/commands.md for
 # the verb table.
 #
 # The per-user grant bounds writes as it bounds reads: a command for an object
@@ -981,7 +981,7 @@ KEEP_POSITION = 101
 # from its SF table. It is the ONLY write that reaches a classic panel's
 # binary outputs (status LEDs) - the `/api` verbs and the per-channel
 # `o/<ch>/cmd` form are silently dropped for those, while a relay module
-# answers all three. docs/protocol.md ("Panel outputs") carries the live
+# answers all three. docs/panel-writes.md ("Panel outputs") carries the live
 # evidence.
 
 # The first frame byte per leaf class, live-proven pairs only: binary
@@ -1017,7 +1017,7 @@ def raw_output_payload(function: int, value: int, channel: int) -> str:
 # function in its low nibble (0 simple, 1 sequence). Every time field
 # counts 10 ms ticks, 16-bit fields are little-endian, and the sequence
 # form's speed bytes stay 0, since they had no audible effect.
-# docs/protocol.md ("Panel buzzer") carries the wire facts.
+# docs/panel-writes.md ("Panel buzzer") carries the wire facts.
 _BUZZER_ACTION_PREFIX = "0c0703"
 
 
@@ -1099,7 +1099,7 @@ RAW_ANALOG_WILDCARD = "ampio/from/+/state/a/+"
 RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
 
 # Bus events (1-65535); receiving rides the admin-only raw tree, raising goes
-# to the command surface - the rights model is in docs/protocol.md.
+# to the command surface - the rights model is in docs/bus-events.md.
 RAW_EVENT_WILDCARD = "ampio/from/+/event"
 
 
@@ -1114,8 +1114,8 @@ DEVICE_API_LIST_TOPIC = "device_api/from/list"
 
 
 # typ_komponentu -> description class (descType), live-proven pairs only
-# (docs/identity.md): an unlisted kind resolves no location. Extend only
-# with a live-proven pair.
+# (docs/description-records.md): an unlisted kind resolves no location.
+# Extend only with a live-proven pair.
 DESC_TYPE_BY_KIND: dict[str, int] = {
     "przekaznik": 12,  # OUTPUTS
     "roleta_procenty": 26,  # ROLLER

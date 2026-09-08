@@ -727,7 +727,7 @@ async def test_restricted_tier_keeps_the_api_path_for_panel_objects(
 ) -> None:
     """The raw write tree is admin-only, so the restricted tier publishes
     the /api form - which the M-SERV drops for a panel output, surfaced
-    by confirm=. Documented as an Ampio limitation in protocol.md."""
+    by confirm=. Documented as an Ampio limitation in panel-writes.md."""
     client, broker = connected
     feed(
         client,

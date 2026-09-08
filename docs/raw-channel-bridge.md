@@ -73,7 +73,7 @@ leaf (class 67). Those report a u8 there and never on their object topic. A
 touch panel's per-field status LEDs have no other retained surface, and a
 relay's outputs share the channel shape, so both gain the raw-first path. The
 event wildcard feeds `BusEventRaised` subscribers - a different surface with its
-own semantics, described in [`protocol.md`](protocol.md).
+own semantics, described in [`bus-events.md`](bus-events.md).
 
 Only the `admin` login subscribes to the tree. The SUBACK enforcement is in
 [`account-tiers.md`](account-tiers.md), and the `subscribe_failures` counter in

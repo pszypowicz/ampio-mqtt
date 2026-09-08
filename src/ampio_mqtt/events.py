@@ -58,7 +58,7 @@ class ObjectRemoved:
     :pyattr:`AmpioClient.objects`. This is the signal to drop whatever
     entity was built on the object. What triggers it differs by tier
     because deletion differs by tool - the wire mechanics (app-side
-    soft-delete vs a Designer save) live in docs/identity.md.
+    soft-delete vs a Designer save) live in docs/visibility.md.
     """
 
     object: AmpioObject

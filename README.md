@@ -71,7 +71,7 @@ the API detail.
 - Commands for relays, dimmers, RGBW lights, covers with stop and tilt, the
   regulator setpoint, scenes, and bus events. The M-DOT panel buzzer is
   admin-only. The `command()` escape hatch sends any other `/api` verb
-  ([`docs/protocol.md`](docs/protocol.md)).
+  ([`docs/commands.md`](docs/commands.md)).
 - A low-latency input bridge from the raw per-channel topics on the admin tier
   ([`docs/raw-channel-bridge.md`](docs/raw-channel-bridge.md)).
 - Room mapping, per-module health, eviction events for server-side deletions,
@@ -123,7 +123,7 @@ moves real devices.
 The M-SERV itself guarantees the safety of a standard account. The broker limits
 such an account to the objects granted in the Ampio app, and it denies the raw
 CAN surfaces on the wire. A defect in this library cannot widen that boundary.
-Bus events are the one exception, because any account can raise any event (see
+Bus events are the one exception (see
 [Choosing an account](#choosing-an-account)).
 
 ## License

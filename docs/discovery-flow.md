@@ -67,12 +67,12 @@ the `connect()` / `disconnect()` lifecycle that joins them.
 
 Every catalogue reply also evicts what it stopped listing, fired as
 `ObjectRemoved` / `ModuleRemoved`. The per-tier rules and the deletion-tool
-differences live on the event docstrings and in [`identity.md`](identity.md).
-Because catalogues are request/response, the next reply is what reveals a
-server-side deletion. That reply comes from the Designer-save push, the refresh
-a reconnect sends, an explicit `refresh()`, or a `refresh_interval` tick. An
-empty reply is a complete reply that lists nothing, and it evicts like any
-other.
+differences live on the event docstrings and in
+[`visibility.md`](visibility.md). Because catalogues are request/response, the
+next reply is what reveals a server-side deletion. That reply comes from the
+Designer-save push, the refresh a reconnect sends, an explicit `refresh()`, or a
+`refresh_interval` tick. An empty reply is a complete reply that lists nothing,
+and it evicts like any other.
 
 ### A Designer save
 
@@ -151,8 +151,9 @@ when - and whether - to call them:
 - **`resolve_records()`** - reads every module's description record in one
   `device_api` list reply, admin tier only. What it folds into
   `AmpioObject.record` and `AmpioModule.record`, and what the returned
-  `RecordSweep` reports, are in [`identity.md`](identity.md). A consumer that
-  does not expose records never pays for the read.
+  `RecordSweep` reports, are in
+  [`description-records.md`](description-records.md). A consumer that does not
+  expose records never pays for the read.
 
 ## Finding the M-SERV on the LAN
 
