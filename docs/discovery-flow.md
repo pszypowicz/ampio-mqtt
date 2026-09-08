@@ -170,3 +170,8 @@ a key-based redactor cannot reach inside one retained string. The snapshot
 therefore masks every info value outside a safe-key set and withholds an
 unparseable info reply. The counters are cheap to update - the dispatch hot path
 touches only `last_message_at`.
+
+The `modules` list holds one row per known module, sorted by id. Each row
+carries the module's `id`, `mac`, `typ_urzadzenia`, `model`, `last_seen`,
+`supply_voltage`, and `temperature`. A bug report about a quiet module reads its
+`last_seen` from this list. The user-given module name stays out of the row.

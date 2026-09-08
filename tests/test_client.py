@@ -773,6 +773,17 @@ def test_diagnostics_snapshot_is_credential_free_and_complete() -> None:
     assert snap["auth_failure"] is None
     assert snap["server_info"]["mac"] == 555
     assert snap["mac_collisions"] == []
+    (module_row,) = snap["modules"]
+    assert set(module_row) == {
+        "id",
+        "mac",
+        "typ_urzadzenia",
+        "model",
+        "last_seen",
+        "supply_voltage",
+        "temperature",
+    }
+    assert module_row["id"] == 7
     assert set(snap["connection"]) == {
         "started_at",
         "reconnect_count",
@@ -784,3 +795,38 @@ def test_diagnostics_snapshot_is_credential_free_and_complete() -> None:
     flat = json.dumps(snap)
     assert "secret-host" not in flat
     assert "s3cr3t-pw" not in flat
+
+
+def test_diagnostics_snapshot_module_rows_mirror_liveness() -> None:
+    """One row per module sorted by id, copying the store's liveness and
+    health fields: a live push for the module's object moves the row's
+    ``last_seen``, and its ``b/4F`` broadcast fills the health pair."""
+    client = _admin_client()
+    feed(
+        client,
+        ADMIN_DEVICES,
+        devices(_module_row(9, 0xBEEF), _module_row(7, 0xCAFE)),
+    )
+    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, "cafe")))
+    rows = client.diagnostics_snapshot()["modules"]
+    assert [row["id"] for row in rows] == [7, 9]
+    assert rows[0]["last_seen"] is None
+
+    feed(
+        client,
+        f"ampio/fromDB/{ADMIN_USER}/ob/10/state",
+        '{"state": "1", "on": 1779565263813}',
+    )
+    feed(client, "ampio/from/CAFE/b/4F", '{"d":[254,79,63,142],"m":51966}')
+    module = client.modules[7]
+    assert module.last_seen is not None
+    assert module.supply_voltage is not None
+    assert client.diagnostics_snapshot()["modules"][0] == {
+        "id": 7,
+        "mac": 0xCAFE,
+        "typ_urzadzenia": 4,
+        "model": module.model,
+        "last_seen": module.last_seen,
+        "supply_voltage": module.supply_voltage,
+        "temperature": module.temperature,
+    }

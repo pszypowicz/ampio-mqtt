@@ -12,6 +12,19 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.53.0
+
+`AmpioModule.last_seen` is the per-module liveness signal that 0.51.0 and 0.52.0
+refined. `diagnostics_snapshot()` returned no module list, so a consumer's
+diagnostics download could not show which module went quiet (#180).
+
+### Added
+
+- **`diagnostics_snapshot()` gains a `modules` list.** One row per known module,
+  sorted by id, with `id`, `mac`, `typ_urzadzenia`, `model`, `last_seen`,
+  `supply_voltage`, and `temperature`. The user-given module name stays out of
+  the row. The snapshot stays credential-free.
+
 ## 0.52.0
 
 `AmpioModule.last_seen` is documented as the local receive time of live

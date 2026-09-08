@@ -526,6 +526,10 @@ class AmpioClient:
           the latest SUBACK to its reason code.
         - ``mac_collisions``: override macs shared by two or more module
           rows, on which raw traffic cannot be attributed reliably.
+        - ``modules``: one row per known module, sorted by id, with the
+          :class:`AmpioModule` fields ``id``, ``mac``, ``typ_urzadzenia``,
+          ``model``, ``last_seen``, ``supply_voltage``, and
+          ``temperature``. The user-given module name stays out.
         - ``last_payloads``: each endpoint's verbatim last reply, absent
           until one lands. A payload that failed to parse is retained
           too - the bad bytes are what the report needs. The one
@@ -549,6 +553,20 @@ class AmpioClient:
                 "subscribe_failures": dict(self._stats.subscribe_failures),
             },
             "mac_collisions": sorted(self._store.colliding_macs),
+            "modules": [
+                {
+                    "id": module.id,
+                    "mac": module.mac,
+                    "typ_urzadzenia": module.typ_urzadzenia,
+                    "model": module.model,
+                    "last_seen": module.last_seen,
+                    "supply_voltage": module.supply_voltage,
+                    "temperature": module.temperature,
+                }
+                for module in sorted(
+                    self._store.modules.values(), key=lambda module: module.id
+                )
+            ],
             "last_payloads": {
                 name: channel.last_payload
                 for name, channel in self._channels.items()
