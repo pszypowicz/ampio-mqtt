@@ -257,8 +257,9 @@ class AmpioClient:
             if admin
             else []
         )
-        # Live raw pushes with no retained table behind them keep the
-        # acknowledged leg.
+        # These filters keep the acknowledged leg. Their retained replay is
+        # at most one diagnostics frame per module, far below the broker's
+        # QoS 1 queue.
         raw_live = (
             [
                 RAW_DIAGNOSTICS_WILDCARD,
@@ -916,7 +917,8 @@ class AmpioClient:
 
         Returns a :class:`RecordSweep`. Its ``records`` map is
         ``{object_id: DesignerRecord}`` for what resolved, and its two
-        mac sets say which catalogued modules the reply listed - a caller
+        mac sets say which modules the reply listed and which catalogued
+        modules it left out - a caller
         that reads ``record`` None needs them to tell an empty entry from
         an unlisted module. An object absent from a pass keeps its
         previous ``record`` until a later pass covers it.

@@ -41,11 +41,11 @@ example is `modules`/`mserv`, which the standard tier never receives.
 | **Panel buzzer** (`buzz`, `buzz_pattern`, `buzz_stop`)                                       | yes           | **no**                                |
 
 The SUBACK enforces the raw-tree denial. A standard account's subscription to
-the `ampio/from/...` filters comes back with reason code 128, even over MQTT
-3.1.1 (where stock mosquitto grants silently and only filters delivery). The
-library never runs into the denial, because a standard client does not ask for
-the raw tree. But the verdict locks the table above to the broker's own
-enforcement, not to convention.
+the `ampio/from/...` filters comes back with reason code 128. This holds even
+over MQTT 3.1.1, where stock mosquitto grants silently and only filters
+delivery. The library never runs into the denial, because a standard client does
+not ask for the raw tree. But the verdict locks the table above to the broker's
+own enforcement, not to convention.
 
 Two of the gaps are narrower than the table suggests. The `data/devices` rows
 carry `id_urzadzenia`, so a standard account still learns the module ids that
@@ -72,9 +72,9 @@ own event logic. The gating detail is in [`protocol.md`](protocol.md).
 
 ## How the model marks the tiers
 
-The model separates facts by source. A plain field holds a fact both tiers
-receive, and nothing changes it after the catalogue seed. Facts from the CAN
-description record live in the nested `record` bundle: `AmpioObject.record` and
+The model separates facts by source. A catalogue fact is a plain field, served
+to both tiers and left alone by the record sweep. Facts from the CAN description
+record live in the nested `record` bundle: `AmpioObject.record` and
 `AmpioModule.record`. The nesting is the marker. Everything under `.record`
 needs the admin tier, and the bundle stays `None` on a standard account. The
 library adds no precedence helper. When the two sources disagree, the consumer
@@ -115,11 +115,12 @@ library's raw-channel bridge closes that gap automatically on the admin tier. On
 the standard tier the bridge never fires, and inputs arrive on the per-object
 path.
 
-**Writes are not affected.** The same flag reaches the device in 41 ms through
-the `/api` command surface and in 36 ms through the admin-only CAN tree. That
-difference is inside the noise of individual trials. The `/api` translation
-costs nothing measurable, so there is no latency reason to prefer the CAN write
-path, even with an admin account available.
+**Write latency is not affected by the tier.** A flag write over `/api` echoes
+in a median 40 ms. The one CAN route that carries a flag frame, `hw/out`, needs
+six frames and echoes in a median 68 ms. See the flag entry in
+[`protocol.md`](protocol.md). The library keeps `/api` for flags on both tiers.
+On writes an admin account gains reach (the panel LEDs and the buzzer) and no
+speed.
 
 ## Choosing a tier
 
@@ -143,7 +144,7 @@ Prefer an administrator account when the install needs:
   `temperature`. This is useful to find a sagging bus or a hot module before it
   misbehaves.
 - **Panel outputs, the panel buzzer, and the CAN vocabulary** - the raw write
-  frames for panel status LEDs and the buzzer, and the device classes `/api`
+  frames for panel status LEDs and the buzzer. Also the device classes `/api`
   cannot express (CCT, DALI, display text). See [`protocol.md`](protocol.md) and
   [`untapped-surfaces.md`](untapped-surfaces.md).
 - **Per-object Designer records** for area assignment - `resolve_records()` and

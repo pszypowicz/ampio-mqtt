@@ -6,13 +6,14 @@ The M-SERV speaks two parallel topic trees on the same MQTT broker:
   User-scoped. It carries the discovery RPC pattern: publish a keyword on one of
   the control surfaces, and the matching `fromDB` topic gets a JSON response.
   Per-object live state arrives on `.../ob/<id>/state`.
-- **Raw tree** - `ampio/from/<MAC>/state/...`. Global, not user-scoped, and
-  retained: the broker holds every channel's last value and replays it on each
-  subscribe. The M-SERV serves it only to administrator accounts (the broker ACL
-  returns nothing on it for standard accounts). It carries decoded CAN
-  per-channel state, keyed by the module's effective bus MAC. The library uses
-  it as a low-latency, self-resyncing input bridge - see
-  [`raw-channel-bridge.md`](raw-channel-bridge.md).
+- **Raw tree** - `ampio/from/#`. Global, not user-scoped, and keyed by the
+  module's effective bus MAC. Its branches are the retained decoded-CAN
+  per-channel state under `state/<prefix>/<ch>`, the diagnostics broadcasts
+  under `b/<type>`, and the bus events under `event`. The broker holds every
+  state channel's last value and replays it on each subscribe. The M-SERV serves
+  the tree only to administrator accounts (the broker ACL returns nothing on it
+  for standard accounts). The library uses the state branch as a low-latency,
+  self-resyncing bridge - see [`raw-channel-bridge.md`](raw-channel-bridge.md).
 
 All topic helpers live in
 [`src/ampio_mqtt/_protocol.py`](../src/ampio_mqtt/_protocol.py). Treat the
@@ -50,12 +51,12 @@ and the raw tree. `device_api/to/list` with the payload `0` asks the M-SERV for
 every module's CAN-resident record at once. The reply lands on
 `device_api/from/list` as `{devices: [...]}`. Each device carries `macUser` (the
 override), `macProd` (the factory id), `protocol`, `name` (base64), and
-`descriptions`, base64 of the per-output entries behind both the Matter device
-type tag and the Designer "Lokalizacja" location pointer. The frame layout, the
-descType enum, and the join rule that resolves an object to its entry are in
-[`identity.md`](identity.md). The tree is admin-only, exactly like the raw tree.
-`AmpioClient.resolve_records()` drives this pair. A consumer never calls it
-directly.
+`descriptions`. The last is base64 of the per-output entries behind both the
+Matter device type tag and the Designer "Lokalizacja" location pointer. The
+frame layout, the descType enum, and the join rule that resolves an object to
+its entry are in [`identity.md`](identity.md). The tree is admin-only, exactly
+like the raw tree. `AmpioClient.resolve_records()` drives this pair. A consumer
+calls that method and never publishes on the pair itself.
 
 The per-module pair serves the same record for one module.
 `device_api/to/<machex>/get_data` (empty payload) answers on
@@ -114,16 +115,16 @@ resolves on the next `ObjectUpdated` for the object. That is the per-object echo
 on both tiers, or the earlier raw edge on the admin tier. The raw edge's arrival
 suppresses the per-object copy. The echo is an observation and nothing stronger.
 A concurrent change from another source satisfies it. A timeout is how every
-silent drop surfaces: an ignored verb, an out-of-grant object, a read-only
-object, or a command that changed nothing and thus pushed nothing. Latency
-bounds the timeout choice. Most verbs echo in under ~200 ms on the per-object
-path, and `arm`/`disarm` take ~1 s, so `confirm=2.0` covers the measured
-surface. Scene commands and `setEvent` fan out beyond a single object and offer
-no per-object echo.
+silent drop shows. The drops are an ignored verb, an out-of-grant object, a
+read-only object, or a command that changed nothing and thus pushed nothing.
+Latency bounds the timeout choice. Most verbs echo in under ~200 ms on the
+per-object path, and `arm`/`disarm` take ~1 s, so `confirm=2.0` covers the
+measured surface. Scene commands and `setEvent` fan out beyond a single object
+and offer no per-object echo.
 
-The `ampio/to/<mac>/...` CAN tree is the other write path (documented in Ampio's
-own MQTT API note, with per-channel `cmd` topics and a `raw` hex channel that
-covers CCT, DALI, blind angles, and display text). It is **admin-only** - the
+The `ampio/to/<mac>/...` CAN tree is the other write path, documented in Ampio's
+own MQTT API note. It has per-channel `cmd` topics and a `raw` hex channel that
+covers CCT, DALI, blind angles, and display text. It is **admin-only** - the
 broker drops a non-admin account's publishes there. The library uses the `/api`
 surface, which works on both tiers, except for the binary-output writes
 described below.
@@ -245,8 +246,8 @@ plain client:
 ampio/to/<machex>/raw      <fn>f9<value:2><channel:2>     (ASCII hex)
 ```
 
-The first byte is the function the Designer sends the leaf's class: `0x30` for a
-binary output (leaf class 257, relays and panel LEDs) and `0x32` for an
+The first byte is the function the Designer sends the leaf's class. It is `0x30`
+for a binary output (leaf class 257, relays and panel LEDs) and `0x32` for an
 open-collector output (class 67, the M-INOC). A module drops `0x30` on a
 class-67 leaf: the write returns, nothing moves, and no frame follows on the
 bus. `0xF9` is the set-u8 command. `channel` is the 0-based output index -
@@ -254,17 +255,18 @@ bus. `0xF9` is the set-u8 command. `channel` is the 0-based output index -
 admin-only like the rest of the `ampio/to` tree. A binary output echoes on
 `state/o/<ch+1>` in ~30-50 ms and on its object topic in ~150 ms. An
 open-collector output echoes on `state/a/<ch+1>` as a u8 value and never on its
-object topic, on any write path, so the library bridges `a` for those objects.
-`confirm=` resolves on either edge.
+object topic, on any write path. The library therefore bridges `a` for those
+objects. `confirm=` resolves on either edge.
 
 On the admin tier, a `przekaznik` on a CAN module rides this frame when its leaf
-class has a proven function byte, addressed purely by its own leaf (mac, 0-based
-channel, and class). A class outside that table, and a leafless object, stay on
-`/api`. There is no module-type table to maintain. Two more writes stay on
-`/api`: the M-SERV's own virtual outputs (they live in the server's DB, not on
-the CAN bus) and every `pulse_ms` write. The raw frame has no timed form, so a
-panel output cannot pulse, and `confirm=` is what surfaces that. The restricted
-tier always publishes the `/api` form, which a panel output ignores.
+class has a proven function byte. The frame is addressed by the object's own
+leaf alone (mac, 0-based channel, and class). A class outside that table, and a
+leafless object, stay on `/api`. There is no module-type table to maintain. Two
+more writes stay on `/api`: the M-SERV's own virtual outputs, and every
+`pulse_ms` write. The virtual outputs live in the server's DB, not on the CAN
+bus. The raw frame has no timed form, so a panel output cannot pulse, and
+`confirm=` is what surfaces that. The restricted tier always publishes the
+`/api` form, which a panel output ignores.
 
 A module condition bound to the LED overrides such writes eventually, not
 preventively. A write to a condition-bound LED takes effect, and the panel
@@ -356,8 +358,8 @@ here for older bridge firmware only.
 
 ## The Designer's own surfaces
 
-The web Designer (served by the M-SERV, bundle at `/assets/index-*.js`) is an
-ordinary MQTT client of the same broker, so everything it does is observable and
+The Designer (served by the M-SERV, bundle at `/assets/index-*.js`) is an
+ordinary MQTT client of the same broker. Everything it does is observable and
 reproducible.
 
 **Transport.** Plain MQTT over websocket via mqtt.js, one connection for
@@ -393,15 +395,15 @@ OpenAPI spec. It works on:
   also sends raw CAN frames to `hw/out` (first byte the send-with-id opcode,
   then `0x80|len`, a 32-bit CAN id, and the data).
 - Flag writes carry their own function, `0x16`. An `/api` flag write makes the
-  M-SERV emit six `hw/out` frames to the module that owns the flag, parts 0 to 5
-  of `[0x16, part, b, b]`. The parts reassemble to a header, a 32-bit flag mask,
-  and one value byte (`FF` on, `00` off). The mask bit is the 0-based flag
-  index, one below the 1-based raw `f` channel, the same rule outputs follow
-  (see Panel outputs). A verbatim replay of those frames drives the flag, but
-  only through `hw/out`, because `ampio/to/<machex>/raw` and `rawf` drop
-  function `0x16` while they accept `0x30`. The replay is also slower than
-  `/api`, with six publishes against one and a median state echo of 68 ms
-  against 40 ms. The library therefore keeps `/api` for flags.
+  M-SERV emit six `hw/out` frames to the module that owns the flag. They are
+  parts 0 to 5 of `[0x16, part, b, b]`. The parts reassemble to a header, a
+  32-bit flag mask, and one value byte (`FF` on, `00` off). The mask bit is the
+  0-based flag index, one below the 1-based raw `f` channel, the same rule
+  outputs follow (see Panel outputs). A verbatim replay of those frames drives
+  the flag, but only through `hw/out`, because `ampio/to/<machex>/raw` and
+  `rawf` drop function `0x16` while they accept `0x30`. The replay is also
+  slower than `/api`, with six publishes against one and a median state echo of
+  68 ms against 40 ms. The library therefore keeps `/api` for flags.
 - Raw feeds: `fc` / `fcocb`, `ampio/from/+/raw`, and the same `ampio/from` state
   tree this library consumes.
 
@@ -433,8 +435,8 @@ The two directions are gated differently:
   anywhere in its own namespace.
 
 On the CAN side an event is frame type `0x2B` with a 16-bit little-endian
-number, low byte first - `FE 2B BD 00` for 189 and `FE 2B BD BD` for 48573. A
-legacy 8-bit event is simply one whose high byte is zero.
+number, low byte first. The frame is `FE 2B BD 00` for 189 and `FE 2B BD BD`
+for 48573. A legacy 8-bit event is one whose high byte is zero.
 
 That layout invites a suspicion worth a rule-out. Does logic bound to an 8-bit
 event also fire for a 16-bit event that shares one of its bytes? This was tested
@@ -451,13 +453,14 @@ as user intent.
 
 ## Live state
 
-| Topic                                    | Payload                  | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ---------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ampio/fromDB/<user>/ob/<id>/state`      | `{state, desc, on}`      | One per object. `state` is the value (string), `desc` is the M-SERV's pretty form, `on` is server-side ms epoch. Cover (`roleta*`) pushes carry a `block` field in place of `desc`. Regulator (`reg`) objects push a richer shape instead: `{state, cooling, mode, measureTemp, setTemperature, on}`, every field a string, surfaced as `AmpioObject.thermostat`. The library surfaces `state`, `lammel`, and the reg readback from these. |
-| `ampio/from/<MAC>/state/f/<ch>`          | plain text (`"0"`/`"1"`) | Flag channel, bridged to the owning object.                                                                                                                                                                                                                                                                                                                                                                                                |
-| `ampio/from/<MAC>/state/i/<ch>`          | plain text (`"0"`/`"1"`) | Digital input channel, bridged to the owning object.                                                                                                                                                                                                                                                                                                                                                                                       |
-| `ampio/from/<MAC>/state/o/<ch>`          | plain text (`"0"`/`"1"`) | Binary output channel, bridged to the owning `przekaznik` object (a panel status LED, or a relay output).                                                                                                                                                                                                                                                                                                                                  |
-| `ampio/from/<MAC>/state/{a,t,rgbw}/<ch>` | varies                   | NOT subscribed by the library - the per-object topic is sufficient for these prefixes.                                                                                                                                                                                                                                                                                                                                                     |
+| Topic                                  | Payload                           | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ampio/fromDB/<user>/ob/<id>/state`    | `{state, desc, on}`               | One per object. `state` is the value (string), `desc` is the M-SERV's pretty form, `on` is server-side ms epoch. Cover (`roleta*`) pushes carry a `block` field in place of `desc`. Regulator (`reg`) objects push a richer shape instead: `{state, cooling, mode, measureTemp, setTemperature, on}`, every field a string, surfaced as `AmpioObject.thermostat`. The library surfaces `state`, `lammel`, and the reg readback from these. |
+| `ampio/from/<MAC>/state/f/<ch>`        | plain text (`"0"`/`"1"`)          | Flag channel, bridged to the owning object.                                                                                                                                                                                                                                                                                                                                                                                                |
+| `ampio/from/<MAC>/state/i/<ch>`        | plain text (`"0"`/`"1"`)          | Digital input channel, bridged to the owning object.                                                                                                                                                                                                                                                                                                                                                                                       |
+| `ampio/from/<MAC>/state/o/<ch>`        | plain text (`"0"`/`"1"`)          | Binary output channel, bridged to the owning `przekaznik` object on a binary-output leaf, class 257 (a panel status LED, or a relay output).                                                                                                                                                                                                                                                                                               |
+| `ampio/from/<MAC>/state/a/<ch>`        | plain text (u8, `"0"` to `"255"`) | Analog output channel, subscribed on the admin tier and bridged to the owning `przekaznik` object on an open-collector leaf (class 67). Every other `a` channel drops at the index lookup.                                                                                                                                                                                                                                                 |
+| `ampio/from/<MAC>/state/{t,rgbw}/<ch>` | varies                            | NOT subscribed by the library - the per-object topic is sufficient for these prefixes.                                                                                                                                                                                                                                                                                                                                                     |
 
 ## Library helpers
 

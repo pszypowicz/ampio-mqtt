@@ -4,7 +4,7 @@ Async Python client for the **Ampio Smart Home** local MQTT protocol exposed by
 the Ampio M-SERV controller. Built to back a Home Assistant integration while
 staying Home Assistant agnostic itself.
 
-> **Beta.** Everything below `1.0.0` may break between any two releases without
+> **Beta.** Everything below `1.0.0` can break between any two releases without
 > migration shims, so pin exact versions. `1.0.0` is reserved for the release
 > that accompanies the
 > [home-assistant/core](https://github.com/home-assistant/core) integration
@@ -57,8 +57,8 @@ Each area is one page under [`docs/`](docs/README.md), and the docstrings carry
 the API detail.
 
 - A maintained broker connection with QoS 1 on every leg but the retained raw
-  tree, capped-backoff reconnect, and one typed event stream that includes the
-  terminal `AuthFailed` and `ConnectionDied` signals
+  state tree, and a capped-backoff reconnect. One typed event stream carries
+  every update and the terminal `AuthFailed` and `ConnectionDied` signals
   ([`docs/events.md`](docs/events.md)).
 - Discovery of the object catalogue on either account tier (the module catalogue
   is admin-only), with the detected tier exposed for setup flows
@@ -69,8 +69,8 @@ the API detail.
 - Replacement-stable identity for objects and modules, so a hardware swap keeps
   its entities ([`docs/identity.md`](docs/identity.md)).
 - Commands for relays, dimmers, RGBW lights, covers with stop and tilt, the
-  regulator setpoint, scenes, bus events, and the M-DOT panel buzzer on the
-  admin tier, plus a raw escape hatch for the rest of the verb vocabulary
+  regulator setpoint, scenes, and bus events. The M-DOT panel buzzer is
+  admin-only. The `command()` escape hatch sends any other `/api` verb
   ([`docs/protocol.md`](docs/protocol.md)).
 - A low-latency input bridge from the raw per-channel topics on the admin tier
   ([`docs/raw-channel-bridge.md`](docs/raw-channel-bridge.md)).
@@ -84,8 +84,8 @@ the API detail.
 A dedicated standard account is the recommended shape for Home Assistant. It
 sees exactly the objects granted in the Ampio app and can command only those. An
 administrator account adds the module list and the low-latency raw input topics.
-Bus events are the exception on both tiers, since any account can raise any
-event number and the logic behind an event runs with full authority.
+Bus events are the exception on both tiers. Any account can raise any event
+number, and the logic behind an event runs with full authority.
 [`docs/account-tiers.md`](docs/account-tiers.md) has the capability table and
 the measured latency difference.
 
@@ -105,10 +105,9 @@ or a module firmware update can change or remove behavior this library depends
 on, without notice. Breaking changes by Ampio are a known pattern. The author of
 an earlier Ampio integration
 [stopped maintenance for exactly this reason](https://github.com/kstaniek/ampio-hacc/issues/2).
-If your install meets the baseline, works, and you are happy with it, stay on
-your current versions and do not chase the latest ones. If you decide to update
-anyway, make a full backup first - ideally a full image of the M-SERV's microSD
-card.
+If your install meets the baseline and works, stay on your current versions. Do
+not chase the latest ones. If you decide to update anyway, make a full backup
+first - ideally a full image of the M-SERV's microSD card.
 
 ## Disclaimer
 

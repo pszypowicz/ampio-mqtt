@@ -24,9 +24,11 @@ from .models import AmpioModule, AmpioObject
 class ObjectUpdated:
     """An object's state or metadata changed.
 
-    Fires on live pushes, raw-channel edges, snapshot corrections, and
-    catalogue rows that actually changed something - a re-requested
-    catalogue that says nothing new dispatches nothing. A catalogue row
+    Fires on live pushes, raw-channel edges, snapshot corrections,
+    catalogue rows that actually changed something, and a
+    :meth:`AmpioClient.resolve_records` pass that changed the object's
+    ``record`` - a re-requested catalogue that says nothing new
+    dispatches nothing. A catalogue row
     establishing an id the store did not already hold dispatches the
     :class:`ObjectAdded` subclass instead.
     """
@@ -64,11 +66,12 @@ class ObjectRemoved:
 
 @dataclass(frozen=True, slots=True)
 class ModuleUpdated:
-    """A module's catalogue row or its own diagnostics broadcast changed it.
+    """A module's catalogue row, its diagnostics broadcast, or its record changed.
 
-    Fires for a module the list adds or changes and for each diagnostics
-    broadcast. Both sources are administrator-only, so it never fires on a
-    standard account.
+    Fires for a module the list adds or changes, for each diagnostics
+    broadcast, and for a :meth:`AmpioClient.resolve_records` pass that
+    changed its ``record``. All three sources are administrator-only, so it
+    never fires on a standard account.
     """
 
     module: AmpioModule
