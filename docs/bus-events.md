@@ -1,6 +1,7 @@
 # Bus events
 
-This page continues [`protocol.md`](protocol.md).
+This page continues [`protocol.md`](protocol.md) with the logical signals that
+Ampio's own logic raises and reacts to.
 
 ## Bus events
 

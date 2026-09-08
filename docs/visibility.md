@@ -1,7 +1,7 @@
 # Visibility and the params bits
 
-This page continues [`identity.md`](identity.md) with the visibility predicate
-and the `params` bit semantics.
+This page continues [`identity.md`](identity.md) with the visibility predicate,
+the `params` bit semantics, the read-only marker, and deletion on the wire.
 
 ## Visibility (`AmpioObject.visible`)
 

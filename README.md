@@ -71,7 +71,7 @@ the API detail.
 - Commands for relays, dimmers, RGBW lights, covers with stop and tilt, the
   regulator setpoint, scenes, and bus events. The M-DOT panel buzzer is
   admin-only. The `command()` escape hatch sends any other `/api` verb
-  ([`docs/protocol.md`](docs/protocol.md)).
+  ([`docs/commands.md`](docs/commands.md)).
 - A low-latency input bridge from the raw per-channel topics on the admin tier
   ([`docs/raw-channel-bridge.md`](docs/raw-channel-bridge.md)).
 - Room mapping, per-module health, eviction events for server-side deletions,

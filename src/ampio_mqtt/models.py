@@ -34,7 +34,7 @@ class AccessTier(Enum):
 # Bit flags inside the `params` integer (`obiekty.params`); the names come
 # from the Designer web bundle's own enum, and the semantics of the bits
 # read here are corroborated by the M-SERV's Matter bridge and by live
-# probing (docs/identity.md). Bit 4 is the hidden/stub marker (see
+# probing (docs/visibility.md). Bit 4 is the hidden/stub marker (see
 # `AmpioObject.hidden`); bit 6 is the Designer read-only checkbox (see
 # `AmpioObject.read_only`); bit 37 is the per-object Matter opt-in, not a
 # visibility signal, and nothing here reads it. Bit 15 is the generic
@@ -110,7 +110,7 @@ class ThermostatState:
     The push carries every field as a string; the library parses the
     temperatures and the cooling flag and passes the mode letter through
     verbatim, so a future unlisted letter loses nothing. The `A,S,M,H`
-    vocabulary is in docs/protocol.md.
+    vocabulary is in docs/commands.md.
     """
 
     measure_temp: float | None
@@ -129,8 +129,9 @@ class DesignerRecord:
     only the admin tier can run that sweep, so ``AmpioObject.record`` is
     None on the restricted tier and before a sweep covers the object. A
     None field inside means the entry carries no value: an unassigned
-    location, an untagged type, an empty description. docs/identity.md
-    holds the wire shape, docs/account-tiers.md the tier rule.
+    location, an untagged type, an empty description.
+    docs/description-records.md holds the wire shape, docs/account-tiers.md
+    the tier rule.
     """
 
     location: str | None = None
@@ -359,7 +360,7 @@ class AmpioObject:
 
         The authoritative "do not surface" marker, honored by the
         M-SERV's own Matter bridge; it catches the phantom rows that
-        duplicate a real Designer channel. See docs/identity.md.
+        duplicate a real Designer channel. See docs/visibility.md.
         """
         return bool(self.params & _HIDDEN_FLAG)
 
@@ -372,7 +373,7 @@ class AmpioObject:
         the CAN bus, with no echo and no error. Reads are unaffected. The
         checkbox can change at any time, so a consumer keeps the object's
         platform and rejects writes while this is True, rather than
-        re-registering the entity. See docs/identity.md.
+        re-registering the entity. See docs/visibility.md.
         """
         return bool(self.params & _READ_ONLY_FLAG)
 
@@ -386,7 +387,7 @@ class AmpioObject:
         ``flaga`` only; on other component types bit 15 carries an
         unrelated per-type option, so this reads False for them. The
         marker is display intent - whether the output auto-releases is
-        the module's own configuration. See docs/identity.md.
+        the module's own configuration. See docs/visibility.md.
         """
         return self.typ_komponentu in _BELL_TYPES and bool(self.params & _BELL_FLAG)
 
@@ -400,7 +401,7 @@ class AmpioObject:
         the same column is a refresh time. The app reads the value as the
         default pulse length for a press; the M-SERV never applies it
         server-side, so a caller honors it by passing it to
-        :meth:`AmpioClient.set_value` as ``pulse_ms``. See docs/identity.md.
+        :meth:`AmpioClient.set_value` as ``pulse_ms``. See docs/visibility.md.
         """
         if self.typ_komponentu not in _PULSE_TYPES:
             return 0
@@ -541,7 +542,7 @@ class AmpioObject:
 
         The ``params`` DELETED bit is the one wire-side marker. ``leaf_id``
         says nothing here: Designer clears it when an object's Matter box
-        is unchecked, and the row stays a real object. See docs/identity.md.
+        is unchecked, and the row stays a real object. See docs/visibility.md.
         """
         return not self.hidden
 

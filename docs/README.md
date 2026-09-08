@@ -12,7 +12,7 @@ the text says in place exactly what is unverified.
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | [`protocol.md`](protocol.md)                       | Topic map: the two trees, discovery requests, response topics, the description-record pair, and live state.                 |
 | [`commands.md`](commands.md)                       | The `/api` verb vocabulary, the client method behind each verb, the state-echo confirmation, and the cover and scene notes. |
-| [`panel-writes.md`](panel-writes.md)               | The raw CAN frames for M-DOT panel status LEDs and the panel buzzer.                                                        |
+| [`panel-writes.md`](panel-writes.md)               | The raw CAN output frame for panel status LEDs, relays, and open-collector outputs, and the panel buzzer.                   |
 | [`designer-surfaces.md`](designer-surfaces.md)     | The legacy CAN bridge endpoints and every surface the Designer itself uses, the flag write frames included.                 |
 | [`bus-events.md`](bus-events.md)                   | Bus events: how to raise one, how to receive one, and which tier gets which.                                                |
 | [`events.md`](events.md)                           | The typed event stream: subscription patterns, what each event announces per tier, ordering, and the terminal signals.      |

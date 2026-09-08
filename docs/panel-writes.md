@@ -1,7 +1,7 @@
 # Panel writes
 
-This page continues [`protocol.md`](protocol.md) with the raw CAN frames that
-drive the M-DOT panels.
+This page continues [`protocol.md`](protocol.md) with the raw CAN output frame
+for panel status LEDs, relays, and open-collector outputs, and the panel buzzer.
 
 ## Panel outputs
 

@@ -13,19 +13,19 @@ The M-SERV speaks two parallel topic trees on the same MQTT broker:
   retained state branch is the library's low-latency bridge - see
   [`raw-channel-bridge.md`](raw-channel-bridge.md).
 
-All topic helpers live in
-[`src/ampio_mqtt/_protocol.py`](../src/ampio_mqtt/_protocol.py). Treat the
-constants there as the authoritative source. The table below is a quick
-reference.
-
 The rest of this area is on its own pages.
 
 | Page                                           | Subject                                                                                                                     |
 | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | [`commands.md`](commands.md)                   | The `/api` verb vocabulary, the client method behind each verb, the state-echo confirmation, and the cover and scene notes. |
-| [`panel-writes.md`](panel-writes.md)           | The raw CAN frames for M-DOT panel status LEDs and the panel buzzer.                                                        |
+| [`panel-writes.md`](panel-writes.md)           | The raw CAN output frame for panel status LEDs, relays, and open-collector outputs, and the panel buzzer.                   |
 | [`designer-surfaces.md`](designer-surfaces.md) | The legacy CAN bridge endpoints and every surface the Designer itself uses, the flag write frames included.                 |
 | [`bus-events.md`](bus-events.md)               | Bus events: how to raise one, how to receive one, and which tier gets which.                                                |
+
+All topic helpers live in
+[`src/ampio_mqtt/_protocol.py`](../src/ampio_mqtt/_protocol.py). Treat the
+constants there as the authoritative source. The table below is a quick
+reference.
 
 ## Discovery (request / response)
 

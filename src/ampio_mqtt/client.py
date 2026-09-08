@@ -67,7 +67,7 @@ from .models import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# The regulator mode letters `setHeatingMode` accepts (docs/protocol.md);
+# The regulator mode letters `setHeatingMode` accepts (docs/commands.md);
 # the readback letter is `ThermostatState.mode`.
 HEATING_MODES: Final[frozenset[str]] = frozenset({"A", "S", "M", "H"})
 
@@ -1016,7 +1016,7 @@ class AmpioClient:
         """Raise a bus event, running whatever Ampio logic is bound to it.
 
         Works on both account tiers and is bounded by nothing - see the
-        bus-events section of docs/protocol.md for the rights model.
+        bus-events section of docs/bus-events.md for the rights model.
         """
         _check_range("event_number", event_number, 1, 65535)
         await self._connection.publish(
@@ -1037,7 +1037,7 @@ class AmpioClient:
 
     async def _scene_command(self, scene_id: int, verb: str) -> None:
         """Publish a scene command; the M-SERV replays the scene's own
-        actions, grant-scoped like any other command (docs/protocol.md)."""
+        actions, grant-scoped like any other command (docs/commands.md)."""
         await self._connection.publish(
             command_topic(self._username), scene_payload(scene_id, verb).encode()
         )
@@ -1053,7 +1053,7 @@ class AmpioClient:
         returns once the broker acknowledges it - "the broker accepted the
         command", not "the M-SERV applied it"; the resulting state arrives
         through the normal object listeners. This is the escape hatch for
-        the verbs the library does not wrap - docs/protocol.md carries the
+        the verbs the library does not wrap - docs/commands.md carries the
         verb table, the grant-scoping rules, and what the M-SERV silently
         ignores.
 
@@ -1065,7 +1065,7 @@ class AmpioClient:
         concurrent change satisfies it, and a timeout is how a silent
         drop surfaces (an ignored verb, an out-of-grant object, or a
         command that changed nothing). Most verbs echo in under ~200 ms
-        and `arm`/`disarm` take ~1 s (docs/protocol.md), so
+        and `arm`/`disarm` take ~1 s (docs/commands.md), so
         ``confirm=2.0`` covers the measured surface. The waiter is armed
         before the publish. Scene commands and :meth:`set_event` fan out
         beyond a single object and offer no per-object echo.
@@ -1185,7 +1185,7 @@ class AmpioClient:
         Raises ``ValueError`` for an output whose kind says the switch verbs
         do not apply (``rgbw``): turning a color light on means choosing a
         color - the consumer's call, via :meth:`set_colors` (the rgbw
-        replay pattern in docs/protocol.md). On the admin tier a binary
+        replay pattern in docs/commands.md). On the admin tier a binary
         output on a CAN module is driven over the raw CAN write topic
         instead - the one write that also reaches a panel's status LEDs,
         which ignore `/api` on every tier (docs/panel-writes.md, "Panel
@@ -1494,7 +1494,7 @@ class AmpioClient:
         self, object_id: int, *, confirm: float | None = None
     ) -> AmpioObject | None:
         """Halt a cover wherever it is, on either axis - a stationary cover
-        is a silent no-op. The `stop` row of docs/protocol.md details the
+        is a silent no-op. The `stop` row of docs/commands.md details the
         mid-travel and mid-rotation behavior. ``confirm`` awaits the state
         echo exactly as :meth:`command` documents."""
         return await self.command(object_id, "stop", confirm=confirm)
@@ -1512,7 +1512,7 @@ class AmpioClient:
         ``lamella`` sets the slat angle of a blind that has one, in the same
         command; omitting it sends no angle, which lets travel drag the
         slats along mechanically - pass it to land on a chosen angle (the
-        slat-drag note in docs/protocol.md). Position updates stream in as
+        slat-drag note in docs/commands.md). Position updates stream in as
         the cover travels; ``confirm`` awaits the first of them exactly as
         :meth:`command` documents, so its snapshot reads the travel's start,
         not its end.
