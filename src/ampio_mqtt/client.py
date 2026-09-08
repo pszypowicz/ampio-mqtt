@@ -231,14 +231,11 @@ class AmpioClient:
         self._digests: dict[str, str] = {}
         self._catalogue_tasks: set[asyncio.Task[None]] = set()
 
-    def _subscriptions(self) -> list[str]:
-        """Every topic the client needs on each (re)connect.
+    def _subscriptions(self) -> list[tuple[str, int]]:
+        """Every filter the client needs on each (re)connect, with its QoS.
 
-        The order is the wire order: the broker replays retained values
-        filter by filter and caps its outgoing QoS 1 queue, and the admin
-        raw tree alone overflows that cap on a full install, so a filter
-        listed after it loses its replay. The digests lead and the raw
-        tree closes the list.
+        The retained raw state tree rides QoS 0 and everything else QoS 1;
+        the two constants in ``_connection`` carry the reasoning.
         """
         admin = self._tier is AccessTier.ADMIN
         # The M-SERV never pushes the `config` catalogues; the retained
@@ -255,11 +252,15 @@ class AmpioClient:
         )
         # The raw tree is served to the admin login alone; any other
         # client never asks, so a SUBACK rejection is always a fault.
-        raw = (
+        raw_state = (
+            [*RAW_INPUT_WILDCARDS, RAW_OUTPUT_WILDCARD, RAW_ANALOG_WILDCARD]
+            if admin
+            else []
+        )
+        # Live raw pushes with no retained table behind them keep the
+        # acknowledged leg.
+        raw_live = (
             [
-                *RAW_INPUT_WILDCARDS,
-                RAW_OUTPUT_WILDCARD,
-                RAW_ANALOG_WILDCARD,
                 RAW_DIAGNOSTICS_WILDCARD,
                 RAW_EVENT_WILDCARD,
                 _protocol.DEVICE_API_LIST_TOPIC,
@@ -267,11 +268,15 @@ class AmpioClient:
             if admin
             else []
         )
-        return [
+        live = [
             *digests,
             *(response_topic(ep, self._username) for ep in self._served),
             ob_state_wildcard(self._username),
-            *raw,
+            *raw_live,
+        ]
+        return [
+            *((t, _connection.SUBSCRIBE_QOS) for t in live),
+            *((t, _connection.RAW_STATE_QOS) for t in raw_state),
         ]
 
     def _handle_message(self, topic: str, payload: str) -> None:

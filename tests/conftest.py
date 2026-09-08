@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator
 from typing import Self
 
 import pytest
+from paho.mqtt.client import topic_matches_sub
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.reasoncodes import ReasonCode
 
@@ -54,7 +55,9 @@ class FakeBroker:
     Pass ``broker.factory`` as ``mqtt_client_factory``; the same instance
     serves every reconnect. Scripted connect outcomes (`enter_errors`) and
     publish outcomes (`publish_errors`) are consumed left to right;
-    `scripted_messages` replay into the stream on every connect.
+    `scripted_messages` replay into the stream on every connect, and the
+    `retained` table replays into it on every subscribe, the way mosquitto
+    does: filter by filter, through a capped QoS 1 queue.
     """
 
     def __init__(self) -> None:
@@ -74,6 +77,13 @@ class FakeBroker:
         self.subscribed_qos: list[int] = []
         # Per-topic SUBACK reason codes; topics absent here are granted (0).
         self.suback_codes: dict[str, int] = {}
+        # The broker's retained store, topic to payload.
+        self.retained: dict[str, bytes] = {}
+        # mosquitto's `max_queued_messages`: how much QoS 1 replay one
+        # SUBSCRIBE packet can queue for the client. The surplus is dropped
+        # and counted. A QoS 0 filter's replay never takes a queue slot.
+        self.max_queued_messages: int = 1000
+        self.dropped: int = 0
         self._queue: asyncio.Queue[Message] = asyncio.Queue()
 
     def factory(self) -> Self:
@@ -98,9 +108,19 @@ class FakeBroker:
         self, topic: str | list[tuple[str, int]], qos: int = 0
     ) -> list[ReasonCode]:
         entries = topic if isinstance(topic, list) else [(topic, qos)]
+        budget = self.max_queued_messages
         for t, q in entries:
             self.subscribed.append(t)
             self.subscribed_qos.append(q)
+            for retained_topic, payload in self.retained.items():
+                if not topic_matches_sub(t, retained_topic):
+                    continue
+                if q > 0:
+                    if budget == 0:
+                        self.dropped += 1
+                        continue
+                    budget -= 1
+                self._queue.put_nowait(Message(retained_topic, payload))
         # aiomqtt's VERSION2 callbacks deliver ReasonCodes, never plain
         # ints - the fake hands over the same shape, with the int knob in
         # `suback_codes` mapped onto real verdicts.
