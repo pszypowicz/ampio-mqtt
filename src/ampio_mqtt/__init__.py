@@ -50,6 +50,8 @@ from .models import (
     DesignerRecord,
     ModuleFunction,
     ModuleRecord,
+    PanelLightSignal,
+    PanelSettings,
     RecordSweep,
     ThermostatState,
 )
@@ -88,6 +90,8 @@ __all__ = [
     "ObjectRemoved",
     "ObjectUpdated",
     "OutputKind",
+    "PanelLightSignal",
+    "PanelSettings",
     "RecordSweep",
     "SensorKind",
     "ThermostatKind",

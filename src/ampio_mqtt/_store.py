@@ -31,6 +31,7 @@ from .models import (
     AmpioServerInfo,
     DesignerRecord,
     ModuleRecord,
+    PanelSettings,
     leaf_mac,
 )
 
@@ -91,6 +92,11 @@ class AmpioStore:
         # kept for the same reason; an empty map is an authoritative
         # "answered, advertising nothing".
         self._module_capabilities_by_mac: dict[int, Mapping[int, int]] = {}
+        # `{mac: PanelSettings}` accumulated across sweeps, kept for the
+        # same reason. A module absent here is one whose panel layout the
+        # sweep could not resolve, which includes everything that is not a
+        # touch panel.
+        self._panel_settings_by_mac: dict[int, PanelSettings] = {}
         # `{object_id: stan_json}` from the last `data/states` snapshot,
         # kept for the same reason; a snapshot row for an id no catalogue
         # established creates nothing.
@@ -166,6 +172,7 @@ class AmpioStore:
         self,
         records: Mapping[int, ModuleRecord],
         capabilities: Mapping[int, Mapping[int, int]],
+        panel_settings: Mapping[int, PanelSettings],
     ) -> Applied:
         """Hold one sweep's module facts and fold them into modules.
 
@@ -178,7 +185,8 @@ class AmpioStore:
         applied = Applied()
         self._module_record_by_mac.update(records)
         self._module_capabilities_by_mac.update(capabilities)
-        for mac in {*records, *capabilities}:
+        self._panel_settings_by_mac.update(panel_settings)
+        for mac in {*records, *capabilities, *panel_settings}:
             mid = self._module_id_by_mac.get(mac)
             if mid is None:
                 continue
@@ -188,6 +196,8 @@ class AmpioStore:
                 updated = replace(updated, record=records[mac])
             if mac in capabilities and updated.capabilities != capabilities[mac]:
                 updated = replace(updated, capabilities=capabilities[mac])
+            if mac in panel_settings and updated.panel_settings != panel_settings[mac]:
+                updated = replace(updated, panel_settings=panel_settings[mac])
             if updated is not module:
                 self.modules[mid] = updated
                 applied.events.append(ModuleUpdated(updated))
@@ -384,15 +394,18 @@ class AmpioStore:
             # The catalogue never carries the record entry; the held
             # table re-applies it on every merge - including the
             # re-creation after an eviction.
-            if module.mac is not None and module.mac in self._module_record_by_mac:
-                module = replace(module, record=self._module_record_by_mac[module.mac])
-            if (
-                module.mac is not None
-                and module.mac in self._module_capabilities_by_mac
-            ):
-                module = replace(
-                    module, capabilities=self._module_capabilities_by_mac[module.mac]
-                )
+            mac = module.mac
+            if mac is not None:
+                if mac in self._module_record_by_mac:
+                    module = replace(module, record=self._module_record_by_mac[mac])
+                if mac in self._module_capabilities_by_mac:
+                    module = replace(
+                        module, capabilities=self._module_capabilities_by_mac[mac]
+                    )
+                if mac in self._panel_settings_by_mac:
+                    module = replace(
+                        module, panel_settings=self._panel_settings_by_mac[mac]
+                    )
             self.modules[module.id] = module
             # A new module or a changed catalogue row is news, exactly as an
             # object catalogue row is; the live fields were carried over

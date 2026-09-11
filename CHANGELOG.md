@@ -21,8 +21,8 @@ this module do X, and on how many channels", without inferring it from the
 device type and the board revision.
 
 The counts are load-bearing, not decoration. On a touch panel the backlight
-count is the number of touch fields, which is the parameter every panel-level
-surface needs.
+count is the number of touch fields, and the panel settings decode below reads
+it straight from the module rather than from a table of board revisions.
 
 ### Added
 
@@ -35,10 +35,18 @@ surface needs.
   by the raw id, so a function this library does not name still reads through
   under its number.
 
+- **`AmpioModule.panel_settings`**, a touch panel's stored appearance and
+  behaviour settings, read from the `params` blob in the same sweep. It covers
+  the touch field and status colours, the per-field light signal, sound, and
+  backlight flags, the touch lock membership, and the dimming delay and
+  brightness. None on anything that is not a panel whose layout is proven.
+- **`PanelSettings`** and **`PanelLightSignal`** for the above.
+
 ### Changed
 
 - A `resolve_records()` sweep now reports **one** `ModuleUpdated` event for a
-  module whose record and capabilities both change, instead of one per fact.
+  module whose record, capabilities, and panel settings change, instead of one
+  event per fact.
 
 ## 0.54.1
 

@@ -53,6 +53,7 @@ from ampio_mqtt.models import (
     DesignerRecord,
     ModuleFunction,
     ModuleRecord,
+    PanelSettings,
     ThermostatState,
 )
 
@@ -1314,7 +1315,7 @@ def test_module_record_survives_refresh_and_eviction() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
     rec = ModuleRecord(location="Rozdzielnia", desc="Panel")
-    applied = store.apply_module_sweep({0xCAFE: rec}, {})
+    applied = store.apply_module_sweep({0xCAFE: rec}, {}, {})
     assert store.modules[7].record == rec
     assert [e.module.record for e in applied.events] == [rec]
 
@@ -1330,12 +1331,12 @@ def test_module_record_unswept_mac_is_untouched() -> None:
     """A sweep that does not cover a module leaves its record standing."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    store.apply_module_sweep({0xCAFE: ModuleRecord(location="Rozdzielnia")}, {})
-    applied = store.apply_module_sweep({}, {})
+    store.apply_module_sweep({0xCAFE: ModuleRecord(location="Rozdzielnia")}, {}, {})
+    applied = store.apply_module_sweep({}, {}, {})
     assert store.modules[7].record == ModuleRecord(location="Rozdzielnia")
     assert applied.events == []
     # The empty bundle is authoritative: the module answered, unassigned.
-    applied = store.apply_module_sweep({0xCAFE: ModuleRecord()}, {})
+    applied = store.apply_module_sweep({0xCAFE: ModuleRecord()}, {}, {})
     assert store.modules[7].record == ModuleRecord()
     assert [e.module.record for e in applied.events] == [ModuleRecord()]
 
@@ -1349,7 +1350,7 @@ def test_module_capabilities_survive_refresh_and_eviction() -> None:
         ModuleFunction.BACKLIGHT_RGBW: 18,
         ModuleFunction.KEY_LOCK: 1,
     }
-    applied = store.apply_module_sweep({}, {0xCAFE: caps})
+    applied = store.apply_module_sweep({}, {0xCAFE: caps}, {})
     assert store.modules[7].capabilities == caps
     assert [e.module.capabilities for e in applied.events] == [caps]
 
@@ -1365,14 +1366,48 @@ def test_module_capabilities_unswept_mac_is_untouched() -> None:
     """A sweep that does not cover a module leaves its capabilities standing."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    store.apply_module_sweep({}, {0xCAFE: {ModuleFunction.BUZZER: 1}})
-    applied = store.apply_module_sweep({}, {})
+    store.apply_module_sweep({}, {0xCAFE: {ModuleFunction.BUZZER: 1}}, {})
+    applied = store.apply_module_sweep({}, {}, {})
     assert store.modules[7].capabilities == {ModuleFunction.BUZZER: 1}
     assert applied.events == []
     # An empty map is authoritative: the module answered, advertising nothing.
-    applied = store.apply_module_sweep({}, {0xCAFE: {}})
+    applied = store.apply_module_sweep({}, {0xCAFE: {}}, {})
     assert store.modules[7].capabilities == {}
     assert [e.module.capabilities for e in applied.events] == [{}]
+
+
+def test_panel_settings_survive_refresh_and_eviction() -> None:
+    """The catalogue never carries panel settings; the held table re-applies
+    them on every merge, including re-creation after eviction."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    settings = PanelSettings(
+        touch_field_color=(0, 0, 0, 255),
+        status_color=(255, 10, 10),
+        light_signal=(1, 1),
+        beep_time=2,
+        sound_signal=(True, True),
+        backlight_active=(True, True),
+        multitouch_lock=(False, False),
+        multitouch_send_count=False,
+        dim_after_s=10,
+        dim_brightness=50,
+    )
+    applied = store.apply_module_sweep({}, {}, {0xCAFE: settings})
+    assert store.modules[7].panel_settings == settings
+    assert [e.module.panel_settings for e in applied.events] == [settings]
+
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # refresh keeps them
+    assert store.modules[7].panel_settings == settings
+
+    _apply(store, DEVICES_TOPIC, devices())  # evict
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # re-add re-applies
+    assert store.modules[7].panel_settings == settings
+
+    # A sweep that does not cover the module leaves the settings standing.
+    applied = store.apply_module_sweep({}, {}, {})
+    assert store.modules[7].panel_settings == settings
+    assert applied.events == []
 
 
 def test_symulacja_classifies_but_is_not_bridged() -> None:

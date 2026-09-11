@@ -62,12 +62,25 @@ def caps(*pairs: tuple[int, int]) -> str:
     return base64.b64encode(bytes(b for pair in pairs for b in pair)).decode()
 
 
+def panel_params(fields: int) -> str:
+    """A params blob for a `fields`-field panel, the live baseline values."""
+    mask_len = -(-fields // 8)
+    every_field = ((1 << fields) - 1).to_bytes(mask_len, "little")
+    blob = bytes([0, 0, 0, 255, 255, 10, 10])  # colours
+    blob += bytes([1] * fields) + bytes([2])  # light signal, beep time
+    blob += every_field * 2  # sound, backlight
+    blob += bytes(mask_len) + bytes([0])  # multitouch mask, send mode
+    blob += bytes([10, 50])  # dim after 10 s to 50 %
+    return base64.b64encode(blob).decode()
+
+
 def _device(
     mac_prod: int,
     mac_user: int,
     *frames: bytes,
     blob: str | None = None,
     functions: str | None = None,
+    params: str | None = None,
 ) -> dict:
     """One `device_api/from/list` device entry; `blob` overrides the encoding."""
     row: dict = {"macProd": mac_prod, "macUser": mac_user}
@@ -77,6 +90,8 @@ def _device(
         row["descriptions"] = base64.b64encode(b"".join(frames)).decode()
     if functions is not None:
         row["supportedFunctions"] = functions
+    if params is not None:
+        row["params"] = params
     return row
 
 
@@ -502,6 +517,90 @@ async def test_resolve_records_reads_the_list_joins_and_merges() -> None:
             ModuleFunction.BACKLIGHT_RGBW: 18,
             ModuleFunction.KEY_LOCK: 1,
         }
+    finally:
+        await client.disconnect()
+
+
+async def test_resolve_records_decodes_panel_settings_for_a_proven_board() -> None:
+    client, broker = await _admin_client_with_catalogue()
+    try:
+        # An M-DOT-4: a board whose params layout the library has proven.
+        feed(
+            client,
+            ADMIN_DEVICES_TOPIC,
+            devices(
+                {
+                    "id": 16,
+                    "mac": 0xCB89,
+                    "typ_urzadzenia": 8,
+                    "wersja_pcb": 4,
+                }
+            ),
+        )
+        delivery = asyncio.create_task(
+            _deliver_causally(
+                client,
+                broker,
+                json.dumps({"List": []}),
+                _list(
+                    _device(
+                        0xCB89,
+                        0xCB89,
+                        functions=caps((ModuleFunction.BACKLIGHT_RGBW, 4)),
+                        params=panel_params(4),
+                    )
+                ),
+            )
+        )
+        try:
+            await client.resolve_records(timeout=1.0)
+        finally:
+            await delivery
+        settings = client.modules[16].panel_settings
+        assert settings is not None
+        # The field count came from the capability, not from a table here.
+        assert len(settings.backlight_active) == 4
+        assert settings.touch_field_color == (0, 0, 0, 255)
+        assert settings.status_color == (255, 10, 10)
+        assert settings.dim_after_s == 10
+        assert settings.dim_brightness == 50
+    finally:
+        await client.disconnect()
+
+
+async def test_resolve_records_leaves_panel_settings_none_for_an_unproven_board() -> (
+    None
+):
+    client, broker = await _admin_client_with_catalogue()
+    try:
+        # Same panel family, a board revision nobody has read.
+        feed(
+            client,
+            ADMIN_DEVICES_TOPIC,
+            devices({"id": 16, "mac": 0xCB89, "typ_urzadzenia": 9, "wersja_pcb": 4}),
+        )
+        delivery = asyncio.create_task(
+            _deliver_causally(
+                client,
+                broker,
+                json.dumps({"List": []}),
+                _list(
+                    _device(
+                        0xCB89,
+                        0xCB89,
+                        functions=caps((ModuleFunction.BACKLIGHT_RGBW, 18)),
+                        params=panel_params(18),
+                    )
+                ),
+            )
+        )
+        try:
+            await client.resolve_records(timeout=1.0)
+        finally:
+            await delivery
+        # The capability is there, so only the unproven layout stops it.
+        assert client.modules[16].capabilities == {ModuleFunction.BACKLIGHT_RGBW: 18}
+        assert client.modules[16].panel_settings is None
     finally:
         await client.disconnect()
 

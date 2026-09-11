@@ -40,7 +40,9 @@ from .models import (
     AmpioScene,
     AmpioServerInfo,
     DesignerRecord,
+    ModuleFunction,
     ModuleRecord,
+    PanelSettings,
     ThermostatState,
 )
 
@@ -447,6 +449,9 @@ class DeviceRecord:
     # `{function id: channel count}` from the record's capability blob.
     # Empty when the device advertises nothing or the blob is unreadable.
     capabilities: Mapping[int, int] = field(default_factory=dict)
+    # The record's raw settings blob, undecoded: what it means depends on
+    # the module's hardware, which the record does not carry.
+    params: bytes = b""
 
 
 def _decode_descriptions(raw: object) -> tuple[OutputDescription, ...] | None:
@@ -460,6 +465,16 @@ def _decode_descriptions(raw: object) -> tuple[OutputDescription, ...] | None:
     except (binascii.Error, ValueError):
         return None
     return parse_descriptions_blob(blob)
+
+
+def _decode_blob(raw: object) -> bytes:
+    """A base64 record field as bytes; anything unreadable reads empty."""
+    if not isinstance(raw, str) or not raw:
+        return b""
+    try:
+        return base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        return b""
 
 
 def parse_capability_blob(raw: object) -> dict[int, int]:
@@ -510,6 +525,7 @@ def parse_device_list(payload: str) -> tuple[DeviceRecord, ...] | None:
                 mac_global=mac_global,
                 entries=entries,
                 capabilities=parse_capability_blob(item.get("supportedFunctions")),
+                params=_decode_blob(item.get("params")),
             )
         )
     return tuple(out)
@@ -590,6 +606,91 @@ def resolve_designer(
 # The description class describing the module itself rather than one output:
 # its `desc` is the module name and its `out_loc` the module-level location.
 DEVICE_NAME_DESC_TYPE = 1
+
+
+# The `(typ_urzadzenia, wersja_pcb)` pairs whose panel params layout is
+# live-proven. The Designer keys the layout by the same pair, and other
+# boards use a different one - an older revision puts the touch field
+# colour at offset 1 as three bytes with no white channel, and shifts the
+# masks. Reading one of those with this layout would produce confident
+# wrong values, so an unlisted pair resolves nothing. Extend only with a
+# pair read off real hardware.
+PANEL_PARAMS_LAYOUTS: frozenset[tuple[int, int]] = frozenset(
+    {
+        (8, 4),  # M-DOT-4
+        (9, 5),  # M-DOT-18
+        (11, 12),  # M-DOT-9
+        (33, 5),  # M-DOT-2
+    }
+)
+
+
+def parse_panel_settings(blob: bytes, fields: int) -> PanelSettings | None:
+    """The panel section of a params blob, for a panel with ``fields`` fields.
+
+    The section is laid out by the field count: the colours, then one
+    light-signal byte per field, the beep time, and three field masks of
+    ``ceil(fields / 8)`` bytes each. None when the blob is too short to
+    hold the whole section - a truncated blob must not read as confident
+    values. docs/description-records.md carries the offsets.
+    """
+    mask_len = -(-fields // 8)  # bytes needed for one bit per field
+    light = 7
+    beep = light + fields
+    sound = beep + 1
+    backlight = sound + mask_len
+    multitouch = backlight + mask_len
+    send_count = multitouch + mask_len
+    dimming = send_count + 1
+    if fields <= 0 or len(blob) < dimming + 2:
+        return None
+
+    def bits(start: int) -> tuple[bool, ...]:
+        mask = int.from_bytes(blob[start : start + mask_len], "little")
+        return tuple(bool(mask >> bit & 1) for bit in range(fields))
+
+    return PanelSettings(
+        touch_field_color=(blob[0], blob[1], blob[2], blob[3]),
+        status_color=(blob[4], blob[5], blob[6]),
+        light_signal=tuple(blob[light:beep]),
+        beep_time=blob[beep],
+        sound_signal=bits(sound),
+        backlight_active=bits(backlight),
+        multitouch_lock=bits(multitouch),
+        multitouch_send_count=bool(blob[send_count]),
+        dim_after_s=blob[dimming],
+        dim_brightness=blob[dimming + 1],
+    )
+
+
+def resolve_panel_settings(
+    params_by_mac: Mapping[int, bytes],
+    capabilities_by_mac: Mapping[int, Mapping[int, int]],
+    hardware_by_mac: Mapping[int, tuple[int | None, int | None]],
+    colliding_macs: frozenset[int],
+) -> dict[int, PanelSettings]:
+    """The panel settings of every module whose layout is proven, by mac.
+
+    A module resolves only when its ``(typ_urzadzenia, wersja_pcb)`` pair
+    is a proven layout and it advertises a backlight channel count - that
+    count is the number of touch fields. Everything else resolves
+    nothing, so a module that is not a panel, a board this library has
+    not read, and a colliding mac are all simply absent.
+    """
+    out: dict[int, PanelSettings] = {}
+    for mac, blob in params_by_mac.items():
+        if mac in colliding_macs:
+            continue
+        typ, pcb = hardware_by_mac.get(mac, (None, None))
+        if typ is None or pcb is None or (typ, pcb) not in PANEL_PARAMS_LAYOUTS:
+            continue
+        fields = capabilities_by_mac.get(mac, {}).get(ModuleFunction.BACKLIGHT_RGBW)
+        if fields is None:
+            continue
+        settings = parse_panel_settings(blob, fields)
+        if settings is not None:
+            out[mac] = settings
+    return out
 
 
 def resolve_module_capabilities(
