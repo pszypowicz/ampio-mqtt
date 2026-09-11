@@ -216,6 +216,61 @@ class ModuleRecord:
     desc: str | None = None
 
 
+class PanelLightSignal(IntEnum):
+    """How a touch field's status indicator reacts to a touch.
+
+    The values are the Designer's own. ``CHANGE_STATE`` is what every
+    field on the baseline install carries, and the Designer shows it as
+    "Change state" for exactly that byte. :pyattr:`PanelSettings.light_signal`
+    stays a plain integer, so a value without a member still reads through.
+    """
+
+    NONE = 0
+    CHANGE_STATE = 1
+    ON = 2
+    OFF = 3
+
+
+@dataclass(slots=True, frozen=True)
+class PanelSettings:
+    """A touch panel's stored appearance and behaviour settings.
+
+    These are the panel's configured defaults, held in the module and
+    read back with the rest of its record. They are what the panel
+    returns to after a restart. Admin-guarded, exactly as
+    :class:`ModuleRecord` is, and None on a module whose panel layout
+    this library has not proven.
+
+    Every per-field tuple is as long as the panel has touch fields, so
+    index 0 is field 1. docs/description-records.md holds the wire shape.
+    """
+
+    # Resting backlight of the touch field icons, as red, green, blue, white.
+    touch_field_color: tuple[int, int, int, int]
+    # Colour the status indicator shows, as red, green, blue.
+    status_color: tuple[int, int, int]
+    # Per field, how its status indicator reacts to a touch. Read the
+    # values with `PanelLightSignal`.
+    light_signal: tuple[int, ...]
+    # The Designer labels this column milliseconds, but the panel's own
+    # buzzer frames count 10 ms ticks, so the unit is not proven. The
+    # stored value passes through verbatim.
+    beep_time: int
+    # Per field, whether a touch beeps.
+    sound_signal: tuple[bool, ...]
+    # Per field, whether its icon is backlit at all.
+    backlight_active: tuple[bool, ...]
+    # Per field, whether touching it takes part in the combination that
+    # toggles the touch lock.
+    multitouch_lock: tuple[bool, ...]
+    # Whether the panel reports how many fields are touched at once.
+    multitouch_send_count: bool
+    # Seconds of inactivity before the panel dims. 0 disables dimming.
+    dim_after_s: int
+    # Percent brightness the panel dims to.
+    dim_brightness: int
+
+
 @dataclass(slots=True, frozen=True)
 class AmpioObject:
     """A logical Ampio object (DB object) and its latest state.
@@ -629,6 +684,10 @@ class AmpioModule:
     # until a sweep covers the module. Index it with `ModuleFunction`; an id
     # without a member reads through under its raw number.
     capabilities: Mapping[int, int] = field(default_factory=dict)
+    # The panel's stored appearance and behaviour settings (#194). Admin
+    # sweep only, and None on anything that is not a touch panel whose
+    # params layout this library has proven.
+    panel_settings: PanelSettings | None = None
     # Local epoch seconds when this process last received live evidence of
     # the module: a state push or raw edge for one of its objects, or its own
     # diagnostics broadcast. One clock only - snapshot and catalogue seeds do
