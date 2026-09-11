@@ -69,9 +69,10 @@ the API detail.
 - Replacement-stable identity for objects and modules, so a hardware swap keeps
   its entities ([`docs/identity.md`](docs/identity.md)).
 - Commands for relays, dimmers, RGBW lights, covers with stop and tilt, the
-  regulator setpoint, scenes, and bus events. The M-DOT panel buzzer and the
-  module identify LED are admin-only. The `command()` escape hatch sends any
-  other `/api` verb ([`docs/commands.md`](docs/commands.md)).
+  regulator setpoint, scenes, and bus events. The M-DOT panel buzzer, its touch
+  field colours and touch lock, and the module identify LED are admin-only. The
+  `command()` escape hatch sends any other `/api` verb
+  ([`docs/commands.md`](docs/commands.md)).
 - A low-latency input bridge from the raw per-channel topics on the admin tier
   ([`docs/raw-channel-bridge.md`](docs/raw-channel-bridge.md)).
 - Room mapping, per-module health, reported capabilities and touch panel
@@ -85,11 +86,11 @@ the API detail.
 A dedicated standard account is the recommended shape for Home Assistant. It
 sees exactly the objects granted in the Ampio app and can command only those. An
 administrator account adds the module catalogue, the low-latency raw tree, the
-module diagnostics, and the CAN write surfaces (panel LEDs, the buzzer, and the
-identify LED). Bus events are the exception on both tiers. Any account can raise
-any event number, and the logic behind an event runs with full authority.
-[`docs/account-tiers.md`](docs/account-tiers.md) has the capability table and
-the measured latency difference.
+module diagnostics, and the CAN write surfaces (panel LEDs and colours, the
+buzzer, the touch lock, and the identify LED). Bus events are the exception on
+both tiers. Any account can raise any event number, and the logic behind an
+event runs with full authority. [`docs/account-tiers.md`](docs/account-tiers.md)
+has the capability table and the measured latency difference.
 
 ## Supported M-SERV versions
 

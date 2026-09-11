@@ -11,7 +11,7 @@ import contextlib
 import logging
 import math
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from types import MappingProxyType
 from typing import Any, Final, TypeVar, cast, overload
@@ -22,6 +22,7 @@ from ._protocol import (
     ENDPOINT_BY_NAME,
     ENDPOINTS,
     KEEP_POSITION,
+    PANEL_MASK_MAX_BYTES,
     RAW_ANALOG_WILDCARD,
     RAW_BUZZER_OFF,
     RAW_BUZZER_SILENCE,
@@ -37,9 +38,13 @@ from ._protocol import (
     command_topic,
     event_payload,
     ob_state_wildcard,
+    panel_field_mask,
+    raw_backlight_payload,
     raw_buzzer_pattern_payload,
     raw_buzzer_payload,
+    raw_key_lock_payload,
     raw_output_payload,
+    raw_status_light_payload,
     raw_write_topic,
     request_topic,
     response_topic,
@@ -64,6 +69,7 @@ from .models import (
     AmpioScene,
     AmpioServerInfo,
     ConnectionStats,
+    ModuleFunction,
     RecordSweep,
 )
 
@@ -1393,6 +1399,128 @@ class AmpioClient:
         """
         topic = raw_write_topic(self._raw_write_mac(module_id))
         await self._connection.publish(topic, RAW_IDENTIFY_OFF.encode())
+
+    def _panel_mask(self, module_id: int, fields: Sequence[int] | None) -> str:
+        """The touch field mask for one panel action.
+
+        The width comes from the module's own backlight channel count
+        when a record sweep has read it. Without one it falls back to the
+        full width, which a panel accepts and reads down to the fields it
+        has - so no panel write needs a sweep first.
+        """
+        module = self._store.modules.get(module_id)
+        advertised = (
+            module.capabilities.get(ModuleFunction.BACKLIGHT_RGBW)
+            if module is not None
+            else None
+        )
+        width = PANEL_MASK_MAX_BYTES if advertised is None else -(-advertised // 8)
+        if fields is not None:
+            for number in fields:
+                _check_range("field", number, 1, width * 8)
+        return panel_field_mask(fields, width)
+
+    async def set_panel_backlight(
+        self,
+        module_id: int,
+        red: int,
+        green: int,
+        blue: int,
+        white: int = 0,
+        *,
+        fields: Sequence[int] | None = None,
+    ) -> None:
+        """Set the resting colour of a panel's touch field icons.
+
+        ``module_id`` is :pyattr:`AmpioModule.id`. ``fields`` names the
+        1-based touch fields to colour, and None colours every field the
+        panel has. Each channel is 0-255; the white channel drives the
+        panel's own white LEDs, so ``0, 0, 0, 255`` is the plain white
+        most installs configure.
+
+        This is a runtime override, not a setting. It takes effect at
+        once, writes no configuration, and a panel restart restores
+        :pyattr:`AmpioModule.panel_settings`, its stored default. Nothing
+        on the bus reports the current colour, so there is no readback.
+
+        Admin tier only (``RuntimeError`` otherwise). ``ValueError`` for
+        an unknown module or an out-of-range value, before any publish.
+        docs/panel-writes.md carries the frame.
+        """
+        mac = self._raw_write_mac(module_id)
+        for name, value in (
+            ("red", red),
+            ("green", green),
+            ("blue", blue),
+            ("white", white),
+        ):
+            _check_range(name, value, 0, 255)
+        mask = self._panel_mask(module_id, fields)
+        payload = raw_backlight_payload(red, green, blue, white, mask)
+        await self._connection.publish(raw_write_topic(mac), payload.encode())
+
+    async def set_panel_status_light(
+        self,
+        module_id: int,
+        red: int,
+        green: int,
+        blue: int,
+        *,
+        fields: Sequence[int] | None = None,
+    ) -> None:
+        """Set the colour a panel's status indicators show.
+
+        The indicator is what reacts when a field is touched or its
+        object is on. It has no white channel, which is the only
+        difference from :meth:`set_panel_backlight`. The same rules apply
+        to ``fields``, the tier, the errors, and the absent readback.
+        """
+        mac = self._raw_write_mac(module_id)
+        for name, value in (("red", red), ("green", green), ("blue", blue)):
+            _check_range(name, value, 0, 255)
+        mask = self._panel_mask(module_id, fields)
+        payload = raw_status_light_payload(red, green, blue, mask)
+        await self._connection.publish(raw_write_topic(mac), payload.encode())
+
+    async def lock_panel(self, module_id: int, *, seconds: float) -> None:
+        """Ignore every touch on a panel for ``seconds``.
+
+        ``module_id`` is :pyattr:`AmpioModule.id`. The panel plays its
+        lock beeps and then swallows touches whole: a locked field
+        broadcasts nothing at all, not even the press. ``seconds`` is
+        0.01-655.35 in 10 ms steps.
+
+        The lock always expires. There is no indefinite form - a zero
+        time is a lock of zero length, not a latch, so it is refused.
+        Hold a panel locked by re-arming before the current lock runs
+        out, and release it early with :meth:`unlock_panel`.
+
+        **No status exists.** Nothing on the bus reports whether a panel
+        is locked, and a locked panel is indistinguishable from an idle
+        one, so a consumer cannot read this back.
+
+        Admin tier only (``RuntimeError`` otherwise). ``ValueError`` for
+        an unknown module or an out-of-range time, before any publish.
+        """
+        mac = self._raw_write_mac(module_id)
+        ticks = self._buzz_ticks("seconds", seconds, 655.35)
+        if ticks == 0:
+            raise ValueError(
+                "seconds must be at least 0.01 - a zero time locks for no time"
+            )
+        payload = raw_key_lock_payload(True, ticks)
+        await self._connection.publish(raw_write_topic(mac), payload.encode())
+
+    async def unlock_panel(self, module_id: int) -> None:
+        """Release a panel's touch lock at once.
+
+        Ends a lock started by :meth:`lock_panel` or by the panel's own
+        touch combination, without waiting for it to expire. The same
+        rules as :meth:`lock_panel` apply to the tier and the errors.
+        """
+        mac = self._raw_write_mac(module_id)
+        payload = raw_key_lock_payload(False, 0)
+        await self._connection.publish(raw_write_topic(mac), payload.encode())
 
     def _output_kind(self, object_id: int) -> OutputKind | None:
         """The object's kind when it is a known output, else None."""

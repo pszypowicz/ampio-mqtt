@@ -12,6 +12,41 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.56.0
+
+A touch panel's colours and its touch lock are settings you change in the
+Designer and then live with. The same panel accepts a runtime frame for each,
+and the library now sends them (#196). Nothing is written to the module's
+configuration, so a panel restart returns its stored defaults.
+
+Colour is addressable per touch field, not once per panel. A single field can go
+red while the rest stay white, which is what makes the frame worth having over
+the stored setting it overrides.
+
+### Added
+
+- **`set_panel_backlight()`** sets the resting colour of a panel's touch field
+  icons, as red, green, blue, and white. `fields` names the 1-based fields to
+  colour and defaults to every field the panel has.
+- **`set_panel_status_light()`** sets the colour the status indicators show. The
+  same shape without the white channel, which the indicator does not have.
+- **`lock_panel()`** and **`unlock_panel()`** make a panel ignore every touch
+  for a time, and release it early. A locked field broadcasts nothing at all,
+  not even the press.
+
+### Notes
+
+The lock always expires. There is no indefinite form, a zero time is a lock of
+zero length rather than a latch and is refused, and a single lock caps at 655.35
+s. Holding a panel locked means re-arming before the current lock runs out.
+
+No lock status exists. Nothing on the bus reports whether a panel is locked, and
+a locked panel is indistinguishable from an idle one, so no consumer can read it
+back.
+
+Neither colour has a readback either. All four methods are admin only, like the
+rest of the CAN write tree, and none of them needs a record sweep first.
+
 ## 0.55.0
 
 A module's `device_api` record says more about the module than the library read
