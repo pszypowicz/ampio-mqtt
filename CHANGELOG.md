@@ -12,6 +12,22 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.54.1
+
+Home Assistant runs a multi-entity service call as one task per entity. A scene
+that commands many Ampio objects therefore fires that many publishes at once,
+and each one waits for its PUBACK. aiomqtt logs a warning for every publish
+above ten in flight. One "turn off every light" call therefore left a burst of
+`There are 11 pending publish calls.` lines in the log (#192). The publishes all
+completed.
+
+### Fixed
+
+- **A burst of concurrent commands logs no pending-calls warnings.** The session
+  object turns the aiomqtt threshold off. Every publish already carries its own
+  PUBACK deadline and raises `AmpioTimeoutError` when the broker does not
+  answer, so the in-flight count adds no signal.
+
 ## 0.54.0
 
 The Designer's Devices tab has an "Identify device" button that lights a
