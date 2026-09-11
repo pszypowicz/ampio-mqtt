@@ -1,8 +1,8 @@
 # Panel writes
 
 This page continues [`protocol.md`](protocol.md) with the raw CAN output frame
-for panel status LEDs, relays, and open-collector outputs, the panel buzzer, and
-the module identify LED.
+for panel status LEDs, relays, and open-collector outputs, the panel buzzer, the
+touch field colours, the touch lock, and the module identify LED.
 
 ## Panel outputs
 
@@ -95,8 +95,67 @@ at the sequence's scheduled end.
 `buzz()`, `buzz_pattern()`, and `buzz_stop()` publish these frames on the admin
 tier, addressed by `AmpioModule.id`. Any catalogued module is a valid address,
 and the M-DOT panels are the proven targets. The touch-press beep length and its
-per-field mask live in the panel's flash parameters, a Designer write the
-library does not make.
+per-field mask are stored settings, readable as `AmpioModule.panel_settings` and
+written only by the Designer.
+
+## Panel colours
+
+The M-DOT panels light each touch field's icon, and show a separate status
+indicator beside it. Both colours are stored settings, read back as
+`AmpioModule.panel_settings` (see
+[`description-records.md`](description-records.md)). Two raw frames override
+them at runtime:
+
+```
+ampio/to/<machex>/raw   0c0703 50 01 <red> <green> <blue> <white> <mask>
+ampio/to/<machex>/raw   0c0703 60 01 <red> <green> <blue> <mask>
+```
+
+`50` is the icon backlight and `60` the status indicator, each the destination
+with its action function in the low nibble. `01` is the sub-function, the one
+the vendor's own stored conditions carry. The backlight has a white channel and
+the status indicator does not, which is the only difference between the two
+payloads.
+
+`mask` selects the touch fields, one bit per field, least significant first, so
+field 1 is bit 0. A panel reads the width its own field count needs and ignores
+any surplus, so a caller that does not know the count can send the full three
+bytes, which covers the 24 fields a panel can report. The library sends the
+panel's own width when a record sweep has read its backlight channel count, and
+the full width otherwise.
+
+These frames write nothing to the module's configuration. The stored settings
+stay untouched, so a panel restart returns the configured colours. Nothing on
+the bus reports the current colour, so no readback exists.
+
+The sub-function `02` also sets the resting colour, and neither code outranks
+the other. The last frame wins in either order. What else separates the two
+codes is not known, and it does not show in the resting colour.
+
+## Touch lock
+
+A panel can ignore every touch for a while. A locked field broadcasts nothing at
+all, not even the press, so the module suppresses the touch before it reaches
+the bus. The lock is write-only. Nothing reports whether a panel is locked, and
+a locked panel is indistinguishable from an idle one.
+
+```
+ampio/to/<machex>/raw   0c0703 f0 2f <fn> <time:2>
+```
+
+The key lock destination is 303, above one byte, so it takes the escape form:
+`0xf0` with the action function in the low nibble, then the destination's low
+byte `0x2f`. `fn` is 1 to lock and 0 to release at once. `time` is little-endian
+10 ms ticks.
+
+**The lock always expires.** There is no indefinite form. A zero time is a lock
+of zero length, not a latch, so the panel beeps and a touch works at once. The
+16-bit field caps a single lock at 655.35 s, about 10 minutes 55 seconds, so
+holding a panel locked means re-arming before the current lock runs out.
+
+A person can also toggle the lock from the panel, with the touch field
+combination the Designer assigns. That combination is invisible on the bus, and
+a manual lock expires the same way.
 
 ## Module identify
 

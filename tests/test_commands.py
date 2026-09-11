@@ -25,6 +25,7 @@ from ampio_mqtt import (
     AmpioClient,
     AmpioConnectionError,
     AmpioTimeoutError,
+    ModuleFunction,
 )
 
 
@@ -890,6 +891,98 @@ async def test_buzz_stop_sends_the_silent_sequence_then_the_off() -> None:
         await client.disconnect()
 
 
+async def test_set_panel_backlight_rides_the_backlight_action() -> None:
+    """Destination 0x50, sub-function 1, then RGBW and the field mask."""
+    client, broker = await _admin_with_panel_module()
+    try:
+        # No record sweep has run, so the width falls back to the full
+        # three bytes, which a panel reads down to the fields it has.
+        await client.set_panel_backlight(7, 0, 255, 0)
+        await client.set_panel_backlight(7, 255, 0, 0, fields=[1, 3])
+        await client.set_panel_backlight(7, 0, 0, 0, white=255)
+        assert broker.published == [
+            (PANEL_RAW_TOPIC, b"0c0703500100ff0000ffffff"),
+            (PANEL_RAW_TOPIC, b"0c07035001ff000000050000"),
+            (PANEL_RAW_TOPIC, b"0c07035001000000ffffffff"),
+        ]
+        assert broker.published_qos == [1, 1, 1]
+    finally:
+        await client.disconnect()
+
+
+async def test_panel_mask_narrows_to_the_advertised_field_count() -> None:
+    """After a sweep the frame carries the panel's own width, as Designer sends."""
+    client, broker = await _admin_with_panel_module()
+    try:
+        client._store.apply_module_sweep(
+            {}, {0xCAFE: {ModuleFunction.BACKLIGHT_RGBW: 4}}, {}
+        )
+        await client.set_panel_backlight(7, 0, 255, 0)
+        assert broker.published == [(PANEL_RAW_TOPIC, b"0c0703500100ff0000ff")]
+        # The mask is one byte now, so field 9 is past the panel's end.
+        with pytest.raises(ValueError):
+            await client.set_panel_backlight(7, 0, 255, 0, fields=[9])
+    finally:
+        await client.disconnect()
+
+
+async def test_set_panel_status_light_rides_the_status_action() -> None:
+    """Destination 0x60, the same shape as the backlight minus the white."""
+    client, broker = await _admin_with_panel_module()
+    try:
+        await client.set_panel_status_light(7, 0, 0, 255)
+        await client.set_panel_status_light(7, 255, 10, 10, fields=[2])
+        assert broker.published == [
+            (PANEL_RAW_TOPIC, b"0c070360010000ffffffff"),
+            (PANEL_RAW_TOPIC, b"0c07036001ff0a0a020000"),
+        ]
+    finally:
+        await client.disconnect()
+
+
+async def test_lock_panel_rides_the_escaped_key_lock_action() -> None:
+    """Destination 303 takes the escape form, and the time is 10 ms ticks."""
+    client, broker = await _admin_with_panel_module()
+    try:
+        await client.lock_panel(7, seconds=10)
+        await client.lock_panel(7, seconds=655.35)
+        await client.unlock_panel(7)
+        assert broker.published == [
+            (PANEL_RAW_TOPIC, b"0c0703f02f01e803"),
+            (PANEL_RAW_TOPIC, b"0c0703f02f01ffff"),
+            (PANEL_RAW_TOPIC, b"0c0703f02f000000"),
+        ]
+    finally:
+        await client.disconnect()
+
+
+async def test_panel_writes_reject_bad_arguments_without_a_publish() -> None:
+    """A zero lock holds for no time at all, so lock_panel() refuses it."""
+    client, broker = await _admin_with_panel_module()
+    try:
+        with pytest.raises(ValueError):
+            await client.lock_panel(7, seconds=0)
+        with pytest.raises(ValueError):
+            await client.lock_panel(7, seconds=655.36)
+        with pytest.raises(ValueError):
+            await client.lock_panel(8, seconds=10)
+        with pytest.raises(ValueError):
+            await client.set_panel_backlight(7, 256, 0, 0)
+        with pytest.raises(ValueError):
+            await client.set_panel_backlight(7, 0, 0, 0, white=-1)
+        with pytest.raises(ValueError):
+            await client.set_panel_backlight(7, 0, 0, 0, fields=[0])
+        with pytest.raises(ValueError):
+            await client.set_panel_backlight(7, 0, 0, 0, fields=[25])
+        with pytest.raises(ValueError):
+            await client.set_panel_status_light(7, 0, 0, 300)
+        with pytest.raises(ValueError):
+            await client.set_panel_status_light(8, 0, 0, 0)
+        assert broker.published == []
+    finally:
+        await client.disconnect()
+
+
 async def test_buzz_rejects_bad_arguments_without_a_publish() -> None:
     """A zero length latches the buzzer on, so buzz() refuses it."""
     client, broker = await _admin_with_panel_module()
@@ -970,4 +1063,20 @@ async def test_identify_needs_the_admin_tier(
         await client.identify(7)
     with pytest.raises(RuntimeError):
         await client.identify_stop(7)
+    assert broker.published == []
+
+
+async def test_panel_writes_need_the_admin_tier(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """Every panel action rides the CAN write tree, admin only."""
+    client, broker = connected
+    with pytest.raises(RuntimeError):
+        await client.set_panel_backlight(7, 0, 255, 0)
+    with pytest.raises(RuntimeError):
+        await client.set_panel_status_light(7, 0, 255, 0)
+    with pytest.raises(RuntimeError):
+        await client.lock_panel(7, seconds=10)
+    with pytest.raises(RuntimeError):
+        await client.unlock_panel(7)
     assert broker.published == []

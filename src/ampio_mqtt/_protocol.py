@@ -1158,14 +1158,29 @@ def raw_output_payload(function: int, value: int, channel: int) -> str:
     return f"{function:02x}f9{value:02x}{channel:02x}"
 
 
-# The M-DOT buzzer rides the condition-action frames the Designer's "test
-# condition" button sends: the `0c0703` prefix, then the action. The
-# action's first byte is the buzzer destination 0x70 with the action
-# function in its low nibble (0 simple, 1 sequence). Every time field
-# counts 10 ms ticks, 16-bit fields are little-endian, and the sequence
-# form's speed bytes stay 0, since they had no audible effect.
-# docs/panel-writes.md ("Panel buzzer") carries the wire facts.
-_BUZZER_ACTION_PREFIX = "0c0703"
+# The Designer's "test condition" button executes one module action at
+# once: the `0c07` envelope, a trigger state byte, then the action. State
+# 3 asserts and 0 releases, and the button sends 3 on press. Every action
+# the library sends asserts, so the prefix carries the 3.
+#
+# An action starts with its destination in the high nibble and its
+# function in the low one. A destination above one byte takes the escape
+# form instead, `0xF0 | function` then the destination's low byte. Every
+# time field counts 10 ms ticks and 16-bit fields are little-endian.
+# docs/panel-writes.md carries the wire facts.
+_ACTION_FRAME_PREFIX = "0c0703"
+# Action destinations, each with its function in the low nibble.
+_BACKLIGHT_ACTION = "50"  # per-field RGBW backlight
+_STATUS_LIGHT_ACTION = "60"  # per-field RGB status indicator
+_KEY_LOCK_ACTION = "f02f"  # destination 303, so the escape form
+# Every action below uses the vendor's own sub-function 1, the code the
+# stored conditions on live modules carry. For the backlight, 1 and 2
+# both set the resting colour and neither outranks the other.
+_ACTION_SUB_FUNCTION = "01"
+# A panel reports at most 24 touch fields, so three mask bytes cover any
+# of them. A module reads the width its own field count needs and ignores
+# the rest, which is what lets a caller send the full width blind.
+PANEL_MASK_MAX_BYTES = 3
 
 
 def raw_buzzer_payload(on: bool, tone: int, ticks: int) -> str:
@@ -1174,7 +1189,7 @@ def raw_buzzer_payload(on: bool, tone: int, ticks: int) -> str:
     ``on`` selects the ON sub-function, else OFF. ``ticks`` is the length
     in 10 ms ticks; 0 with ON latches the buzzer on.
     """
-    return f"{_BUZZER_ACTION_PREFIX}70{int(on):02x}{tone:02x}{ticks:02x}"
+    return f"{_ACTION_FRAME_PREFIX}70{int(on):02x}{tone:02x}{ticks:02x}"
 
 
 def raw_buzzer_pattern_payload(
@@ -1186,7 +1201,7 @@ def raw_buzzer_pattern_payload(
     replaces the sequence.
     """
     return (
-        f"{_BUZZER_ACTION_PREFIX}7101"
+        f"{_ACTION_FRAME_PREFIX}7101"
         f"{delay_ticks & 0xFF:02x}{delay_ticks >> 8:02x}"
         f"{tone1:02x}00{ticks1 & 0xFF:02x}{ticks1 >> 8:02x}"
         f"{tone2:02x}00{ticks2 & 0xFF:02x}{ticks2 >> 8:02x}"
@@ -1200,6 +1215,56 @@ def raw_buzzer_pattern_payload(
 # re-assert.
 RAW_BUZZER_SILENCE = raw_buzzer_pattern_payload(0, 1, 0, 0, 1, 0)
 RAW_BUZZER_OFF = raw_buzzer_payload(False, 6, 0)
+
+
+def panel_field_mask(fields: Sequence[int] | None, width: int) -> str:
+    """The touch field mask of a panel action, as ASCII hex.
+
+    One bit per field, least significant first, so field 1 is bit 0.
+    None selects every field: all bits set, which each panel reads down
+    to the fields it actually has.
+    """
+    if fields is None:
+        return "ff" * width
+    mask = 0
+    for number in fields:
+        mask |= 1 << (number - 1)
+    return mask.to_bytes(width, "little").hex()
+
+
+def raw_backlight_payload(
+    red: int, green: int, blue: int, white: int, mask: str
+) -> str:
+    """The per-field backlight colour action as ASCII hex."""
+    return (
+        f"{_ACTION_FRAME_PREFIX}{_BACKLIGHT_ACTION}{_ACTION_SUB_FUNCTION}"
+        f"{red:02x}{green:02x}{blue:02x}{white:02x}{mask}"
+    )
+
+
+def raw_status_light_payload(red: int, green: int, blue: int, mask: str) -> str:
+    """The per-field status indicator colour action as ASCII hex.
+
+    The same shape as the backlight action, minus the white channel: the
+    status indicator has no white.
+    """
+    return (
+        f"{_ACTION_FRAME_PREFIX}{_STATUS_LIGHT_ACTION}{_ACTION_SUB_FUNCTION}"
+        f"{red:02x}{green:02x}{blue:02x}{mask}"
+    )
+
+
+def raw_key_lock_payload(on: bool, ticks: int) -> str:
+    """The touch lock action as ASCII hex.
+
+    ``ticks`` is how long the lock holds, in 10 ms ticks. Zero is a lock
+    of zero length, not a latch, so the module beeps and a touch works at
+    once. ``on`` False releases the lock immediately and ignores the time.
+    """
+    return (
+        f"{_ACTION_FRAME_PREFIX}{_KEY_LOCK_ACTION}{int(on):02x}"
+        f"{ticks & 0xFF:02x}{ticks >> 8:02x}"
+    )
 
 
 # Module identify, the Designer's "Identify device" button: `[0x7E, flag]`
