@@ -12,6 +12,34 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+Every module states what it can do. The `device_api` record carries a
+`supportedFunctions` blob of function ids paired with channel counts, and the
+library dropped it (#197). Reading it gives a consumer a direct answer to "can
+this module do X, and on how many channels", without inferring it from the
+device type and the board revision.
+
+The counts are load-bearing, not decoration. On a touch panel the backlight
+count is the number of touch fields, which is the parameter every panel-level
+surface needs.
+
+### Added
+
+- **`AmpioModule.capabilities`**, a mapping of function id to channel count,
+  read from the same `resolve_records()` sweep that reads the module record. It
+  costs no extra request. Empty on a standard account, and until a sweep covers
+  the module.
+- **`ModuleFunction`**, an `IntEnum` naming the function ids. Membership covers
+  the ids a module on the baseline install advertises. The mapping stays keyed
+  by the raw id, so a function this library does not name still reads through
+  under its number.
+
+### Changed
+
+- A `resolve_records()` sweep now reports **one** `ModuleUpdated` event for a
+  module whose record and capabilities both change, instead of one per fact.
+
 ## 0.54.1
 
 Home Assistant runs a multi-entity service call as one task per entity. A scene

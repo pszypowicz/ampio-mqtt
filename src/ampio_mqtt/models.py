@@ -6,7 +6,7 @@ import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, IntEnum
 
 from .classification import (
     ObjectKind,
@@ -29,6 +29,52 @@ class AccessTier(Enum):
 
     ADMIN = "admin"  # the reserved `admin` login: full catalogue + modules
     RESTRICTED = "restricted"  # an app-created user: app-sync view only
+
+
+class ModuleFunction(IntEnum):
+    """A function id from a module's capability map.
+
+    The ids and names are the Designer's own. Membership is limited to
+    ids a module on the baseline install advertises, so an id here is one
+    the wire has shown. :pyattr:`AmpioModule.capabilities` is keyed by the
+    raw id, so an id without a member still reads through under its
+    number.
+
+    The value paired with an id is a channel count, not a flag. On a touch
+    panel the ``BACKLIGHT_RGBW`` count is the number of touch fields.
+    """
+
+    OUT_BIN = 1
+    OUT_ANALOG_U8 = 2
+    FLAG_BIN = 3
+    FLAG_ANALOG_U8 = 4
+    ROLLER = 5
+    BACKLIGHT_RGBW = 7
+    STATUSLIGHT_RGB = 8
+    BUZZER = 9
+    MRT = 13  # thermostat
+    FLAG_ANALOG_I16 = 18
+    IN_BIN = 19
+    IN_ANALOG_U8 = 20
+    OW = 24  # 1-Wire
+    RGBW = 30
+    FLAG_BIN_SIMPLE = 37
+    PIN = 46
+    KEY_LOCK = 47
+    LIC_CONFIG = 50
+    RTC_SUPPORT = 52
+    SEND_TIME = 55
+    MLED = 59
+    BR_ACTION_TAB = 61
+    CURVE_CNT = 66
+    OC_U8_CNT = 67
+    MODBUS1 = 70
+    RS232_INT_SYS = 71
+    TYPE_CHANGE = 78
+    SATEL = 79
+    LED_WW_CNT = 81
+    GROUP = 99
+    LOGS = 100
 
 
 # Bit flags inside the `params` integer (`obiekty.params`); the names come
@@ -578,6 +624,11 @@ class AmpioModule:
     # The module's DEVICE_NAME record entry, admin sweep only; None
     # until a sweep covers the module.
     record: ModuleRecord | None = None
+    # What the module reports it can do, as `{function id: channel count}`
+    # (#197). Admin sweep only, so it stays empty on a standard account and
+    # until a sweep covers the module. Index it with `ModuleFunction`; an id
+    # without a member reads through under its raw number.
+    capabilities: Mapping[int, int] = field(default_factory=dict)
     # Local epoch seconds when this process last received live evidence of
     # the module: a state push or raw edge for one of its objects, or its own
     # diagnostics broadcast. One clock only - snapshot and catalogue seeds do

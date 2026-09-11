@@ -21,6 +21,7 @@ from ampio_mqtt import (
     AmpioClient,
     AmpioTimeoutError,
     DesignerRecord,
+    ModuleFunction,
     ModuleRecord,
     ModuleUpdated,
     ObjectUpdated,
@@ -36,6 +37,7 @@ from ampio_mqtt._protocol import (
     parse_descriptions_blob,
     parse_device_list,
     resolve_designer,
+    resolve_module_capabilities,
     resolve_module_records,
 )
 from ampio_mqtt.models import AmpioObject
@@ -55,8 +57,17 @@ def frame(desc_type: int, out_no: int, out_loc: int, out_type: int, desc: str) -
     )
 
 
+def caps(*pairs: tuple[int, int]) -> str:
+    """A `supportedFunctions` blob: 2 bytes per (function id, channel count)."""
+    return base64.b64encode(bytes(b for pair in pairs for b in pair)).decode()
+
+
 def _device(
-    mac_prod: int, mac_user: int, *frames: bytes, blob: str | None = None
+    mac_prod: int,
+    mac_user: int,
+    *frames: bytes,
+    blob: str | None = None,
+    functions: str | None = None,
 ) -> dict:
     """One `device_api/from/list` device entry; `blob` overrides the encoding."""
     row: dict = {"macProd": mac_prod, "macUser": mac_user}
@@ -64,6 +75,8 @@ def _device(
         row["descriptions"] = blob
     elif frames:
         row["descriptions"] = base64.b64encode(b"".join(frames)).decode()
+    if functions is not None:
+        row["supportedFunctions"] = functions
     return row
 
 
@@ -140,6 +153,65 @@ def test_device_list_skips_unreadable_devices() -> None:
     )
     assert devs is not None
     assert [(d.mac, d.mac_global) for d in devs] == [(4, 4)]
+
+
+def test_device_list_reads_the_capability_pairs() -> None:
+    devs = parse_device_list(
+        _list(
+            _device(
+                1,
+                1,
+                functions=caps(
+                    (ModuleFunction.IN_BIN, 18),
+                    (ModuleFunction.BACKLIGHT_RGBW, 18),
+                    (ModuleFunction.KEY_LOCK, 1),
+                ),
+            )
+        )
+    )
+    assert devs is not None
+    assert devs[0].capabilities == {
+        ModuleFunction.IN_BIN: 18,
+        ModuleFunction.BACKLIGHT_RGBW: 18,
+        ModuleFunction.KEY_LOCK: 1,
+    }
+    # An id this library cannot name still reads through under its number.
+    devs = parse_device_list(_list(_device(1, 1, functions=caps((253, 4)))))
+    assert devs is not None
+    assert devs[0].capabilities == {253: 4}
+
+
+def test_device_list_unreadable_capabilities_keep_the_device() -> None:
+    """Capabilities are additive, so a bad blob must not cost the record."""
+    devs = parse_device_list(
+        _list(
+            _device(1, 1, frame(12, 0, 14, 256, "L")),  # field absent
+            _device(2, 2, functions="!!!not-base64"),
+            _device(3, 3, functions=base64.b64encode(bytes([7])).decode()),  # odd
+            _device(4, 4, functions=""),
+        )
+    )
+    assert devs is not None
+    assert [(d.mac, d.capabilities) for d in devs] == [
+        (1, {}),
+        (2, {}),
+        (3, {}),
+        (4, {}),
+    ]
+    assert devs[0].entries[0].desc == "L"
+
+
+def test_device_list_last_capability_pair_wins() -> None:
+    """A repeated id is not expected on the wire; pick one rule and hold it."""
+    devs = parse_device_list(
+        _list(
+            _device(
+                1, 1, functions=caps((ModuleFunction.OW, 6), (ModuleFunction.OW, 2))
+            )
+        )
+    )
+    assert devs is not None
+    assert devs[0].capabilities == {ModuleFunction.OW: 2}
 
 
 def test_device_list_rejects_garbage() -> None:
@@ -301,6 +373,18 @@ def test_resolve_module_records_skips_colliding_macs() -> None:
     assert resolve_module_records(by_mac, names, frozenset({0xCB89})) == {}
 
 
+def test_resolve_module_capabilities_keys_by_mac_and_skips_collisions() -> None:
+    by_mac = {
+        0xCB89: {ModuleFunction.BACKLIGHT_RGBW: 18},
+        0xBEEF: {},
+        0xCAFE: {ModuleFunction.BUZZER: 1},
+    }
+    assert resolve_module_capabilities(by_mac, frozenset({0xCAFE})) == {
+        0xCB89: {ModuleFunction.BACKLIGHT_RGBW: 18},
+        0xBEEF: {},
+    }
+
+
 async def _admin_client_with_catalogue() -> tuple[AmpioClient, FakeBroker]:
     broker = FakeBroker()
     client = AmpioClient(
@@ -386,6 +470,10 @@ async def test_resolve_records_reads_the_list_joins_and_merges() -> None:
                         0xCB89,
                         frame(1, 0, 19, 0, "Modul"),
                         frame(12, 0, 14, 256, "L"),
+                        functions=caps(
+                            (ModuleFunction.BACKLIGHT_RGBW, 18),
+                            (ModuleFunction.KEY_LOCK, 1),
+                        ),
                     )
                 ),
             )
@@ -409,6 +497,11 @@ async def test_resolve_records_reads_the_list_joins_and_merges() -> None:
             location="Rozdzielnia", desc="Modul"
         )
         assert [m.module.record.location for m in module_events] == ["Rozdzielnia"]
+        # The same sweep folds the capability map - no extra request.
+        assert client.modules[16].capabilities == {
+            ModuleFunction.BACKLIGHT_RGBW: 18,
+            ModuleFunction.KEY_LOCK: 1,
+        }
     finally:
         await client.disconnect()
 
