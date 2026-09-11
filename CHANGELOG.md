@@ -12,7 +12,7 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## 0.55.0
+## Unreleased
 
 Every module states what it can do. The `device_api` record carries a
 `supportedFunctions` blob of function ids paired with channel counts, and the
