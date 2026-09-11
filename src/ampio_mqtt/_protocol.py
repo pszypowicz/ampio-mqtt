@@ -29,7 +29,7 @@ import json
 import logging
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .events import BusEventRaised
@@ -444,6 +444,9 @@ class DeviceRecord:
     mac: int
     mac_global: int
     entries: tuple[OutputDescription, ...]
+    # `{function id: channel count}` from the record's capability blob.
+    # Empty when the device advertises nothing or the blob is unreadable.
+    capabilities: Mapping[int, int] = field(default_factory=dict)
 
 
 def _decode_descriptions(raw: object) -> tuple[OutputDescription, ...] | None:
@@ -457,6 +460,25 @@ def _decode_descriptions(raw: object) -> tuple[OutputDescription, ...] | None:
     except (binascii.Error, ValueError):
         return None
     return parse_descriptions_blob(blob)
+
+
+def parse_capability_blob(raw: object) -> dict[int, int]:
+    """A record's ``supportedFunctions`` blob as ``{function id: count}``.
+
+    The blob is base64 of 2-byte pairs, the function id then its channel
+    count. Anything unreadable - absent, not base64, an odd length -
+    reads empty, so a device keeps its record either way. A repeated id
+    takes its last pair.
+    """
+    if not isinstance(raw, str) or not raw:
+        return {}
+    try:
+        blob = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        return {}
+    if len(blob) % 2:
+        return {}
+    return {blob[i]: blob[i + 1] for i in range(0, len(blob), 2)}
 
 
 def parse_device_list(payload: str) -> tuple[DeviceRecord, ...] | None:
@@ -482,7 +504,14 @@ def parse_device_list(payload: str) -> tuple[DeviceRecord, ...] | None:
         entries = _decode_descriptions(item.get("descriptions"))
         if mac is None or mac_global is None or entries is None:
             continue
-        out.append(DeviceRecord(mac=mac, mac_global=mac_global, entries=entries))
+        out.append(
+            DeviceRecord(
+                mac=mac,
+                mac_global=mac_global,
+                entries=entries,
+                capabilities=parse_capability_blob(item.get("supportedFunctions")),
+            )
+        )
     return tuple(out)
 
 
@@ -561,6 +590,23 @@ def resolve_designer(
 # The description class describing the module itself rather than one output:
 # its `desc` is the module name and its `out_loc` the module-level location.
 DEVICE_NAME_DESC_TYPE = 1
+
+
+def resolve_module_capabilities(
+    capabilities_by_mac: Mapping[int, Mapping[int, int]],
+    colliding_macs: frozenset[int],
+) -> dict[int, Mapping[int, int]]:
+    """The capability map of every answering module, by mac.
+
+    An empty map is authoritative: the module answered and advertised
+    nothing. Colliding macs are skipped, exactly as the record side skips
+    them - the reply cannot be attributed.
+    """
+    return {
+        mac: caps
+        for mac, caps in capabilities_by_mac.items()
+        if mac not in colliding_macs
+    }
 
 
 def resolve_module_records(

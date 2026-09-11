@@ -51,6 +51,7 @@ from ampio_mqtt.models import (
     AmpioModule,
     AmpioObject,
     DesignerRecord,
+    ModuleFunction,
     ModuleRecord,
     ThermostatState,
 )
@@ -1313,7 +1314,7 @@ def test_module_record_survives_refresh_and_eviction() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
     rec = ModuleRecord(location="Rozdzielnia", desc="Panel")
-    applied = store.apply_module_records({0xCAFE: rec})
+    applied = store.apply_module_sweep({0xCAFE: rec}, {})
     assert store.modules[7].record == rec
     assert [e.module.record for e in applied.events] == [rec]
 
@@ -1329,14 +1330,49 @@ def test_module_record_unswept_mac_is_untouched() -> None:
     """A sweep that does not cover a module leaves its record standing."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    store.apply_module_records({0xCAFE: ModuleRecord(location="Rozdzielnia")})
-    applied = store.apply_module_records({})
+    store.apply_module_sweep({0xCAFE: ModuleRecord(location="Rozdzielnia")}, {})
+    applied = store.apply_module_sweep({}, {})
     assert store.modules[7].record == ModuleRecord(location="Rozdzielnia")
     assert applied.events == []
     # The empty bundle is authoritative: the module answered, unassigned.
-    applied = store.apply_module_records({0xCAFE: ModuleRecord()})
+    applied = store.apply_module_sweep({0xCAFE: ModuleRecord()}, {})
     assert store.modules[7].record == ModuleRecord()
     assert [e.module.record for e in applied.events] == [ModuleRecord()]
+
+
+def test_module_capabilities_survive_refresh_and_eviction() -> None:
+    """The catalogue never carries capabilities; the held table re-applies
+    them on every merge, including re-creation after eviction."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    caps: dict[int, int] = {
+        ModuleFunction.BACKLIGHT_RGBW: 18,
+        ModuleFunction.KEY_LOCK: 1,
+    }
+    applied = store.apply_module_sweep({}, {0xCAFE: caps})
+    assert store.modules[7].capabilities == caps
+    assert [e.module.capabilities for e in applied.events] == [caps]
+
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # refresh keeps them
+    assert store.modules[7].capabilities == caps
+
+    _apply(store, DEVICES_TOPIC, devices())  # evict
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # re-add re-applies
+    assert store.modules[7].capabilities == caps
+
+
+def test_module_capabilities_unswept_mac_is_untouched() -> None:
+    """A sweep that does not cover a module leaves its capabilities standing."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    store.apply_module_sweep({}, {0xCAFE: {ModuleFunction.BUZZER: 1}})
+    applied = store.apply_module_sweep({}, {})
+    assert store.modules[7].capabilities == {ModuleFunction.BUZZER: 1}
+    assert applied.events == []
+    # An empty map is authoritative: the module answered, advertising nothing.
+    applied = store.apply_module_sweep({}, {0xCAFE: {}})
+    assert store.modules[7].capabilities == {}
+    assert [e.module.capabilities for e in applied.events] == [{}]
 
 
 def test_symulacja_classifies_but_is_not_bridged() -> None:

@@ -87,6 +87,10 @@ class AmpioStore:
         # same reason on the module side; an empty bundle is an
         # authoritative "answered, unassigned".
         self._module_record_by_mac: dict[int, ModuleRecord] = {}
+        # `{mac: {function id: channel count}}` accumulated across sweeps,
+        # kept for the same reason; an empty map is an authoritative
+        # "answered, advertising nothing".
+        self._module_capabilities_by_mac: dict[int, Mapping[int, int]] = {}
         # `{object_id: stan_json}` from the last `data/states` snapshot,
         # kept for the same reason; a snapshot row for an id no catalogue
         # established creates nothing.
@@ -158,24 +162,35 @@ class AmpioStore:
             self._record(obj, applied)
         return applied
 
-    def apply_module_records(self, by_mac: Mapping[int, ModuleRecord]) -> Applied:
-        """Hold the swept DEVICE_NAME entries and fold them into modules.
+    def apply_module_sweep(
+        self,
+        records: Mapping[int, ModuleRecord],
+        capabilities: Mapping[int, Mapping[int, int]],
+    ) -> Applied:
+        """Hold one sweep's module facts and fold them into modules.
 
+        Both maps come from the same ``device_api`` reply, so they fold
+        together and a module changed by either reports one event.
         Wholesale per answering mac, exactly as the object side; a mac
-        the sweep did not cover leaves both the held table and the
+        the sweep did not cover leaves both the held tables and the
         module untouched.
         """
         applied = Applied()
-        self._module_record_by_mac.update(by_mac)
-        for mac, rec in by_mac.items():
+        self._module_record_by_mac.update(records)
+        self._module_capabilities_by_mac.update(capabilities)
+        for mac in {*records, *capabilities}:
             mid = self._module_id_by_mac.get(mac)
             if mid is None:
                 continue
             module = self.modules[mid]
-            if module.record != rec:
-                module = replace(module, record=rec)
-                self.modules[mid] = module
-                applied.events.append(ModuleUpdated(module))
+            updated = module
+            if mac in records and updated.record != records[mac]:
+                updated = replace(updated, record=records[mac])
+            if mac in capabilities and updated.capabilities != capabilities[mac]:
+                updated = replace(updated, capabilities=capabilities[mac])
+            if updated is not module:
+                self.modules[mid] = updated
+                applied.events.append(ModuleUpdated(updated))
         return applied
 
     def apply(self, msg: _protocol.Inbound, *, retained: bool = False) -> Applied:
@@ -371,6 +386,13 @@ class AmpioStore:
             # re-creation after an eviction.
             if module.mac is not None and module.mac in self._module_record_by_mac:
                 module = replace(module, record=self._module_record_by_mac[module.mac])
+            if (
+                module.mac is not None
+                and module.mac in self._module_capabilities_by_mac
+            ):
+                module = replace(
+                    module, capabilities=self._module_capabilities_by_mac[module.mac]
+                )
             self.modules[module.id] = module
             # A new module or a changed catalogue row is news, exactly as an
             # object catalogue row is; the live fields were carried over

@@ -116,6 +116,39 @@ exactly like the per-object side. On the baseline install the installer tagged
 the wall devices this way, and left the cabinet modules untagged. An M-SENS and
 three M-DOT panels carry room names.
 
+### Module capabilities (`AmpioModule.capabilities`)
+
+The same reply carries `supportedFunctions`, a base64 blob of 2-byte pairs. Each
+pair is a function id and the number of channels the module has of that
+function. `resolve_records()` decodes it and sets `AmpioModule.capabilities`,
+with a `ModuleUpdated` dispatch on change. The sweep folds it together with the
+module record, so a module that both change reports one event.
+
+The mapping is keyed by the raw function id. The `ModuleFunction` enum names the
+ids that a module on the baseline install advertises. An id without a member
+still reads through under its number, so a module with a function this library
+does not name loses nothing.
+
+The value is a channel count, not a flag. On a touch panel the `BACKLIGHT_RGBW`
+count is the number of touch fields:
+
+| Module         | `BACKLIGHT_RGBW` count |
+| -------------- | ---------------------- |
+| 18-field M-DOT | 18                     |
+| 9-field M-DOT  | 9                      |
+| 4-field M-DOT  | 4                      |
+| 2-field M-DOT  | 2                      |
+
+On the baseline install the count matches the model name on all 12 panels. The
+two facts are independent: the model name comes from the device type table, and
+the count comes from the module itself.
+
+A blob that is absent, not base64, or of odd length reads as an empty mapping,
+and the device keeps its description record. Capabilities are additive, so an
+unreadable capability blob must not cost the descriptions. A module the sweep
+did not cover keeps its previous mapping. An empty mapping from a module that
+answered is authoritative: it advertises nothing.
+
 ### The join rule
 
 An object joins its entry through
