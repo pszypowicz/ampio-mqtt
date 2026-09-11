@@ -12,17 +12,22 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## Unreleased
+## 0.55.0
 
-Every module states what it can do. The `device_api` record carries a
-`supportedFunctions` blob of function ids paired with channel counts, and the
-library dropped it (#197). Reading it gives a consumer a direct answer to "can
-this module do X, and on how many channels", without inferring it from the
-device type and the board revision.
+A module's `device_api` record says more about the module than the library read
+from it. The library dropped two of its fields, a capability blob and a settings
+blob. This release reads both, in the sweep that already fetches the record, so
+neither costs an extra request.
 
-The counts are load-bearing, not decoration. On a touch panel the backlight
-count is the number of touch fields, and the panel settings decode below reads
-it straight from the module rather than from a table of board revisions.
+The capability blob pairs function ids with channel counts (#197). It answers
+"can this module do X, and on how many channels" directly, rather than by
+inferring it from the device type and the board revision.
+
+The settings blob holds a touch panel's stored appearance and behaviour (#194).
+It carries the colours, what each field does on a touch, and when the panel
+dims. Its layout depends on the touch field count, and that count is one of the
+capabilities, so the second read is built on the first instead of on a table of
+board revisions.
 
 ### Added
 
@@ -34,7 +39,6 @@ it straight from the module rather than from a table of board revisions.
   the ids a module on the baseline install advertises. The mapping stays keyed
   by the raw id, so a function this library does not name still reads through
   under its number.
-
 - **`AmpioModule.panel_settings`**, a touch panel's stored appearance and
   behaviour settings, read from the `params` blob in the same sweep. It covers
   the touch field and status colours, the per-field light signal, sound, and
