@@ -47,7 +47,7 @@ for every account.
 | `params_devices` | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/params_devices`   | `{List: [{id, params, param1, czas, powiazane, url}]}` - per-object `params` bitfields for the **full** catalogue (not grant-filtered).                                                                                                                                                                                                                           |
 | `groups`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/groups`           | `{List: [{id, id_rodzica, opis_menu}]}` - room tree.                                                                                                                                                                                                                                                                                                              |
 | `group_devices`  | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/group_devices`    | `{List: [{id_grupy, id_obiektu}]}` - object-to-room join.                                                                                                                                                                                                                                                                                                         |
-| `scenes`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/scenes`           | `{List: [{id, parentId, sceneName, active, Actions, Infos, Schedules}]}` - scene catalogue. `Actions` are wire command strings, `Infos` their structured form.                                                                                                                                                                                                    |
+| `scenes`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/scenes`           | `{List: [{id, parentId, sceneName, active, Actions, Infos, Schedules}]}` - scene catalogue. `parentId` is the room the scene is filed under. `Actions` are wire command strings, `Infos` their structured form.                                                                                                                                                   |
 | (empty)          | `ampio/control/<user>/states` | `ampio/fromDB/<user>/data/states`           | `{List: [{id, stan_json}]}` - bulk snapshot of the account's object states.                                                                                                                                                                                                                                                                                       |
 | (empty)          | `ampio/control/<user>/info`   | `ampio/fromDB/<user>/data/info`             | `{Results: {mac, userId, serverVersion, serverRevision, mqttVersion, local_ip, device_id, ...}}` - server self-report, retained in the account namespace. `userId` is the asking account's id (`-1` for the reserved `admin` login). `AmpioServerInfo.access_tier` exposes it for config flows. A running client's tier is decided by its authenticated username. |
 
@@ -94,8 +94,11 @@ all, so a raw edge is stamped locally, and the ordering rules in
 A scene row carries more than the table lists. `Actions` holds the wire command
 strings, `Infos` the structured form of the same actions, and `Schedules` the
 timed triggers. The library reads the object ids out of `Infos` alone, because
-the M-SERV replays a scene's actions itself. `parentId` -1 marks a top-level
-scene.
+the M-SERV replays a scene's actions itself.
+
+`parentId` names the room the scene is filed under. It is an id of the `groups`
+table, not another scene, and -1 means no room. `AmpioScene.group_id` carries
+it, so a consumer can file a scene in the same area as its room.
 
 ## Module description records (`device_api`)
 

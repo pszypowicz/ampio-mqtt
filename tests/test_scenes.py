@@ -49,16 +49,35 @@ def _catalogue(*rows: dict) -> str:
 
 _PAYLOAD = _catalogue(
     _scene(),
+    # A scene filed under a room, with a per-action delay on the wire and
+    # the string `delay` its Infos entry spells.
     _scene(
         id=7,
-        parentId=1,
+        parentId=22,
         sceneName="Away",
         active=0,
         Actions=[
             {"action": "set/64/turnOff", "delay": 0},
-            {"action": "set/48/setRollerPos/0/101", "delay": 5},
+            {"action": "set/48/setRollerPos/0/101", "delay": 5000},
         ],
-        Infos=[{"id": 64}, {"id": 48}],
+        Infos=[
+            {
+                "id": 64,
+                "param1": -1,
+                "param2": -1,
+                "param3": -1,
+                "value": 0,
+                "delay": "0",
+            },
+            {
+                "id": 48,
+                "param1": 0,
+                "param2": 0,
+                "param3": -1,
+                "value": 0,
+                "delay": "5000",
+            },
+        ],
     ),
 )
 
@@ -66,9 +85,9 @@ _PAYLOAD = _catalogue(
 def test_parses_the_catalogue() -> None:
     first, second = parse_scenes(_PAYLOAD)
     assert (first.id, first.scene_name, first.active) == (1, "Evening", True)
-    assert first.parent_id is None  # -1 means top level
+    assert first.group_id is None  # -1 means the scene is filed under no room
     assert first.object_ids == frozenset({50})
-    assert (second.id, second.active, second.parent_id) == (7, False, 1)
+    assert (second.id, second.active, second.group_id) == (7, False, 22)
     assert second.object_ids == frozenset({64, 48})
 
 

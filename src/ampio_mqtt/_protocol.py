@@ -356,18 +356,19 @@ def parse_scenes(payload: str) -> list[AmpioScene]:
 
     Each row carries its actions twice - `Actions` as the wire command strings
     and `Infos` as their structured form. Only the object ids are kept, since
-    the M-SERV replays the actions itself when a scene is run. `parentId` -1
-    marks a top-level scene.
+    the M-SERV replays the actions itself when a scene is run. `parentId` is
+    the room the scene is filed under, an id of the `groups` table, and -1
+    means no room.
     """
     out: list[AmpioScene] = []
     for item in require_rows(payload, _SCENES):
-        parent = _int_column(item, "parentId", _SCENES)
+        group = _int_column(item, "parentId", _SCENES)
         out.append(
             AmpioScene(
                 id=_int_column(item, "id", _SCENES),
                 scene_name=_text_column(item, "sceneName", _SCENES),
                 active=_int_column(item, "active", _SCENES) != 0,
-                parent_id=parent if parent >= 0 else None,
+                group_id=group if group >= 0 else None,
                 object_ids=_scene_object_ids(item),
             )
         )
