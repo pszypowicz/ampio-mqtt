@@ -668,10 +668,8 @@ class AmpioStore:
         if obj.raw_owned:
             return obj, False
         seed = _protocol.parse_stan_json(stan_json)
-        if seed is None:
-            return obj, False
-        reported_at = None if seed.on_ms is None else float(seed.on_ms) / 1000.0
-        if seed.state is None or not self._supersedes(obj, reported_at):
+        reported_at = float(seed.on_ms) / 1000.0
+        if not self._supersedes(obj, reported_at):
             return obj, False
         changed = (
             obj.state != seed.state
@@ -693,23 +691,22 @@ class AmpioStore:
         self._guarded.discard(obj.id)
         return obj, changed
 
-    def _supersedes(self, obj: AmpioObject, reported_at: float | None) -> bool:
-        """Whether a dated snapshot report should replace what `obj` holds.
+    def _supersedes(self, obj: AmpioObject, reported_at: float) -> bool:
+        """Whether a snapshot report should replace what `obj` holds.
 
-        Undated reports only fill a gap. Dated-versus-dated compares the
-        M-SERV's own clock on both sides, so RTC skew cancels out. A
-        locally-stamped value is never stamp-compared - this process's
-        clock is not comparable to a server `on` stamp. Instead the
-        snapshot request is the ordering boundary: a live value received
-        after the latest request (guarded) outranks every seed, and one
-        received before it loses to the seed that request produced.
-        Raw-owned objects never reach this comparison: their snapshot
-        rows are skipped before it.
+        Every snapshot row carries the M-SERV stamp it was reported at, so
+        stamp-versus-stamp compares that one clock on both sides and RTC
+        skew cancels out. A locally-stamped value is never stamp-compared -
+        this process's clock is not comparable to a server `on` stamp.
+        Instead the snapshot request is the ordering boundary: a live value
+        received after the latest request (guarded) outranks every seed, and
+        one received before it loses to the seed that request produced. A
+        value with no stamp of its own is one nothing has reported yet.
+        Raw-owned objects never reach this comparison: their snapshot rows
+        are skipped before it.
         """
         if obj.state is None:
             return True
-        if reported_at is None:
-            return False
         if obj.updated_at is None:
             return True
         if obj.id in self._guarded:

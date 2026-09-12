@@ -127,10 +127,14 @@ class ModuleDiagnostics:
 
 @dataclass(slots=True)
 class StanJsonSeed:
-    """Initial `state` value and server timestamp extracted from `stan_json`."""
+    """Initial `state` value and server timestamp extracted from `stan_json`.
 
-    state: str | None
-    on_ms: int | float | None
+    Both are always there: the snapshot lists the objects that hold a value,
+    and the stamp is what orders the seed against a live value.
+    """
+
+    state: str
+    on_ms: int | float
     lammel: int | None
     # Roller lock bits, present only on cover rows.
     block: int | None = None
@@ -429,16 +433,18 @@ def parse_rooms(
 def parse_locations(payload: str) -> dict[int, str]:
     """``{location_id: name}`` from a `config/locations` reply.
 
-    The name table behind the Designer's "Lokalizacja" dropdown. This row
-    shape is not pinned live, so only the envelope is strict: a row with a
-    missing id or an empty name is skipped.
+    The name table behind the Designer's "Lokalizacja" dropdown. Every row
+    carries an id and a name, and a pointer into a row with neither would
+    read as an unassigned location.
     """
     out: dict[int, str] = {}
     for row in require_rows(payload, _LOCATIONS):
-        lid = to_int(row.get("id"))
-        name = row.get("opis_menu")
-        if lid is not None and isinstance(name, str) and name:
-            out[lid] = name
+        name = _text_column(row, "opis_menu", _LOCATIONS)
+        if not name:
+            raise AmpioProtocolError(
+                f"The `opis_menu` column of an Ampio {_LOCATIONS} row is empty"
+            )
+        out[_int_column(row, "id", _LOCATIONS)] = name
     return out
 
 
@@ -976,22 +982,35 @@ def parse_diagnostics(payload: str) -> ModuleDiagnostics | None:
     )
 
 
-def parse_stan_json(stan_json: str) -> StanJsonSeed | None:
-    """Parse a `stan_json` blob into an initial state and server timestamp."""
-    if not stan_json:
-        return None
+def parse_stan_json(stan_json: str) -> StanJsonSeed:
+    """Parse a `stan_json` blob into an initial state and server timestamp.
+
+    The snapshot lists the objects that hold a value, and every blob carries
+    both the value and the M-SERV stamp it was reported at. The stamp is
+    what orders the seed against a live value, so a blob without one seeds
+    nothing and is refused.
+    """
     try:
         data = json.loads(stan_json)
-    except (ValueError, TypeError):
-        return None
+    except (ValueError, TypeError) as err:
+        raise AmpioProtocolError(
+            f"An Ampio {_SNAPSHOT} row's `stan_json` is not JSON"
+        ) from err
     if not isinstance(data, dict):
-        return None
-    raw_on = data.get("on")
-    on_ms = raw_on if isinstance(raw_on, (int, float)) else None
-    raw_state = data.get("state")
+        raise AmpioProtocolError(
+            f"An Ampio {_SNAPSHOT} row's `stan_json` is not a JSON object"
+        )
+    raw_on = _column(data, "on", _SNAPSHOT)
+    if not isinstance(raw_on, (int, float)):
+        raise AmpioProtocolError(
+            f"The `on` stamp of an Ampio {_SNAPSHOT} row is not a number"
+        )
+    raw_state = _column(data, "state", _SNAPSHOT)
+    if raw_state is None:
+        raise AmpioProtocolError(f"An Ampio {_SNAPSHOT} row carries a null `state`")
     return StanJsonSeed(
-        state=str(raw_state) if raw_state is not None else None,
-        on_ms=on_ms,
+        state=str(raw_state),
+        on_ms=raw_on,
         lammel=to_int(data.get("lammel")),
         block=to_int(data.get("block")),
         thermostat=_parse_thermostat(data),

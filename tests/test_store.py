@@ -419,24 +419,14 @@ def test_the_echo_of_a_raw_edge_is_ignored_whole() -> None:
     assert store.objects[10].updated_at == before
 
 
-def test_a_dated_snapshot_beats_an_undated_seed() -> None:
-    store = _store()
-    _apply(store, DETAILS_TOPIC, _flaga_details((10, 1)))
-    _apply(store, STATES_TOPIC, _snapshot("5", None))
-    assert store.objects[10].state == "5"
-    assert store.objects[10].updated_at is None
-    applied = _apply(store, STATES_TOPIC, _snapshot("7", 1779560000000))
-    assert [o.id for o in _updated(applied)] == [10]
-    assert store.objects[10].state == "7"
-
-
-def test_an_undated_snapshot_only_fills_a_gap() -> None:
-    """An undated report never replaces a value, however the value is dated."""
+def test_a_snapshot_row_with_no_stamp_is_refused() -> None:
+    """The stamp is what orders a seed against a live value, so a blob
+    without one seeds nothing. The held value stands."""
     store = _store()
     _apply(store, DETAILS_TOPIC, details({"id": 10}))
     _apply(store, f"ampio/fromDB/{USER}/ob/10/state", '{"state":"live"}')
-    applied = _apply(store, STATES_TOPIC, _snapshot("undated", None))
-    assert _updated(applied) == []
+    with pytest.raises(AmpioProtocolError, match="on"):
+        _apply(store, STATES_TOPIC, _snapshot("undated", None))
     assert store.objects[10].state == "live"
 
 
@@ -1888,7 +1878,7 @@ def test_a_cleared_name_clears_in_the_store() -> None:
 
 def test_updated_at_takes_the_report_date_or_the_receipt_time() -> None:
     """A dated report stamps the M-SERV's own `on` (0 is a value, not
-    absence); an undated push stamps receipt; an undated seed leaves None."""
+    absence); a push without one stamps receipt."""
     store = _store()
     _apply(store, DETAILS_TOPIC, details({"id": 9}))
     topic = f"ampio/fromDB/{USER}/ob/9/state"
@@ -1898,17 +1888,6 @@ def test_updated_at_takes_the_report_date_or_the_receipt_time() -> None:
     _apply(store, topic, '{"state": "2"}')
     updated_at = store.objects[9].updated_at
     assert updated_at is not None and before <= updated_at <= time.time()
-
-    seeded = _store()
-    _apply(seeded, DETAILS_TOPIC, _flaga_details((9, 1)))
-    _apply(
-        seeded,
-        STATES_TOPIC,
-        json.dumps({"List": [{"id": 9, "stan_json": json.dumps({"state": "5"})}]}),
-    )
-    obj = seeded.objects[9]
-    assert obj.state == "5"
-    assert obj.updated_at is None
 
 
 def test_raw_owned_tracks_the_bridge_coverage() -> None:

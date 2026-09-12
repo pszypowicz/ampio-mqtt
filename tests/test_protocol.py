@@ -592,16 +592,29 @@ def test_parse_stan_json_coerces_numeric_state_to_str(
     assert isinstance(seed.state, str)
 
 
-def test_parse_stan_json_null_state_yields_none() -> None:
-    """An explicit `null` state preserves the None contract."""
-    seed = parse_stan_json(json.dumps({"state": None, "on": 1}))
-    assert seed is not None
-    assert seed.state is None
+@pytest.mark.parametrize("field", ["state", "on"])
+def test_parse_stan_json_refuses_a_blob_without_a_served_field(field: str) -> None:
+    """Every snapshot row's blob carries the value and the server stamp it
+    was reported at. A blob without either cannot seed anything."""
+    blob = {"state": "21.0", "on": 1700000000000}
+    del blob[field]
+    with pytest.raises(AmpioProtocolError, match=field):
+        parse_stan_json(json.dumps(blob))
 
 
-@pytest.mark.parametrize("payload", ["", "not json", json.dumps([1, 2])])
-def test_parse_stan_json_invalid(payload: str) -> None:
-    assert parse_stan_json(payload) is None
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "",
+        "not json",
+        json.dumps([1, 2]),
+        json.dumps({"state": None, "on": 1}),  # a null value seeds nothing
+        json.dumps({"state": "1", "on": "now"}),  # a stamp nothing can order by
+    ],
+)
+def test_parse_stan_json_refuses_a_payload_of_the_wrong_shape(payload: str) -> None:
+    with pytest.raises(AmpioProtocolError):
+        parse_stan_json(payload)
 
 
 # A reg state as a live M-SERV serializes it: every field a string, the

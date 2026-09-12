@@ -65,17 +65,23 @@ into wrong values on an object.
 | `data/devices`          | the same set, minus `params`, `czas`, and `url`                                                                                       |
 | `config/devices`        | `id`, `mac`, `mac_global`, `nazwa_urzadzenia`, `typ_urzadzenia`, `wersja_softu`, `wersja_pcb`                                         |
 | `data/params_devices`   | `id`, `params`, `czas`, `url`                                                                                                         |
-| `data/states`           | `id`, `stan_json`                                                                                                                     |
+| `data/states`           | `id`, `stan_json`, and inside the blob `state` and `on`                                                                               |
 | `data/info`             | `mac`, `userId`                                                                                                                       |
+| `config/locations`      | `id`, `opis_menu`                                                                                                                     |
 
-A column can hold an empty value. `leafId`, `opis_menu`, `url`, and `format` are
-text columns the M-SERV writes empty, or null, when the object carries no value.
-The `type` column is null or empty on an untagged object. What must be there is
-the column itself.
+A column can hold an empty value. `leafId`, `opis_menu` on an object row, `url`,
+and `format` are text columns the M-SERV writes empty, or null, when the object
+carries no value. The `type` column is null or empty on an untagged object. What
+must be there is the column itself.
 
-The scene catalogue and the `locations` name table are the two exceptions. Their
-row shapes are not pinned against live replies, so only the envelope is strict.
-A row of either that carries no id, or no name, is skipped.
+Three columns must also hold a usable value, because nothing downstream can work
+around an empty one. A `locations` row needs a name, or the pointer into it
+would read as an unassigned location. A `stan_json` blob needs its `state` and
+its `on` stamp, because the stamp is what orders the seed against a live value.
+
+The scene catalogue is the one exception. Its row shape is not pinned against a
+live reply, because the reference install defines no scene, so only the envelope
+is strict and a row without an id is skipped.
 
 ## Module description records (`device_api`)
 
