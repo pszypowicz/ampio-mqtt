@@ -1047,22 +1047,34 @@ class AmpioClient:
             self._store.colliding_macs,
             mac_by_device_id,
         )
-        applied = self._store.apply_designer_records(resolved)
+        params_by_mac = {device.mac: device.params for device in devices}
+        hardware_by_mac = {
+            mod.mac: (mod.typ_urzadzenia, mod.wersja_pcb)
+            for mod in self._store.modules.values()
+            if mod.mac is not None
+        }
         capabilities = _protocol.resolve_module_capabilities(
             {device.mac: device.capabilities for device in devices},
             self._store.colliding_macs,
+        )
+        applied = self._store.apply_designer_records(
+            resolved,
+            _protocol.resolve_cover_parameters(
+                self._store.objects,
+                params_by_mac,
+                capabilities,
+                hardware_by_mac,
+                self._store.colliding_macs,
+                mac_by_device_id,
+            ),
         )
         module_applied = self._store.apply_module_sweep(
             _protocol.resolve_module_records(by_mac, names, self._store.colliding_macs),
             capabilities,
             _protocol.resolve_panel_settings(
-                {device.mac: device.params for device in devices},
+                params_by_mac,
                 capabilities,
-                {
-                    mod.mac: (mod.typ_urzadzenia, mod.wersja_pcb)
-                    for mod in self._store.modules.values()
-                    if mod.mac is not None
-                },
+                hardware_by_mac,
                 self._store.colliding_macs,
             ),
         )

@@ -371,6 +371,12 @@ class AmpioObject:
     # The object's description-record entry, admin sweep only; None on
     # the restricted tier and before a sweep covers the object.
     record: DesignerRecord | None = None
+    # The stored travel configuration of this cover's channel, read from
+    # the module's params blob during a sweep. Admin sweep only, and None
+    # on anything that is not a cover on a board whose roller layout this
+    # library has proven. `block` is the live lock the module pushes, and
+    # it is a different fact from a different surface.
+    cover_parameters: CoverParameters | None = None
     # What this object is. Derived - never passed: computed from
     # `typ_komponentu` and `interpretacja` on every construction,
     # `dataclasses.replace` included, so no instance can hold a kind that

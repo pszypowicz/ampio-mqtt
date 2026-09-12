@@ -53,6 +53,7 @@ from ampio_mqtt.models import (
     AccessTier,
     AmpioModule,
     AmpioObject,
+    CoverParameters,
     DesignerRecord,
     ModuleFunction,
     ModuleRecord,
@@ -2094,11 +2095,11 @@ def test_apply_designer_records_sets_the_bundle() -> None:
         store, {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     )
     rec = DesignerRecord(location="Potter", matter_device_type=256, desc="Lampa")
-    applied = store.apply_designer_records({64: rec})
+    applied = store.apply_designer_records({64: rec}, {})
     assert store.objects[64].record == rec
     assert [e.object.id for e in applied.events] == [64]
     # Re-applying the identical table is not news.
-    assert store.apply_designer_records({64: rec}).events == []
+    assert store.apply_designer_records({64: rec}, {}).events == []
 
 
 def test_sweep_never_touches_the_catalogue_type_column() -> None:
@@ -2113,7 +2114,7 @@ def test_sweep_never_touches_the_catalogue_type_column() -> None:
         },
     )
     store.apply_designer_records(
-        {5: DesignerRecord(location="Testowe", matter_device_type=256)}
+        {5: DesignerRecord(location="Testowe", matter_device_type=256)}, {}
     )
     assert store.objects[5].matter_device_type == 266
     assert store.objects[5].record == DesignerRecord(
@@ -2126,9 +2127,10 @@ def test_record_replaces_wholesale() -> None:
     row = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     _seed_catalogue(store, row)
     store.apply_designer_records(
-        {64: DesignerRecord(location="Potter", matter_device_type=256, desc="Lampa")}
+        {64: DesignerRecord(location="Potter", matter_device_type=256, desc="Lampa")},
+        {},
     )
-    applied = store.apply_designer_records({64: DesignerRecord(location="Salon")})
+    applied = store.apply_designer_records({64: DesignerRecord(location="Salon")}, {})
     assert store.objects[64].record == DesignerRecord(location="Salon")
     assert [e.object.id for e in applied.events] == [64]
 
@@ -2138,8 +2140,8 @@ def test_held_records_accumulate_across_partial_sweeps() -> None:
     row_a = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     row_b = {"id": 48, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_1"}
     _seed_catalogue(store, row_a, row_b)
-    store.apply_designer_records({64: DesignerRecord(location="Potter")})
-    store.apply_designer_records({48: DesignerRecord(location="Salon")})
+    store.apply_designer_records({64: DesignerRecord(location="Potter")}, {})
+    store.apply_designer_records({48: DesignerRecord(location="Salon")}, {})
     _seed_catalogue(store)  # eviction: empty catalogue
     _seed_catalogue(store, row_a, row_b)  # both return
     assert store.objects[64].record == DesignerRecord(location="Potter")
@@ -2151,13 +2153,86 @@ def test_record_for_an_unknown_id_waits_for_the_catalogue() -> None:
     object just evicted) creates no placeholder - the held table applies
     it once the id's own catalogue row lands."""
     store = AmpioStore(AccessTier.ADMIN)
-    applied = store.apply_designer_records({999: DesignerRecord(location="X")})
+    applied = store.apply_designer_records({999: DesignerRecord(location="X")}, {})
     assert applied.events == []
     assert store.objects == {}
     _seed_catalogue(
         store, {"id": 999, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     )
     assert store.objects[999].record == DesignerRecord(location="X")
+
+
+def test_apply_designer_records_folds_both_maps_into_one_event() -> None:
+    store = AmpioStore(AccessTier.ADMIN)
+    _seed_catalogue(
+        store,
+        {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"},
+    )
+    rec = DesignerRecord(location="Potter", desc="Roleta")
+    params = CoverParameters(
+        with_slats=False,
+        open_time_s=40,
+        close_time_s=40,
+        calibration=10,
+        slat_time_ms=1000,
+        reversal_lag_ms=500,
+        start_lag_same_ms=None,
+        start_lag_other_ms=None,
+    )
+    applied = store.apply_designer_records({70: rec}, {70: params})
+    assert store.objects[70].record == rec
+    assert store.objects[70].cover_parameters == params
+    assert [e.object.id for e in applied.events] == [70]
+    # Re-applying the identical pair is not news.
+    assert store.apply_designer_records({70: rec}, {70: params}).events == []
+
+
+def test_held_cover_parameters_survive_an_eviction() -> None:
+    store = AmpioStore(AccessTier.ADMIN)
+    row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
+    _seed_catalogue(store, row)
+    params = CoverParameters(
+        with_slats=True,
+        open_time_s=52,
+        close_time_s=52,
+        calibration=10,
+        slat_time_ms=1500,
+        reversal_lag_ms=500,
+        start_lag_same_ms=200,
+        start_lag_other_ms=120,
+    )
+    store.apply_designer_records({}, {70: params})
+    _seed_catalogue(store)  # eviction: empty catalogue
+    _seed_catalogue(store, row)  # the row returns
+    assert store.objects[70].cover_parameters == params
+
+
+def test_a_locked_cover_keeps_both_facts() -> None:
+    """The lock is a live push and the parameters are a sweep read."""
+    store = AmpioStore(AccessTier.ADMIN)
+    _seed_catalogue(
+        store,
+        {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"},
+    )
+    _apply(
+        store,
+        f"ampio/fromDB/{USER}/ob/70/state",
+        '{ "state": "70","block": "3","on": 1789000000000 }',
+    )
+    params = CoverParameters(
+        with_slats=False,
+        open_time_s=40,
+        close_time_s=40,
+        calibration=10,
+        slat_time_ms=1000,
+        reversal_lag_ms=500,
+        start_lag_same_ms=None,
+        start_lag_other_ms=None,
+    )
+    store.apply_designer_records({}, {70: params})
+    assert store.objects[70].cover_parameters == params
+    assert store.objects[70].blocks_opening is True
+    assert store.objects[70].blocks_closing is True
 
 
 # --- ObjectAdded: an object's first event -----------------------------------
