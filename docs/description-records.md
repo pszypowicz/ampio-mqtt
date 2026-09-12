@@ -193,6 +193,58 @@ and shifts the masks. Reading one of those with this layout would produce
 confident wrong values, so an unlisted board reads None. The proven boards are
 the M-DOT-2, M-DOT-4, M-DOT-9, and M-DOT-18.
 
+### Cover parameters (`AmpioObject.cover_parameters`)
+
+A module's record carries `params`, a base64 blob of its stored settings. Part
+of that blob holds the travel configuration of every roller channel the module
+drives. `resolve_records()` decodes it into `AmpioObject.cover_parameters`, a
+`CoverParameters`, with an `ObjectUpdated` dispatch on change. These are the
+values the Designer shows under "Roller blinds parameters".
+
+The section holds one group of fields per channel, interleaved by field rather
+than by channel. The Index column counts from the start of the section. For a
+board with `N` channels, and for channel `t` counted from zero:
+
+| Index     | Size | Setting                                          |
+| --------- | ---- | ------------------------------------------------ |
+| `t`       | 1    | Work mode: 0 plain, 1 slats                      |
+| `N + 2t`  | 2    | Opening time, in seconds                         |
+| `3N + 2t` | 2    | Closing time, in seconds                         |
+| `5N + t`  | 1    | Additional calibration in percent, 0 to 50       |
+| `6N + 2t` | 2    | Slat movement time, in 10 ms ticks               |
+| `8N + t`  | 1    | Reversal lag, in 10 ms ticks                     |
+| `10N + t` | 1    | Motor start lag, same direction, in 10 ms ticks  |
+| `11N + t` | 1    | Motor start lag, other direction, in 10 ms ticks |
+
+Every two-byte field reads least significant byte first. The library multiplies
+the tick fields by 10 and names them in milliseconds. Travel time keeps seconds,
+because the module stores whole seconds. Calibration stores the percent value as
+the Designer displays it, from 0 to 50. Its effect on travel is not proven.
+
+A board holds either 12 or 10 bytes per channel. A 10-byte stride ends the
+section after the reversal lag, so both motor start lags read None there and the
+Designer hides them. The byte range `9N` to `10N - 1` has no label on either
+board, and the library does not read it.
+
+An object joins its channel the same way it joins its description record. The
+key is `leaf_io_no` for a leafed object, and `funkcja` minus one for a leafless
+one. Either cover kind joins the same way, so a cover carries the same values
+whichever type the app has it set to.
+
+Only a board whose layout is live-proven resolves. The Designer keys the layout
+by `(typ_urzadzenia, wersja_pcb)`, and the boards differ in the offset, the
+channel count, and the stride. Reading one with another's layout produces
+confident wrong values, so an unlisted board reads None. The proven boards are
+the M-ROL-4s and the M-REL-2.
+
+The channel count comes from the layout and not from the module. The M-ROL-4s
+reports no roller capability at all, so its own report cannot supply the count.
+Where a module does report one and it disagrees with the layout, the module
+reads None rather than guessing.
+
+`AmpioObject.block` is a different fact. It is the live roller lock the module
+pushes, and it says nothing about travel.
+
 ### The join rule
 
 An object joins its entry through

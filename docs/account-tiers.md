@@ -93,13 +93,13 @@ own event logic. The gating detail is in [`bus-events.md`](bus-events.md).
 The tier is fixed before the first connect, so every fact the library holds has
 exactly one source. There is no precedence chain and no second opinion.
 
-| Fact                                       | Administrator source    | Standard-account source |
-| ------------------------------------------ | ----------------------- | ----------------------- |
-| object rows, names, leaf ids               | `config/devicesDetails` | `data/devices`          |
-| `params`, `czas`, `url`                    | `config/devicesDetails` | `data/params_devices`   |
-| the initial value of every object          | `data/states`           | `data/states`           |
-| module rows                                | `config/devices`        | not served              |
-| `record`, `capabilities`, `panel_settings` | the `device_api` sweep  | not served              |
+| Fact                                                           | Administrator source    | Standard-account source |
+| -------------------------------------------------------------- | ----------------------- | ----------------------- |
+| object rows, names, leaf ids                                   | `config/devicesDetails` | `data/devices`          |
+| `params`, `czas`, `url`                                        | `config/devicesDetails` | `data/params_devices`   |
+| the initial value of every object                              | `data/states`           | `data/states`           |
+| module rows                                                    | `config/devices`        | not served              |
+| `record`, `capabilities`, `panel_settings`, `cover_parameters` | the `device_api` sweep  | not served              |
 
 The `config/devicesDetails` reply also carries a `stan_json` column. The library
 does not read it. The `data/states` snapshot answers both tiers and lists every

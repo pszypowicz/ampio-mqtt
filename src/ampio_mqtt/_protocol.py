@@ -40,6 +40,7 @@ from .models import (
     AmpioObject,
     AmpioScene,
     AmpioServerInfo,
+    CoverParameters,
     DesignerRecord,
     ModuleFunction,
     ModuleRecord,
@@ -621,6 +622,28 @@ def _entry_desc(entry: OutputDescription) -> str | None:
     return None if entry.desc in ("", _EMPTY_DESC) else entry.desc
 
 
+def _object_channel(
+    obj: AmpioObject, mac_by_device_id: Mapping[int, int]
+) -> tuple[int, int] | None:
+    """The `(mac, channel)` pair an object joins through.
+
+    This is the one join rule `resolve_designer` and
+    `resolve_cover_parameters` both share. A leafed object joins through
+    its own `module_mac` and `leaf_io_no`. A leafless object joins through
+    `mac_by_device_id[id_urzadzenia]` and `funkcja` minus one. Returns
+    None when either part is missing.
+    """
+    if obj.leaf_id:
+        mac = obj.module_mac
+        channel = obj.leaf_io_no
+    else:
+        mac = mac_by_device_id.get(obj.id_urzadzenia)
+        channel = obj.funkcja - 1
+    if mac is None or channel is None:
+        return None
+    return mac, channel
+
+
 def resolve_designer(
     objects: Mapping[int, AmpioObject],
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
@@ -649,14 +672,10 @@ def resolve_designer(
         desc_type = DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "")
         if desc_type is None:
             continue
-        if obj.leaf_id:
-            mac = obj.module_mac
-            out_no = obj.leaf_io_no
-        else:
-            mac = mac_by_device_id.get(obj.id_urzadzenia)
-            out_no = obj.funkcja - 1
-        if mac is None or out_no is None:
+        joined = _object_channel(obj, mac_by_device_id)
+        if joined is None:
             continue
+        mac, out_no = joined
         if mac in colliding_macs:
             continue
         entry = entries_by_key.get(mac, {}).get((desc_type, out_no))
@@ -757,6 +776,125 @@ def resolve_panel_settings(
         settings = parse_panel_settings(blob, fields)
         if settings is not None:
             out[mac] = settings
+    return out
+
+
+@dataclass(slots=True, frozen=True)
+class _CoverLayout:
+    """Where one board keeps its roller section, and how wide a channel is.
+
+    The stride must leave every field index at `8N + t` and below inside
+    the section, since `parse_cover_parameters` reads them with no bounds
+    check.
+    """
+
+    offset: int
+    channels: int
+    stride: int
+
+
+# The `(typ_urzadzenia, wersja_pcb)` pairs whose roller params layout is
+# live-proven. The Designer keys the layout by the same pair, and the
+# boards differ in all three numbers. A stride of 10 ends the section
+# before the two motor start lags, which that board does not hold.
+# Reading one board with another's layout would produce confident wrong
+# values, so an unlisted pair resolves nothing. Extend only with a pair
+# read off real hardware.
+COVER_PARAMS_LAYOUTS: Mapping[tuple[int, int], _CoverLayout] = {
+    (3, 8): _CoverLayout(offset=5, channels=4, stride=10),  # M-ROL-4s
+    (24, 11): _CoverLayout(offset=33, channels=1, stride=12),  # M-REL-2
+}
+
+
+def parse_cover_parameters(
+    blob: bytes, layout: _CoverLayout
+) -> tuple[CoverParameters, ...] | None:
+    """One board's roller section, one entry per channel in channel order.
+
+    The section interleaves by field rather than by channel: every
+    channel's work mode, then every channel's opening time, and so on.
+    None when the blob is too short to hold the whole section - a
+    truncated blob must not read as confident values.
+    docs/description-records.md carries the offsets.
+    """
+    count = layout.channels
+    end = layout.offset + layout.stride * count
+    if count <= 0 or len(blob) < end:
+        return None
+    section = blob[layout.offset : end]
+
+    def u16(index: int) -> int:
+        return section[index] | section[index + 1] << 8
+
+    def lag(index: int) -> int | None:
+        # A stride of 10 ends the section before both lag fields.
+        return section[index] * 10 if index < len(section) else None
+
+    return tuple(
+        CoverParameters(
+            with_slats=bool(section[channel]),
+            open_time_s=u16(count + 2 * channel),
+            close_time_s=u16(3 * count + 2 * channel),
+            calibration_percent=section[5 * count + channel],
+            slat_time_ms=u16(6 * count + 2 * channel) * 10,
+            reversal_lag_ms=section[8 * count + channel] * 10,
+            start_lag_same_ms=lag(10 * count + channel),
+            start_lag_other_ms=lag(11 * count + channel),
+        )
+        for channel in range(count)
+    )
+
+
+def resolve_cover_parameters(
+    objects: Mapping[int, AmpioObject],
+    params_by_mac: Mapping[int, bytes],
+    capabilities_by_mac: Mapping[int, Mapping[int, int]],
+    hardware_by_mac: Mapping[int, tuple[int | None, int | None]],
+    colliding_macs: frozenset[int],
+    mac_by_device_id: Mapping[int, int],
+) -> dict[int, CoverParameters]:
+    """Join each cover object to its channel's stored travel parameters.
+
+    A module resolves only when its ``(typ_urzadzenia, wersja_pcb)`` pair
+    is a proven layout. The channel count comes from that layout and not
+    from the module: the four-channel board advertises no ``ROLLER``
+    capability at all. Where a module does advertise one and its count
+    disagrees with the layout, the module resolves nothing rather than
+    guessing.
+
+    The channel key matches ``resolve_designer``: ``leaf_io_no`` for a
+    leafed object, ``funkcja`` minus one for a leafless one. A colliding
+    mac is skipped, because the reply cannot be attributed to one module.
+    """
+    channels_by_mac: dict[int, tuple[CoverParameters, ...]] = {}
+    for module_mac, blob in params_by_mac.items():
+        if module_mac in colliding_macs:
+            continue
+        typ, pcb = hardware_by_mac.get(module_mac, (None, None))
+        if typ is None or pcb is None:
+            continue
+        layout = COVER_PARAMS_LAYOUTS.get((typ, pcb))
+        if layout is None:
+            continue
+        advertised = capabilities_by_mac.get(module_mac, {}).get(ModuleFunction.ROLLER)
+        if advertised is not None and advertised != layout.channels:
+            continue
+        channels = parse_cover_parameters(blob, layout)
+        if channels is not None:
+            channels_by_mac[module_mac] = channels
+
+    out: dict[int, CoverParameters] = {}
+    for obj in objects.values():
+        if DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "") != ROLLER_DESC_TYPE:
+            continue
+        joined = _object_channel(obj, mac_by_device_id)
+        if joined is None:
+            continue
+        mac, channel = joined
+        channels = channels_by_mac.get(mac)
+        if channels is None or not 0 <= channel < len(channels):
+            continue
+        out[obj.id] = channels[channel]
     return out
 
 
@@ -1421,13 +1559,18 @@ DEVICE_API_LIST_PAYLOAD = b"0"
 DEVICE_API_LIST_TOPIC = "device_api/from/list"
 
 
+# The description class the Designer gives a roller channel. Named so the
+# cover decode derives its kind gate from this table instead of repeating
+# the kind names.
+ROLLER_DESC_TYPE = 26
+
 # typ_komponentu -> description class (descType), live-proven pairs only
 # (docs/description-records.md): an unlisted kind resolves no location.
 # Extend only with a live-proven pair.
 DESC_TYPE_BY_KIND: dict[str, int] = {
     "przekaznik": 12,  # OUTPUTS
-    "roleta_procenty": 26,  # ROLLER
-    "roleta_lamelki": 26,  # ROLLER
+    "roleta_procenty": ROLLER_DESC_TYPE,
+    "roleta_lamelki": ROLLER_DESC_TYPE,
     "led": 16,  # OUT_OC_U8
     "rgbw": 34,  # RGBW output class; no symbolic name in the recovered enum
     "flaga": 6,  # FLAG_BIN

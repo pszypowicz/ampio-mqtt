@@ -272,6 +272,40 @@ class PanelSettings:
 
 
 @dataclass(slots=True, frozen=True)
+class CoverParameters:
+    """One cover channel's stored travel configuration.
+
+    These are the values the Designer shows under "Roller blinds
+    parameters", held in the module and read back with the rest of its
+    record. Admin-guarded, exactly as :class:`PanelSettings` is, and None
+    on a board whose roller layout this library has not proven.
+
+    This is configuration, not state. :pyattr:`AmpioObject.block` is the
+    live roller lock the module pushes, and it says nothing about travel.
+    docs/description-records.md holds the wire shape.
+    """
+
+    # Designer "Work mode": False is a plain roller shutter, True a blind
+    # whose slats turn.
+    with_slats: bool
+    # Full travel, as the module counts it.
+    open_time_s: int
+    close_time_s: int
+    # Designer "Additional calibration" field shows 0 to 50 percent. The
+    # library stores this value as the Designer displays it.
+    calibration_percent: int
+    # One full turn of the slats.
+    slat_time_ms: int
+    # How long the module waits before it drives the other way.
+    reversal_lag_ms: int
+    # Motor start lag, driving the same way and the other way. Both None
+    # on a board whose section holds 10 bytes per channel: the two fields
+    # do not exist there, and the Designer hides them.
+    start_lag_same_ms: int | None
+    start_lag_other_ms: int | None
+
+
+@dataclass(slots=True, frozen=True)
 class AmpioObject:
     """A logical Ampio object (DB object) and its latest state.
 
@@ -337,6 +371,12 @@ class AmpioObject:
     # The object's description-record entry, admin sweep only; None on
     # the restricted tier and before a sweep covers the object.
     record: DesignerRecord | None = None
+    # The stored travel configuration of this cover's channel, read from
+    # the module's params blob during a sweep. Admin sweep only, and None
+    # on anything that is not a cover on a board whose roller layout this
+    # library has proven. `block` is the live lock the module pushes, and
+    # it is a different fact from a different surface.
+    cover_parameters: CoverParameters | None = None
     # What this object is. Derived - never passed: computed from
     # `typ_komponentu` and `interpretacja` on every construction,
     # `dataclasses.replace` included, so no instance can hold a kind that

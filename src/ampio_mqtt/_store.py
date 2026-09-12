@@ -30,6 +30,7 @@ from .models import (
     AmpioModule,
     AmpioObject,
     AmpioServerInfo,
+    CoverParameters,
     DesignerRecord,
     ModuleRecord,
     PanelSettings,
@@ -95,6 +96,10 @@ class AmpioStore:
         # kept so a catalogue refresh re-applies what the CAN records
         # proved (the catalogue itself never carries them).
         self._record_by_id: dict[int, DesignerRecord] = {}
+        # `{object_id: CoverParameters}` accumulated across sweeps, kept
+        # for the same reason as the record table: the catalogue never
+        # carries the params blob either.
+        self._cover_parameters_by_id: dict[int, CoverParameters] = {}
         # `{mac: ModuleRecord}` accumulated across sweeps, kept for the
         # same reason on the module side; an empty bundle is an
         # authoritative "answered, unassigned".
@@ -173,24 +178,40 @@ class AmpioStore:
         """
         self._guarded.clear()
 
-    def apply_designer_records(self, resolved: dict[int, DesignerRecord]) -> Applied:
-        """Hold the swept record entries and fold them into known objects.
+    def apply_designer_records(
+        self,
+        resolved: Mapping[int, DesignerRecord],
+        cover_parameters: Mapping[int, CoverParameters],
+    ) -> Applied:
+        """Hold one sweep's per-object facts and fold them into known objects.
 
         A joined object's ``record`` is replaced wholesale - the entry is
-        what its module answered, None fields included. Objects a sweep
-        did not join keep their previous record, and the held table
-        accumulates across sweeps so a catalogue re-seed re-folds
-        everything this session learned.
+        what its module answered, None fields included. Both maps come
+        from one ``device_api`` reply, so an object changed by either
+        reports one event. Objects a sweep did not join keep what they
+        had, and the held tables accumulate across sweeps so a catalogue
+        re-seed re-folds everything this session learned.
         """
         applied = Applied()
         self._record_by_id.update(resolved)
-        for oid, rec in resolved.items():
+        self._cover_parameters_by_id.update(cover_parameters)
+        # Insertion order, so the event order follows the maps rather than
+        # a set's hash order.
+        for oid in dict.fromkeys((*resolved, *cover_parameters)):
             obj = self.objects.get(oid)
-            if obj is None or obj.record == rec:
+            if obj is None:
                 continue
-            obj = replace(obj, record=rec)
-            self.objects[oid] = obj
-            self._record(obj, applied)
+            updated = obj
+            if oid in resolved and updated.record != resolved[oid]:
+                updated = replace(updated, record=resolved[oid])
+            if (
+                oid in cover_parameters
+                and updated.cover_parameters != cover_parameters[oid]
+            ):
+                updated = replace(updated, cover_parameters=cover_parameters[oid])
+            if updated is not obj:
+                self.objects[oid] = updated
+                self._record(updated, applied)
         return applied
 
     def apply_module_sweep(
@@ -392,6 +413,9 @@ class AmpioStore:
         record = self._record_by_id.get(meta.id)
         if record is not None:
             updates["record"] = record
+        parameters = self._cover_parameters_by_id.get(meta.id)
+        if parameters is not None:
+            updates["cover_parameters"] = parameters
         changed = any(getattr(obj, name) != value for name, value in updates.items())
         updated = replace(obj, **updates)
         # The states snapshot is the one seed source on both tiers, so a
