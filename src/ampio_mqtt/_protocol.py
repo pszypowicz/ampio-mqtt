@@ -844,21 +844,21 @@ def resolve_cover_parameters(
     mac is skipped, because the reply cannot be attributed to one module.
     """
     channels_by_mac: dict[int, tuple[CoverParameters, ...]] = {}
-    for mac, blob in params_by_mac.items():
-        if mac in colliding_macs:
+    for module_mac, blob in params_by_mac.items():
+        if module_mac in colliding_macs:
             continue
-        typ, pcb = hardware_by_mac.get(mac, (None, None))
+        typ, pcb = hardware_by_mac.get(module_mac, (None, None))
         if typ is None or pcb is None:
             continue
         layout = COVER_PARAMS_LAYOUTS.get((typ, pcb))
         if layout is None:
             continue
-        advertised = capabilities_by_mac.get(mac, {}).get(ModuleFunction.ROLLER)
+        advertised = capabilities_by_mac.get(module_mac, {}).get(ModuleFunction.ROLLER)
         if advertised is not None and advertised != layout.channels:
             continue
         channels = parse_cover_parameters(blob, layout)
         if channels is not None:
-            channels_by_mac[mac] = channels
+            channels_by_mac[module_mac] = channels
 
     out: dict[int, CoverParameters] = {}
     for obj in objects.values():
