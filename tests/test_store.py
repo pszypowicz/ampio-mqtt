@@ -1588,6 +1588,88 @@ def test_plain_cover_reports_no_tilt() -> None:
     assert obj.supports_tilt is False
 
 
+# --- cover block flag ------------------------------------------------------
+
+
+def test_block_is_parsed_into_the_object() -> None:
+    store = _store()
+    _apply(
+        store,
+        DETAILS_TOPIC,
+        details({"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}),
+    )
+    _apply(store, f"ampio/fromDB/{USER}/ob/48/state", '{ "state": "70","block": "1" }')
+    obj = store.objects[48]
+    assert obj.block == 1
+    assert obj.blocks_closing is True
+    assert obj.blocks_opening is False
+
+
+def test_block_bits_read_per_direction() -> None:
+    store = _store()
+    _apply(
+        store,
+        DETAILS_TOPIC,
+        details({"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}),
+    )
+    for value, closing, opening in (
+        (0, False, False),
+        (2, False, True),
+        (3, True, True),
+    ):
+        _apply(
+            store,
+            f"ampio/fromDB/{USER}/ob/48/state",
+            f'{{ "state": "70","block": "{value}" }}',
+        )
+        obj = store.objects[48]
+        assert obj.block == value
+        assert obj.blocks_closing is closing
+        assert obj.blocks_opening is opening
+
+
+def test_object_without_block_reads_none() -> None:
+    store = _store()
+    _apply(store, DETAILS_TOPIC, details({"id": 12, "typ_komponentu": "przekaznik"}))
+    _apply(store, f"ampio/fromDB/{USER}/ob/12/state", '{ "state": "255" }')
+    obj = store.objects[12]
+    assert obj.block is None
+    assert obj.blocks_closing is False
+    assert obj.blocks_opening is False
+
+
+def test_push_without_block_keeps_the_last_value() -> None:
+    store = _store()
+    _apply(
+        store,
+        DETAILS_TOPIC,
+        details({"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}),
+    )
+    _apply(store, f"ampio/fromDB/{USER}/ob/48/state", '{ "state": "70","block": "3" }')
+    _apply(store, f"ampio/fromDB/{USER}/ob/48/state", '{ "state": "80" }')
+    assert store.objects[48].block == 3
+
+
+def test_states_snapshot_seeds_block() -> None:
+    store = _store()
+    _apply(
+        store,
+        DETAILS_TOPIC,
+        details({"id": 48, "typ_komponentu": "roleta_procenty", "opis_menu": "R"}),
+    )
+    _apply(
+        store,
+        STATES_TOPIC,
+        devices(
+            {
+                "id": 48,
+                "stan_json": '{ "state": "100","block": "2" , "on": 1779560000000}',
+            }
+        ),
+    )
+    assert store.objects[48].block == 2
+
+
 def test_states_snapshot_seeds_lammel() -> None:
     store = _store()
     _apply(

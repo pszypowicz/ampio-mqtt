@@ -37,7 +37,9 @@ classifies, as the generic value sensor or the `analog_<n>` fallback.
 - `roleta_lamelki` is what the Ampio app writes when a cover's type is set to
   "blinds - slats". The same cover reads back as `roleta_procenty` while it is
   set to "blinds - percentage". Only the slats variant reports a `lammel` angle
-  in its state payload, exposed as `AmpioObject.lammel`.
+  in its state payload, exposed as `AmpioObject.lammel`. Both variants report a
+  `block` lock, exposed as `AmpioObject.block`. A locked cover refuses commands
+  in the blocked direction (see [`commands.md`](commands.md)).
 - `rgbw` is the one output that ignores the `turnOn`/`turnOff`/`switch` family.
   The replay pattern Ampio's own consumers use for on/off is in
   [`commands.md`](commands.md).

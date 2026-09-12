@@ -99,6 +99,8 @@ class StateUpdate:
     state: str
     on_ms: int | float | None
     lammel: int | None  # Percent, present only for tilt-capable covers
+    # Roller lock bits, present only on cover pushes.
+    block: int | None = None
     # Climate readback, present only in the rich `reg` push shape.
     thermostat: ThermostatState | None = None
 
@@ -118,6 +120,8 @@ class StanJsonSeed:
     state: str | None
     on_ms: int | float | None
     lammel: int | None
+    # Roller lock bits, present only on cover rows.
+    block: int | None = None
     # Climate readback, present only in the rich `reg` snapshot shape.
     thermostat: ThermostatState | None = None
 
@@ -879,6 +883,7 @@ def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
     state: str = payload.strip()
     on_ms: int | float | None = None
     lammel: int | None = None
+    block: int | None = None
     thermostat: ThermostatState | None = None
     try:
         data = json.loads(payload)
@@ -894,9 +899,15 @@ def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
         if isinstance(raw_on, (int, float)):
             on_ms = raw_on
         lammel = to_int(data.get("lammel"))
+        block = to_int(data.get("block"))
         thermostat = _parse_thermostat(data)
     return StateUpdate(
-        id=oid, state=state, on_ms=on_ms, lammel=lammel, thermostat=thermostat
+        id=oid,
+        state=state,
+        on_ms=on_ms,
+        lammel=lammel,
+        block=block,
+        thermostat=thermostat,
     )
 
 
@@ -947,6 +958,7 @@ def parse_stan_json(stan_json: str) -> StanJsonSeed | None:
         state=str(raw_state) if raw_state is not None else None,
         on_ms=on_ms,
         lammel=to_int(data.get("lammel")),
+        block=to_int(data.get("block")),
         thermostat=_parse_thermostat(data),
     )
 

@@ -355,6 +355,12 @@ class AmpioObject:
     raw_owned: bool = False
     # Slat angle percent. Only tilt-capable covers report it.
     lammel: int | None = None
+    # The roller lock, verbatim from the wire: two bits the module keeps per
+    # cover, so bit 0 blocks closing and bit 1 blocks opening. A blocked
+    # direction refuses every command, the API included. Only covers report
+    # it. `blocks_closing` and `blocks_opening` read the bits.
+    # docs/commands.md holds the Designer actions that set them.
+    block: int | None = None
     # Climate readback, from the rich state shape only `reg` objects push.
     # None until a reg-shaped report arrives; a later report that lacks the
     # shape keeps the last readback, like `lammel` does.
@@ -370,6 +376,22 @@ class AmpioObject:
     def supports_tilt(self) -> bool:
         """Whether this object has a slat axis."""
         return isinstance(self.kind, OutputKind) and self.kind.tilt
+
+    @property
+    def blocks_closing(self) -> bool:
+        """Whether the module refuses to close this cover.
+
+        False when no lock is reported, so a non-cover reads False.
+        """
+        return bool((self.block or 0) & 1)
+
+    @property
+    def blocks_opening(self) -> bool:
+        """Whether the module refuses to open this cover.
+
+        False when no lock is reported, so a non-cover reads False.
+        """
+        return bool((self.block or 0) & 2)
 
     @property
     def is_on(self) -> bool:

@@ -349,6 +349,7 @@ class AmpioStore:
                 changed |= (
                     updated.state != update.state
                     or (update.lammel is not None and updated.lammel != update.lammel)
+                    or (update.block is not None and updated.block != update.block)
                     or (
                         update.thermostat is not None
                         and updated.thermostat != update.thermostat
@@ -360,6 +361,7 @@ class AmpioStore:
                     lammel=(
                         update.lammel if update.lammel is not None else updated.lammel
                     ),
+                    block=update.block if update.block is not None else updated.block,
                     thermostat=(
                         update.thermostat
                         if update.thermostat is not None
@@ -510,6 +512,7 @@ class AmpioStore:
             obj,
             state=update.state,
             lammel=update.lammel if update.lammel is not None else obj.lammel,
+            block=update.block if update.block is not None else obj.block,
             thermostat=(
                 update.thermostat if update.thermostat is not None else obj.thermostat
             ),
@@ -593,12 +596,14 @@ class AmpioStore:
         changed = (
             obj.state != seed.state
             or (seed.lammel is not None and obj.lammel != seed.lammel)
+            or (seed.block is not None and obj.block != seed.block)
             or (seed.thermostat is not None and obj.thermostat != seed.thermostat)
         )
         obj = replace(
             obj,
             state=seed.state,
             lammel=seed.lammel if seed.lammel is not None else obj.lammel,
+            block=seed.block if seed.block is not None else obj.block,
             thermostat=seed.thermostat
             if seed.thermostat is not None
             else obj.thermostat,
