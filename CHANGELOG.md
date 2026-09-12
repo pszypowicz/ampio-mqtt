@@ -19,6 +19,11 @@ the module then drops every command for the blocked direction, the API included.
 The state push already carried the flag and the library dropped it, so a
 consumer saw a normal cover that quietly refused to move (#202).
 
+Every fact the library holds now has one source per account tier, and a reply
+that lacks what its surface always serves is refused instead of read. The tier
+is fixed before the first connect, so there was never a reason to resolve a fact
+by trying one source and then another.
+
 ### Added
 
 - **`AmpioObject.block`** holds the module's roller lock, verbatim. The module
@@ -26,6 +31,31 @@ consumer saw a normal cover that quietly refused to move (#202).
   the value runs 0 to 3. None on everything that is not a cover.
 - **`AmpioObject.blocks_closing`** and **`AmpioObject.blocks_opening`** read one
   bit each. Both read False when no lock is reported.
+- **`AmpioProtocolError`** is raised when a reply lacks a column its surface
+  always serves, or is not the surface's own document shape. The client catches
+  it, reports it, and keeps the connection up.
+- **`diagnostics_snapshot()`** gains two entries. `connection`
+  `protocol_violations` maps each topic whose reply was refused to the reason.
+  `params_gap` lists the granted objects the `params_devices` table carries no
+  row for.
+
+### Changed
+
+- **One source per fact, per tier.** The administrator catalogue carries
+  `params`, `czas`, and `url` on every row, and `data/params_devices` carries
+  them for a standard account. The library reads whichever one its tier serves.
+  It no longer tries the catalogue column, then the held table, then the
+  previous value.
+- **The `data/states` snapshot is the only initial-value source.** It answers
+  both tiers, and it lists every object that holds a value, so the
+  `config/devicesDetails` `stan_json` column is no longer read.
+- **A malformed reply is refused, not tolerated.** Every catalogue, module list,
+  config table, snapshot, and server-info reply must carry the columns the
+  surface serves. The scene catalogue and the `locations` name table keep their
+  row tolerance, because their row shapes are not pinned against live replies.
+- **The held config table survives an eviction.** A re-granted object reads its
+  Designer config flags at once, instead of reading them as unset until the next
+  table reply.
 
 ### Notes
 
@@ -38,6 +68,18 @@ blocked for a long time.
 No `/api` verb sets or clears the flag, so this is a read. Both the live push
 and the bulk `data/states` snapshot carry it, and a push without the field keeps
 the last value, the way `lammel` does.
+
+The column sets come off the reference install: 194 catalogue rows, 39 module
+rows, 151 config rows, and 141 snapshot rows, each carrying every column the
+library reads. The snapshot covers exactly the objects whose catalogue row
+carries a value, which is why dropping the catalogue seed loses nothing.
+
+A refused reply costs that one message. It latches no discovery signal, so
+`connect()` returns False exactly as it does for silence, and
+`protocol_violations` is what tells the two apart. A consumer that reads
+`AmpioObject.params` before `wait_for_initial_discovery()` returns True can
+still see a standard account's config flags unset, because the two app-sync
+replies arrive in no fixed order.
 
 ### Tools
 

@@ -93,7 +93,7 @@ them. Designer triggers the push with a `refresh` keyword on its `data` surface.
   client re-request `devicesDetails` and `devices`. The reply's diff then fires
   the same object events, and the module events with them. The re-request opens
   no snapshot cycle, so a value pushed since the last request keeps outranking
-  the reply's `stan_json`.
+  the held snapshot seed.
 
 The `md5/params_devices` digest covers the `params` table, which carries the
 hidden bit. The admin catalogue carries that bit inline, so a rewrite of either
@@ -178,12 +178,24 @@ endpoint's verbatim last reply. The `info` entry is the exception. Its reply
 carries the account's address, coordinates, cloud endpoint, and public key, and
 a key-based redactor cannot reach inside one retained string. The snapshot
 therefore masks every info value outside a safe-key set and withholds an
-unparseable info reply. The `connection` entry carries five keys. `started_at`
+unparseable info reply. The `connection` entry carries six keys. `started_at`
 and `reconnect_count` cover the current `connect()` run, so a deliberate restart
 never reads as a flapping connection. `last_error` and `last_message_at` roll
 across runs, and `subscribe_failures` maps each topic the latest SUBACK rejected
-to its reason code. The counters are cheap to update - the dispatch hot path
-touches only `last_message_at`.
+to its reason code. `protocol_violations` maps each topic whose reply the
+library refused to the reason, and rolls across runs too. The counters are cheap
+to update - the dispatch hot path touches only `last_message_at`.
+
+## A reply the library refuses
+
+Each surface serves a fixed column set, and the library refuses a reply that
+drops one of them (see [`protocol.md`](protocol.md)). The refusal costs that one
+message. The client logs it, records the topic and the reason in
+`protocol_violations`, keeps the payload in `last_payloads`, and holds the
+connection up. Nothing else changes: the refused reply latches no discovery
+signal, resolves no pending `fetch_*` call, and leaves held state untouched. So
+a refused discovery reply makes `connect()` return False, exactly as silence
+does, and `protocol_violations` is what tells the two apart.
 
 The `modules` list holds one row per known module, sorted by id. Each row
 carries the module's `id`, `mac`, `typ_urzadzenia`, `model`, `last_seen`,
