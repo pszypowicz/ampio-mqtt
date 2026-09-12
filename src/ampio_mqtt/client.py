@@ -68,7 +68,6 @@ from .models import (
     AmpioScene,
     AmpioServerInfo,
     ConnectionStats,
-    ModuleFunction,
     RecordSweep,
 )
 
@@ -1273,9 +1272,9 @@ class AmpioClient:
         A color output that does not answer the switch verbs (``rgbw``) is
         turned off with ``setColors 0/0/0/0`` instead - off is unambiguous,
         so the library routes it. An admin session's binary outputs ride
-        the raw CAN write topic, exactly as :meth:`turn_on` documents. An
-        object whose kind is not yet known gets the plain verb. ``confirm``
-        awaits the state echo exactly as :meth:`command` documents.
+        the raw CAN write topic, exactly as :meth:`turn_on` documents. An id
+        no catalogue has established gets the plain verb. ``confirm`` awaits
+        the state echo exactly as :meth:`command` documents.
         """
         kind = self._output_kind(object_id)
         if kind is not None and not kind.switchable and kind.color:
@@ -1439,25 +1438,20 @@ class AmpioClient:
         topic = raw_write_topic(self._raw_write_mac(module_id))
         await self._connection.publish(topic, RAW_IDENTIFY_OFF.encode())
 
-    def _panel_mask(self, module_id: int, fields: Sequence[int] | None) -> str:
+    @staticmethod
+    def _panel_mask(fields: Sequence[int] | None) -> str:
         """The touch field mask for one panel action.
 
-        The width comes from the module's own backlight channel count
-        when a record sweep has read it. Without one it falls back to the
-        full width, which a panel accepts and reads down to the fields it
-        has - so no panel write needs a sweep first.
+        Always the full width. A panel reads the width its own field count
+        needs and ignores the rest, which is what lets a caller send one
+        width to every panel and makes no panel write depend on a record
+        sweep (docs/panel-writes.md). A field number the frame cannot carry
+        is refused; a field the panel does not have is ignored by the panel.
         """
-        module = self._store.modules.get(module_id)
-        advertised = (
-            module.capabilities.get(ModuleFunction.BACKLIGHT_RGBW)
-            if module is not None
-            else None
-        )
-        width = PANEL_MASK_MAX_BYTES if advertised is None else -(-advertised // 8)
         if fields is not None:
             for number in fields:
-                _check_range("field", number, 1, width * 8)
-        return panel_field_mask(fields, width)
+                _check_range("field", number, 1, PANEL_MASK_MAX_BYTES * 8)
+        return panel_field_mask(fields, PANEL_MASK_MAX_BYTES)
 
     async def set_panel_backlight(
         self,
@@ -1494,7 +1488,7 @@ class AmpioClient:
             ("white", white),
         ):
             _check_range(name, value, 0, 255)
-        mask = self._panel_mask(module_id, fields)
+        mask = self._panel_mask(fields)
         payload = raw_backlight_payload(red, green, blue, white, mask)
         await self._connection.publish(raw_write_topic(mac), payload.encode())
 
@@ -1517,7 +1511,7 @@ class AmpioClient:
         mac = self._raw_write_mac(module_id)
         for name, value in (("red", red), ("green", green), ("blue", blue)):
             _check_range(name, value, 0, 255)
-        mask = self._panel_mask(module_id, fields)
+        mask = self._panel_mask(fields)
         payload = raw_status_light_payload(red, green, blue, mask)
         await self._connection.publish(raw_write_topic(mac), payload.encode())
 
@@ -1569,8 +1563,8 @@ class AmpioClient:
 
     def _check_switchable(self, object_id: int, verb: str) -> None:
         """Reject a switch-family verb for an output known not to answer it -
-        the M-SERV would drop it with no effect and no reply. An object
-        with no metadata yet passes through."""
+        the M-SERV would drop it with no effect and no reply. An id no
+        catalogue has established passes through."""
         kind = self._output_kind(object_id)
         if kind is not None and not kind.switchable:
             raise ValueError(

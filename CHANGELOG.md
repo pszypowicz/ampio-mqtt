@@ -78,6 +78,13 @@ not served this".
 - **An `info` reply that contradicts the session's tier is refused.** The
   username decides the tier and the reply's account id states it, so a
   disagreement means every subscription is aimed at the wrong surface.
+- **A panel write always sends the full touch field mask.** The frame used to
+  narrow to the panel's advertised field count once a record sweep had read it.
+  A panel reads the width its own count needs and ignores the rest, so the two
+  widths did the same thing, and only the narrow one could reject a field
+  number. `set_panel_backlight()` and `set_panel_status_light()` now refuse a
+  field above 24, the most a frame can carry, and a field the panel does not
+  have is accepted and ignored by the panel.
 
 ### Notes
 

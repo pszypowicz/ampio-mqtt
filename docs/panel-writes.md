@@ -119,10 +119,10 @@ payloads.
 
 `mask` selects the touch fields, one bit per field, least significant first, so
 field 1 is bit 0. A panel reads the width its own field count needs and ignores
-any surplus, so a caller that does not know the count can send the full three
-bytes, which covers the 24 fields a panel can report. The library sends the
-panel's own width when a record sweep has read its backlight channel count, and
-the full width otherwise.
+any surplus. The library therefore always sends the full three bytes, which
+covers the 24 fields a panel can report, and no panel write depends on a record
+sweep. A field number above 24 is refused, because no frame can carry it. A
+field the panel does not have is accepted and the panel ignores it.
 
 These frames write nothing to the module's configuration. The stored settings
 stay untouched, so a panel restart returns the configured colours. Nothing on
