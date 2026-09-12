@@ -738,9 +738,12 @@ class AmpioScene:
     scene_name: str
     # The M-SERV's own enabled flag for the scene.
     active: bool = True
-    # The room the scene is filed under, from the wire's `parentId`: an id of
-    # the `groups` table that `AmpioClient.fetch_rooms()` joins, not another
-    # scene. None when the scene is filed under no room (wire -1).
+    # The room the app presents the scene in, from the wire's `parentId`: an
+    # id of the `groups` table that `AmpioClient.fetch_rooms()` joins, not
+    # another scene. The Ampio app asks for it when a scene is created, and
+    # it places the scene rather than scoping what the scene can touch - a
+    # scene's actions reach any object. None when no room was chosen (wire
+    # -1). A consumer that files scene entities by area reads this.
     group_id: int | None = None
     # Objects the scene's actions touch, for a consumer that wants to relate a
     # scene to its entities.
