@@ -9,6 +9,7 @@ import pytest
 from ampio_mqtt import (
     AccessTier,
     AmpioModule,
+    AmpioProtocolError,
     AmpioServerInfo,
     BusEventRaised,
     ThermostatState,
@@ -28,6 +29,7 @@ from ampio_mqtt._protocol import (
     Router,
     StateUpdate,
     md5_topic,
+    parse_app_sync_devices,
     parse_details,
     parse_devices,
     parse_params_devices,
@@ -64,37 +66,120 @@ def test_to_int(value: object, expected: int | None) -> None:
     assert to_int(value) == expected
 
 
+# Every column the live M-SERV serves on every row of one catalogue
+# surface. A test that drops one is making a point about that column.
+_ADMIN_COLUMNS = (
+    "id",
+    "id_urzadzenia",
+    "typ_komponentu",
+    "interpretacja",
+    "funkcja",
+    "leafId",
+    "opis_menu",
+    "type",
+    "format",
+    "params",
+    "czas",
+    "url",
+)
+_APP_SYNC_COLUMNS = (
+    "id",
+    "id_urzadzenia",
+    "typ_komponentu",
+    "interpretacja",
+    "funkcja",
+    "leafId",
+    "opis_menu",
+    "type",
+    "format",
+)
+
+
+def _admin_row(**over: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "id": 41,
+        "id_urzadzenia": 3,
+        "typ_komponentu": "temp",
+        "interpretacja": 1,
+        "funkcja": 7,
+        "leafId": "0_cb8f_76_0_0",
+        "opis_menu": "Salon",
+        "type": None,
+        "format": "",
+        "params": 137438953473,  # 2**37 + 1: matter-exposed, not hidden
+        "czas": 0,
+        "url": "",
+    }
+    return {**row, **over}
+
+
+def _app_row(**over: object) -> dict[str, object]:
+    row = {k: v for k, v in _admin_row().items() if k in _APP_SYNC_COLUMNS}
+    return {**row, **over}
+
+
+def _rows(*items: dict[str, object]) -> str:
+    return json.dumps({"Status": 0, "List": list(items)})
+
+
 def test_parse_details_returns_metadata() -> None:
-    payload = json.dumps(
-        {
-            "List": [
-                {
-                    "id": 41,
-                    "id_urzadzenia": 3,
-                    "typ_komponentu": "temp",
-                    "interpretacja": 1,
-                    "funkcja": 7,
-                    "leafId": "0_cb8f_76_0_0",
-                    "params": 137438953473,  # 2**37 + 1: matter-exposed, not hidden
-                    "opis_menu": "Salon",
-                    "stan_json": json.dumps({"state": "21.5", "on": 1700000000000}),
-                },
-                {"id": "bad"},  # skipped: non-int id
-                {"id": 42},  # kept: minimal record
-            ]
-        }
-    )
-    items = parse_details(payload)
-    assert items is not None
-    assert [m.id for m in items] == [41, 42]
-    assert items[0].opis_menu == "Salon"
+    items = parse_details(_rows(_admin_row()))
+    assert [row.shared.id for row in items] == [41]
+    shared = items[0].shared
+    assert shared.id_urzadzenia == 3
+    assert shared.typ_komponentu == "temp"
+    assert shared.interpretacja == 1
+    assert shared.funkcja == 7
+    assert shared.leaf_id == "0_cb8f_76_0_0"
+    assert shared.opis_menu == "Salon"
+    assert shared.matter_device_type is None
+    assert items[0].params == 137438953473
+    assert items[0].czas == 0
+    assert items[0].url == ""
+
+
+def test_parse_app_sync_devices_returns_the_shared_columns() -> None:
+    """The app-sync catalogue serves no `params`, `czas`, or `url` column.
+    `data/params_devices` is that tier's source for the three."""
+    items = parse_app_sync_devices(_rows(_app_row()))
+    assert [row.id for row in items] == [41]
+    assert items[0].typ_komponentu == "temp"
     assert items[0].funkcja == 7
-    assert items[0].leaf_id == "0_cb8f_76_0_0"
-    assert items[0].stan_json is not None
-    assert items[1].opis_menu is None and items[1].stan_json is None
-    assert items[1].funkcja is None  # absent -> None
-    assert items[1].leaf_id == ""  # absent -> empty string
-    assert items[1].matter_device_type is None  # absent -> None
+    assert items[0].opis_menu == "Salon"
+
+
+@pytest.mark.parametrize("column", _ADMIN_COLUMNS)
+def test_parse_details_refuses_a_row_without_a_served_column(column: str) -> None:
+    """Every listed column rides every live `devicesDetails` row, so a reply
+    without one is a protocol break rather than an unconfigured object."""
+    row = _admin_row()
+    del row[column]
+    with pytest.raises(AmpioProtocolError, match=column):
+        parse_details(_rows(row))
+
+
+@pytest.mark.parametrize("column", _APP_SYNC_COLUMNS)
+def test_parse_app_sync_devices_refuses_a_row_without_a_served_column(
+    column: str,
+) -> None:
+    row = _app_row()
+    del row[column]
+    with pytest.raises(AmpioProtocolError, match=column):
+        parse_app_sync_devices(_rows(row))
+
+
+@pytest.mark.parametrize(
+    "column", ["id", "id_urzadzenia", "interpretacja", "funkcja", "params", "czas"]
+)
+def test_parse_details_refuses_a_column_that_is_not_an_integer(column: str) -> None:
+    with pytest.raises(AmpioProtocolError, match=column):
+        parse_details(_rows(_admin_row(**{column: "junk"})))
+
+
+@pytest.mark.parametrize("column", ["typ_komponentu", "url"])
+def test_parse_details_refuses_a_column_that_is_not_text(column: str) -> None:
+    with pytest.raises(AmpioProtocolError, match=column):
+        parse_details(_rows(_admin_row(**{column: 7})))
 
 
 @pytest.mark.parametrize(
@@ -103,14 +188,10 @@ def test_parse_details_returns_metadata() -> None:
         (17, 17),  # bit0 + bit4 (the live phantom shape)
         ("16", 16),  # string coerced
         (137438953473, 137438953473),  # >32-bit matter-exposed value
-        (None, None),  # absent column -> None, so the client keeps what it has
-        ("not-a-number", None),  # junk is indistinguishable from absent
     ],
 )
-def test_parse_details_params(raw: object, expected: int | None) -> None:
-    payload = json.dumps({"List": [{"id": 1, "params": raw}]})
-    items = parse_details(payload)
-    assert items is not None and items[0].params == expected
+def test_parse_details_params(raw: object, expected: int) -> None:
+    assert parse_details(_rows(_admin_row(params=raw)))[0].params == expected
 
 
 @pytest.mark.parametrize(
@@ -122,112 +203,125 @@ def test_parse_details_params(raw: object, expected: int | None) -> None:
     ],
 )
 def test_parse_details_matter_device_type(raw: object, expected: int | None) -> None:
-    payload = json.dumps({"List": [{"id": 1, "type": raw}]})
-    items = parse_details(payload)
-    assert items is not None and items[0].matter_device_type == expected
+    items = parse_details(_rows(_admin_row(type=raw)))
+    assert items[0].shared.matter_device_type == expected
 
 
 @pytest.mark.parametrize(
-    ("row", "expected"),
+    ("raw", "expected"),
     [
-        ({"id": 1, "czas": 500}, 500),  # the raw 10 ms ticks
-        ({"id": 1, "czas": "500"}, 500),  # string coerced
-        ({"id": 1, "czas": 0}, 0),  # configured off
-        ({"id": 1}, None),  # absent column -> None, the client keeps what it has
-        ({"id": 1, "czas": "junk"}, None),  # junk is indistinguishable from absent
+        (500, 500),  # the raw 10 ms ticks
+        ("500", 500),  # string coerced
+        (0, 0),  # configured off
     ],
 )
-def test_parse_details_czas(row: dict, expected: int | None) -> None:
-    items = parse_details(json.dumps({"List": [row]}))
-    assert items is not None and items[0].czas == expected
+def test_parse_details_czas(raw: object, expected: int) -> None:
+    assert parse_details(_rows(_admin_row(czas=raw)))[0].czas == expected
 
 
-@pytest.mark.parametrize(
-    ("row", "params", "czas"),
-    [
-        ({"id": 5, "params": 17, "czas": 500}, 17, 500),
-        ({"id": 5, "params": 17}, 17, 0),  # the table is complete: absent = off
-        ({"id": 5, "czas": 500}, 0, 500),
-    ],
-)
-def test_parse_params_devices_carries_czas(row: dict, params: int, czas: int) -> None:
-    table = parse_params_devices(json.dumps({"List": [row]}))
-    assert table is not None
-    assert table[5].params == params
-    assert table[5].czas == czas
+def _params_row(**over: object) -> dict[str, object]:
+    """A well-formed `data/params_devices` row."""
+    row: dict[str, object] = {"id": 5, "params": 17, "czas": 500, "url": "kWh"}
+    return {**row, **over}
+
+
+def test_parse_params_devices_carries_the_config_columns() -> None:
+    table = parse_params_devices(_rows(_params_row()))
+    assert table[5].params == 17
+    assert table[5].czas == 500
+    assert table[5].url == "kWh"
+
+
+@pytest.mark.parametrize("column", ["id", "params", "czas", "url"])
+def test_parse_params_devices_refuses_a_row_without_a_served_column(
+    column: str,
+) -> None:
+    row = _params_row()
+    del row[column]
+    with pytest.raises(AmpioProtocolError, match=column):
+        parse_params_devices(_rows(row))
+
+
+def test_parse_params_devices_keeps_the_without_unit_sentinel() -> None:
+    assert parse_params_devices(_rows(_params_row(url=" ")))[5].url == " "
 
 
 @pytest.mark.parametrize(
     ("row", "url", "fmt"),
     [
-        ({"id": 1, "url": "V", "format": "%.1f V"}, "V", "%.1f V"),
-        ({"id": 1, "url": "", "format": "%.3f A"}, "", "%.3f A"),  # the live shape
-        ({"id": 1, "url": " ", "format": ""}, " ", ""),  # "without unit" sentinel
-        ({"id": 1, "format": "%.1f"}, None, "%.1f"),  # app-sync row: no url column
-        ({"id": 1, "url": "V"}, "V", ""),  # absent format reads as empty
-        ({"id": 1, "url": 7, "format": 7}, None, ""),  # non-text is not a column
+        ({"url": "V", "format": "%.1f V"}, "V", "%.1f V"),
+        ({"url": "", "format": "%.3f A"}, "", "%.3f A"),  # the live shape
+        ({"url": " ", "format": ""}, " ", ""),  # "without unit" sentinel
+        ({"url": "V", "format": None}, "V", ""),  # a null format reads as empty
     ],
 )
-def test_parse_details_url_and_format(row: dict, url: str | None, fmt: str) -> None:
-    items = parse_details(json.dumps({"List": [row]}))
-    assert items is not None
+def test_parse_details_url_and_format(row: dict, url: str, fmt: str) -> None:
+    items = parse_details(_rows(_admin_row(**row)))
     assert items[0].url == url
-    assert items[0].format == fmt
-
-
-@pytest.mark.parametrize(
-    ("row", "url"),
-    [
-        ({"id": 5, "params": 17, "url": "kWh"}, "kWh"),
-        ({"id": 5, "params": 17, "url": " "}, " "),  # the sentinel survives
-        ({"id": 5, "params": 17}, ""),  # the table is complete: absent = empty
-    ],
-)
-def test_parse_params_devices_carries_url(row: dict, url: str) -> None:
-    table = parse_params_devices(json.dumps({"List": [row]}))
-    assert table is not None
-    assert table[5].url == url
+    assert items[0].shared.format == fmt
 
 
 @pytest.mark.parametrize(
     "parser",
     [
         parse_details,
+        parse_app_sync_devices,
         parse_devices,
         parse_params_devices,
         parse_scenes,
         parse_states_snapshot,
+        parse_server_info,
     ],
 )
-def test_unparseable_payloads_return_none(parser) -> None:
-    assert parser("not json") is None
+def test_unparseable_payloads_are_refused(parser) -> None:
+    """A reply that is not the surface's own document shape is a protocol
+    break. Nothing downstream can tell a tolerated one from an empty one."""
+    with pytest.raises(AmpioProtocolError):
+        parser("not json")
 
 
-@pytest.mark.parametrize(
-    ("parser", "rows", "surviving_ids"),
-    [
-        (parse_details, [{"id": "x"}, {"id": 5}], lambda r: [i.id for i in r]),
-        (
-            parse_devices,
-            [{"id": "x"}, {"id": 5, "typ_urzadzenia": 1}],
-            lambda r: [m.id for m in r],
-        ),
-        (
-            parse_params_devices,
-            [{"id": "x", "params": 1}, {"id": 5, "params": 17}],
-            lambda r: list(r),
-        ),
-        (
-            parse_scenes,
-            [{"id": None, "sceneName": "Bad"}, {"id": 5, "sceneName": "Good"}],
-            lambda r: [s.id for s in r],
-        ),
-        (parse_states_snapshot, [{"id": "x"}, {"id": 5}], lambda r: [e.id for e in r]),
-    ],
-)
-def test_rows_without_an_int_id_are_skipped(parser, rows, surviving_ids) -> None:
-    result = parser(json.dumps({"List": rows}))
-    assert result is not None and surviving_ids(result) == [5]
+def _module_row(**over: object) -> dict[str, object]:
+    """A well-formed `devices` module row."""
+    row: dict[str, object] = {
+        "id": 5,
+        "mac": 0xCAFE,
+        "mac_global": 0xBEEF,
+        "nazwa_urzadzenia": "M-DOT-9",
+        "typ_urzadzenia": 11,
+        "wersja_softu": 908,
+        "wersja_pcb": 12,
+    }
+    return {**row, **over}
+
+
+def test_parse_devices_reads_the_module_row() -> None:
+    modules = parse_devices(_rows(_module_row()))
+    assert [m.id for m in modules] == [5]
+    assert modules[0].mac == 0xCAFE and modules[0].mac_global == 0xBEEF
+    assert modules[0].wersja_softu == 908 and modules[0].wersja_pcb == 12
+
+
+@pytest.mark.parametrize("column", list(_module_row()))
+def test_parse_devices_refuses_a_row_without_a_served_column(column: str) -> None:
+    row = _module_row()
+    del row[column]
+    with pytest.raises(AmpioProtocolError, match=column):
+        parse_devices(_rows(row))
+
+
+def test_parse_states_snapshot_reads_every_row() -> None:
+    entries = parse_states_snapshot(_rows({"id": 7, "stan_json": '{"state":"1"}'}))
+    assert [(e.id, e.stan_json) for e in entries] == [(7, '{"state":"1"}')]
+
+
+@pytest.mark.parametrize("column", ["id", "stan_json"])
+def test_parse_states_snapshot_refuses_a_row_without_a_served_column(
+    column: str,
+) -> None:
+    row = {"id": 7, "stan_json": '{"state":"1"}'}
+    del row[column]
+    with pytest.raises(AmpioProtocolError, match=column):
+        parse_states_snapshot(_rows(row))
 
 
 def test_state_route_non_dict_payload() -> None:
@@ -239,44 +333,21 @@ def test_state_route_non_dict_payload() -> None:
 
 
 def test_parse_devices_resolves_the_model_name() -> None:
-    """The model column is derived from the type code; unknown or missing
-    types resolve to None rather than failing the row."""
-    payload = json.dumps(
-        {
-            "List": [
-                {"id": 1, "typ_urzadzenia": 44},  # M-SENS
-                {"id": 5, "typ_urzadzenia": 999},  # unknown type
-                {"id": 6},  # no typ_urzadzenia
-            ]
-        }
+    """The model column is derived from the type code. A type code outside
+    the catalogue resolves to None rather than failing the row."""
+    modules = parse_devices(
+        _rows(
+            _module_row(id=1, typ_urzadzenia=44),  # M-SENS
+            _module_row(id=5, typ_urzadzenia=999),  # unknown type
+        )
     )
-    modules = parse_devices(payload)
-    assert modules is not None
     by_id = {m.id: m for m in modules}
     assert by_id[1].model == "M-SENS"
     assert by_id[5].model is None
-    assert by_id[6].model is None
 
 
 def test_parse_devices_returns_modules() -> None:
-    payload = json.dumps(
-        {
-            "List": [
-                {
-                    "id": 3,
-                    "mac": 10,
-                    "mac_global": 1234,
-                    "nazwa_urzadzenia": "M-SENS",
-                    "typ_urzadzenia": 5,
-                    "wersja_softu": 7,
-                    "wersja_pcb": 1,
-                },
-            ]
-        }
-    )
-    modules = parse_devices(payload)
-    assert modules is not None
-    [module] = modules
+    [module] = parse_devices(_rows(_module_row(id=3)))
     assert isinstance(module, AmpioModule)
     assert module.id == 3 and module.last_seen is None
 
@@ -294,23 +365,28 @@ def test_parse_server_info_extracts_safe_fields() -> None:
         }
     )
     info = parse_server_info(payload)
-    assert info is not None
     assert info.mac == 1234
     assert info.user_id == -1
     assert info.server_version == "3.4.5"
     assert info.local_ip == "192.168.1.10"
 
 
-def test_parse_server_info_bad_payload_returns_none() -> None:
-    assert parse_server_info("not json") is None
-    assert parse_server_info(json.dumps([1, 2, 3])) is None
-    # The baseline server always wraps the fields in `Results`.
-    assert parse_server_info(json.dumps({"mac": 1})) is None
-    # ... and always reports its mac: an identity-less reply is unparseable,
-    # which is what keeps `AmpioServerInfo.server_key` populated by
-    # construction.
-    assert parse_server_info(json.dumps({"Results": {}})) is None
-    assert parse_server_info(json.dumps({"Results": {"serverVersion": "1865"}})) is None
+@pytest.mark.parametrize(
+    "payload",
+    [
+        json.dumps([1, 2, 3]),
+        # The baseline server always wraps the fields in `Results`.
+        json.dumps({"mac": 1}),
+        # ... and always reports its mac: an identity-less reply is refused,
+        # which is what keeps `AmpioServerInfo.server_key` populated by
+        # construction.
+        json.dumps({"Results": {}}),
+        json.dumps({"Results": {"serverVersion": "1865"}}),
+    ],
+)
+def test_parse_server_info_refuses_a_reply_without_the_identity(payload: str) -> None:
+    with pytest.raises(AmpioProtocolError):
+        parse_server_info(payload)
 
 
 def test_redact_info_payload_keeps_only_safelisted_values() -> None:

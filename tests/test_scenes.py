@@ -8,7 +8,7 @@ import json
 import pytest
 from conftest import API_TOPIC, USER, FakeBroker, deliver_later
 
-from ampio_mqtt import AmpioClient, AmpioConnectionError
+from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioProtocolError
 from ampio_mqtt._protocol import parse_scenes
 
 _PAYLOAD = json.dumps(
@@ -61,18 +61,22 @@ def test_parses_the_catalogue() -> None:
 
 
 @pytest.mark.parametrize(
-    ("payload", "expected"),
+    "payload",
     [
-        ("not json", None),
-        ("null", None),
-        ("[]", None),  # a reply of the wrong shape is not an empty catalogue
-        ("{}", None),  # no List key either
-        ('{"List": []}', []),  # this is what an empty catalogue looks like
-        ('{"List": [1, "x"]}', []),  # rows that are not objects are skipped
+        "not json",
+        "null",
+        "[]",  # a reply of the wrong shape is not an empty catalogue
+        "{}",  # no List key either
+        '{"List": [1, "x"]}',  # a row that is not an object is not a scene
     ],
 )
-def test_unparseable_or_empty_payloads(payload: str, expected: list | None) -> None:
-    assert parse_scenes(payload) == expected
+def test_a_reply_of_the_wrong_shape_is_refused(payload: str) -> None:
+    with pytest.raises(AmpioProtocolError):
+        parse_scenes(payload)
+
+
+def test_an_empty_catalogue_reads_as_no_scenes() -> None:
+    assert parse_scenes('{"List": []}') == []
 
 
 @pytest.mark.parametrize("infos", [5, "x", None, {"id": 1}])

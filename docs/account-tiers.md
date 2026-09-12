@@ -72,6 +72,32 @@ with full authority. A dedicated standard account is thus a real boundary for
 direct object control only, and not against anything reachable through Ampio's
 own event logic. The gating detail is in [`bus-events.md`](bus-events.md).
 
+## One source per fact, per tier
+
+The tier is fixed before the first connect, so every fact the library holds has
+exactly one source. There is no precedence chain and no second opinion.
+
+| Fact                                       | Administrator source    | Standard-account source |
+| ------------------------------------------ | ----------------------- | ----------------------- |
+| object rows, names, leaf ids               | `config/devicesDetails` | `data/devices`          |
+| `params`, `czas`, `url`                    | `config/devicesDetails` | `data/params_devices`   |
+| the initial value of every object          | `data/states`           | `data/states`           |
+| module rows                                | `config/devices`        | not served              |
+| `record`, `capabilities`, `panel_settings` | the `device_api` sweep  | not served              |
+
+The `config/devicesDetails` reply also carries a `stan_json` column. The library
+does not read it. The `data/states` snapshot answers both tiers and lists every
+object that holds a value, so the snapshot is the one seed on both.
+
+A standard account receives the whole `params_devices` table, grants included,
+so every object its catalogue lists has a row there. The two replies arrive in
+no fixed order, which is why the library holds the table and applies it at the
+merge. Before the table answers, those three fields read their unset values.
+`wait_for_initial_discovery()` returning True is the boundary: it waits for both
+replies of the tier's pair. If the table answers and an object of the grant has
+no row in it, the library warns and lists that object in the `params_gap` entry
+of `diagnostics_snapshot()`.
+
 ## How the model marks the tiers
 
 The model separates facts by source. A catalogue fact is a plain field, served

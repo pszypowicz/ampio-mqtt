@@ -183,14 +183,6 @@ def test_module_for_joins_a_leafless_object_without_the_mac_gate(
     assert module.id == 7
 
 
-def test_module_for_rejects_a_module_row_without_a_mac() -> None:
-    """A leafed object cannot agree with a row that carries no mac."""
-    client = _admin_client()
-    feed(client, ADMIN_DEVICES, devices(_module_row(7, None)))
-    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, "cafe")))
-    assert client.module_for(client.objects[10]) is None
-
-
 def test_module_for_without_a_join_key() -> None:
     client = _admin_client()
     feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
@@ -773,6 +765,7 @@ def test_diagnostics_snapshot_is_credential_free_and_complete() -> None:
     assert snap["auth_failure"] is None
     assert snap["server_info"]["mac"] == 555
     assert snap["mac_collisions"] == []
+    assert snap["params_gap"] == []
     (module_row,) = snap["modules"]
     assert set(module_row) == {
         "id",
@@ -790,6 +783,7 @@ def test_diagnostics_snapshot_is_credential_free_and_complete() -> None:
         "last_message_at",
         "last_error",
         "subscribe_failures",
+        "protocol_violations",
     }
     assert "devices" in snap["last_payloads"]
     flat = json.dumps(snap)

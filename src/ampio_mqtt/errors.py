@@ -22,3 +22,15 @@ class AmpioTimeoutError(AmpioConnectionError):
 
 class AmpioAuthError(AmpioError):
     """Raised when the broker rejects the credentials."""
+
+
+class AmpioProtocolError(AmpioError):
+    """Raised when a reply lacks something its surface always serves.
+
+    The account tier fixes which surface answers, and each surface serves a
+    fixed column set (docs/protocol.md). A reply that drops a column, or
+    that is not the surface's own document shape, is a server fault. To
+    read it as an unconfigured object would hide that fault behind wrong
+    values, so the parse refuses it instead. The client reports the refusal
+    through ``diagnostics_snapshot()`` and keeps the connection up.
+    """

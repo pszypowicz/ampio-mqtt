@@ -11,11 +11,11 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields, replace
-from functools import partial
 from typing import Any
 
 from . import _protocol
 from .classification import input_channel_prefix
+from .errors import AmpioProtocolError
 from .events import (
     BusEventRaised,
     ModuleRemoved,
@@ -26,6 +26,7 @@ from .events import (
     StoreEvent,
 )
 from .models import (
+    AccessTier,
     AmpioModule,
     AmpioObject,
     AmpioServerInfo,
@@ -42,9 +43,6 @@ _LOGGER = logging.getLogger(__name__)
 class Applied:
     """What one inbound message did to the store."""
 
-    # Whether the payload could be read - an endpoint reply that could not
-    # must not advance discovery or resolve a fetch.
-    parsed: bool = True
     # Everything the message changed, in processing order, ready to dispatch.
     # Update events carry a snapshot taken as the change was applied, so a
     # consumer that defers processing still sees the state the event was
@@ -55,12 +53,14 @@ class Applied:
 class AmpioStore:
     """Applies typed M-SERV messages to the object, module and server state.
 
-    Tier-agnostic by design: which surfaces can deliver is decided upstream
-    (the client subscribes and routes only the account tier's endpoints),
-    so every message that reaches ``apply`` is one the account is served.
+    The account tier decides which surfaces answer (docs/account-tiers.md),
+    so the store holds the handlers of that tier alone. Each fact then has
+    one source: the admin catalogue carries the Designer config columns
+    inline, and on the app-sync tier `data/params_devices` carries them.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, tier: AccessTier) -> None:
+        self._tier = tier
         self.objects: dict[int, AmpioObject] = {}
         self.modules: dict[int, AmpioModule] = {}
         self.server_info: AmpioServerInfo | None = None
@@ -75,10 +75,21 @@ class AmpioStore:
         # broadcasts. Ids, not instances: modules are frozen and replaced on
         # every change, so a cached instance would go stale.
         self._module_id_by_mac: dict[int, int] = {}
-        # Full-catalogue per-object config facts (`params`, `czas`, `url`) from
-        # `data/params_devices`, kept because the app-sync catalogue omits
-        # `params` and `url` and the two replies arrive in no fixed order.
+        # Full-catalogue per-object config facts (`params`, `czas`, `url`)
+        # from `data/params_devices`, the app-sync tier's one source for
+        # them. Held because the two app-sync replies arrive in no fixed
+        # order, and re-applied on every merge - an eviction included.
+        # Stays empty on the admin tier, which is served neither the table
+        # nor a catalogue that needs it.
         self._params_by_id: dict[int, _protocol.ParamsEntry] = {}
+        # Whether the config table has answered at least once, so a gap in
+        # its coverage is told apart from a table still in flight.
+        self._params_received = False
+        # Granted objects the config table carries no row for. The table
+        # covers the full catalogue, so a non-empty set is a server fault:
+        # those objects read every Designer config flag as unset. Warned
+        # once per change and surfaced for diagnostics.
+        self.missing_params_ids: frozenset[int] = frozenset()
         # `{object_id: DesignerRecord}` accumulated across resolve
         # sweeps (a sweep updates its joined ids and leaves the rest),
         # kept so a catalogue refresh re-applies what the CAN records
@@ -115,26 +126,32 @@ class AmpioStore:
         # clears the guard; a server-stamped report clears both.
         self._local_stamped: set[int] = set()
         self._guarded: set[int] = set()
-        # Endpoints whose reply mutates state, each reporting whether the
-        # payload parsed. The rest are pure request/response, parsed by the
-        # dispatcher with the endpoint's own `parses` gate and never sent
-        # here.
-        self._handlers: dict[str, Callable[[str, Applied], bool]] = {
-            "details": partial(self._handle_catalogue, "devicesDetails"),
-            "data_devices": partial(self._handle_catalogue, "data/devices"),
-            "devices": self._handle_devices,
-            "params_devices": self._handle_params_devices,
+        # This tier's endpoints whose reply mutates state. The rest are pure
+        # request/response, parsed by the dispatcher with the endpoint's own
+        # `parses` gate and never sent here.
+        self._handlers: dict[str, Callable[[str, Applied], None]] = {
             "states": self._handle_states_snapshot,
             "info": self._handle_info,
         }
+        if tier is AccessTier.ADMIN:
+            self._handlers["details"] = self._handle_admin_catalogue
+            self._handlers["devices"] = self._handle_devices
+        else:
+            self._handlers["data_devices"] = self._handle_app_sync_catalogue
+            self._handlers["params_devices"] = self._handle_params_devices
         # The endpoint table and this handler table are edited separately;
         # a name typo between them would otherwise surface as a silent
         # discovery hang, so misalignment fails construction instead.
-        handler_gated = {ep.name for ep in _protocol.ENDPOINTS if ep.parses is None}
+        handler_gated = {
+            ep.name
+            for ep in _protocol.ENDPOINTS
+            if ep.parses is None and ep.tier in (None, tier)
+        }
         if set(self._handlers) != handler_gated:
             raise RuntimeError(
                 f"store handlers {sorted(self._handlers)} do not match the "
-                f"handler-gated endpoints {sorted(handler_gated)}"
+                f"{tier.value} tier's handler-gated endpoints "
+                f"{sorted(handler_gated)}"
             )
 
     # --- routing ----------------------------------------------------------
@@ -215,7 +232,13 @@ class AmpioStore:
             case _protocol.EndpointReply(endpoint=endpoint, payload=body):
                 # Only handler-gated replies reach the store - the dispatcher
                 # parses pure request/response replies itself.
-                applied.parsed = self._handlers[endpoint.name](body, applied)
+                handler = self._handlers.get(endpoint.name)
+                if handler is None:
+                    raise AmpioProtocolError(
+                        f"The Ampio {endpoint.name!r} reply is not served on "
+                        f"the {self._tier.value} tier"
+                    )
+                handler(body, applied)
             case _protocol.StateUpdate() as update:
                 self._apply_state(update, applied)
             case _protocol.RawChannelEdge() as edge:
@@ -228,31 +251,76 @@ class AmpioStore:
 
     # --- catalogues -------------------------------------------------------
 
-    def _handle_catalogue(self, surface: str, payload: str, applied: Applied) -> bool:
-        """Apply an object catalogue from either discovery surface.
+    def _handle_admin_catalogue(self, payload: str, applied: Applied) -> None:
+        """Apply a `config/devicesDetails` reply, the admin object catalogue.
 
-        The two surfaces carry the same rows: the app-sync one simply omits
-        ``params`` (which the ``params_devices`` table supplies instead) and
-        ``stan_json``, so one merge covers both.
+        Every row carries the Designer config columns inline, so the row is
+        their one source on this tier.
         """
-        items = _protocol.parse_details(payload)
-        if items is None:
-            _LOGGER.warning("Could not parse Ampio %s catalogue", surface)
-            return False
+        served = _protocol.parse_details(payload)
+        self._apply_catalogue(
+            [row.shared for row in served],
+            {
+                row.shared.id: {
+                    "params": row.params,
+                    "czas": row.czas,
+                    "url": row.url,
+                }
+                for row in served
+            },
+            applied,
+        )
+
+    def _handle_app_sync_catalogue(self, payload: str, applied: Applied) -> None:
+        """Apply a `data/devices` reply, the grant-filtered app-sync catalogue.
+
+        The surface serves no Designer config columns, so the held
+        `data/params_devices` table is their one source here. The table
+        re-applies on every merge, the re-creation after an eviction
+        included.
+        """
+        served = _protocol.parse_app_sync_devices(payload)
+        self._apply_catalogue(served, self._held_config(served), applied)
+        self._report_params_coverage()
+
+    def _held_config(
+        self, served: list[_protocol.ObjectMetadata]
+    ) -> dict[int, Mapping[str, Any]]:
+        """The config columns the held table holds for the served rows."""
+        return {
+            meta.id: {"params": entry.params, "czas": entry.czas, "url": entry.url}
+            for meta in served
+            if (entry := self._params_by_id.get(meta.id)) is not None
+        }
+
+    def _apply_catalogue(
+        self,
+        served: list[_protocol.ObjectMetadata],
+        config: Mapping[int, Mapping[str, Any]],
+        applied: Applied,
+    ) -> None:
+        """Fold one tier's whole object catalogue into the store.
+
+        ``config`` carries the Designer config columns per object id, from
+        whichever source this tier serves them on. An id absent from it is
+        one whose columns have not arrived yet, which leaves the object
+        reading the unset values until they do.
+        """
         # One reply is the whole catalogue this tier holds, so its leafed
         # rows are every sibling a leafless row can learn its module from.
         sibling_macs: dict[int, int] = {}
-        for meta in items:
+        for meta in served:
             mac = leaf_mac(meta.leaf_id)
-            if meta.id_urzadzenia is not None and mac is not None:
+            if mac is not None:
                 sibling_macs[meta.id_urzadzenia] = mac
         touched = False
-        for meta in items:
-            touched |= self._merge_metadata(meta, sibling_macs, applied)
-        evicted = self._evict_missing_objects({meta.id for meta in items}, applied)
+        for meta in served:
+            touched |= self._merge_metadata(
+                meta, config.get(meta.id, {}), sibling_macs, applied
+            )
+        evicted = self._evict_missing_objects({meta.id for meta in served}, applied)
         if touched or evicted:
             self._rebuild_indexes(applied)
-        return True
 
     def _evict_missing_objects(self, present: set[int], applied: Applied) -> bool:
         """Drop objects the authoritative catalogue no longer lists.
@@ -273,7 +341,9 @@ class AmpioStore:
             return False
         for oid in missing:
             obj = self.objects.pop(oid)
-            self._params_by_id.pop(oid, None)
+            # The held config table stays whole: it is not grant-filtered,
+            # and it is this tier's one source for the Designer config
+            # columns, so a re-granted object reads them again at once.
             self._stan_by_id.pop(oid, None)
             self._local_stamped.discard(oid)
             self._guarded.discard(oid)
@@ -283,6 +353,7 @@ class AmpioStore:
     def _merge_metadata(
         self,
         meta: _protocol.ObjectMetadata,
+        config: Mapping[str, Any],
         sibling_macs: Mapping[int, int],
         applied: Applied,
     ) -> bool:
@@ -299,19 +370,8 @@ class AmpioStore:
         updates: dict[str, Any] = {
             name: getattr(meta, name) for name in _METADATA_FIELDS
         }
-        updates["sibling_module_mac"] = (
-            sibling_macs.get(meta.id_urzadzenia)
-            if meta.id_urzadzenia is not None
-            else None
-        )
-        # A row without the column leaves the params_devices value standing.
-        entry = self._params_by_id.get(meta.id)
-        if updates["params"] is None:
-            updates["params"] = entry.params if entry is not None else obj.params
-        if updates["czas"] is None:
-            updates["czas"] = entry.czas if entry is not None else obj.czas
-        if updates["url"] is None:
-            updates["url"] = entry.url if entry is not None else obj.url
+        updates["sibling_module_mac"] = sibling_macs.get(meta.id_urzadzenia)
+        updates.update(config)
         # The catalogue never carries the record entry, so the held table
         # re-applies it on every merge - including the re-creation after
         # an eviction.
@@ -320,14 +380,10 @@ class AmpioStore:
             updates["record"] = record
         changed = any(getattr(obj, name) != value for name, value in updates.items())
         updated = replace(obj, **updates)
-        # A row without the column (the app-sync shape) falls back to the
-        # buffered snapshot value, so reply order never decides whether an
-        # object starts with its state.
-        stan_json = (
-            meta.stan_json
-            if meta.stan_json is not None
-            else self._stan_by_id.get(meta.id)
-        )
+        # The states snapshot is the one seed source on both tiers, so a
+        # buffered snapshot value applies here and reply order never decides
+        # whether an object starts with its state.
+        stan_json = self._stan_by_id.get(meta.id)
         if stan_json is not None:
             updated, seeded = self._apply_stan_json(updated, stan_json)
             changed |= seeded
@@ -378,11 +434,8 @@ class AmpioStore:
             self._record(updated, applied)
         return changed or created
 
-    def _handle_devices(self, payload: str, applied: Applied) -> bool:
+    def _handle_devices(self, payload: str, applied: Applied) -> None:
         modules = _protocol.parse_devices(payload)
-        if modules is None:
-            _LOGGER.warning("Could not parse Ampio devices list")
-            return False
         changed = False
         for module in modules:
             previous = self.modules.get(module.id)
@@ -425,22 +478,19 @@ class AmpioStore:
             applied.events.append(ModuleRemoved(self.modules.pop(mid)))
         if changed or evicted:
             self._rebuild_indexes(applied)
-        return True
 
-    def _handle_params_devices(self, payload: str, applied: Applied) -> bool:
-        """Apply the ``data/params_devices`` params table.
+    def _handle_params_devices(self, payload: str, applied: Applied) -> None:
+        """Apply the ``data/params_devices`` config table.
 
-        Stores the full table for catalogue rows that arrive later, and updates
-        objects already known. Ids with no known object create no placeholder:
-        the table is not grant-filtered, so on a restricted account most of it
-        refers to objects the account cannot otherwise see.
+        The app-sync tier's one source for `params`, `czas` and `url`. The
+        whole table is held for catalogue rows that arrive later, and
+        objects already known are updated in place. An id with no known
+        object creates no placeholder: the table is not grant-filtered, so
+        most of it refers to objects the account cannot otherwise see.
         """
-        table = _protocol.parse_params_devices(payload)
-        if table is None:
-            _LOGGER.warning("Could not parse Ampio params_devices table")
-            return False
-        self._params_by_id = table
-        for oid, entry in table.items():
+        self._params_by_id = _protocol.parse_params_devices(payload)
+        self._params_received = True
+        for oid, entry in self._params_by_id.items():
             obj = self.objects.get(oid)
             if obj is not None and (
                 obj.params != entry.params
@@ -450,46 +500,56 @@ class AmpioStore:
                 obj = replace(obj, params=entry.params, czas=entry.czas, url=entry.url)
                 self.objects[oid] = obj
                 self._record(obj, applied)
-        return True
+        self._report_params_coverage()
 
-    def _handle_info(self, payload: str, applied: Applied) -> bool:
+    def _report_params_coverage(self) -> None:
+        """Name the granted objects the config table carries no row for.
+
+        The table covers the whole object catalogue, so every object a
+        grant lists has a row. A gap leaves those objects reading every
+        Designer config flag as unset, which is a server fault to report
+        rather than a state to model. Warned once per change, and held for
+        diagnostics either way.
+        """
+        if not self._params_received:
+            return
+        missing = frozenset(self.objects) - self._params_by_id.keys()
+        if missing == self.missing_params_ids:
+            return
+        self.missing_params_ids = missing
+        if missing:
+            _LOGGER.warning(
+                "The Ampio params_devices table carries no row for object(s) "
+                "%s; every Designer config flag of theirs reads as unset",
+                sorted(missing),
+            )
+
+    def _handle_info(self, payload: str, applied: Applied) -> None:
         info = _protocol.parse_server_info(payload)
-        if info is None:
-            # Covers the identity-less reply too: without a server mac there
-            # is nothing to scope a consumer's registry by, so it must
-            # neither complete discovery nor displace an identified info.
-            _LOGGER.warning("Could not parse Ampio info reply")
-            return False
         previous = self.server_info
         # Warn when the version first becomes known or changes, not on the
         # re-request every reconnect issues.
         if previous is None or previous.server_version != info.server_version:
             _protocol.warn_if_below_baseline(info.server_version)
         self.server_info = info
-        return True
 
-    def _handle_states_snapshot(self, payload: str, applied: Applied) -> bool:
+    def _handle_states_snapshot(self, payload: str, applied: Applied) -> None:
+        """Apply a `data/states` reply, the one initial-value source.
+
+        The snapshot answers both tiers, so neither catalogue needs to seed
+        a value. An id no catalogue established stays out of the store, and
+        its value waits here for the catalogue row that may establish it.
+        """
         entries = _protocol.parse_states_snapshot(payload)
-        if entries is None:
-            _LOGGER.warning("Could not parse Ampio states snapshot")
-            return False
-        self._stan_by_id = {
-            entry.id: entry.stan_json
-            for entry in entries
-            if entry.stan_json is not None
-        }
+        self._stan_by_id = {entry.id: entry.stan_json for entry in entries}
         for entry in entries:
             obj = self.objects.get(entry.id)
-            if obj is None or entry.stan_json is None:
-                # An id no catalogue established stays out of the store;
-                # its value waits in _stan_by_id for the catalogue row
-                # that may establish it.
+            if obj is None:
                 continue
             obj, changed = self._apply_stan_json(obj, entry.stan_json)
             self.objects[entry.id] = obj
             if changed:
                 self._record(obj, applied)
-        return True
 
     # --- live state -------------------------------------------------------
 
@@ -711,11 +771,11 @@ class AmpioStore:
         applied.events.append(ObjectUpdated(obj))
 
 
-# The catalogue-owned object fields, derived from the wire row's own shape
-# so a new column is added in one place and flows through the merge; `id`
-# keys the merge and `stan_json` seeds state, so neither is metadata.
+# The object fields both catalogue surfaces own, derived from the shared
+# row's own shape so a new column is added in one place and flows through
+# the merge. `id` keys the merge, so it is not metadata. The Designer
+# config columns are not here: each tier serves them from its own surface,
+# and the merge takes them as `config`.
 _METADATA_FIELDS = tuple(
-    f.name
-    for f in fields(_protocol.ObjectMetadata)
-    if f.name not in ("id", "stan_json")
+    f.name for f in fields(_protocol.ObjectMetadata) if f.name != "id"
 )

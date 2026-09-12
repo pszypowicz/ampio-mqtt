@@ -43,13 +43,39 @@ for every account.
 | `devicesDetails` | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devicesDetails` | `{Status, List: [{id, id_urzadzenia, typ_komponentu, interpretacja, funkcja, leafId, opis_menu, type, stan_json, ...}]}` - `type` is the Matter device type tag (see [`description-records.md`](description-records.md)).                                                                                                                                         |
 | `devices`        | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devices`        | `{List: [{id, mac, mac_global, typ_urzadzenia, nazwa_urzadzenia, wersja_softu, wersja_pcb, ...}]}`                                                                                                                                                                                                                                                                |
 | `locations`      | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/locations`      | `{List: [{id, opis_menu, opis_rozwiniety}]}` - Designer's "Lokalizacja" name table. The per-output pointer that resolves through it rides the `device_api` tree below (see [`description-records.md`](description-records.md)).                                                                                                                                   |
-| `devices`        | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/devices`          | `{List: [...]}` - app-sync object catalogue: the `devicesDetails` row shape minus `params`, `stan_json`, and `url`, filtered to the account's app grants.                                                                                                                                                                                                         |
+| `devices`        | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/devices`          | `{List: [...]}` - app-sync object catalogue: the `devicesDetails` row shape minus `params`, `czas`, `url`, and `stan_json`, filtered to the account's app grants.                                                                                                                                                                                                 |
 | `params_devices` | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/params_devices`   | `{List: [{id, params, param1, czas, powiazane, url}]}` - per-object `params` bitfields for the **full** catalogue (not grant-filtered).                                                                                                                                                                                                                           |
 | `groups`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/groups`           | `{List: [{id, id_rodzica, opis_menu}]}` - room tree.                                                                                                                                                                                                                                                                                                              |
 | `group_devices`  | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/group_devices`    | `{List: [{id_grupy, id_obiektu}]}` - object-to-room join.                                                                                                                                                                                                                                                                                                         |
 | `scenes`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/scenes`           | `{List: [{id, parentId, sceneName, active, Actions, Infos, Schedules}]}` - scene catalogue. `Actions` are wire command strings, `Infos` their structured form.                                                                                                                                                                                                    |
 | (empty)          | `ampio/control/<user>/states` | `ampio/fromDB/<user>/data/states`           | `{List: [{id, stan_json}]}` - bulk snapshot of the account's object states.                                                                                                                                                                                                                                                                                       |
 | (empty)          | `ampio/control/<user>/info`   | `ampio/fromDB/<user>/data/info`             | `{Results: {mac, userId, serverVersion, serverRevision, mqttVersion, local_ip, device_id, ...}}` - server self-report, retained in the account namespace. `userId` is the asking account's id (`-1` for the reserved `admin` login). `AmpioServerInfo.access_tier` exposes it for config flows. A running client's tier is decided by its authenticated username. |
+
+### Every row carries the surface's whole column set
+
+A surface serves the same columns on every row of every reply. The library
+depends on that. A reply that drops one of them raises `AmpioProtocolError`, and
+the client reports the refusal through `diagnostics_snapshot()` and drops the
+message. To read a dropped column as "not configured" would turn a server fault
+into wrong values on an object.
+
+| Surface                 | Columns every row carries                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `config/devicesDetails` | `id`, `id_urzadzenia`, `typ_komponentu`, `interpretacja`, `funkcja`, `leafId`, `opis_menu`, `type`, `format`, `params`, `czas`, `url` |
+| `data/devices`          | the same set, minus `params`, `czas`, and `url`                                                                                       |
+| `config/devices`        | `id`, `mac`, `mac_global`, `nazwa_urzadzenia`, `typ_urzadzenia`, `wersja_softu`, `wersja_pcb`                                         |
+| `data/params_devices`   | `id`, `params`, `czas`, `url`                                                                                                         |
+| `data/states`           | `id`, `stan_json`                                                                                                                     |
+| `data/info`             | `mac`                                                                                                                                 |
+
+A column can hold an empty value. `leafId`, `opis_menu`, `url`, and `format` are
+text columns the M-SERV writes empty, or null, when the object carries no value.
+The `type` column is null or empty on an untagged object. What must be there is
+the column itself.
+
+The scene catalogue and the `locations` name table are the two exceptions. Their
+row shapes are not pinned against live replies, so only the envelope is strict.
+A row of either that carries no id, or no name, is skipped.
 
 ## Module description records (`device_api`)
 
