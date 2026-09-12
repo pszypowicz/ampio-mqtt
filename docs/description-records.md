@@ -195,11 +195,11 @@ the M-DOT-2, M-DOT-4, M-DOT-9, and M-DOT-18.
 
 ### Cover parameters (`AmpioObject.cover_parameters`)
 
-The same `params` blob holds the travel configuration of every roller channel a
-module drives. `resolve_records()` decodes it into
-`AmpioObject.cover_parameters`, a `CoverParameters`, with an `ObjectUpdated`
-dispatch on change. These are the values the Designer shows under "Roller blinds
-parameters".
+A module's record carries `params`, a base64 blob of its stored settings. Part
+of that blob holds the travel configuration of every roller channel the module
+drives. `resolve_records()` decodes it into `AmpioObject.cover_parameters`, a
+`CoverParameters`, with an `ObjectUpdated` dispatch on change. These are the
+values the Designer shows under "Roller blinds parameters".
 
 The section holds one group of fields per channel, interleaved by field rather
 than by channel. For a board whose section starts at offset `O` with `N`
@@ -226,14 +226,14 @@ section after the reversal lag, so both motor start lags read None there and the
 Designer hides them. The byte range `9N` to `10N - 1` has no label on either
 board, and the library does not read it.
 
-An object joins its channel the same way it joins its description record:
-`leaf_io_no` for a leafed object, and `funkcja` minus one for a leafless one.
-The percent object and the lamella object of one slat blind share a channel, so
-both carry the same values.
+An object joins its channel the same way it joins its description record. The
+key is `leaf_io_no` for a leafed object, and `funkcja` minus one for a leafless
+one. The percent object and the lamella object of one slat blind share a
+channel, so both carry the same values.
 
 Only a board whose layout is live-proven resolves. The Designer keys the layout
 by `(typ_urzadzenia, wersja_pcb)`, and the boards differ in the offset, the
-channel count, and the stride. Reading one with another's layout would produce
+channel count, and the stride. Reading one with another's layout produces
 confident wrong values, so an unlisted board reads None. The proven boards are
 the M-ROL-4s and the M-REL-2.
 
