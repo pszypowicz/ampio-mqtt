@@ -366,7 +366,13 @@ class AmpioStore:
         obj = self.objects.get(meta.id)
         created = obj is None
         if obj is None:
-            obj = AmpioObject(id=meta.id)
+            obj = AmpioObject(
+                id=meta.id,
+                id_urzadzenia=meta.id_urzadzenia,
+                typ_komponentu=meta.typ_komponentu,
+                interpretacja=meta.interpretacja,
+                funkcja=meta.funkcja,
+            )
         updates: dict[str, Any] = {
             name: getattr(meta, name) for name in _METADATA_FIELDS
         }
@@ -525,7 +531,21 @@ class AmpioStore:
             )
 
     def _handle_info(self, payload: str, applied: Applied) -> None:
+        """Apply a `data/info` reply, the M-SERV's self-report.
+
+        The reply names the asking account, which is the wire's own verdict
+        on the tier. The username decided the same question at
+        construction, and every subscription and request follows from that
+        decision, so a disagreement means the session is aimed at the wrong
+        surfaces. Nothing in the reply can fix that, so it is refused.
+        """
         info = _protocol.parse_server_info(payload)
+        if info.access_tier is not self._tier:
+            raise AmpioProtocolError(
+                f"The Ampio server reports account id {info.user_id}, the "
+                f"{info.access_tier.value} tier, for a session connected on "
+                f"the {self._tier.value} tier"
+            )
         previous = self.server_info
         # Warn when the version first becomes known or changes, not on the
         # re-request every reconnect issues.
@@ -698,16 +718,16 @@ class AmpioStore:
             return True
         return reported_at >= obj.updated_at
 
-    def _touch_module(self, module_id: int | None) -> None:
+    def _touch_module(self, module_id: int) -> None:
         """Mark the module as having produced live evidence just now.
 
         One clock only: the local receive time, because a live message is by
         definition received "now". Snapshot and catalogue seeds do not touch
         this - they replay DB state that may be arbitrarily old, which says
-        nothing about whether the module is alive.
+        nothing about whether the module is alive. An id the module list
+        does not carry touches nothing, which on the reference install is
+        the soft-deleted rows alone.
         """
-        if module_id is None:
-            return
         module = self.modules.get(module_id)
         if module is not None:
             self.modules[module_id] = replace(module, last_seen=time.time())
@@ -732,18 +752,16 @@ class AmpioStore:
                 # A binary output reports on `o`; an open-collector output
                 # (leaf class 67) reports a u8 on `a`, same 1-based channel.
                 prefix = "a" if obj.sf_id == _protocol.OC_OUTPUT_SF else "o"
-            if prefix is None or obj.funkcja is None or obj.id_urzadzenia is None:
+            if prefix is None:
                 continue
             module = self.modules.get(obj.id_urzadzenia)
-            if module is None or module.mac is None:
+            if module is None:
                 continue
             index[(module.mac, prefix, obj.funkcja)] = obj.id
         self._input_index = index
         by_mac: dict[int, int] = {}
         colliding: set[int] = set()
         for module in self.modules.values():
-            if module.mac is None:
-                continue
             if module.mac in by_mac:
                 colliding.add(module.mac)
             by_mac[module.mac] = module.id

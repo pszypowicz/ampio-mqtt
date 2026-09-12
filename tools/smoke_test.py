@@ -22,6 +22,7 @@ from collections.abc import Callable
 import aiomqtt
 
 from ampio_mqtt import (
+    AccessTier,
     AmpioClient,
     AmpioConnectionError,
     AmpioObject,
@@ -88,14 +89,16 @@ async def run(
     await asyncio.sleep(args.duration)
 
     objs = client.objects
-    types: dict[str | None, int] = {}
+    types: dict[str, int] = {}
     for o in objs.values():
         types[o.typ_komponentu] = types.get(o.typ_komponentu, 0) + 1
     sensors = [o for o in objs.values() if isinstance(o.kind, SensorKind)]
     print(f"\n=== Access tier: {client.access_tier.value} ===")
-    print(
-        f"=== Objects: {len(objs)} (sensors: {len(sensors)}), modules: {len(client.modules)} ==="
-    )
+    # The module catalogue answers the admin login alone, and reading it on
+    # any other account raises.
+    admin = client.access_tier is AccessTier.ADMIN
+    modules = len(client.modules) if admin else 0
+    print(f"=== Objects: {len(objs)} (sensors: {len(sensors)}), modules: {modules} ===")
     print("  by typ_komponentu:", types)
 
     print("\n=== Sensors (auto-discovered) ===")

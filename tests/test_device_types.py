@@ -1,4 +1,4 @@
-"""Tests for module type code -> model name resolution and hub detection."""
+"""Tests for module type code resolution: the model name and the mounting."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import pytest
 from ampio_mqtt.device_types import (
     MODULE_MODELS,
     MODULE_MOUNTING,
-    is_hub,
     module_model,
     module_mounting,
 )
@@ -36,19 +35,6 @@ def test_unknown_type_returns_none() -> None:
 
 def test_none_returns_none() -> None:
     assert module_model(None) is None
-
-
-# --- is_hub ---------------------------------------------------------------
-
-
-@pytest.mark.parametrize("code", [10, 0])  # M-SERV-s, VIRTUAL
-def test_hub_types(code: int) -> None:
-    assert is_hub(code) is True
-
-
-@pytest.mark.parametrize("code", [4, 44, 999, None])  # M-REL-8s, M-SENS, unknown
-def test_non_hub_types(code: int | None) -> None:
-    assert is_hub(code) is False
 
 
 # --- module_mounting (#115) -------------------------------------------------
@@ -102,6 +88,11 @@ def test_unclassified_codes_are_the_deliberate_set() -> None:
 
 
 def test_ampio_module_derives_mounting() -> None:
-    assert AmpioModule(id=1, typ_urzadzenia=44).mounting == "wall"
-    assert AmpioModule(id=2, typ_urzadzenia=4).mounting == "cabinet"
-    assert AmpioModule(id=3, typ_urzadzenia=None).mounting is None
+    def module(typ: int) -> AmpioModule:
+        return AmpioModule(
+            id=1, mac=1, mac_global=2, typ_urzadzenia=typ, wersja_softu=1, wersja_pcb=1
+        )
+
+    assert module(44).mounting == "wall"
+    assert module(4).mounting == "cabinet"
+    assert module(999).mounting is None  # a type code outside the catalogue

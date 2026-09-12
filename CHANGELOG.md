@@ -24,6 +24,11 @@ that lacks what its surface always serves is refused instead of read. The tier
 is fixed before the first connect, so there was never a reason to resolve a fact
 by trying one source and then another.
 
+The model stops typing a served fact as optional, and the admin-only read
+surface refuses a standard account instead of reading empty. Both were places
+where a consumer could not tell "the server did not say" from "the account is
+not served this".
+
 ### Added
 
 - **`AmpioObject.block`** holds the module's roller lock, verbatim. The module
@@ -56,6 +61,23 @@ by trying one source and then another.
 - **The held config table survives an eviction.** A re-granted object reads its
   Designer config flags at once, instead of reading them as unset until the next
   table reply.
+- **The catalogue columns are no longer optional on the model.**
+  `AmpioObject.id_urzadzenia`, `.typ_komponentu`, `.interpretacja` and
+  `.funkcja` are required, as are `AmpioModule.mac`, `.mac_global`,
+  `.typ_urzadzenia`, `.wersja_softu`, `.wersja_pcb`, and
+  `AmpioServerInfo.user_id`. Every live row carries them, so a consumer drops
+  its None checks. `AmpioServerInfo.access_tier` is an `AccessTier` rather than
+  an optional one.
+- **`modules`, `mserv` and `module_for()` raise on a standard account.** The
+  M-SERV serves the module catalogue to the admin login alone, and an empty
+  mapping reads the same as an install with no modules. `resolve_records()` and
+  the raw writes already refused that account.
+- **`mserv` no longer guesses.** It is the module row whose `mac_global` or
+  `mac` is the server's self-reported mac. The former fallback to "the one
+  hub-typed module" is gone, and with it `device_types.is_hub`.
+- **An `info` reply that contradicts the session's tier is refused.** The
+  username decides the tier and the reply's account id states it, so a
+  disagreement means every subscription is aimed at the wrong surface.
 
 ### Notes
 

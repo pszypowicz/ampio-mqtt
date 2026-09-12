@@ -283,5 +283,10 @@ def snapshot(*items: dict) -> str:
 
 
 def info(**fields: object) -> str:
-    """A server-info payload."""
-    return json.dumps({"Results": fields})
+    """A server-info payload.
+
+    Every reply names the asking account, and the library refuses one whose
+    account id contradicts the session's tier, so this defaults to the
+    administrator pseudo-id. A standard-account test passes its own.
+    """
+    return json.dumps({"Results": {"mac": 1, "userId": -1, **fields}})

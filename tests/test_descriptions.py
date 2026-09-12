@@ -42,6 +42,19 @@ from ampio_mqtt._protocol import (
 )
 from ampio_mqtt.models import AmpioObject
 
+
+def _object(**over: object) -> AmpioObject:
+    """An object carrying the catalogue columns every row serves."""
+    row: dict[str, object] = {
+        "id": 1,
+        "id_urzadzenia": 1,
+        "typ_komponentu": "",
+        "interpretacja": 0,
+        "funkcja": 1,
+    }
+    return AmpioObject(**{**row, **over})  # type: ignore[arg-type]
+
+
 LOCATIONS_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/locations"
 
 
@@ -259,10 +272,8 @@ def _entries(*specs: tuple[int, int, int, int, str]) -> tuple[OutputDescription,
 
 def test_resolve_designer_joins_location_and_type() -> None:
     objects = {
-        64: AmpioObject(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
-        48: AmpioObject(
-            id=48, typ_komponentu="roleta_procenty", leaf_id="0_cb89_5_0_1"
-        ),
+        64: _object(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
+        48: _object(id=48, typ_komponentu="roleta_procenty", leaf_id="0_cb89_5_0_1"),
     }
     by_mac = {
         0xCB89: _entries((12, 0, 14, 256, "Lampa"), (26, 1, 0, 0, "Roleta")),
@@ -276,10 +287,10 @@ def test_resolve_designer_joins_location_and_type() -> None:
 
 def test_resolve_designer_skips_the_unjoinable() -> None:
     objects = {
-        1: AmpioObject(id=1, typ_komponentu="flaga_x", leaf_id="0_cb89_3_0_0"),
-        2: AmpioObject(id=2, typ_komponentu="przekaznik", leaf_id=""),
-        3: AmpioObject(id=3, typ_komponentu="przekaznik", leaf_id="0_beef_257_2_0"),
-        4: AmpioObject(id=4, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_9"),
+        1: _object(id=1, typ_komponentu="flaga_x", leaf_id="0_cb89_3_0_0"),
+        2: _object(id=2, typ_komponentu="przekaznik", leaf_id=""),
+        3: _object(id=3, typ_komponentu="przekaznik", leaf_id="0_beef_257_2_0"),
+        4: _object(id=4, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_9"),
     }
     by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
     assert resolve_designer(objects, by_mac, {14: "P"}, frozenset(), {}) == {}
@@ -287,7 +298,7 @@ def test_resolve_designer_skips_the_unjoinable() -> None:
 
 def test_resolve_designer_skips_colliding_macs() -> None:
     objects = {
-        64: AmpioObject(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
+        64: _object(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
     }
     by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
     assert resolve_designer(objects, by_mac, {14: "P"}, frozenset({0xCB89}), {}) == {}
@@ -295,7 +306,7 @@ def test_resolve_designer_skips_colliding_macs() -> None:
 
 def test_resolve_designer_reads_empty_desc_as_none() -> None:
     objects = {
-        64: AmpioObject(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
+        64: _object(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
     }
     by_mac = {0xCB89: _entries((12, 0, 0, 0, ""))}
     assert resolve_designer(objects, by_mac, {}, frozenset(), {}) == {
@@ -307,7 +318,7 @@ def test_resolve_designer_reads_clear_sentinels_as_none() -> None:
     """A cleared Designer entry (outLoc 16383, desc ".") reads all-None,
     even when the names table carries the sentinel id."""
     objects = {
-        64: AmpioObject(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
+        64: _object(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
     }
     by_mac = {0xCB89: _entries((12, 0, 16383, 0, "."))}
     assert resolve_designer(objects, by_mac, {16383: "Bogus"}, frozenset(), {}) == {
@@ -316,7 +327,7 @@ def test_resolve_designer_reads_clear_sentinels_as_none() -> None:
 
 
 def test_resolve_designer_joins_a_flag_on_the_binary_flag_class() -> None:
-    objects = {152: AmpioObject(id=152, typ_komponentu="flaga", leaf_id="0_1_3_0_0")}
+    objects = {152: _object(id=152, typ_komponentu="flaga", leaf_id="0_1_3_0_0")}
     by_mac = {1: _entries((6, 0, 19, 21, "flag"), (12, 0, 1, 266, "relay"))}
     assert resolve_designer(objects, by_mac, {19: "Testowe"}, frozenset(), {}) == {
         152: DesignerRecord(location="Testowe", matter_device_type=21, desc="flag")
@@ -327,10 +338,10 @@ def test_resolve_designer_joins_a_leafless_object_through_funkcja() -> None:
     """No leaf: the module comes from id_urzadzenia and the channel from
     funkcja - 1, the relation every leafed object of the table kinds holds."""
     objects = {
-        153: AmpioObject(
+        153: _object(
             id=153, typ_komponentu="flaga", id_urzadzenia=1, funkcja=2, leaf_id=""
         ),
-        143: AmpioObject(
+        143: _object(
             id=143, typ_komponentu="przekaznik", id_urzadzenia=3, funkcja=1, leaf_id=""
         ),
     }
@@ -351,11 +362,14 @@ def test_resolve_designer_joins_a_leafless_object_through_funkcja() -> None:
 
 def test_resolve_designer_skips_a_leafless_object_without_a_module() -> None:
     objects = {
-        153: AmpioObject(
+        # A module id the sweep has no mac for, and a channel the answering
+        # module wrote no entry for.
+        153: _object(
             id=153, typ_komponentu="flaga", id_urzadzenia=9, funkcja=2, leaf_id=""
         ),
-        154: AmpioObject(id=154, typ_komponentu="flaga", funkcja=2, leaf_id=""),
-        155: AmpioObject(id=155, typ_komponentu="flaga", id_urzadzenia=1, leaf_id=""),
+        155: _object(
+            id=155, typ_komponentu="flaga", id_urzadzenia=1, funkcja=9, leaf_id=""
+        ),
     }
     by_mac = {1: _entries((6, 1, 19, 21, "test2"))}
     assert resolve_designer(objects, by_mac, {19: "Testowe"}, frozenset(), {1: 1}) == {}
@@ -571,6 +585,7 @@ async def test_resolve_records_decodes_panel_settings_for_a_proven_board() -> No
 async def test_resolve_records_leaves_panel_settings_none_for_an_unproven_board() -> (
     None
 ):
+
     client, broker = await _admin_client_with_catalogue()
     try:
         # Same panel family, a board revision nobody has read.

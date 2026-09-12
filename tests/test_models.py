@@ -12,12 +12,38 @@ from ampio_mqtt.device_types import module_model
 from ampio_mqtt.models import DesignerRecord, ModuleRecord
 
 
+# Every catalogue row carries these columns on both tiers, so an object
+# always holds them. A test names only what it is about.
+def _object(**over: object) -> AmpioObject:
+    row: dict[str, object] = {
+        "id": 1,
+        "id_urzadzenia": 1,
+        "typ_komponentu": "",
+        "interpretacja": 0,
+        "funkcja": 1,
+    }
+    return AmpioObject(**{**row, **over})  # type: ignore[arg-type]
+
+
+def _module(**over: object) -> AmpioModule:
+    """A module carrying the columns every module-list row serves."""
+    row: dict[str, object] = {
+        "id": 1,
+        "mac": 0xCAFE,
+        "mac_global": 0xBEEF,
+        "typ_urzadzenia": 44,
+        "wersja_softu": 908,
+        "wersja_pcb": 1,
+    }
+    return AmpioModule(**{**row, **over})  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [(None, False), ("", False), ("0", False), ("1", True), ("255", True)],
 )
 def test_is_on_interpretation(value, expected) -> None:
-    assert AmpioObject(id=1, state=value).is_on is expected
+    assert _object(id=1, state=value).is_on is expected
 
 
 @pytest.mark.parametrize(
@@ -37,18 +63,18 @@ def test_is_on_interpretation(value, expected) -> None:
     ],
 )
 def test_numeric_value_interpretation(value, expected) -> None:
-    assert AmpioObject(id=1, state=value).numeric_value == expected
+    assert _object(id=1, state=value).numeric_value == expected
 
 
 def test_leaf_key_is_the_physical_output_token() -> None:
     """leaf_key returns leaf_<leaf_id>."""
-    obj = AmpioObject(id=1, leaf_id="0_1f2e_257_2_5")
+    obj = _object(id=1, leaf_id="0_1f2e_257_2_5")
     assert obj.leaf_key == "leaf_0_1f2e_257_2_5"
 
 
 def test_object_key_is_the_per_object_token() -> None:
     """object_key returns obj_<id>."""
-    obj = AmpioObject(id=7)
+    obj = _object(id=7)
     assert obj.object_key == "obj_7"
 
 
@@ -57,25 +83,25 @@ def test_object_key_is_the_per_object_token() -> None:
     [("0_cb9b_74_0_1", "leaf_0_cb9b_74_0_1"), ("", None)],
 )
 def test_leaf_key_from_leaf_id(leaf_id: str, expected: str | None) -> None:
-    assert AmpioObject(id=1, leaf_id=leaf_id).leaf_key == expected
+    assert _object(id=1, leaf_id=leaf_id).leaf_key == expected
 
 
 def test_object_key_is_the_object_id() -> None:
-    assert AmpioObject(id=150, leaf_id="0_be82_257_2_2").object_key == "obj_150"
+    assert _object(id=150, leaf_id="0_be82_257_2_2").object_key == "obj_150"
 
 
 def test_object_key_separates_views_of_one_output() -> None:
     """Two Designer views of one output share a leaf but not an identity."""
     leaf = "0_be82_257_2_2"
-    relay_view = AmpioObject(id=150, leaf_id=leaf)
-    bell_view = AmpioObject(id=151, leaf_id=leaf)
+    relay_view = _object(id=150, leaf_id=leaf)
+    bell_view = _object(id=151, leaf_id=leaf)
     assert relay_view.leaf_key == bell_view.leaf_key
     assert relay_view.object_key != bell_view.object_key
 
 
 def test_object_key_survives_an_empty_leaf_id() -> None:
     """System objects and Matter-unchecked rows carry no leaf, but do carry an id."""
-    assert AmpioObject(id=99, leaf_id="").object_key == "obj_99"
+    assert _object(id=99, leaf_id="").object_key == "obj_99"
 
 
 @pytest.mark.parametrize(
@@ -104,7 +130,7 @@ def test_visibility_predicate(
     params: int,
     visible: bool,
 ) -> None:
-    obj = AmpioObject(id=1, typ_komponentu=typ, leaf_id=leaf_id, params=params)
+    obj = _object(id=1, typ_komponentu=typ, leaf_id=leaf_id, params=params)
     assert obj.visible is visible
 
 
@@ -113,7 +139,7 @@ def test_visibility_predicate(
     [("symulacja", True), ("detekcja", True), ("flaga", False), (None, False)],
 )
 def test_is_system_names_the_two_system_types(typ: str | None, is_system: bool) -> None:
-    assert AmpioObject(id=1, typ_komponentu=typ).is_system is is_system
+    assert _object(id=1, typ_komponentu=typ).is_system is is_system
 
 
 @pytest.mark.parametrize(
@@ -128,7 +154,7 @@ def test_is_system_names_the_two_system_types(typ: str | None, is_system: bool) 
     ],
 )
 def test_params_flags(params: int, hidden: bool) -> None:
-    obj = AmpioObject(id=1, params=params)
+    obj = _object(id=1, params=params)
     assert obj.hidden is hidden
 
 
@@ -144,7 +170,7 @@ def test_params_flags(params: int, hidden: bool) -> None:
     ],
 )
 def test_read_only_reads_params_bit_6(params: int, read_only: bool) -> None:
-    obj = AmpioObject(id=1, params=params)
+    obj = _object(id=1, params=params)
     assert obj.read_only is read_only
 
 
@@ -167,7 +193,7 @@ def test_read_only_reads_params_bit_6(params: int, read_only: bool) -> None:
 def test_pulse_ms_reads_czas_only_on_the_turn_on_time_types(
     typ: str | None, czas: int, pulse_ms: int
 ) -> None:
-    assert AmpioObject(id=1, typ_komponentu=typ, czas=czas).pulse_ms == pulse_ms
+    assert _object(id=1, typ_komponentu=typ, czas=czas).pulse_ms == pulse_ms
 
 
 @pytest.mark.parametrize(
@@ -196,7 +222,7 @@ def test_pulse_ms_reads_czas_only_on_the_turn_on_time_types(
 def test_unit_reads_the_format_tail_then_the_url_on_sensor_kinds(
     typ: str, url: str, fmt: str, unit: str | None
 ) -> None:
-    obj = AmpioObject(id=1, typ_komponentu=typ, interpretacja=1, url=url, format=fmt)
+    obj = _object(id=1, typ_komponentu=typ, interpretacja=1, url=url, format=fmt)
     assert obj.unit == unit
 
 
@@ -226,7 +252,7 @@ def test_unit_reads_the_format_tail_then_the_url_on_sensor_kinds(
 def test_decimals_reads_the_explicit_precision_of_a_fixed_point_format(
     typ: str, fmt: str, decimals: int | None
 ) -> None:
-    obj = AmpioObject(id=1, typ_komponentu=typ, interpretacja=1, format=fmt)
+    obj = _object(id=1, typ_komponentu=typ, interpretacja=1, format=fmt)
     assert obj.decimals == decimals
 
 
@@ -246,7 +272,7 @@ def test_decimals_reads_the_explicit_precision_of_a_fixed_point_format(
 def test_bell_reads_params_bit_15_only_on_relay_and_flag(
     typ: str | None, params: int, bell: bool
 ) -> None:
-    obj = AmpioObject(id=1, typ_komponentu=typ, params=params)
+    obj = _object(id=1, typ_komponentu=typ, params=params)
     assert obj.bell is bell
 
 
@@ -257,17 +283,17 @@ def test_hidden_overrides_leaf_id_visibility() -> None:
     twin share a leaf_id, so the leaf_id heuristic keeps both and the consumer's
     unique-id collides. The phantom carries bit 4, so it is filtered out.
     """
-    phantom = AmpioObject(
+    phantom = _object(
         id=1, typ_komponentu="lin_wej", leaf_id="0_cb97_74_0_1", params=17
     )
-    labelled = AmpioObject(
+    labelled = _object(
         id=2, typ_komponentu="lin_wej", leaf_id="0_cb97_74_0_1", params=(1 << 37) | 1
     )
     assert phantom.visible is False
     assert labelled.visible is True
     # A system object the M-SERV explicitly hid (bit 4) is dropped too, even
     # though is_system would otherwise force it visible.
-    assert AmpioObject(id=3, typ_komponentu="symulacja", params=16).visible is False
+    assert _object(id=3, typ_komponentu="symulacja", params=16).visible is False
 
 
 # --- derived fields: kind and model own their inputs (#94) ------------------
@@ -276,32 +302,32 @@ def test_hidden_overrides_leaf_id_visibility() -> None:
 def test_kind_derives_from_the_metadata_inputs() -> None:
     """A seeded instance carries the same kind the store would compute -
     the derivation lives in the model, not at every construction site."""
-    assert AmpioObject(id=1, typ_komponentu="led").kind == classify("led", None)
-    assert AmpioObject(id=1).kind == classify(None, None)  # the generic sensor
+    assert _object(id=1, typ_komponentu="led").kind == classify("led", None)
+    assert _object(id=1).kind == classify(None, None)  # the generic sensor
 
 
 def test_kind_rederives_on_replace() -> None:
-    obj = AmpioObject(id=1, typ_komponentu="led")
+    obj = _object(id=1, typ_komponentu="led")
     assert replace(obj, typ_komponentu="rgbw").kind == classify("rgbw", None)
 
 
 def test_kind_cannot_be_passed() -> None:
     """No instance can hold a kind that disagrees with its inputs."""
     with pytest.raises(TypeError):
-        AmpioObject(id=1, kind=classify("led", None))  # type: ignore[call-arg]
+        _object(id=1, kind=classify("led", None))  # type: ignore[call-arg]
 
 
 def test_module_model_derives_from_type() -> None:
-    module = AmpioModule(id=1, typ_urzadzenia=4)
+    module = _module(id=1, typ_urzadzenia=4)
     assert module.model == module_model(4)
     assert module.model is not None
     assert replace(module, typ_urzadzenia=None).model is None
     with pytest.raises(TypeError):
-        AmpioModule(id=1, model="M-REL")  # type: ignore[call-arg]
+        _module(id=1, model="M-REL")  # type: ignore[call-arg]
 
 
 def test_reg_classifies_as_thermostat_and_surfaces_the_running_flag() -> None:
-    obj = AmpioObject(id=138, typ_komponentu="reg")
+    obj = _object(id=138, typ_komponentu="reg")
     assert isinstance(obj.kind, ThermostatKind)
     assert replace(obj, state="1").is_on  # the surfaced value is the running flag
 
@@ -323,7 +349,7 @@ def test_reg_classifies_as_thermostat_and_surfaces_the_running_flag() -> None:
 def test_module_mac_parses_strictly(leaf_id: str, expected: int | None) -> None:
     """`0_<macHex>_<sfId>_<subSfId>_<ioNo>` yields the module's override mac;
     any other shape yields None rather than a half-parsed guess."""
-    assert AmpioObject(id=1, leaf_id=leaf_id).module_mac == expected
+    assert _object(id=1, leaf_id=leaf_id).module_mac == expected
 
 
 @pytest.mark.parametrize(
@@ -339,17 +365,17 @@ def test_is_server_owned_reads_the_mserv_override_mac(
 ) -> None:
     """Served identically on both tiers via leafId, so server-owned
     objects anchor to the hub device without a module catalogue."""
-    assert AmpioObject(id=1, leaf_id=leaf_id).is_server_owned is server_owned
+    assert _object(id=1, leaf_id=leaf_id).is_server_owned is server_owned
 
 
 @pytest.mark.parametrize(("mac", "expected"), [(47846, "47846"), (1, "1")])
 def test_server_key_is_the_decimal_mac(mac: int, expected: str) -> None:
     """The canonical registry-scoping string; its format is a promise."""
-    assert AmpioServerInfo(mac=mac).server_key == expected
+    assert AmpioServerInfo(mac=mac, user_id=-1).server_key == expected
 
 
 def _colored(value: str | None) -> AmpioObject:
-    return AmpioObject(id=1, typ_komponentu="rgbw", state=value)
+    return _object(id=1, typ_komponentu="rgbw", state=value)
 
 
 @pytest.mark.parametrize(
@@ -377,12 +403,12 @@ def test_rgbw_decodes_the_packed_state(
 
 def test_rgbw_reads_none_for_non_color_kinds() -> None:
     """A dimmer's 0-255 level must not masquerade as a color."""
-    dimmer = AmpioObject(id=1, typ_komponentu="led", state="255")
+    dimmer = _object(id=1, typ_komponentu="led", state="255")
     assert dimmer.rgbw is None
 
 
 def _cover(value: str | None, typ: str = "roleta_procenty") -> AmpioObject:
-    return AmpioObject(id=1, typ_komponentu=typ, state=value)
+    return _object(id=1, typ_komponentu=typ, state=value)
 
 
 @pytest.mark.parametrize(
@@ -403,28 +429,28 @@ def test_position_reads_none_off_the_position_axis() -> None:
 
 
 def test_record_survives_replace() -> None:
-    obj = AmpioObject(id=1, record=DesignerRecord(location="Potter"))
+    obj = _object(id=1, record=DesignerRecord(location="Potter"))
     assert replace(obj, state="1").record == DesignerRecord(location="Potter")
 
 
 def test_leaf_io_no_parses_last_segment() -> None:
-    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_7").leaf_io_no == 7
-    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_0").leaf_io_no == 0
-    assert AmpioObject(id=1, leaf_id="").leaf_io_no is None
-    assert AmpioObject(id=1, leaf_id="0_cb89_257_2_x").leaf_io_no is None
-    assert AmpioObject(id=1, leaf_id="junk").leaf_io_no is None
+    assert _object(id=1, leaf_id="0_cb89_257_2_7").leaf_io_no == 7
+    assert _object(id=1, leaf_id="0_cb89_257_2_0").leaf_io_no == 0
+    assert _object(id=1, leaf_id="").leaf_io_no is None
+    assert _object(id=1, leaf_id="0_cb89_257_2_x").leaf_io_no is None
+    assert _object(id=1, leaf_id="junk").leaf_io_no is None
 
 
 def test_sf_id_and_sub_sf_id_parse_the_middle_segments():
     """sf_id and sub_sf_id read the third and fourth leaf_id segments."""
-    obj = AmpioObject(id=1, leaf_id="0_1f2e_257_2_5")
+    obj = _object(id=1, leaf_id="0_1f2e_257_2_5")
     assert obj.sf_id == 257
     assert obj.sub_sf_id == 2
 
 
 def test_sf_id_reads_none_for_a_malformed_leaf_id():
     """A leaf_id that does not parse yields None on every segment."""
-    obj = AmpioObject(id=1, leaf_id="not-a-leaf")
+    obj = _object(id=1, leaf_id="not-a-leaf")
     assert obj.sf_id is None
     assert obj.sub_sf_id is None
     assert obj.leaf_io_no is None
@@ -432,21 +458,21 @@ def test_sf_id_reads_none_for_a_malformed_leaf_id():
 
 def test_sf_id_reads_none_for_an_empty_leaf_id():
     """System objects and Matter-unchecked rows carry an empty leaf_id."""
-    obj = AmpioObject(id=1, leaf_id="")
+    obj = _object(id=1, leaf_id="")
     assert obj.sf_id is None
     assert obj.sub_sf_id is None
 
 
 def test_sf_id_reads_none_when_the_segment_is_not_a_number():
     """A non-numeric segment yields None rather than raising."""
-    obj = AmpioObject(id=1, leaf_id="0_1f2e_abc_2_5")
+    obj = _object(id=1, leaf_id="0_1f2e_abc_2_5")
     assert obj.sf_id is None
     assert obj.sub_sf_id == 2
 
 
 def test_record_bundles_default_to_none() -> None:
-    assert AmpioObject(id=1).record is None
-    assert AmpioModule(id=1).record is None
+    assert _object(id=1).record is None
+    assert _module(id=1).record is None
 
 
 def test_record_bundle_fields_default_to_none() -> None:

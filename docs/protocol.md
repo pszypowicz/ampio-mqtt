@@ -66,7 +66,7 @@ into wrong values on an object.
 | `config/devices`        | `id`, `mac`, `mac_global`, `nazwa_urzadzenia`, `typ_urzadzenia`, `wersja_softu`, `wersja_pcb`                                         |
 | `data/params_devices`   | `id`, `params`, `czas`, `url`                                                                                                         |
 | `data/states`           | `id`, `stan_json`                                                                                                                     |
-| `data/info`             | `mac`                                                                                                                                 |
+| `data/info`             | `mac`, `userId`                                                                                                                       |
 
 A column can hold an empty value. `leafId`, `opis_menu`, `url`, and `format` are
 text columns the M-SERV writes empty, or null, when the object carries no value.

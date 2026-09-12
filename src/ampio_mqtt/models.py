@@ -281,20 +281,22 @@ class AmpioObject:
     through the read surface.
     """
 
-    # The per-object identity source, exposed as `object_key`. An object
-    # delete is soft on the `config` catalogue, so the autoincrement never
-    # renumbers. `id_urzadzenia` is the volatile one: it mirrors the module
-    # row, which is reassigned when a module is replaced.
-    # docs/identity.md is the home for the identity model.
+    # The columns every catalogue row carries on both tiers, so every
+    # object holds them (docs/protocol.md). The per-object identity source
+    # is `id`, exposed as `object_key`. An object delete is soft on the
+    # `config` catalogue, so the autoincrement never renumbers.
+    # `id_urzadzenia` is the volatile one: it mirrors the module row, which
+    # is reassigned when a module is replaced. docs/identity.md is the home
+    # for the identity model.
     id: int
-    id_urzadzenia: int | None = None  # physical module
-    typ_komponentu: str | None = None
-    opis_menu: str | None = None
-    interpretacja: int | None = None
+    id_urzadzenia: int  # physical module
+    typ_komponentu: str
+    interpretacja: int
     # Physical channel index within the module (obiekty.funkcja);
     # replacement-stable but NOT unique - objects can share one. Routes raw
     # channel events to this object.
-    funkcja: int | None = None
+    funkcja: int
+    opis_menu: str | None = None
     # `leafId`, identical on both discovery surfaces. Empty for system
     # objects, and Designer clears it when an object's Matter box is
     # unchecked. The physical-output key (`leaf_key`) and the parse source
@@ -677,16 +679,19 @@ class AmpioModule:
     Frozen, exactly as :class:`AmpioObject` is.
     """
 
+    # Every module-list row carries these (docs/protocol.md).
     id: int
     # The effective bus address (Designer "MAC override"), keying the raw
     # `ampio/from/<MAC>/...` topics. Replacement-stable - prefer it over
     # `mac_global` as the module key; may be a non-unique default (the
     # M-SERV is 1). docs/identity.md carries the full identity model.
-    mac: int | None = None  # devices.mac (override / effective bus address)
+    mac: int  # devices.mac (override / effective bus address)
     # Factory-burned hardware id; CHANGES when the unit is replaced.
-    mac_global: int | None = None  # devices.mac_global (factory id)
+    mac_global: int  # devices.mac_global (factory id)
+    typ_urzadzenia: int
+    wersja_softu: int
+    wersja_pcb: int
     nazwa_urzadzenia: str | None = None  # user-given module name
-    typ_urzadzenia: int | None = None
     # Resolved model name for `typ_urzadzenia`. Derived - never passed:
     # computed on every construction (#94), None when `typ_urzadzenia` is
     # unknown or missing.
@@ -696,8 +701,6 @@ class AmpioModule:
     # Decoration for device info only - never a topology input. None when
     # unclassified.
     mounting: Mounting | None = field(init=False)
-    wersja_softu: int | None = None
-    wersja_pcb: int | None = None
     # The module's DEVICE_NAME record entry, admin sweep only; None
     # until a sweep covers the module.
     record: ModuleRecord | None = None
@@ -752,8 +755,9 @@ class AmpioServerInfo:
 
     mac: int  # the M-SERV's own CAN mac (matches a module's mac_global)
     # The asking account's id: -1 for the reserved `admin` login, the
-    # users-table row id for an app-created user. See `access_tier`.
-    user_id: int | None = None
+    # users-table row id for an app-created user. Every reply carries it,
+    # so a reply without one does not parse. See `access_tier`.
+    user_id: int
     server_version: str | None = None  # the M-SERV server application's version
     server_revision: str | None = None
     mqtt_version: str | None = None  # broker version
@@ -773,19 +777,17 @@ class AmpioServerInfo:
         return str(self.mac)
 
     @property
-    def access_tier(self) -> AccessTier | None:
-        """Account tier per the account id in the info reply, or None.
+    def access_tier(self) -> AccessTier:
+        """Account tier per the account id in the info reply.
 
-        The wire's own confirmation for a config flow reading a
-        :meth:`AmpioClient.check_connection` result; a running client's
-        operational tier comes from the authenticated username instead.
-        The reserved ``admin`` login reports the pseudo-user id ``-1``;
-        app-created users carry a positive row id and are always the
-        standard tier (docs/account-tiers.md). None when the reply carried
-        no ``userId``.
+        The wire's own verdict on the question the authenticated username
+        answers at construction. A config flow reads it from a
+        :meth:`AmpioClient.check_connection` result, and a running client
+        refuses a reply that contradicts its own tier. The reserved
+        ``admin`` login reports the pseudo-user id ``-1``; app-created
+        users carry a positive row id and are always the standard tier
+        (docs/account-tiers.md).
         """
-        if self.user_id is None:
-            return None
         return AccessTier.ADMIN if self.user_id == -1 else AccessTier.RESTRICTED
 
 

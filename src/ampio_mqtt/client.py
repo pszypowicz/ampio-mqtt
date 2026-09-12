@@ -52,7 +52,6 @@ from ._protocol import (
 )
 from ._store import AmpioStore
 from .classification import OutputKind
-from .device_types import is_hub
 from .errors import AmpioConnectionError, AmpioProtocolError, AmpioTimeoutError
 from .events import (
     AuthFailed,
@@ -451,8 +450,25 @@ class AmpioClient:
 
     @property
     def modules(self) -> Mapping[int, AmpioModule]:
-        """All known physical modules keyed by id, as a read-only live view."""
+        """All known physical modules keyed by id, as a read-only live view.
+
+        Admin tier only: the M-SERV serves the module catalogue to the
+        reserved ``admin`` login alone, so this raises ``RuntimeError`` on a
+        standard account rather than reading as an install with no modules.
+        A consumer that must group entities by module on either tier reads
+        :pyattr:`AmpioObject.module_mac`, which both catalogues carry
+        (docs/identity.md).
+        """
+        self._require_module_catalogue("modules")
         return MappingProxyType(self._store.modules)
+
+    def _require_module_catalogue(self, what: str) -> None:
+        """Refuse a module-catalogue read on the tier that is not served it."""
+        if self._tier is not AccessTier.ADMIN:
+            raise RuntimeError(
+                f"{what} needs the reserved admin login - the M-SERV serves "
+                "the module catalogue to no other account"
+            )
 
     @property
     def server_info(self) -> AmpioServerInfo | None:
@@ -468,23 +484,25 @@ class AmpioClient:
     def mserv(self) -> AmpioModule | None:
         """The M-SERV's own module row, for naming the hub device.
 
-        Prefers cross-validating the server's self-reported mac against
-        each module's mac_global/mac; falls back to the unique hub-typed
-        module. None when neither identifies one - ambiguity included -
-        and always None on the restricted tier, which never receives the
-        module catalogue. Tier-independent device grouping needs no module
-        row at all: see :pyattr:`AmpioObject.is_server_owned`.
+        The row whose ``mac_global`` or ``mac`` is the server's
+        self-reported mac. The override arm covers a replaced unit, whose
+        factory id changes while the re-stamped override does not. Nothing
+        else identifies the row, so no other module stands in for it.
+
+        None until both the module catalogue and the server info have
+        arrived, which :meth:`wait_for_initial_discovery` waits for. A
+        lasting None therefore says the module list does not carry the
+        M-SERV's own row. Admin tier only, like :pyattr:`modules`.
+        Tier-independent device grouping needs no module row at all: see
+        :pyattr:`AmpioObject.is_server_owned`.
         """
+        self._require_module_catalogue("mserv")
         info = self._store.server_info
-        if info is not None:
-            for mod in self._store.modules.values():
-                if info.mac in (mod.mac_global, mod.mac):
-                    return mod
-        candidates = [
-            mod for mod in self._store.modules.values() if is_hub(mod.typ_urzadzenia)
-        ]
-        if len(candidates) == 1:
-            return candidates[0]
+        if info is None:
+            return None
+        for mod in self._store.modules.values():
+            if info.mac in (mod.mac_global, mod.mac):
+                return mod
         return None
 
     def module_for(self, obj: AmpioObject) -> AmpioModule | None:
@@ -494,14 +512,16 @@ class AmpioClient:
         carries a leaf-derived :pyattr:`AmpioObject.module_mac`, the row's
         mac must agree with it - DB ids are volatile across a module
         replacement while the leaf mac is the stable identity
-        (docs/identity.md). A leafless object has no mac to gate on, so
-        its join stands as is. None when the join finds no row or the macs
-        disagree, and always on the restricted tier, which never receives
-        the module catalogue; tier-independent grouping reads
+        (docs/identity.md). A leafless object has no mac to gate on, so its
+        join stands as is.
+
+        None when the join does not resolve, which on the reference install
+        happens for the soft-deleted rows alone: their ``id_urzadzenia``
+        points at a module the list no longer carries. Admin tier only,
+        like :pyattr:`modules`; tier-independent grouping reads
         ``module_mac`` directly.
         """
-        if obj.id_urzadzenia is None:
-            return None
+        self._require_module_catalogue("module_for()")
         module = self._store.modules.get(obj.id_urzadzenia)
         if module is None:
             return None
