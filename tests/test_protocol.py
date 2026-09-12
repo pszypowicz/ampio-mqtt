@@ -382,6 +382,9 @@ def test_parse_server_info_extracts_safe_fields() -> None:
         # construction.
         json.dumps({"Results": {}}),
         json.dumps({"Results": {"serverVersion": "1865"}}),
+        # ... and always names the asking account, which is the wire's own
+        # verdict on the tier the session is served.
+        json.dumps({"Results": {"mac": 1}}),
     ],
 )
 def test_parse_server_info_refuses_a_reply_without_the_identity(payload: str) -> None:
@@ -453,10 +456,16 @@ def test_parse_server_info_coerces_numeric_version_fields() -> None:
     """The version fields are typed str; an int wire value must land as a
     string, or `server_below_baseline` would raise on splitting it."""
     payload = json.dumps(
-        {"Results": {"mac": 1, "serverVersion": 1865, "serverRevision": 409}}
+        {
+            "Results": {
+                "mac": 1,
+                "userId": -1,
+                "serverVersion": 1865,
+                "serverRevision": 409,
+            }
+        }
     )
     info = parse_server_info(payload)
-    assert info is not None
     assert info.server_version == "1865"
     assert info.server_revision == "409"
 
@@ -484,12 +493,13 @@ def test_server_below_baseline(version: str | None, below: bool) -> None:
         (-1, AccessTier.ADMIN),
         (4, AccessTier.RESTRICTED),
         (0, AccessTier.RESTRICTED),
-        (None, None),
     ],
 )
 def test_server_info_access_tier_from_account_id(
-    user_id: int | None, tier: AccessTier | None
+    user_id: int, tier: AccessTier
 ) -> None:
+    """Every info reply carries the asking account's id, so the wire's own
+    tier verdict is always readable."""
     assert AmpioServerInfo(mac=1, user_id=user_id).access_tier is tier
 
 

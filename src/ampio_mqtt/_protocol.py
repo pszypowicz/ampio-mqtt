@@ -628,12 +628,8 @@ def resolve_designer(
             mac = obj.module_mac
             out_no = obj.leaf_io_no
         else:
-            mac = (
-                mac_by_device_id.get(obj.id_urzadzenia)
-                if obj.id_urzadzenia is not None
-                else None
-            )
-            out_no = obj.funkcja - 1 if obj.funkcja is not None else None
+            mac = mac_by_device_id.get(obj.id_urzadzenia)
+            out_no = obj.funkcja - 1
         if mac is None or out_no is None:
             continue
         if mac in colliding_macs:
@@ -798,10 +794,11 @@ def parse_server_info(payload: str) -> AmpioServerInfo:
     """Parse a server-info payload, keeping only the safe fields.
 
     The baseline server wraps the fields in a ``Results`` object and always
-    reports its ``mac`` - the identity every consumer scopes a registry by.
-    A payload without either is refused, so every
-    :class:`AmpioServerInfo` carries a populated
-    :pyattr:`AmpioServerInfo.server_key`.
+    reports two things: its ``mac``, the identity every consumer scopes a
+    registry by, and ``userId``, the asking account. A payload missing any
+    of the three is refused, so every :class:`AmpioServerInfo` carries a
+    populated :pyattr:`AmpioServerInfo.server_key` and a readable
+    :pyattr:`AmpioServerInfo.access_tier`.
     """
     try:
         outer = json.loads(payload)
@@ -812,7 +809,7 @@ def parse_server_info(payload: str) -> AmpioServerInfo:
         raise AmpioProtocolError(f"The Ampio {_INFO} reply carries no `Results` object")
     return AmpioServerInfo(
         mac=_int_column(data, "mac", _INFO),
-        user_id=to_int(data.get("userId")),
+        user_id=_int_column(data, "userId", _INFO),
         server_version=_to_str(data.get("serverVersion")),
         server_revision=_to_str(data.get("serverRevision")),
         mqtt_version=_to_str(data.get("mqttVersion")),

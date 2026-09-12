@@ -468,7 +468,6 @@ async def test_restricted_account_completes_via_data_surface_fallback() -> None:
         assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
         assert obj.leaf_key == "leaf_0_cb9b_75_0_0"
         assert obj.visible is True
-        assert client.modules == {}
         assert client.server_info is not None and client.server_info.mac == 99
     finally:
         await client.disconnect()

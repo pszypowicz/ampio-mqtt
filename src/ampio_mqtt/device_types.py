@@ -2,9 +2,8 @@
 
 The `typ_urzadzenia` field reported for each module is a numeric hardware
 type code. :func:`module_model` resolves it to the human model name (for
-example 44 -> M-SENS) for a consumer's device info, and :func:`is_hub`
-answers the one capability question the library itself has - which module
-is the M-SERV - for :pyattr:`AmpioClient.mserv`.
+example 44 -> M-SENS) for a consumer's device info, and
+:func:`module_mounting` to the curated mounting class.
 
 The table is derived from the device-type catalogue published by Ampio
 in `node-red-contrib-ampio` (file `ampioin/db/devtypes.json`), a verbatim
@@ -138,14 +137,3 @@ def module_mounting(type_code: int | None) -> Mounting | None:
     if type_code is None:
         return None
     return MODULE_MOUNTING.get(type_code)
-
-
-def is_hub(type_code: int | None) -> bool:
-    """Whether a module type code is an M-SERV-class hub.
-
-    The upstream catalogue marks the hub role only through the model name:
-    the M-SERV variants share the ``M-SERV-`` prefix, and ``VIRTUAL`` is
-    the M-SERV's own virtual-module face.
-    """
-    model = module_model(type_code)
-    return model is not None and (model.startswith("M-SERV-") or model == "VIRTUAL")

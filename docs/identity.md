@@ -115,13 +115,20 @@ Three helpers close the loop for a consumer that builds devices on `module_mac`.
 `AmpioObject.is_server_owned` marks the objects that belong to the M-SERV itself
 (their `leafId` embeds its override mac). They anchor to the hub device
 identically on both tiers. `AmpioClient.mserv` returns the M-SERV's own module
-row - name, model, versions - on the admin tier that has the catalogue.
+row - name, model, versions - on the admin tier that has the catalogue. It is
+the row whose `mac_global` or `mac` is the server's self-reported mac, and
+nothing else in the list stands in for it. The override arm covers a replaced
+unit, whose factory id changes while the re-stamped override does not.
+
 `AmpioClient.module_for(obj)` resolves any object to its catalogue row. It joins
 on `id_urzadzenia` and gates on mac agreement, so the volatile DB join can never
 pair an object with a replaced module's stale row. The join keys the lookup
 rather than the mac, because override macs can collide across rows. The mac then
 gates what the join found. A leafless object has no mac to gate on, so its join
-stands as is. It answers on the admin tier only.
+stands as is. On the reference install the join fails for the soft-deleted rows
+alone: their `id_urzadzenia` points at a module the list no longer carries.
+
+Both answer on the admin tier only, and raise on a standard account.
 
 `AmpioObject.sibling_module_mac` is the module lookup that works on both tiers.
 Every leafed object on the same `id_urzadzenia` embeds the module's override mac

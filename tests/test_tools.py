@@ -37,6 +37,8 @@ from conftest import (
     details,
     devices,
     info,
+    params_table,
+    snapshot,
 )
 
 from ampio_mqtt import AmpioClient, ModuleFunction
@@ -70,8 +72,11 @@ def _discovery(*rows: dict) -> list[Message]:
     """The restricted tier's four initial replies, so ``connect()`` completes."""
     return [
         Message(DATA_DEVICES_TOPIC, details(*rows).encode()),
-        Message(PARAMS_DEVICES_TOPIC, devices().encode()),
-        Message(STATES_TOPIC, devices().encode()),
+        Message(
+            PARAMS_DEVICES_TOPIC,
+            params_table(*({"id": r["id"]} for r in rows)).encode(),
+        ),
+        Message(STATES_TOPIC, snapshot().encode()),
         Message(INFO_TOPIC, info(mac=1, userId="7").encode()),
     ]
 
@@ -279,8 +284,8 @@ def _admin_discovery(*rows: dict) -> list[Message]:
     return [
         Message(ADMIN_DETAILS_TOPIC, details().encode()),
         Message(ADMIN_DEVICES_TOPIC, devices(*rows).encode()),
-        Message(ADMIN_STATES_TOPIC, devices().encode()),
-        Message(ADMIN_INFO_TOPIC, info(mac=1, userId="7").encode()),
+        Message(ADMIN_STATES_TOPIC, snapshot().encode()),
+        Message(ADMIN_INFO_TOPIC, info(mac=1, userId="-1").encode()),
     ]
 
 

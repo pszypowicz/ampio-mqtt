@@ -258,7 +258,7 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
 
 def test_the_store_is_the_only_thing_holding_state() -> None:
     store = _store()
-    _apply(store, f"ampio/fromDB/{USER}/data/info", '{"Results": {"mac": "47846"}}')
+    _apply(store, f"ampio/fromDB/{USER}/data/info", info(mac="47846"))
     assert store.server_info is not None and store.server_info.mac == 47846
     assert isinstance(store.objects, dict)
     assert all(isinstance(o, AmpioObject) for o in store.objects.values())
@@ -267,7 +267,7 @@ def test_the_store_is_the_only_thing_holding_state() -> None:
 def test_a_below_baseline_server_warns_once(caplog: pytest.LogCaptureFixture) -> None:
     store = _store()
     topic = f"ampio/fromDB/{USER}/data/info"
-    payload = '{"Results": {"mac": 1, "serverVersion": "409"}}'
+    payload = info(serverVersion="409")
     with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
         _apply(store, topic, payload)
         # The re-request every reconnect issues repeats the same version.
@@ -283,7 +283,7 @@ def test_a_baseline_server_does_not_warn(caplog: pytest.LogCaptureFixture) -> No
         _apply(
             store,
             f"ampio/fromDB/{USER}/data/info",
-            '{"Results": {"mac": 1, "serverVersion": "1865"}}',
+            info(serverVersion="1865"),
         )
     assert caplog.records == []
 
@@ -306,7 +306,7 @@ def test_a_refused_info_reply_never_wipes_held_identity(
     warning off the wiped version."""
     store = _store()
     topic = f"ampio/fromDB/{USER}/data/info"
-    _apply(store, topic, '{"Results": {"mac": 1, "serverVersion": "1865"}}')
+    _apply(store, topic, info(serverVersion="1865"))
     with (
         caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"),
         pytest.raises(AmpioProtocolError),
@@ -318,6 +318,37 @@ def test_a_refused_info_reply_never_wipes_held_identity(
     assert not any("baseline" in r.getMessage() for r in caplog.records)
 
 
+@pytest.mark.parametrize(
+    ("tier", "user_id"),
+    [(AccessTier.ADMIN, 4), (AccessTier.RESTRICTED, -1)],
+)
+def test_an_info_reply_that_contradicts_the_tier_is_refused(
+    tier: AccessTier, user_id: int
+) -> None:
+    """The username decides the tier, and every subscription and request
+    follows from it. The account id in the info reply is the wire's own
+    verdict on the same question, so a disagreement means the whole session
+    is aimed at the wrong surfaces."""
+    store = AmpioStore(tier)
+    topic = f"ampio/fromDB/{USER}/data/info"
+    with pytest.raises(AmpioProtocolError, match="tier"):
+        _apply(store, topic, info(mac=1, userId=user_id))
+    assert store.server_info is None
+
+
+@pytest.mark.parametrize(
+    ("tier", "user_id"),
+    [(AccessTier.ADMIN, -1), (AccessTier.RESTRICTED, 4)],
+)
+def test_an_info_reply_that_confirms_the_tier_is_applied(
+    tier: AccessTier, user_id: int
+) -> None:
+    store = AmpioStore(tier)
+    _apply(store, f"ampio/fromDB/{USER}/data/info", info(mac=1, userId=user_id))
+    assert store.server_info is not None
+    assert store.server_info.access_tier is tier
+
+
 def test_below_baseline_warning_survives_an_identityless_reply_arriving_first(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -327,8 +358,8 @@ def test_below_baseline_warning_survives_an_identityless_reply_arriving_first(
     topic = f"ampio/fromDB/{USER}/data/info"
     with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
         with pytest.raises(AmpioProtocolError):
-            _apply(store, topic, '{"Results": {"serverVersion": "100"}}')
-        _apply(store, topic, '{"Results": {"mac": 1, "serverVersion": "100"}}')
+            _apply(store, topic, '{"Results": {"userId": -1, "serverVersion": "100"}}')
+        _apply(store, topic, info(serverVersion="100"))
     warnings = [r for r in caplog.records if "baseline" in r.getMessage()]
     assert len(warnings) == 1
     assert "100" in warnings[0].getMessage()

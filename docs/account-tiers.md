@@ -19,6 +19,22 @@ and `check_connection()` reports it at validation time. A config flow can then
 reject an account whose tier will not support what the consumer needs. One
 example is `modules`/`mserv`, which the standard tier never receives.
 
+A running client checks the two answers against each other. Every `info` reply
+carries the account id, and the client refuses one whose tier disagrees with the
+tier its username decided. Every subscription and request follows from that
+decision, so a disagreement means the session is aimed at the wrong surfaces,
+and nothing in the reply can correct that. The refusal is reported the way any
+other is (see [`discovery-flow.md`](discovery-flow.md)), and discovery never
+completes.
+
+Reading an admin-only surface on a standard account raises `RuntimeError` rather
+than reading empty. `modules`, `mserv`, `module_for()`, `resolve_records()`,
+`fetch_locations()` and every raw write behave this way. An empty module
+catalogue is indistinguishable from an install with no modules, and a consumer
+cannot act on that. Grouping entities by module needs no module row on either
+tier: `AmpioObject.module_mac` carries the key (see
+[`identity.md`](identity.md)).
+
 ## What each tier gets
 
 | Capability                                                                                   | Administrator | Standard user                                            |

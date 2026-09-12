@@ -25,6 +25,9 @@ from conftest import (
     feed,
     info,
     make_client,
+    params_table,
+    rows,
+    snapshot,
 )
 
 from ampio_mqtt import (
@@ -92,34 +95,36 @@ def test_mserv_prefers_info_mac_cross_check() -> None:
     assert mserv is not None and mserv.id == 1 and mserv.nazwa_urzadzenia == "MSERV"
 
 
-# Type 10 is the M-SERV-s; type 0 is VIRTUAL. Both are hub types.
-@pytest.mark.parametrize("hub_type", [10, 0])
-def test_mserv_falls_back_to_unique_hub_module(hub_type: int) -> None:
-    """Without info, the unique hub-typed module identifies the M-SERV,
-    with a VIRTUAL hub resolving exactly like an M-SERV one."""
+def test_mserv_reads_none_until_both_replies_land() -> None:
+    """The server mac is the only thing that identifies the row, so the
+    module list alone answers nothing. A hub-looking type code is not
+    evidence: an install can hold several."""
     client = _admin_client()
     feed(
         client,
         f"ampio/fromDB/{ADMIN_USER}/config/devices",
         devices(
-            {
-                "id": 5,
-                "mac": 1,
-                "mac_global": 12345,
-                "typ_urzadzenia": hub_type,
-                "nazwa_urzadzenia": "HUB",
-            },
-            {
-                "id": 6,
-                "mac": 2,
-                "mac_global": 67890,
-                "typ_urzadzenia": 4,
-                "nazwa_urzadzenia": "MREL",
-            },
+            {"id": 5, "mac": 1, "mac_global": 12345, "typ_urzadzenia": 10},
+            {"id": 6, "mac": 2, "mac_global": 67890, "typ_urzadzenia": 4},
         ),
     )
-    mserv = client.mserv
-    assert mserv is not None and mserv.id == 5
+    assert client.mserv is None
+    feed(client, f"ampio/fromDB/{ADMIN_USER}/data/info", info(mac="12345"))
+    assert client.mserv is not None and client.mserv.id == 5
+
+
+def test_the_module_catalogue_refuses_a_standard_account() -> None:
+    """The M-SERV serves the module list to the admin login alone, so a
+    standard account reading it is a consumer fault, not an empty install.
+    Tier-independent grouping reads `AmpioObject.module_mac`."""
+    client = _client()
+    feed(client, DATA_DEVICES_TOPIC, details(_object_row(10, 7, "cafe")))
+    with pytest.raises(RuntimeError, match="admin"):
+        _ = client.modules
+    with pytest.raises(RuntimeError, match="admin"):
+        _ = client.mserv
+    with pytest.raises(RuntimeError, match="admin"):
+        client.module_for(client.objects[10])
 
 
 # --- module_for: the mac-validated object-to-module join (#93) --------------
@@ -211,15 +216,6 @@ def test_module_for_resolves_colliding_macs_by_the_join() -> None:
     assert (module.id, module.nazwa_urzadzenia) == (8, "SECOND")
 
 
-def test_module_for_is_none_on_the_restricted_tier() -> None:
-    """The restricted tier never receives the module catalogue, so the
-    resolver is honest about having no row to validate."""
-    client = _client()
-    feed(client, DATA_DEVICES_TOPIC, details(_object_row(10, 7, "cafe")))
-    assert client.objects[10].module_mac == 0xCAFE
-    assert client.module_for(client.objects[10]) is None
-
-
 def test_mserv_matches_the_override_mac_arm() -> None:
     """The cross-check accepts the Designer override mac as well as the
     factory id: after a hardware swap mac_global changes but the
@@ -269,29 +265,16 @@ def test_read_surface_is_immutable() -> None:
         client.modules[7].nazwa_urzadzenia = "TAMPERED"  # type: ignore[misc]
 
 
-def test_mserv_none_when_ambiguous_and_no_info() -> None:
-    """If multiple modules are typ=10 and no info reply, do not guess."""
+def test_mserv_reads_none_when_no_row_carries_the_server_mac() -> None:
+    """A lasting None says the module list does not carry the M-SERV's own
+    row. Nothing else in the list stands in for it."""
     client = _admin_client()
     feed(
         client,
         f"ampio/fromDB/{ADMIN_USER}/config/devices",
-        devices(
-            {
-                "id": 1,
-                "mac": 1,
-                "mac_global": 1,
-                "typ_urzadzenia": 10,
-                "nazwa_urzadzenia": "MSERV-A",
-            },
-            {
-                "id": 2,
-                "mac": 2,
-                "mac_global": 2,
-                "typ_urzadzenia": 10,
-                "nazwa_urzadzenia": "MSERV-B",
-            },
-        ),
+        devices({"id": 1, "mac": 1, "mac_global": 1, "typ_urzadzenia": 10}),
     )
+    feed(client, f"ampio/fromDB/{ADMIN_USER}/data/info", info(mac="47846"))
     assert client.mserv is None
 
 
@@ -547,13 +530,13 @@ def test_last_payloads_retained_for_each_handler() -> None:
     assert admin.diagnostics_snapshot()["last_payloads"]["details"] == details_payload
 
     client = _client()
-    info_payload = info(mac=12345, serverVersion="2025")
-    states_payload = devices({"id": 5, "stan_json": '{"state":"1"}'})
+    info_payload = info(mac=12345, userId=4, serverVersion="2025")
+    states_payload = snapshot({"id": 5, "stan_json": '{"state":"1"}'})
     data_devices_payload = details({"id": 5, "typ_komponentu": "temp"})
-    params_payload = devices({"id": 5, "params": 17})
-    scenes_payload = devices({"id": 3, "sceneName": "Evening"})
-    groups_payload = devices({"id": 1, "opis_menu": "Salon"})
-    group_devices_payload = devices({"id_grupy": 1, "id_obiektu": 5})
+    params_payload = params_table({"id": 5, "params": 17})
+    scenes_payload = rows({"id": 3, "sceneName": "Evening"})
+    groups_payload = rows({"id": 1, "opis_menu": "Salon"})
+    group_devices_payload = rows({"id_grupy": 1, "id_obiektu": 5})
     feed(client, f"ampio/fromDB/{USER}/data/info", info_payload)
     feed(client, f"ampio/fromDB/{USER}/data/states", states_payload)
     feed(client, f"ampio/fromDB/{USER}/data/devices", data_devices_payload)
@@ -582,7 +565,6 @@ def test_last_payloads_retained_for_each_handler() -> None:
     # tier is not served that surface, so nothing is retained for it.
     feed(client, f"ampio/fromDB/{USER}/config/devices", devices_payload)
     assert "devices" not in client.diagnostics_snapshot()["last_payloads"]
-    assert client.modules == {}
 
 
 def test_snapshot_retains_the_info_payload_redacted() -> None:
@@ -592,6 +574,7 @@ def test_snapshot_retains_the_info_payload_redacted() -> None:
     client = _client()
     payload = info(
         mac=12345,
+        userId=4,
         serverVersion="1865",
         city="Example Street 1, Springfield",
         lat="52.1000",
@@ -684,7 +667,7 @@ async def test_discovery_stays_incomplete_without_server_identity(
     assert await client.wait_for_initial_discovery(timeout=0.05) is False
     assert client.server_info is None
 
-    feed(client, INFO_TOPIC, info(mac=555, userId=-1, serverVersion="1865"))
+    feed(client, INFO_TOPIC, info(mac=555, userId=4, serverVersion="1865"))
     feed(client, DETAILS_TOPIC, details())
     feed(client, DEVICES_TOPIC, devices())
     assert await client.wait_for_initial_discovery(timeout=1.0) is True
