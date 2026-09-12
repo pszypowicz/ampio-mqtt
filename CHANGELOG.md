@@ -83,6 +83,11 @@ not served this".
   `state` and its `on` stamp. The library refuses a reply that drops one, rather
   than skipping the row or seeding a value nothing can order. That retires the
   undated-seed path: a seed always carries the M-SERV stamp it was reported at.
+- **A per-object state push must carry its value and its `on` stamp.** The
+  payload is a JSON object, and the library no longer reads a plain-text payload
+  or stamps a push with its own clock. `StateUpdate.on_ms` is required, and the
+  local-stamp bookkeeping now has one writer: a raw channel edge, the one report
+  that carries no stamp at all.
 - **A panel write always sends the full touch field mask.** The frame used to
   narrow to the panel's advertised field count once a record sweep had read it.
   A panel reads the width its own count needs and ignores the rest, so the two

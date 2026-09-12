@@ -202,7 +202,11 @@ def test_an_unreadable_reply_is_refused() -> None:
 @pytest.mark.parametrize(
     ("topic", "payload", "event_type"),
     [
-        (f"ampio/fromDB/{USER}/ob/41/state", '{"state":"1"}', ObjectUpdated),
+        (
+            f"ampio/fromDB/{USER}/ob/41/state",
+            '{"state":"1","on":1789000000000}',
+            ObjectUpdated,
+        ),
         ("ampio/from/1/event", "189", BusEventRaised),
     ],
 )
@@ -250,7 +254,9 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
             }
         ),
     )
-    applied = _apply(store, f"ampio/fromDB/{USER}/ob/50/state", '{"state":"55"}')
+    applied = _apply(
+        store, f"ampio/fromDB/{USER}/ob/50/state", '{"state":"55","on":1789000000000}'
+    )
 
     assert [o.id for o in _updated(applied)] == [50]
     assert store.objects[50].state == "55"
@@ -424,7 +430,9 @@ def test_a_snapshot_row_with_no_stamp_is_refused() -> None:
     without one seeds nothing. The held value stands."""
     store = _store()
     _apply(store, DETAILS_TOPIC, details({"id": 10}))
-    _apply(store, f"ampio/fromDB/{USER}/ob/10/state", '{"state":"live"}')
+    _apply(
+        store, f"ampio/fromDB/{USER}/ob/10/state", '{"state":"live","on":1789000000000}'
+    )
     with pytest.raises(AmpioProtocolError, match="on"):
         _apply(store, STATES_TOPIC, _snapshot("undated", None))
     assert store.objects[10].state == "live"
@@ -447,40 +455,24 @@ def test_a_newer_snapshot_corrects_a_value_that_changed_during_an_outage() -> No
     assert store.objects[10].state == "0"
 
 
-def test_a_skewed_dated_snapshot_does_not_displace_a_live_undated_push() -> None:
-    """An undated push carries this process's clock, which a server `on`
-    stamp cannot outrank however far ahead the M-SERV's RTC runs. The
-    live value stands until the next snapshot request cycle."""
+def test_begin_refresh_lets_the_snapshot_resync_a_locally_stamped_value() -> None:
+    """A raw edge is the one report with no stamp of its own, so its value
+    carries this process's clock. A new request cycle proves the next
+    snapshot is at least as fresh as anything held, which is what lets the
+    seed correct such a value once the object leaves the raw index."""
     store = _store()
-    _apply(store, DETAILS_TOPIC, details({"id": 10}))
-    _apply(store, f"ampio/fromDB/{USER}/ob/10/state", '{"state":"live"}')
+    _raw_owned_flag(store)
+    # Retyped to a kind the raw tree does not carry, so the object leaves
+    # the index and goes back to the per-object path.
+    retyped = {"id": 10, "id_urzadzenia": 1, "typ_komponentu": "roleta_procenty"}
+    _apply(store, DETAILS_TOPIC, details(retyped))
+    assert store.objects[10].raw_owned is False
     far_future = int((time.time() + 3600) * 1000)
-    applied = _apply(store, STATES_TOPIC, _snapshot("stale", far_future))
-    assert _updated(applied) == []
-    assert store.objects[10].state == "live"
-
-
-def test_begin_refresh_lets_the_snapshot_resync_an_undated_value() -> None:
-    """A new request cycle proves the next snapshot is at least as fresh
-    as anything held, so the dated seed corrects the pre-cycle push."""
-    store = _store()
-    _apply(store, DETAILS_TOPIC, details({"id": 10}))
-    _apply(store, f"ampio/fromDB/{USER}/ob/10/state", '{"state":"live"}')
+    assert _updated(_apply(store, STATES_TOPIC, _snapshot("stale", far_future))) == []
     store.begin_refresh()
     applied = _apply(store, STATES_TOPIC, _snapshot("0", 1786700900000))
     assert [o.id for o in _updated(applied)] == [10]
     assert store.objects[10].state == "0"
-
-
-def test_a_buffered_undated_push_beats_a_skewed_snapshot_seed() -> None:
-    """The pending replay makes no cross-clock comparison either: the
-    push arrived live in this session, so the dated seed loses."""
-    store = _store()
-    far_future = int((time.time() + 3600) * 1000)
-    _apply(store, f"ampio/fromDB/{USER}/ob/93/state", '{"state":"live"}')
-    _apply(store, STATES_TOPIC, _snapshot("stale", far_future, oid=93))
-    _apply(store, DETAILS_TOPIC, details({"id": 93}))
-    assert store.objects[93].state == "live"
 
 
 def test_echo_of_an_earlier_edge_does_not_disturb_a_fast_toggle() -> None:
@@ -1040,7 +1032,9 @@ def test_a_push_for_an_uncatalogued_id_waits_for_its_catalogue_row() -> None:
     is no update/remove churn around a catalogue reply."""
     store = _store()
     state_topic = f"ampio/fromDB/{USER}/ob/93/state"
-    applied = _apply(store, state_topic, '{"state":"187.6","desc":"187.6 "}')
+    applied = _apply(
+        store, state_topic, '{"state":"187.6","desc":"187.6 ","on":1789000000000}'
+    )
     assert applied.events == []
     assert 93 not in store.objects
 
@@ -1073,7 +1067,11 @@ def test_a_buffered_push_for_an_unlisted_id_is_pruned() -> None:
     gain a row; the buffered value must not resurface if the id later
     appears (a DB id reassignment, not the same object)."""
     store = _store()
-    _apply(store, f"ampio/fromDB/{USER}/ob/99/state", '{"state":"ghost"}')
+    _apply(
+        store,
+        f"ampio/fromDB/{USER}/ob/99/state",
+        '{"state":"ghost","on":1789000000000}',
+    )
     _apply(store, DETAILS_TOPIC, details({"id": 41}))
     _apply(store, DETAILS_TOPIC, details({"id": 41}, {"id": 99}))
     assert store.objects[99].state is None
@@ -1149,7 +1147,9 @@ def test_numeric_value_none_for_bare_nan_state_push() -> None:
     """A bare NaN literal parses (Python's json accepts it) but reads as None."""
     store = _store()
     _apply(store, DETAILS_TOPIC, details({"id": 12}))
-    _apply(store, f"ampio/fromDB/{USER}/ob/12/state", '{"state": NaN}')
+    _apply(
+        store, f"ampio/fromDB/{USER}/ob/12/state", '{"state": NaN, "on": 1789000000000}'
+    )
     obj = store.objects[12]
     assert obj.state == "nan"
     assert obj.numeric_value is None
@@ -1582,7 +1582,11 @@ def test_plain_cover_reports_no_tilt() -> None:
         DETAILS_TOPIC,
         details({"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}),
     )
-    _apply(store, f"ampio/fromDB/{USER}/ob/48/state", '{ "state": "55","block": "0" }')
+    _apply(
+        store,
+        f"ampio/fromDB/{USER}/ob/48/state",
+        '{ "state": "55","block": "0","on": 1789000000000 }',
+    )
     obj = store.objects[48]
     assert obj.state == "55"
     assert obj.lammel is None
@@ -1599,7 +1603,11 @@ def test_block_is_parsed_into_the_object() -> None:
         DETAILS_TOPIC,
         details({"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}),
     )
-    _apply(store, f"ampio/fromDB/{USER}/ob/48/state", '{ "state": "70","block": "1" }')
+    _apply(
+        store,
+        f"ampio/fromDB/{USER}/ob/48/state",
+        '{ "state": "70","block": "1","on": 1789000000000 }',
+    )
     obj = store.objects[48]
     assert obj.block == 1
     assert obj.blocks_closing is True
@@ -1621,7 +1629,7 @@ def test_block_bits_read_per_direction() -> None:
         _apply(
             store,
             f"ampio/fromDB/{USER}/ob/48/state",
-            f'{{ "state": "70","block": "{value}" }}',
+            f'{{ "state": "70","block": "{value}","on": 1789000000000 }}',
         )
         obj = store.objects[48]
         assert obj.block == value
@@ -1632,7 +1640,11 @@ def test_block_bits_read_per_direction() -> None:
 def test_object_without_block_reads_none() -> None:
     store = _store()
     _apply(store, DETAILS_TOPIC, details({"id": 12, "typ_komponentu": "przekaznik"}))
-    _apply(store, f"ampio/fromDB/{USER}/ob/12/state", '{ "state": "255" }')
+    _apply(
+        store,
+        f"ampio/fromDB/{USER}/ob/12/state",
+        '{ "state": "255","on": 1789000000000 }',
+    )
     obj = store.objects[12]
     assert obj.block is None
     assert obj.blocks_closing is False
@@ -1646,8 +1658,16 @@ def test_push_without_block_keeps_the_last_value() -> None:
         DETAILS_TOPIC,
         details({"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}),
     )
-    _apply(store, f"ampio/fromDB/{USER}/ob/48/state", '{ "state": "70","block": "3" }')
-    _apply(store, f"ampio/fromDB/{USER}/ob/48/state", '{ "state": "80" }')
+    _apply(
+        store,
+        f"ampio/fromDB/{USER}/ob/48/state",
+        '{ "state": "70","block": "3","on": 1789000000000 }',
+    )
+    _apply(
+        store,
+        f"ampio/fromDB/{USER}/ob/48/state",
+        '{ "state": "80","on": 1789000000000 }',
+    )
     assert store.objects[48].block == 3
 
 
@@ -1876,18 +1896,16 @@ def test_a_cleared_name_clears_in_the_store() -> None:
     assert [o.id for o in _updated(applied)] == [9]
 
 
-def test_updated_at_takes_the_report_date_or_the_receipt_time() -> None:
-    """A dated report stamps the M-SERV's own `on` (0 is a value, not
-    absence); a push without one stamps receipt."""
+def test_updated_at_takes_the_report_date() -> None:
+    """Every report stamps the M-SERV's own `on`, and 0 is a value rather
+    than an absent stamp."""
     store = _store()
     _apply(store, DETAILS_TOPIC, details({"id": 9}))
     topic = f"ampio/fromDB/{USER}/ob/9/state"
     _apply(store, topic, '{"state": "1", "on": 0}')
     assert store.objects[9].updated_at == 0.0
-    before = time.time()
-    _apply(store, topic, '{"state": "2"}')
-    updated_at = store.objects[9].updated_at
-    assert updated_at is not None and before <= updated_at <= time.time()
+    _apply(store, topic, '{"state":"2","on":1789000000000}')
+    assert store.objects[9].updated_at == 1789000000.0
 
 
 def test_raw_owned_tracks_the_bridge_coverage() -> None:
@@ -2147,7 +2165,9 @@ def test_panel_output_per_object_echo_is_dropped_once_raw_owned() -> None:
     _apply(store, DETAILS_TOPIC, details(_przekaznik_row(90, 2, 7, "0_cafe_257_2_1")))
     _apply(store, "ampio/from/CAFE/state/o/2", "1")
 
-    applied = _apply(store, f"ampio/fromDB/{USER}/ob/90/state", '{"state": "255"}')
+    applied = _apply(
+        store, f"ampio/fromDB/{USER}/ob/90/state", '{"state":"255","on":1789000000000}'
+    )
 
     assert store.objects[90].state == "1"
     assert _updated(applied) == []

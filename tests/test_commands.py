@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import aiomqtt
 import pytest
@@ -340,13 +341,18 @@ def _ob_state(oid: int, user: str = USER) -> str:
     return f"ampio/fromDB/{user}/ob/{oid}/state"
 
 
+def _push(state: str) -> str:
+    """One live state push, with the M-SERV stamp every push carries."""
+    return json.dumps({"state": state, "on": 1789000000000})
+
+
 async def test_confirm_resolves_with_the_echo_snapshot(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
     _learn(client, 64, "przekaznik")
     task = asyncio.create_task(client.set_value(64, 255, confirm=1.0))
-    delivery = deliver_later(client, (_ob_state(64), "255"))
+    delivery = deliver_later(client, (_ob_state(64), _push("255")))
     obj = await task
     await delivery
     assert broker.published == [(API_TOPIC, b"/api/set/64/setValue/255")]
@@ -367,7 +373,9 @@ async def test_confirm_ignores_updates_for_other_objects(
         ),
     )
     task = asyncio.create_task(client.turn_on(64, confirm=1.0))
-    delivery = deliver_later(client, (_ob_state(65), "255"), (_ob_state(64), "255"))
+    delivery = deliver_later(
+        client, (_ob_state(65), _push("255")), (_ob_state(64), _push("255"))
+    )
     obj = await task
     await delivery
     assert obj is not None
@@ -431,7 +439,7 @@ async def test_wrappers_thread_confirm_through(
     client, broker = connected
     _learn(client, oid, typ)
     task = asyncio.create_task(call(client))
-    delivery = deliver_later(client, (_ob_state(oid), "1"))
+    delivery = deliver_later(client, (_ob_state(oid), _push("1")))
     obj = await task
     await delivery
     assert broker.published == [(API_TOPIC, expected)]
@@ -449,7 +457,7 @@ async def test_confirm_survives_the_catalogue_race(
     client, _ = connected
     task = asyncio.create_task(client.set_value(70, 255, confirm=1.0))
     await asyncio.sleep(0)  # the waiter arms before the publish
-    feed(client, _ob_state(70), "255")
+    feed(client, _ob_state(70), _push("255"))
     assert not task.done()
     feed(client, DATA_DEVICES_TOPIC, details({"id": 70, "typ_komponentu": "flaga"}))
     obj = await task
@@ -464,7 +472,7 @@ async def test_concurrent_confirms_resolve_on_one_echo(
     _learn(client, 64, "przekaznik")
     first = asyncio.create_task(client.turn_on(64, confirm=1.0))
     second = asyncio.create_task(client.turn_on(64, confirm=1.0))
-    delivery = deliver_later(client, (_ob_state(64), "255"))
+    delivery = deliver_later(client, (_ob_state(64), _push("255")))
     one, other = await asyncio.gather(first, second)
     await delivery
     assert one == other

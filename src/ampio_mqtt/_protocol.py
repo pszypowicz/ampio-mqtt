@@ -109,7 +109,9 @@ class StateUpdate:
 
     id: int
     state: str
-    on_ms: int | float | None
+    # The M-SERV stamp the value was reported at, in ms. Every push carries
+    # one, so nothing here is stamped with this process's clock.
+    on_ms: int | float
     lammel: int | None  # Percent, present only for tilt-capable covers
     # Roller lock bits, present only on cover pushes.
     block: int | None = None
@@ -256,6 +258,7 @@ _SNAPSHOT = "states snapshot"
 _SCENES = "scene catalogue"
 _LOCATIONS = "locations table"
 _INFO = "server info"
+_PUSH = "state push"
 
 
 def _shared_columns(row: Mapping[str, Any]) -> ObjectMetadata:
@@ -372,9 +375,9 @@ def parse_scenes(payload: str) -> list[AmpioScene]:
         parent = to_int(item.get("parentId"))
         # Malformed row fields degrade instead of hiding the scene: it is
         # real and runnable (the M-SERV replays its actions server-side).
-        # This row shape is not pinned live, so only the envelope is
-        # strict. A row without `active` reads enabled, the state the app
-        # creates.
+        # This row shape is the one the library has no live reply for, so
+        # only the envelope is strict (#212). A row without `active` reads
+        # enabled, the state the app creates.
         raw_active = to_int(item.get("active"))
         infos = item.get("Infos")
         objects = {
@@ -916,39 +919,40 @@ def _parse_thermostat(data: dict[str, Any]) -> ThermostatState | None:
 def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
     """Parse a live per-object state payload into a `StateUpdate`.
 
-    The payload may be plain text or a JSON object with a `state` field; in
-    either case `state` is set, and `on_ms` is populated when the payload
-    carried a server timestamp. Plain text is stripped, exactly as the raw
-    channel form is.
+    The payload is a JSON object carrying the value and the M-SERV stamp it
+    was reported at. The stamp is what orders one report against another, so
+    a payload without it is refused rather than stamped with this process's
+    own clock.
     """
-    state: str = payload.strip()
-    on_ms: int | float | None = None
-    lammel: int | None = None
-    block: int | None = None
-    thermostat: ThermostatState | None = None
     try:
         data = json.loads(payload)
-    except (ValueError, TypeError):
-        data = None
-    if isinstance(data, dict):
-        # Numeric `state` values arrive as int/float from JSON; the library
-        # contract is text, so coerce here rather than at every consumer.
-        raw_state = data.get("state")
-        if raw_state is not None:
-            state = str(raw_state)
-        raw_on = data.get("on")
-        if isinstance(raw_on, (int, float)):
-            on_ms = raw_on
-        lammel = to_int(data.get("lammel"))
-        block = to_int(data.get("block"))
-        thermostat = _parse_thermostat(data)
+    except (ValueError, TypeError) as err:
+        raise AmpioProtocolError(
+            f"The Ampio state push for object {oid} is not JSON"
+        ) from err
+    if not isinstance(data, dict):
+        raise AmpioProtocolError(
+            f"The Ampio state push for object {oid} is not a JSON object"
+        )
+    raw_on = _column(data, "on", _PUSH)
+    if not isinstance(raw_on, (int, float)):
+        raise AmpioProtocolError(
+            f"The `on` stamp of the Ampio state push for object {oid} is not a number"
+        )
+    raw_state = _column(data, "state", _PUSH)
+    if raw_state is None:
+        raise AmpioProtocolError(
+            f"The Ampio state push for object {oid} carries a null `state`"
+        )
     return StateUpdate(
         id=oid,
-        state=state,
-        on_ms=on_ms,
-        lammel=lammel,
-        block=block,
-        thermostat=thermostat,
+        # Numeric `state` values arrive as int/float from JSON; the library
+        # contract is text, so coerce here rather than at every consumer.
+        state=str(raw_state),
+        on_ms=raw_on,
+        lammel=to_int(data.get("lammel")),
+        block=to_int(data.get("block")),
+        thermostat=_parse_thermostat(data),
     )
 
 

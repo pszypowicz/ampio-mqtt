@@ -310,26 +310,41 @@ def test_parse_devices_refuses_a_row_without_a_served_column(column: str) -> Non
 
 
 def test_parse_states_snapshot_reads_every_row() -> None:
-    entries = parse_states_snapshot(_rows({"id": 7, "stan_json": '{"state":"1"}'}))
-    assert [(e.id, e.stan_json) for e in entries] == [(7, '{"state":"1"}')]
+    entries = parse_states_snapshot(
+        _rows({"id": 7, "stan_json": '{"state":"1","on":1789000000000}'})
+    )
+    assert [(e.id, e.stan_json) for e in entries] == [
+        (7, '{"state":"1","on":1789000000000}')
+    ]
 
 
 @pytest.mark.parametrize("column", ["id", "stan_json"])
 def test_parse_states_snapshot_refuses_a_row_without_a_served_column(
     column: str,
 ) -> None:
-    row = {"id": 7, "stan_json": '{"state":"1"}'}
+    row = {"id": 7, "stan_json": '{"state":"1","on":1789000000000}'}
     del row[column]
     with pytest.raises(AmpioProtocolError, match=column):
         parse_states_snapshot(_rows(row))
 
 
-def test_state_route_non_dict_payload() -> None:
-    """A JSON array payload falls through to text-mode and yields the raw string."""
-    update = _route("ampio/fromDB/u/ob/41/state", json.dumps([1, 2]))
-    assert isinstance(update, StateUpdate)
-    assert update is not None
-    assert update.state == "[1, 2]" and update.on_ms is None
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "255",  # plain text: no stamp to order the value by
+        "not json at all",
+        json.dumps([1, 2]),
+        json.dumps({"state": "1"}),  # no `on` stamp
+        json.dumps({"state": "1", "on": "now"}),  # a stamp nothing can order by
+        json.dumps({"on": 1700}),  # no value
+        json.dumps({"state": None, "on": 1700}),  # a null value is no value
+    ],
+)
+def test_a_state_push_without_a_value_and_a_stamp_is_refused(payload: str) -> None:
+    """Every live push carries both, so a payload missing one is a fault to
+    report rather than a value to stamp with this process's own clock."""
+    with pytest.raises(AmpioProtocolError):
+        _route("ampio/fromDB/u/ob/41/state", payload)
 
 
 def test_parse_devices_resolves_the_model_name() -> None:
@@ -511,20 +526,6 @@ def test_state_route_json_payload() -> None:
     assert update.id == 41 and update.state == "22.4" and update.on_ms == 1700
 
 
-def test_state_route_plain_payload() -> None:
-    update = _route("ampio/fromDB/u/ob/41/state", "ok")
-    assert isinstance(update, StateUpdate)
-    assert update.state == "ok" and update.on_ms is None
-
-
-def test_state_route_strips_plain_payload_whitespace() -> None:
-    """A trailing newline must not flip `is_on`; the per-object plain form
-    strips exactly as the raw channel form does."""
-    update = _route("ampio/fromDB/u/ob/41/state", "0\n")
-    assert isinstance(update, StateUpdate)
-    assert update.state == "0"
-
-
 @pytest.mark.parametrize(
     ("raw_state", "expected"),
     [
@@ -545,14 +546,6 @@ def test_state_route_coerces_numeric_state_to_str(
     assert isinstance(update, StateUpdate)
     assert update.state == expected
     assert isinstance(update.state, str)
-
-
-def test_state_route_null_state_falls_back_to_payload() -> None:
-    """An explicit `null` state preserves the raw payload as the value."""
-    payload = json.dumps({"state": None, "on": 1700})
-    update = _route("ampio/fromDB/u/ob/41/state", payload)
-    assert isinstance(update, StateUpdate)
-    assert update.state == payload
 
 
 @pytest.mark.parametrize(
@@ -683,7 +676,10 @@ def test_parse_stan_json_reg_shape_carries_thermostat() -> None:
 )
 def test_reg_shape_partial_fields(fields: dict, expected: ThermostatState) -> None:
     """Any reg key makes the shape; absent or unparseable fields read None."""
-    update = _route("ampio/fromDB/u/ob/138/state", json.dumps({"state": "0", **fields}))
+    update = _route(
+        "ampio/fromDB/u/ob/138/state",
+        json.dumps({"state": "0", "on": 1789000000000, **fields}),
+    )
     assert isinstance(update, StateUpdate)
     assert update.thermostat == expected
 

@@ -114,11 +114,13 @@ covers the common case on both tiers. The tick is the fallback for a change the
 M-SERV pushes no table or digest for. The next tick reports such a change as
 `ObjectAdded` / `ObjectRemoved`, with no reconnect needed.
 
-Each tick also runs `begin_refresh()`, which clears the live-value guard. An
-undated live value can then be re-seeded from the M-SERV's DB snapshot on the
-next reply. A raw-owned object is exempt, because its resync is the broker's
-retained raw state tree, not the DB snapshot. Each cycle re-fetches the full
-catalogue, so `refresh_interval` is sized in minutes, not seconds.
+Each tick also runs `begin_refresh()`, which clears the live-value guard. A
+locally stamped live value can then be re-seeded from the M-SERV's DB snapshot
+on the next reply. Only a raw channel edge leaves such a value, because the raw
+tree carries no stamp of its own. A raw-owned object is exempt, because its
+resync is the broker's retained raw state tree, not the DB snapshot. Each cycle
+re-fetches the full catalogue, so `refresh_interval` is sized in minutes, not
+seconds.
 
 ## Errors
 

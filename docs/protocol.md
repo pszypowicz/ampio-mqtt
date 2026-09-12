@@ -68,16 +68,25 @@ into wrong values on an object.
 | `data/states`           | `id`, `stan_json`, and inside the blob `state` and `on`                                                                               |
 | `data/info`             | `mac`, `userId`                                                                                                                       |
 | `config/locations`      | `id`, `opis_menu`                                                                                                                     |
+| `ob/<id>/state`         | `state`, `on`                                                                                                                         |
 
 A column can hold an empty value. `leafId`, `opis_menu` on an object row, `url`,
 and `format` are text columns the M-SERV writes empty, or null, when the object
 carries no value. The `type` column is null or empty on an untagged object. What
 must be there is the column itself.
 
-Three columns must also hold a usable value, because nothing downstream can work
+Some columns must also hold a usable value, because nothing downstream can work
 around an empty one. A `locations` row needs a name, or the pointer into it
-would read as an unassigned location. A `stan_json` blob needs its `state` and
-its `on` stamp, because the stamp is what orders the seed against a live value.
+would read as an unassigned location. A `stan_json` blob and a per-object push
+each need their `state` and their `on` stamp, because the stamp is what orders
+one report against another.
+
+The per-object push is the one live message in the table, and the rest are
+replies. Its stamp makes every object's value comparable on one clock, which is
+why the library refuses a push without one rather than reaching for its own
+clock. The raw channel tree is the exception: its payloads carry no stamp at
+all, so a raw edge is stamped locally, and the ordering rules in
+[`discovery-flow.md`](discovery-flow.md) exist for exactly those values.
 
 The scene catalogue is the one exception. Its row shape is not pinned against a
 live reply, because the reference install defines no scene, so only the envelope

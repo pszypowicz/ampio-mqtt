@@ -112,14 +112,14 @@ class AmpioStore:
         # kept for the same reason; a snapshot row for an id no catalogue
         # established creates nothing.
         self._stan_by_id: dict[int, str] = {}
-        # Latest live push per id no catalogue has established, with its
-        # local receive time. Only the catalogues decide which objects
-        # exist, so a push that races ahead of them waits here and
-        # surfaces with the catalogue row.
-        self._pending_state: dict[int, tuple[_protocol.StateUpdate, float]] = {}
-        # Ids whose current value carries a local-clock stamp (an undated
-        # push or a raw edge). Local stamps are not comparable to the
-        # M-SERV's `on` stamps, so `_supersedes` never compares them:
+        # Latest live push per id no catalogue has established. Only the
+        # catalogues decide which objects exist, so a push that races ahead
+        # of them waits here and surfaces with the catalogue row.
+        self._pending_state: dict[int, _protocol.StateUpdate] = {}
+        # Ids whose current value carries a local-clock stamp, which only a
+        # raw channel edge produces: the raw tree carries no stamp of its
+        # own. Local stamps are not comparable to the M-SERV's `on` stamps,
+        # so `_supersedes` never compares them:
         # `_guarded` (received after the latest snapshot request) outranks
         # any seed, while an unguarded local stamp predates the request
         # and loses to the seed the request produced. `begin_refresh`
@@ -393,21 +393,12 @@ class AmpioStore:
         if stan_json is not None:
             updated, seeded = self._apply_stan_json(updated, stan_json)
             changed |= seeded
-        # Replay a buffered push under the snapshot's dated-supersedes
-        # rule; an undated push has no stamp comparable to the seed's
-        # server clock and arrived live in this session, so it wins.
-        pending = self._pending_state.pop(meta.id, None)
-        if pending is not None:
-            update, received_at = pending
-            if update.on_ms is not None:
-                stamp = float(update.on_ms) / 1000.0
-                wins = self._supersedes(updated, stamp)
-            else:
-                stamp = received_at
-                wins = True
-                self._local_stamped.add(meta.id)
-                self._guarded.add(meta.id)
-            if wins:
+        # Replay a buffered push under the same stamp-supersedes rule the
+        # seed follows: both carry the M-SERV's own clock.
+        update = self._pending_state.pop(meta.id, None)
+        if update is not None:
+            stamp = float(update.on_ms) / 1000.0
+            if self._supersedes(updated, stamp):
                 changed |= (
                     updated.state != update.state
                     or (update.lammel is not None and updated.lammel != update.lammel)
@@ -576,7 +567,7 @@ class AmpioStore:
     def _apply_state(self, update: _protocol.StateUpdate, applied: Applied) -> None:
         obj = self.objects.get(update.id)
         if obj is None:
-            self._pending_state[update.id] = (update, time.time())
+            self._pending_state[update.id] = update
             return
         if obj.raw_owned:
             # The raw path owns this object: the per-object echo repeats
@@ -585,9 +576,6 @@ class AmpioStore:
             # module.
             self._touch_module(obj.id_urzadzenia)
             return
-        stamp = (
-            float(update.on_ms) / 1000.0 if update.on_ms is not None else time.time()
-        )
         obj = replace(
             obj,
             state=update.state,
@@ -596,15 +584,13 @@ class AmpioStore:
             thermostat=(
                 update.thermostat if update.thermostat is not None else obj.thermostat
             ),
-            updated_at=stamp,
+            updated_at=float(update.on_ms) / 1000.0,
         )
         self.objects[update.id] = obj
-        if update.on_ms is None:
-            self._local_stamped.add(update.id)
-            self._guarded.add(update.id)
-        else:
-            self._local_stamped.discard(update.id)
-            self._guarded.discard(update.id)
+        # The value now carries the M-SERV's own clock, so the local-stamp
+        # bookkeeping a raw edge left behind no longer applies.
+        self._local_stamped.discard(update.id)
+        self._guarded.discard(update.id)
         self._touch_module(obj.id_urzadzenia)
         self._record(obj, applied)
 

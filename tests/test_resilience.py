@@ -39,7 +39,9 @@ def test_a_raising_listener_does_not_stop_the_others() -> None:
     client.subscribe(lambda e: (_ for _ in ()).throw(ValueError("boom")))
     client.subscribe(lambda e: seen.append(e.object.id), of=ObjectUpdated)
 
-    feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1"}')
+    feed(
+        client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1","on":1789000000000}'
+    )
 
     assert seen == [41]
 
@@ -49,8 +51,12 @@ def test_a_raising_listener_does_not_stop_later_messages() -> None:
     _establish(client, 41)
     client.subscribe(lambda e: (_ for _ in ()).throw(ValueError("boom")))
 
-    feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1"}')
-    feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"2"}')
+    feed(
+        client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"1","on":1789000000000}'
+    )
+    feed(
+        client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"2","on":1789000000000}'
+    )
 
     assert client.objects[41].state == "2"
 
@@ -81,7 +87,9 @@ def test_a_malformed_reply_does_not_stop_later_messages() -> None:
     client = _client()
     _establish(client, 41)
     feed(client, f"ampio/fromDB/{USER}/data/devices", b"null")
-    feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"77"}')
+    feed(
+        client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"77","on":1789000000000}'
+    )
     assert client.objects[41].state == "77"
 
 
@@ -175,17 +183,18 @@ async def test_poison_message_does_not_kill_the_connection(
 
     client._store.apply = fragile  # type: ignore[method-assign]
     topic = f"ampio/fromDB/{USER}/ob/5/state"
+    poison = b'{"state":"POISON","on":1789000000000}'
     with caplog.at_level(logging.ERROR):
-        feed(client, topic, b"POISON")  # must not raise
+        feed(client, topic, poison)  # must not raise
     assert client.available
     assert sum("failed processing" in r.message for r in caplog.records) == 1
 
-    feed(client, topic, b'{"state":"42"}')
+    feed(client, topic, b'{"state":"42","on":1789000000000}')
     assert client.objects[5].state == "42"
 
     # A recurring poison on the same topic stays out of the error log -
     # the traceback was already recorded once.
     caplog.clear()
     with caplog.at_level(logging.ERROR):
-        feed(client, topic, b"POISON")
+        feed(client, topic, poison)
     assert not caplog.records

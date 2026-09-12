@@ -36,6 +36,13 @@ library does not subscribe. A subscription would add about 0.3 messages per
 second and would give `last_seen` to the M-SERV row and to that one module.
 Probe notes: [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/188).
 
+**Scene catalogue row shape.** The library fetches and parses the scene
+catalogue, and the reference install defines no scene, so the reply carries no
+row. Every other reply shape is strict about the columns its surface always
+serves. The scene row keeps its tolerance instead, because no live row exists to
+read a contract off. Probe notes:
+[tracker](https://github.com/pszypowicz/ampio-mqtt/issues/212).
+
 Picking one up takes three steps.
 
 1. Find the topic. The M-SERV serves the Designer at its own root. That bundle
