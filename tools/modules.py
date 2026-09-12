@@ -94,9 +94,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="SECONDS",
         help=(
             "hold the connection this long and report how many modules have "
-            "broadcast a voltage or a temperature as time passes. The server "
-            "does not replay those frames at connect, so a fresh connection "
-            "sees none of them."
+            "broadcast a voltage or a temperature as time passes. A fresh "
+            "connection starts with almost none, because the client drops the "
+            "retained frames that arrive before the module catalogue."
         ),
     )
     return p.parse_args(argv)
