@@ -12,7 +12,13 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## Unreleased
+## 0.57.0
+
+Every reading the broker already holds now arrives at `connect()`. The retained
+raw tree lands before the catalogue can route it, so the library used to discard
+it and rediscover a subset over the following minutes. On the reference install
+that is 92 bridged objects and 27 module health readings, present at the moment
+`connect()` returns rather than several minutes later (#204).
 
 A cover can be locked. A Designer logic rule can block a cover's movement, and
 the module then drops every command for the blocked direction, the API included.
@@ -106,6 +112,11 @@ not served this".
   keys. A row that drops one is refused, rather than read as a scene that
   touches nothing or an object with no room. `parse_rooms()` now takes the two
   parsed tables rather than raw rows.
+- **`AmpioScene.parent_id` is now `AmpioScene.group_id`.** The wire's `parentId`
+  names the room the Ampio app presents the scene in, an id of the `groups`
+  table, and not another scene. The old name invited a scene tree the M-SERV
+  does not keep. The choice places the scene for display. It does not scope what
+  the scene can touch, because a scene's actions reach any object.
 - **A per-object state push must carry its value and its `on` stamp.** The
   payload is a JSON object, and the library no longer reads a plain-text payload
   or stamps a push with its own clock. `StateUpdate.on_ms` is required, and the
