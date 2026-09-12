@@ -291,8 +291,8 @@ class CoverParameters:
     # Full travel, as the module counts it.
     open_time_s: int
     close_time_s: int
-    # Designer "Additional calibration", 0 to 50. The screen shows no
-    # unit, so the stored value passes through verbatim.
+    # Designer "Additional calibration" field shows 0 to 50 percent. The
+    # library stores this value as the Designer displays it.
     calibration: int
     # One full turn of the slats.
     slat_time_ms: int

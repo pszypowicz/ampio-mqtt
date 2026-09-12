@@ -205,21 +205,21 @@ The section holds one group of fields per channel, interleaved by field rather
 than by channel. For a board whose section starts at offset `O` with `N`
 channels, and for channel `t` counted from zero:
 
-| Index     | Size | Setting                            |
-| --------- | ---- | ---------------------------------- |
-| `t`       | 1    | Work mode: 0 plain, 1 slats        |
-| `N + 2t`  | 2    | Opening time, in seconds           |
-| `3N + 2t` | 2    | Closing time, in seconds           |
-| `5N + t`  | 1    | Additional calibration, 0 to 50    |
-| `6N + 2t` | 2    | Slat movement time, in 10 ms ticks |
-| `8N + t`  | 1    | Reversal lag, in 10 ms ticks       |
-| `10N + t` | 1    | Motor start lag, same direction    |
-| `11N + t` | 1    | Motor start lag, other direction   |
+| Index     | Size | Setting                                    |
+| --------- | ---- | ------------------------------------------ |
+| `t`       | 1    | Work mode: 0 plain, 1 slats                |
+| `N + 2t`  | 2    | Opening time, in seconds                   |
+| `3N + 2t` | 2    | Closing time, in seconds                   |
+| `5N + t`  | 1    | Additional calibration in percent, 0 to 50 |
+| `6N + 2t` | 2    | Slat movement time, in 10 ms ticks         |
+| `8N + t`  | 1    | Reversal lag, in 10 ms ticks               |
+| `10N + t` | 1    | Motor start lag, same direction            |
+| `11N + t` | 1    | Motor start lag, other direction           |
 
 Every two-byte field reads least significant byte first. The library multiplies
 the tick fields by 10 and names them in milliseconds. Travel time keeps seconds,
-because the module stores whole seconds. Calibration passes through verbatim,
-because the Designer shows it without a unit.
+because the module stores whole seconds. Calibration stores the percent value as
+the Designer displays it, from 0 to 50.
 
 A board holds either 12 or 10 bytes per channel. A 10-byte stride ends the
 section after the reversal lag, so both motor start lags read None there and the
