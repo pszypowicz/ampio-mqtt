@@ -8,56 +8,86 @@ import json
 import pytest
 from conftest import API_TOPIC, USER, FakeBroker, deliver_later
 
-from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioProtocolError
+from ampio_mqtt import (
+    AmpioClient,
+    AmpioConnectionError,
+    AmpioProtocolError,
+    AmpioTimeoutError,
+)
 from ampio_mqtt._protocol import parse_scenes
 
-_PAYLOAD = json.dumps(
-    {
-        "List": [
+
+# One scene row as the live M-SERV serves it. `Infos` carries the structured
+# form of each action, and the library reads the object ids out of it.
+def _scene(**over: object) -> dict:
+    row: dict = {
+        "id": 1,
+        "parentId": -1,
+        "sceneName": "Evening",
+        "sceneIdent": "",
+        "active": 1,
+        "lp": 0,
+        "Actions": [{"action": "set/50/setColors/65536", "delay": 0}],
+        "Infos": [
             {
-                "id": 1,
-                "parentId": -1,
-                "sceneName": "Schody noc",
-                "active": 1,
-                "Actions": [{"action": "set/50/setColors/65536", "delay": 0}],
-                "Infos": [{"id": 50, "value": 65536, "delay": "0"}],
-                "Schedules": [],
-            },
-            {
-                "id": 7,
-                "parentId": 1,
-                "sceneName": "Wyjście",
-                "active": 0,
-                "Actions": [
-                    {"action": "set/64/turnOff", "delay": 0},
-                    {"action": "set/48/setRollerPos/0/101", "delay": 5},
-                ],
-                "Infos": [{"id": 64}, {"id": 48}],
-            },
-            # No "active" column: the baseline server always sends it, so
-            # this is the shape-drift case - it must
-            # read enabled, matching the dataclass default.
-            {
-                "id": 9,
-                "parentId": -1,
-                "sceneName": "Bez kolumny",
-                "Infos": [],
-            },
-        ]
+                "id": 50,
+                "param1": -1,
+                "param2": -1,
+                "param3": -1,
+                "value": 65536,
+                "delay": "0",
+            }
+        ],
+        "Schedules": [],
     }
+    return {**row, **over}
+
+
+def _catalogue(*rows: dict) -> str:
+    return json.dumps({"List": list(rows)})
+
+
+_PAYLOAD = _catalogue(
+    _scene(),
+    _scene(
+        id=7,
+        parentId=1,
+        sceneName="Away",
+        active=0,
+        Actions=[
+            {"action": "set/64/turnOff", "delay": 0},
+            {"action": "set/48/setRollerPos/0/101", "delay": 5},
+        ],
+        Infos=[{"id": 64}, {"id": 48}],
+    ),
 )
 
 
 def test_parses_the_catalogue() -> None:
-    scenes = parse_scenes(_PAYLOAD)
-    assert scenes is not None
-    first, second, third = scenes
-    assert (first.id, first.scene_name, first.active) == (1, "Schody noc", True)
+    first, second = parse_scenes(_PAYLOAD)
+    assert (first.id, first.scene_name, first.active) == (1, "Evening", True)
     assert first.parent_id is None  # -1 means top level
     assert first.object_ids == frozenset({50})
     assert (second.id, second.active, second.parent_id) == (7, False, 1)
     assert second.object_ids == frozenset({64, 48})
-    assert (third.id, third.active) == (9, True)
+
+
+@pytest.mark.parametrize("column", ["id", "parentId", "sceneName", "active", "Infos"])
+def test_a_scene_row_without_a_served_column_is_refused(column: str) -> None:
+    """Every live row carries these, and the library reads each one."""
+    row = _scene()
+    del row[column]
+    with pytest.raises(AmpioProtocolError, match=column):
+        parse_scenes(_catalogue(row))
+
+
+@pytest.mark.parametrize("infos", [5, "x", None, {"id": 1}, [{"value": 1}], [7]])
+def test_a_malformed_infos_annex_is_refused(infos: object) -> None:
+    """`Infos` is the structured form of the scene's actions, and its ids are
+    what relate a scene to its objects. A shape that carries none of them
+    would read as a scene that touches nothing."""
+    with pytest.raises(AmpioProtocolError, match="Infos"):
+        parse_scenes(_catalogue(_scene(Infos=infos)))
 
 
 @pytest.mark.parametrize(
@@ -79,43 +109,31 @@ def test_an_empty_catalogue_reads_as_no_scenes() -> None:
     assert parse_scenes('{"List": []}') == []
 
 
-@pytest.mark.parametrize("infos", [5, "x", None, {"id": 1}])
-def test_malformed_infos_degrades_to_empty_object_ids(infos: object) -> None:
-    """The scene is real and runnable whatever its Infos annex looks like,
-    and nothing row-shaped may escape fetch_scenes as a bare exception."""
-    payload = json.dumps({"List": [{"id": 1, "sceneName": "Evening", "Infos": infos}]})
-    scenes = parse_scenes(payload)
-    assert scenes is not None
-    [scene] = scenes
-    assert (scene.id, scene.scene_name) == (1, "Evening")
-    assert scene.object_ids == frozenset()
+def test_a_non_text_scene_name_is_refused() -> None:
+    with pytest.raises(AmpioProtocolError, match="sceneName"):
+        parse_scenes(_catalogue(_scene(sceneName=7)))
 
 
-def test_non_string_scene_name_reads_empty() -> None:
-    """AmpioScene.scene_name is typed str; a non-string wire value must not
-    land in it."""
-    payload = json.dumps({"List": [{"id": 1, "sceneName": 7}]})
-    scenes = parse_scenes(payload)
-    assert scenes is not None
-    assert scenes[0].scene_name == ""
+def test_an_empty_scene_name_reads_through() -> None:
+    """The app asks for a name, but an empty one names no value the library
+    has to resolve, so it passes through as the empty string."""
+    assert parse_scenes(_catalogue(_scene(sceneName="")))[0].scene_name == ""
 
 
-async def test_fetch_scenes_survives_a_malformed_infos_row(
+async def test_fetch_scenes_maps_a_refused_reply_to_the_retryable_error(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
-    """The documented error contract holds even for a reply whose row
-    content is malformed: the fetch returns the degraded scene rather than
-    leaking a bare TypeError."""
+    """A reply the parse refuses resolves no waiter, so the fetch ends in the
+    same retryable error as silence rather than leaking a bare exception."""
     client, _broker = connected
-    bad = json.dumps({"List": [{"id": 1, "sceneName": "Evening", "Infos": 5}]})
+    bad = _catalogue(_scene(Infos=5))
 
     delivery = deliver_later(client, (f"ampio/fromDB/{USER}/data/scenes", bad))
     try:
-        scenes = await client.fetch_scenes(timeout=2)
+        with pytest.raises(AmpioTimeoutError):
+            await client.fetch_scenes(timeout=0.2)
     finally:
         await delivery
-    [scene] = scenes
-    assert (scene.id, scene.scene_name, scene.object_ids) == (1, "Evening", frozenset())
 
 
 @pytest.mark.parametrize(
@@ -150,7 +168,7 @@ async def test_fetch_scenes_requests_and_parses_the_reply(
         scenes = await client.fetch_scenes(timeout=2)
     finally:
         await delivery
-    assert [s.scene_name for s in scenes] == ["Schody noc", "Wyjście", "Bez kolumny"]
+    assert [s.scene_name for s in scenes] == ["Evening", "Away"]
     assert broker.published == [(f"ampio/control/{USER}/data", b"scenes")]
 
 

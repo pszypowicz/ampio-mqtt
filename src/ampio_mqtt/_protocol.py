@@ -30,7 +30,6 @@ import logging
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from functools import partial
 from typing import Any, cast
 
 from .errors import AmpioProtocolError
@@ -194,16 +193,6 @@ def require_rows(payload: str, surface: str) -> list[dict[str, Any]]:
     return cast("list[dict[str, Any]]", rows)
 
 
-def _rows_parser(surface: str) -> Callable[[str], list[dict[str, Any]]]:
-    """An endpoint parser handing a reply's rows to the caller, strictly.
-
-    For a table whose row shape this library has not pinned live: the
-    envelope is checked, the rows pass through, and the consumer's own join
-    reads what it needs.
-    """
-    return partial(require_rows, surface=surface)
-
-
 def to_int(value: Any) -> int | None:
     """Int coercion for a column whose absence is a value, None on bad input."""
     try:
@@ -259,6 +248,8 @@ _SCENES = "scene catalogue"
 _LOCATIONS = "locations table"
 _INFO = "server info"
 _PUSH = "state push"
+_GROUPS = "room table"
+_MEMBERSHIP = "room membership table"
 
 
 def _shared_columns(row: Mapping[str, Any]) -> ObjectMetadata:
@@ -365,70 +356,94 @@ def parse_scenes(payload: str) -> list[AmpioScene]:
 
     Each row carries its actions twice - `Actions` as the wire command strings
     and `Infos` as their structured form. Only the object ids are kept, since
-    the M-SERV replays the actions itself when a scene is run.
+    the M-SERV replays the actions itself when a scene is run. `parentId` -1
+    marks a top-level scene.
     """
     out: list[AmpioScene] = []
     for item in require_rows(payload, _SCENES):
-        sid = to_int(item.get("id"))
-        if sid is None:
-            continue
-        parent = to_int(item.get("parentId"))
-        # Malformed row fields degrade instead of hiding the scene: it is
-        # real and runnable (the M-SERV replays its actions server-side).
-        # This row shape is the one the library has no live reply for, so
-        # only the envelope is strict (#212). A row without `active` reads
-        # enabled, the state the app creates.
-        raw_active = to_int(item.get("active"))
-        infos = item.get("Infos")
-        objects = {
-            oid
-            for info in (infos if isinstance(infos, list) else [])
-            if isinstance(info, dict) and (oid := to_int(info.get("id"))) is not None
-        }
-        name = item.get("sceneName")
+        parent = _int_column(item, "parentId", _SCENES)
         out.append(
             AmpioScene(
-                id=sid,
-                scene_name=name if isinstance(name, str) else "",
-                active=raw_active != 0 if raw_active is not None else True,
-                parent_id=parent if parent is not None and parent >= 0 else None,
-                object_ids=frozenset(objects),
+                id=_int_column(item, "id", _SCENES),
+                scene_name=_text_column(item, "sceneName", _SCENES),
+                active=_int_column(item, "active", _SCENES) != 0,
+                parent_id=parent if parent >= 0 else None,
+                object_ids=_scene_object_ids(item),
             )
         )
     return out
 
 
-def parse_rooms(
-    groups_rows: list[Any], group_devices_rows: list[Any]
-) -> dict[int, str]:
-    """Join parsed `data/groups` and `data/group_devices` rows into a room map.
+def _scene_object_ids(row: Mapping[str, Any]) -> frozenset[int]:
+    """The object ids of one scene row, out of its ``Infos`` annex.
 
-    Returns ``{ampio_object_id: room_name}``. Objects assigned to multiple
-    groups map to the first room encountered - the join table has no
-    "primary group" marker, and the intended consumer (a Home Assistant
-    integration forwarding the value as ``DeviceInfo.suggested_area``)
-    allows one area per device. Mistyped rows are skipped.
+    The annex is the structured form of the row's actions, one entry per
+    action, and its ids are what relate a scene to its objects. A shape that
+    carries none of them would read as a scene that touches nothing.
     """
-    group_names: dict[int, str] = {}
-    for row in groups_rows:
-        if not isinstance(row, dict):
-            continue
-        gid = row.get("id")
-        name = row.get("opis_menu")
-        if isinstance(gid, int) and isinstance(name, str) and name:
-            group_names[gid] = name
+    infos = _column(row, "Infos", _SCENES)
+    if not isinstance(infos, list):
+        raise AmpioProtocolError(f"An Ampio {_SCENES} row's `Infos` is not an array")
+    out: set[int] = set()
+    for entry in infos:
+        if not isinstance(entry, dict):
+            raise AmpioProtocolError(
+                f"An Ampio {_SCENES} row's `Infos` entry is not a JSON object"
+            )
+        out.add(_int_column(entry, "id", f"{_SCENES} `Infos` entry"))
+    return frozenset(out)
+
+
+def parse_groups(payload: str) -> dict[int, str]:
+    """``{group_id: name}`` from a `data/groups` reply, the room tree.
+
+    Every row carries an id and a name. The name becomes a consumer's area,
+    so an empty one names no room and is refused.
+    """
+    out: dict[int, str] = {}
+    for row in require_rows(payload, _GROUPS):
+        name = _text_column(row, "opis_menu", _GROUPS)
+        if not name:
+            raise AmpioProtocolError(
+                f"The `opis_menu` column of an Ampio {_GROUPS} row is empty"
+            )
+        out[_int_column(row, "id", _GROUPS)] = name
+    return out
+
+
+def parse_group_devices(payload: str) -> list[tuple[int, int]]:
+    """``(object_id, group_id)`` per row of a `data/group_devices` reply.
+
+    The order is the reply's own, which is what makes the first room an
+    object appears in the one :func:`parse_rooms` keeps.
+    """
+    return [
+        (
+            _int_column(row, "id_obiektu", _MEMBERSHIP),
+            _int_column(row, "id_grupy", _MEMBERSHIP),
+        )
+        for row in require_rows(payload, _MEMBERSHIP)
+    ]
+
+
+def parse_rooms(
+    group_names: Mapping[int, str], membership: Sequence[tuple[int, int]]
+) -> dict[int, str]:
+    """Join the two room tables into ``{ampio_object_id: room_name}``.
+
+    An object in several groups takes the first room of the membership
+    reply: the join table marks no primary group, and the intended consumer
+    (a Home Assistant integration forwarding the value as
+    ``DeviceInfo.suggested_area``) allows one area per device. A membership
+    row can name a group the names table does not list, which leaves that
+    object without a room.
+    """
     room_map: dict[int, str] = {}
-    for row in group_devices_rows:
-        if not isinstance(row, dict):
-            continue
-        oid = row.get("id_obiektu")
-        gid = row.get("id_grupy")
-        if not isinstance(oid, int) or not isinstance(gid, int):
-            continue
+    for oid, gid in membership:
         if oid in room_map:
             continue  # first match wins; HA allows one area per device
         name = group_names.get(gid)
-        if name:
+        if name is not None:
             room_map[oid] = name
     return room_map
 
@@ -1119,16 +1134,14 @@ ENDPOINTS: tuple[Endpoint, ...] = (
         initial=True,
         tier=AccessTier.RESTRICTED,
     ),
-    Endpoint(
-        "groups", "data", "groups", "data", "groups", parses=_rows_parser("room table")
-    ),
+    Endpoint("groups", "data", "groups", "data", "groups", parses=parse_groups),
     Endpoint(
         "group_devices",
         "data",
         "group_devices",
         "data",
         "group_devices",
-        parses=_rows_parser("room membership table"),
+        parses=parse_group_devices,
     ),
     Endpoint("scenes", "data", "scenes", "data", "scenes", parses=parse_scenes),
     # The Designer "Lokalizacja" name table. On-demand; the per-output
