@@ -47,7 +47,7 @@ for every account.
 | `params_devices` | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/params_devices`   | `{List: [{id, params, param1, czas, powiazane, url}]}` - per-object `params` bitfields for the **full** catalogue (not grant-filtered).                                                                                                                                                                                                                           |
 | `groups`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/groups`           | `{List: [{id, id_rodzica, opis_menu}]}` - room tree.                                                                                                                                                                                                                                                                                                              |
 | `group_devices`  | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/group_devices`    | `{List: [{id_grupy, id_obiektu}]}` - object-to-room join.                                                                                                                                                                                                                                                                                                         |
-| `scenes`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/scenes`           | `{List: [{id, parentId, sceneName, active, Actions, Infos, Schedules}]}` - scene catalogue. `Actions` are wire command strings, `Infos` their structured form.                                                                                                                                                                                                    |
+| `scenes`         | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/scenes`           | `{List: [{id, parentId, sceneName, active, Actions, Infos, Schedules}]}` - scene catalogue. `parentId` is the room the scene is filed under. `Actions` are wire command strings, `Infos` their structured form.                                                                                                                                                   |
 | (empty)          | `ampio/control/<user>/states` | `ampio/fromDB/<user>/data/states`           | `{List: [{id, stan_json}]}` - bulk snapshot of the account's object states.                                                                                                                                                                                                                                                                                       |
 | (empty)          | `ampio/control/<user>/info`   | `ampio/fromDB/<user>/data/info`             | `{Results: {mac, userId, serverVersion, serverRevision, mqttVersion, local_ip, device_id, ...}}` - server self-report, retained in the account namespace. `userId` is the asking account's id (`-1` for the reserved `admin` login). `AmpioServerInfo.access_tier` exposes it for config flows. A running client's tier is decided by its authenticated username. |
 
@@ -68,6 +68,9 @@ into wrong values on an object.
 | `data/states`           | `id`, `stan_json`, and inside the blob `state` and `on`                                                                               |
 | `data/info`             | `mac`, `userId`                                                                                                                       |
 | `config/locations`      | `id`, `opis_menu`                                                                                                                     |
+| `data/scenes`           | `id`, `parentId`, `sceneName`, `active`, `Infos`, and an `id` per `Infos` entry                                                       |
+| `data/groups`           | `id`, a non-empty `opis_menu`                                                                                                         |
+| `data/group_devices`    | `id_grupy`, `id_obiektu`                                                                                                              |
 | `ob/<id>/state`         | `state`, `on`                                                                                                                         |
 
 A column can hold an empty value. `leafId`, `opis_menu` on an object row, `url`,
@@ -76,10 +79,10 @@ carries no value. The `type` column is null or empty on an untagged object. What
 must be there is the column itself.
 
 Some columns must also hold a usable value, because nothing downstream can work
-around an empty one. A `locations` row needs a name, or the pointer into it
-would read as an unassigned location. A `stan_json` blob and a per-object push
-each need their `state` and their `on` stamp, because the stamp is what orders
-one report against another.
+around an empty one. A `locations` row and a `groups` row each need a name: the
+first resolves a per-output pointer, the second becomes a consumer's area. A
+`stan_json` blob and a per-object push each need their `state` and their `on`
+stamp, because the stamp is what orders one report against another.
 
 The per-object push is the one live message in the table, and the rest are
 replies. Its stamp makes every object's value comparable on one clock, which is
@@ -88,9 +91,14 @@ clock. The raw channel tree is the exception: its payloads carry no stamp at
 all, so a raw edge is stamped locally, and the ordering rules in
 [`discovery-flow.md`](discovery-flow.md) exist for exactly those values.
 
-The scene catalogue is the one exception. Its row shape is not pinned against a
-live reply, because the reference install defines no scene, so only the envelope
-is strict and a row without an id is skipped.
+A scene row carries more than the table lists. `Actions` holds the wire command
+strings, `Infos` the structured form of the same actions, and `Schedules` the
+timed triggers. The library reads the object ids out of `Infos` alone, because
+the M-SERV replays a scene's actions itself.
+
+`parentId` names the room the scene is filed under. It is an id of the `groups`
+table, not another scene, and -1 means no room. `AmpioScene.group_id` carries
+it, so a consumer can file a scene in the same area as its room.
 
 ## Module description records (`device_api`)
 

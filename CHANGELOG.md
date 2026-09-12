@@ -83,6 +83,13 @@ not served this".
   `state` and its `on` stamp. The library refuses a reply that drops one, rather
   than skipping the row or seeding a value nothing can order. That retires the
   undated-seed path: a seed always carries the M-SERV stamp it was reported at.
+- **The scene catalogue and the two room tables are strict too.** A scene row
+  carries `id`, `parentId`, `sceneName`, `active` and an `Infos` annex, and
+  every annex entry carries the object id its action targets. A `groups` row
+  carries an id and a non-empty name, and a `group_devices` row both of its join
+  keys. A row that drops one is refused, rather than read as a scene that
+  touches nothing or an object with no room. `parse_rooms()` now takes the two
+  parsed tables rather than raw rows.
 - **A per-object state push must carry its value and its `on` stamp.** The
   payload is a JSON object, and the library no longer reads a plain-text payload
   or stamps a push with its own clock. `StateUpdate.on_ms` is required, and the

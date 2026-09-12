@@ -738,8 +738,10 @@ class AmpioScene:
     scene_name: str
     # The M-SERV's own enabled flag for the scene.
     active: bool = True
-    # Parent scene when the install nests them; None for a top-level scene.
-    parent_id: int | None = None
+    # The room the scene is filed under, from the wire's `parentId`: an id of
+    # the `groups` table that `AmpioClient.fetch_rooms()` joins, not another
+    # scene. None when the scene is filed under no room (wire -1).
+    group_id: int | None = None
     # Objects the scene's actions touch, for a consumer that wants to relate a
     # scene to its entities.
     object_ids: frozenset[int] = field(default_factory=frozenset)

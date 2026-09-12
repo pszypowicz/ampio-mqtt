@@ -18,8 +18,13 @@ import aiomqtt
 import pytest
 from conftest import FakeBroker, deliver_later, feed
 
-from ampio_mqtt import AmpioClient, AmpioConnectionError, AmpioTimeoutError
-from ampio_mqtt._protocol import parse_rooms
+from ampio_mqtt import (
+    AmpioClient,
+    AmpioConnectionError,
+    AmpioProtocolError,
+    AmpioTimeoutError,
+)
+from ampio_mqtt._protocol import parse_group_devices, parse_groups, parse_rooms
 
 # --- parse_rooms() pure tests ----------------------------------------------
 
@@ -28,60 +33,74 @@ def _payload(rows: list[object]) -> str:
     return json.dumps({"List": rows})
 
 
+def _groups(*rows: dict) -> str:
+    return _payload(list(rows))
+
+
+def _members(*rows: dict) -> str:
+    return _payload(list(rows))
+
+
 def test_parse_rooms_happy_path() -> None:
-    groups = [
-        {"id": 8, "id_rodzica": 4, "opis_menu": "Salon"},
-        {"id": 7, "id_rodzica": 4, "opis_menu": "Jadalnia"},
-    ]
-    group_devices = [
-        {"id_grupy": 8, "id_obiektu": 31},
-        {"id_grupy": 7, "id_obiektu": 28},
-    ]
-    assert parse_rooms(groups, group_devices) == {31: "Salon", 28: "Jadalnia"}
+    names = parse_groups(
+        _groups(
+            {"id": 8, "id_rodzica": 4, "opis_menu": "Salon"},
+            {"id": 7, "id_rodzica": 4, "opis_menu": "Jadalnia"},
+        )
+    )
+    members = parse_group_devices(
+        _members({"id_grupy": 8, "id_obiektu": 31}, {"id_grupy": 7, "id_obiektu": 28})
+    )
+    assert parse_rooms(names, members) == {31: "Salon", 28: "Jadalnia"}
 
 
 def test_parse_rooms_first_match_wins_for_multi_group_objects() -> None:
-    """Object 50 appears in groups 15 (Schody) and 11 (Korytarz) - first wins."""
-    groups = [
-        {"id": 15, "opis_menu": "Schody"},
-        {"id": 11, "opis_menu": "Korytarz"},
-    ]
-    group_devices = [
-        {"id_grupy": 15, "id_obiektu": 50},
-        {"id_grupy": 11, "id_obiektu": 50},
-    ]
-    assert parse_rooms(groups, group_devices) == {50: "Schody"}
+    """An object in two groups takes the first room: the join table marks no
+    primary group, and Home Assistant allows one area per device."""
+    names = parse_groups(
+        _groups({"id": 15, "opis_menu": "Schody"}, {"id": 11, "opis_menu": "Korytarz"})
+    )
+    members = parse_group_devices(
+        _members({"id_grupy": 15, "id_obiektu": 50}, {"id_grupy": 11, "id_obiektu": 50})
+    )
+    assert parse_rooms(names, members) == {50: "Schody"}
 
 
-def test_parse_rooms_skips_malformed_entries() -> None:
-    groups = [
-        {"id": 1, "opis_menu": "OK"},
-        {"id": None, "opis_menu": "Missing id"},
-        {"id": 2, "opis_menu": ""},
-        {"id": 3, "opis_menu": None},
-        "not an object",
-        {"id": 4, "opis_menu": "Used"},
-    ]
-    group_devices = [
-        {"id_grupy": 1, "id_obiektu": 100},
-        {"id_grupy": 2, "id_obiektu": 101},
-        {"id_grupy": 3, "id_obiektu": 102},
-        {"id_grupy": 4, "id_obiektu": None},
-        {"id_grupy": None, "id_obiektu": 103},
-        "not an object",
-        {"id_grupy": 4, "id_obiektu": 104},
-    ]
-    assert parse_rooms(groups, group_devices) == {100: "OK", 104: "Used"}
+@pytest.mark.parametrize("column", ["id", "opis_menu"])
+def test_parse_groups_refuses_a_row_without_a_served_column(column: str) -> None:
+    row = {"id": 1, "opis_menu": "Salon"}
+    del row[column]
+    with pytest.raises(AmpioProtocolError, match=column):
+        parse_groups(_groups(row))
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_parse_groups_refuses_an_unusable_name(value: object) -> None:
+    """The name becomes a consumer's area, so an empty one names no room."""
+    with pytest.raises(AmpioProtocolError, match="opis_menu"):
+        parse_groups(_groups({"id": 1, "opis_menu": value}))
+
+
+@pytest.mark.parametrize("column", ["id_grupy", "id_obiektu"])
+def test_parse_group_devices_refuses_a_row_without_a_served_column(
+    column: str,
+) -> None:
+    row = {"id_grupy": 1, "id_obiektu": 100}
+    del row[column]
+    with pytest.raises(AmpioProtocolError, match=column):
+        parse_group_devices(_members(row))
 
 
 def test_parse_rooms_ignores_devices_pointing_at_unknown_groups() -> None:
-    groups = [{"id": 1, "opis_menu": "OK"}]
-    group_devices = [{"id_grupy": 99, "id_obiektu": 5}]
-    assert parse_rooms(groups, group_devices) == {}
+    """A membership row can name a group the names table does not list, which
+    leaves that object without a room rather than inventing one."""
+    names = parse_groups(_groups({"id": 1, "opis_menu": "OK"}))
+    members = parse_group_devices(_members({"id_grupy": 99, "id_obiektu": 5}))
+    assert parse_rooms(names, members) == {}
 
 
 def test_parse_rooms_of_empty_tables_is_empty() -> None:
-    assert parse_rooms([], []) == {}
+    assert parse_rooms({}, []) == {}
 
 
 # --- AmpioClient.fetch_rooms() MQTT orchestration -------------------------
