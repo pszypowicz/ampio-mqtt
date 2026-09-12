@@ -12,6 +12,19 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Tools
+
+- **`tools/modules.py`** prints the module inventory an admin account receives:
+  one row per module with the model, the firmware version, the supply voltage,
+  the temperature, and the size of the capability map. `--function BUZZER`
+  narrows the list to the modules that carry one capability, `--module <row>`
+  prints one module's whole map, and `--watch <seconds>` counts how many modules
+  broadcast a reading while the connection stays open. The script needs the
+  admin login, because the description sweep behind it reads the `device_api`
+  tree. It sends no command to any module.
+
 ## 0.56.0
 
 A touch panel's colours and its touch lock are settings you change in the
