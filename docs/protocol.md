@@ -96,9 +96,11 @@ strings, `Infos` the structured form of the same actions, and `Schedules` the
 timed triggers. The library reads the object ids out of `Infos` alone, because
 the M-SERV replays a scene's actions itself.
 
-`parentId` names the room the scene is filed under. It is an id of the `groups`
-table, not another scene, and -1 means no room. `AmpioScene.group_id` carries
-it, so a consumer can file a scene in the same area as its room.
+`parentId` names the room the app presents the scene in. It is an id of the
+`groups` table, not another scene, and -1 means no room was chosen. The choice
+places the scene for display. It does not scope what the scene can touch,
+because a scene's actions reach any object. `AmpioScene.group_id` carries the
+id, so a consumer that files scene entities by area reads it from there.
 
 ## Module description records (`device_api`)
 
