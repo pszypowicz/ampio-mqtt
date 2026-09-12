@@ -112,8 +112,8 @@ sensors. It is None for a missing, unparseable, or non-finite value. `position`
 is the travel percent of a position-capable cover, 0 closed to 100 open, and
 None elsewhere. `supports_tilt` says whether the object has a slat axis.
 `updated_at` is the epoch time of the report `state` came from. It is the
-M-SERV's own `on` stamp, or the local receive time for an undated raw edge. It
-is None until a report arrives.
+M-SERV's own `on` stamp, or the local receive time for a raw edge, which carries
+no stamp. It is None until a report arrives.
 
 ## The kind-key vocabulary
 

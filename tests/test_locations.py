@@ -25,19 +25,21 @@ def test_parse_locations_happy_path() -> None:
     assert parse_locations(payload) == {14: "Potter", 19: "Testowe"}
 
 
-def test_parse_locations_skips_malformed_rows() -> None:
-    """This row shape is not pinned live, so a row without an id or a name
-    is skipped rather than refused."""
-    payload = json.dumps(
-        {
-            "List": [
-                {"id": 1, "opis_menu": "OK"},
-                {"id": None, "opis_menu": "x"},
-                {"id": 2, "opis_menu": ""},
-            ]
-        }
-    )
-    assert parse_locations(payload) == {1: "OK"}
+@pytest.mark.parametrize("column", ["id", "opis_menu"])
+def test_parse_locations_refuses_a_row_without_a_served_column(column: str) -> None:
+    """Every row of the name table carries both columns, and a name the
+    pointer cannot resolve would read as an unassigned location."""
+    row = {"id": 1, "opis_menu": "OK"}
+    del row[column]
+    with pytest.raises(AmpioProtocolError, match=column):
+        parse_locations(json.dumps({"List": [row]}))
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_parse_locations_refuses_an_unusable_name(value: object) -> None:
+    payload = json.dumps({"List": [{"id": 1, "opis_menu": value}]})
+    with pytest.raises(AmpioProtocolError, match="opis_menu"):
+        parse_locations(payload)
 
 
 @pytest.mark.parametrize("payload", ["not-json", json.dumps({"Status": 0})])

@@ -109,7 +109,9 @@ class StateUpdate:
 
     id: int
     state: str
-    on_ms: int | float | None
+    # The M-SERV stamp the value was reported at, in ms. Every push carries
+    # one, so nothing here is stamped with this process's clock.
+    on_ms: int | float
     lammel: int | None  # Percent, present only for tilt-capable covers
     # Roller lock bits, present only on cover pushes.
     block: int | None = None
@@ -127,10 +129,14 @@ class ModuleDiagnostics:
 
 @dataclass(slots=True)
 class StanJsonSeed:
-    """Initial `state` value and server timestamp extracted from `stan_json`."""
+    """Initial `state` value and server timestamp extracted from `stan_json`.
 
-    state: str | None
-    on_ms: int | float | None
+    Both are always there: the snapshot lists the objects that hold a value,
+    and the stamp is what orders the seed against a live value.
+    """
+
+    state: str
+    on_ms: int | float
     lammel: int | None
     # Roller lock bits, present only on cover rows.
     block: int | None = None
@@ -252,6 +258,7 @@ _SNAPSHOT = "states snapshot"
 _SCENES = "scene catalogue"
 _LOCATIONS = "locations table"
 _INFO = "server info"
+_PUSH = "state push"
 
 
 def _shared_columns(row: Mapping[str, Any]) -> ObjectMetadata:
@@ -368,9 +375,9 @@ def parse_scenes(payload: str) -> list[AmpioScene]:
         parent = to_int(item.get("parentId"))
         # Malformed row fields degrade instead of hiding the scene: it is
         # real and runnable (the M-SERV replays its actions server-side).
-        # This row shape is not pinned live, so only the envelope is
-        # strict. A row without `active` reads enabled, the state the app
-        # creates.
+        # This row shape is the one the library has no live reply for, so
+        # only the envelope is strict (#212). A row without `active` reads
+        # enabled, the state the app creates.
         raw_active = to_int(item.get("active"))
         infos = item.get("Infos")
         objects = {
@@ -429,16 +436,18 @@ def parse_rooms(
 def parse_locations(payload: str) -> dict[int, str]:
     """``{location_id: name}`` from a `config/locations` reply.
 
-    The name table behind the Designer's "Lokalizacja" dropdown. This row
-    shape is not pinned live, so only the envelope is strict: a row with a
-    missing id or an empty name is skipped.
+    The name table behind the Designer's "Lokalizacja" dropdown. Every row
+    carries an id and a name, and a pointer into a row with neither would
+    read as an unassigned location.
     """
     out: dict[int, str] = {}
     for row in require_rows(payload, _LOCATIONS):
-        lid = to_int(row.get("id"))
-        name = row.get("opis_menu")
-        if lid is not None and isinstance(name, str) and name:
-            out[lid] = name
+        name = _text_column(row, "opis_menu", _LOCATIONS)
+        if not name:
+            raise AmpioProtocolError(
+                f"The `opis_menu` column of an Ampio {_LOCATIONS} row is empty"
+            )
+        out[_int_column(row, "id", _LOCATIONS)] = name
     return out
 
 
@@ -910,39 +919,40 @@ def _parse_thermostat(data: dict[str, Any]) -> ThermostatState | None:
 def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
     """Parse a live per-object state payload into a `StateUpdate`.
 
-    The payload may be plain text or a JSON object with a `state` field; in
-    either case `state` is set, and `on_ms` is populated when the payload
-    carried a server timestamp. Plain text is stripped, exactly as the raw
-    channel form is.
+    The payload is a JSON object carrying the value and the M-SERV stamp it
+    was reported at. The stamp is what orders one report against another, so
+    a payload without it is refused rather than stamped with this process's
+    own clock.
     """
-    state: str = payload.strip()
-    on_ms: int | float | None = None
-    lammel: int | None = None
-    block: int | None = None
-    thermostat: ThermostatState | None = None
     try:
         data = json.loads(payload)
-    except (ValueError, TypeError):
-        data = None
-    if isinstance(data, dict):
-        # Numeric `state` values arrive as int/float from JSON; the library
-        # contract is text, so coerce here rather than at every consumer.
-        raw_state = data.get("state")
-        if raw_state is not None:
-            state = str(raw_state)
-        raw_on = data.get("on")
-        if isinstance(raw_on, (int, float)):
-            on_ms = raw_on
-        lammel = to_int(data.get("lammel"))
-        block = to_int(data.get("block"))
-        thermostat = _parse_thermostat(data)
+    except (ValueError, TypeError) as err:
+        raise AmpioProtocolError(
+            f"The Ampio state push for object {oid} is not JSON"
+        ) from err
+    if not isinstance(data, dict):
+        raise AmpioProtocolError(
+            f"The Ampio state push for object {oid} is not a JSON object"
+        )
+    raw_on = _column(data, "on", _PUSH)
+    if not isinstance(raw_on, (int, float)):
+        raise AmpioProtocolError(
+            f"The `on` stamp of the Ampio state push for object {oid} is not a number"
+        )
+    raw_state = _column(data, "state", _PUSH)
+    if raw_state is None:
+        raise AmpioProtocolError(
+            f"The Ampio state push for object {oid} carries a null `state`"
+        )
     return StateUpdate(
         id=oid,
-        state=state,
-        on_ms=on_ms,
-        lammel=lammel,
-        block=block,
-        thermostat=thermostat,
+        # Numeric `state` values arrive as int/float from JSON; the library
+        # contract is text, so coerce here rather than at every consumer.
+        state=str(raw_state),
+        on_ms=raw_on,
+        lammel=to_int(data.get("lammel")),
+        block=to_int(data.get("block")),
+        thermostat=_parse_thermostat(data),
     )
 
 
@@ -976,22 +986,35 @@ def parse_diagnostics(payload: str) -> ModuleDiagnostics | None:
     )
 
 
-def parse_stan_json(stan_json: str) -> StanJsonSeed | None:
-    """Parse a `stan_json` blob into an initial state and server timestamp."""
-    if not stan_json:
-        return None
+def parse_stan_json(stan_json: str) -> StanJsonSeed:
+    """Parse a `stan_json` blob into an initial state and server timestamp.
+
+    The snapshot lists the objects that hold a value, and every blob carries
+    both the value and the M-SERV stamp it was reported at. The stamp is
+    what orders the seed against a live value, so a blob without one seeds
+    nothing and is refused.
+    """
     try:
         data = json.loads(stan_json)
-    except (ValueError, TypeError):
-        return None
+    except (ValueError, TypeError) as err:
+        raise AmpioProtocolError(
+            f"An Ampio {_SNAPSHOT} row's `stan_json` is not JSON"
+        ) from err
     if not isinstance(data, dict):
-        return None
-    raw_on = data.get("on")
-    on_ms = raw_on if isinstance(raw_on, (int, float)) else None
-    raw_state = data.get("state")
+        raise AmpioProtocolError(
+            f"An Ampio {_SNAPSHOT} row's `stan_json` is not a JSON object"
+        )
+    raw_on = _column(data, "on", _SNAPSHOT)
+    if not isinstance(raw_on, (int, float)):
+        raise AmpioProtocolError(
+            f"The `on` stamp of an Ampio {_SNAPSHOT} row is not a number"
+        )
+    raw_state = _column(data, "state", _SNAPSHOT)
+    if raw_state is None:
+        raise AmpioProtocolError(f"An Ampio {_SNAPSHOT} row carries a null `state`")
     return StanJsonSeed(
-        state=str(raw_state) if raw_state is not None else None,
-        on_ms=on_ms,
+        state=str(raw_state),
+        on_ms=raw_on,
         lammel=to_int(data.get("lammel")),
         block=to_int(data.get("block")),
         thermostat=_parse_thermostat(data),

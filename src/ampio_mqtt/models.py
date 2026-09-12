@@ -345,10 +345,10 @@ class AmpioObject:
     # The state payload's `state` key, verbatim.
     state: str | None = None
     # Epoch seconds of the report `state` came from: the M-SERV's own `on`
-    # timestamp when the report carried one, the local receive time for the
-    # undated raw tree. Lets a later bulk snapshot be compared against what
-    # is held instead of applied or dropped blind. None until any report
-    # arrives, or when an undated seed supplied the value.
+    # stamp, which every per-object push and snapshot row carries, or the
+    # local receive time for a raw channel edge, which carries no stamp of
+    # its own. Lets a later bulk snapshot be compared against what is held
+    # instead of applied or dropped blind. None until any report arrives.
     updated_at: float | None = None
     # Whether the raw path owns this object (its raw-channel form has been
     # observed): per-object echoes and snapshot rows are then skipped -

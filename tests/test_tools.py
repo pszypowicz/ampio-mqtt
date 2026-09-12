@@ -191,7 +191,9 @@ async def test_set_object_sends_the_command_and_reports_the_state(
     broker = FakeBroker()
     broker.scripted_messages = [
         *_discovery({"id": 64, "typ_komponentu": "flaga", "opis_menu": "Flag"}),
-        Message(f"ampio/fromDB/{USER}/ob/64/state", b'{"state":"0"}'),
+        Message(
+            f"ampio/fromDB/{USER}/ob/64/state", b'{"state":"0","on":1789000000000}'
+        ),
     ]
     a = _parse(monkeypatch, set_object, "--object-id", "64", "--on", "--watch", "0.01")
     assert await set_object.run(a, client_factory=broker.factory) == 0
@@ -247,7 +249,9 @@ async def test_smoke_test_prints_the_discovery_summary(
                 "opis_menu": "Salon",
             }
         ),
-        Message(f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"22.5"}'),
+        Message(
+            f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"22.5","on":1789000000000}'
+        ),
     ]
     a = _parse(monkeypatch, smoke_test, "--duration", "0.01")
     assert await smoke_test.run(a, client_factory=broker.factory) == 0

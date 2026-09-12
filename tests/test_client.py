@@ -24,7 +24,6 @@ from conftest import (
     devices,
     feed,
     info,
-    make_client,
     params_table,
     rows,
     snapshot,
@@ -531,7 +530,9 @@ def test_last_payloads_retained_for_each_handler() -> None:
 
     client = _client()
     info_payload = info(mac=12345, userId=4, serverVersion="2025")
-    states_payload = snapshot({"id": 5, "stan_json": '{"state":"1"}'})
+    states_payload = snapshot(
+        {"id": 5, "stan_json": '{"state":"1","on":1789000000000}'}
+    )
     data_devices_payload = details({"id": 5, "typ_komponentu": "temp"})
     params_payload = params_table({"id": 5, "params": 17})
     scenes_payload = rows({"id": 3, "sceneName": "Evening"})
@@ -683,27 +684,6 @@ async def test_username_is_required(username: str | None) -> None:
         AmpioClient("host", username=username)
     with pytest.raises(ValueError):
         await AmpioClient.check_connection("host", username, None)
-
-
-async def test_refresh_resets_the_snapshot_boundary() -> None:
-    """refresh() opens a new request cycle, so the snapshot it requests
-    can correct a value that carries only a local receive stamp."""
-    broker = FakeBroker()
-    client = make_client(broker)
-    await client.connect(timeout=1.0, discovery_timeout=0.01)
-    try:
-        feed(client, DATA_DEVICES_TOPIC, details({"id": 10}))
-        feed(client, f"ampio/fromDB/{USER}/ob/10/state", '{"state":"live"}')
-        stan = json.dumps({"state": "0", "on": 1786700900000})
-        snapshot = json.dumps({"List": [{"id": 10, "stan_json": stan}]})
-        feed(client, STATES_TOPIC, snapshot)
-        assert client.objects[10].state == "live"
-
-        await client.refresh()
-        feed(client, STATES_TOPIC, snapshot)
-        assert client.objects[10].state == "0"
-    finally:
-        await client.disconnect()
 
 
 def test_subscribe_rejects_an_empty_of_tuple() -> None:

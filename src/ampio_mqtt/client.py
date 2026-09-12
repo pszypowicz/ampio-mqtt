@@ -903,7 +903,8 @@ class AmpioClient:
         ``connect()`` issues this once on every (re)connect; call it to force
         a fresh discovery cycle without reconnecting. The call also resets
         the store's live-value protection, so the requested snapshot can
-        correct values that only carry a local receive stamp.
+        correct a value that carries only a local receive stamp, which a raw
+        channel edge leaves behind.
         """
         self._store.begin_refresh()
         for name in self._initial_endpoints:

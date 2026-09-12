@@ -937,7 +937,10 @@ async def test_listeners_run_on_the_connect_loop_in_the_main_thread() -> None:
             ADMIN_INFO_TOPIC,
             json.dumps({"Results": {"mac": 99, "userId": "-1"}}).encode(),
         ),
-        Message(f"ampio/fromDB/{ADMIN_USER}/ob/41/state", b'{"state":"1"}'),
+        Message(
+            f"ampio/fromDB/{ADMIN_USER}/ob/41/state",
+            b'{"state":"1","on":1789000000000}',
+        ),
     ]
     client = make_client(broker, username=ADMIN_USER, reconnect_interval=0.001)
     contexts: list[tuple[asyncio.AbstractEventLoop, threading.Thread]] = []
@@ -1102,7 +1105,11 @@ async def test_a_digest_trigger_keeps_the_live_value_guard() -> None:
     try:
         stan = json.dumps({"state": "0", "on": 1786700900000})
         feed(client, ADMIN_DETAILS_TOPIC, details({"id": 10, "stan_json": stan}))
-        feed(client, f"ampio/fromDB/{ADMIN_USER}/ob/10/state", '{"state":"live"}')
+        feed(
+            client,
+            f"ampio/fromDB/{ADMIN_USER}/ob/10/state",
+            '{"state":"live","on":1789000000000}',
+        )
         broker.published.clear()
         feed(client, ADMIN_MD5_DEVICES_TOPIC, "a" * 32)
         feed(client, ADMIN_MD5_DEVICES_TOPIC, "b" * 32)
