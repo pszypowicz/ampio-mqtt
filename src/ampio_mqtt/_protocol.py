@@ -822,6 +822,67 @@ def parse_cover_parameters(
     )
 
 
+def resolve_cover_parameters(
+    objects: Mapping[int, AmpioObject],
+    params_by_mac: Mapping[int, bytes],
+    capabilities_by_mac: Mapping[int, Mapping[int, int]],
+    hardware_by_mac: Mapping[int, tuple[int | None, int | None]],
+    colliding_macs: frozenset[int],
+    mac_by_device_id: Mapping[int, int],
+) -> dict[int, CoverParameters]:
+    """Join each cover object to its channel's stored travel parameters.
+
+    A module resolves only when its ``(typ_urzadzenia, wersja_pcb)`` pair
+    is a proven layout. The channel count comes from that layout and not
+    from the module: the four-channel board advertises no ``ROLLER``
+    capability at all. Where a module does advertise one and its count
+    disagrees with the layout, the module resolves nothing rather than
+    guessing.
+
+    The channel key matches ``resolve_designer``: ``leaf_io_no`` for a
+    leafed object, ``funkcja`` minus one for a leafless one. A colliding
+    mac is skipped, because the reply cannot be attributed to one module.
+    """
+    channels_by_mac: dict[int, tuple[CoverParameters, ...]] = {}
+    for mac, blob in params_by_mac.items():
+        if mac in colliding_macs:
+            continue
+        typ, pcb = hardware_by_mac.get(mac, (None, None))
+        if typ is None or pcb is None:
+            continue
+        layout = COVER_PARAMS_LAYOUTS.get((typ, pcb))
+        if layout is None:
+            continue
+        advertised = capabilities_by_mac.get(mac, {}).get(ModuleFunction.ROLLER)
+        if advertised is not None and advertised != layout.channels:
+            continue
+        channels = parse_cover_parameters(blob, layout)
+        if channels is not None:
+            channels_by_mac[mac] = channels
+
+    out: dict[int, CoverParameters] = {}
+    for obj in objects.values():
+        if DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "") != ROLLER_DESC_TYPE:
+            continue
+        if obj.leaf_id:
+            mac = obj.module_mac
+            channel = obj.leaf_io_no
+        else:
+            mac = (
+                mac_by_device_id.get(obj.id_urzadzenia)
+                if obj.id_urzadzenia is not None
+                else None
+            )
+            channel = obj.funkcja - 1 if obj.funkcja is not None else None
+        if mac is None or channel is None:
+            continue
+        channels = channels_by_mac.get(mac)
+        if channels is None or not 0 <= channel < len(channels):
+            continue
+        out[obj.id] = channels[channel]
+    return out
+
+
 def resolve_module_capabilities(
     capabilities_by_mac: Mapping[int, Mapping[int, int]],
     colliding_macs: frozenset[int],
@@ -1486,10 +1547,18 @@ DEVICE_API_LIST_TOPIC = "device_api/from/list"
 # typ_komponentu -> description class (descType), live-proven pairs only
 # (docs/description-records.md): an unlisted kind resolves no location.
 # Extend only with a live-proven pair.
+# The description class the Designer gives a roller channel. Named so the
+# cover decode derives its kind gate from this table instead of repeating
+# the kind names.
+ROLLER_DESC_TYPE = 26
+
+# typ_komponentu -> description class (descType), live-proven pairs only
+# (docs/description-records.md): an unlisted kind resolves no location.
+# Extend only with a live-proven pair.
 DESC_TYPE_BY_KIND: dict[str, int] = {
     "przekaznik": 12,  # OUTPUTS
-    "roleta_procenty": 26,  # ROLLER
-    "roleta_lamelki": 26,  # ROLLER
+    "roleta_procenty": ROLLER_DESC_TYPE,
+    "roleta_lamelki": ROLLER_DESC_TYPE,
     "led": 16,  # OUT_OC_U8
     "rgbw": 34,  # RGBW output class; no symbolic name in the recovered enum
     "flaga": 6,  # FLAG_BIN

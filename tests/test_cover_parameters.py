@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from ampio_mqtt import CoverParameters
-from ampio_mqtt._protocol import COVER_PARAMS_LAYOUTS, parse_cover_parameters
+from ampio_mqtt import AmpioObject, CoverParameters, ModuleFunction
+from ampio_mqtt._protocol import (
+    COVER_PARAMS_LAYOUTS,
+    parse_cover_parameters,
+    resolve_cover_parameters,
+)
 
 # A four-channel section, stride 10, at offset 5. Channel 4 carries travel
 # times above 255 s so the two-byte order is provable. The last four bytes
@@ -97,3 +101,94 @@ def test_a_blob_too_short_for_the_section_reads_none() -> None:
 
 def test_only_proven_boards_carry_a_layout() -> None:
     assert set(COVER_PARAMS_LAYOUTS) == {(3, 8), (24, 11)}
+
+
+HARDWARE = {0xCB89: (3, 8), 0xBEEF: (24, 11)}
+
+
+def _object(**over: object) -> AmpioObject:
+    """An object carrying the catalogue columns every row serves."""
+    row: dict[str, object] = {
+        "id": 1,
+        "id_urzadzenia": 1,
+        "typ_komponentu": "roleta_procenty",
+        "interpretacja": 0,
+        "funkcja": 1,
+    }
+    return AmpioObject(**{**row, **over})  # type: ignore[arg-type]
+
+
+def test_a_leafed_cover_joins_through_its_leaf_channel() -> None:
+    objects = {
+        10: _object(id=10, leaf_id="0_cb89_5_0_0"),
+        11: _object(id=11, typ_komponentu="roleta_lamelki", leaf_id="0_cb89_5_0_3"),
+    }
+    resolved = resolve_cover_parameters(
+        objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset(), {}
+    )
+    assert resolved[10].open_time_s == 52
+    assert resolved[11].open_time_s == 300
+
+
+def test_a_leafless_cover_joins_through_funkcja_minus_one() -> None:
+    objects = {12: _object(id=12, id_urzadzenia=7, funkcja=2, leaf_id="")}
+    resolved = resolve_cover_parameters(
+        objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset(), {7: 0xCB89}
+    )
+    assert resolved[12].open_time_s == 30
+
+
+def test_the_unjoinable_resolves_nothing() -> None:
+    objects = {
+        1: _object(id=1, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
+        2: _object(id=2, leaf_id="0_cb89_5_0_9"),  # channel past the count
+        3: _object(id=3, leaf_id="0_dead_5_0_0"),  # module carries no blob
+    }
+    assert (
+        resolve_cover_parameters(
+            objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset(), {}
+        )
+        == {}
+    )
+
+
+def test_an_unlisted_board_resolves_nothing() -> None:
+    objects = {10: _object(id=10, leaf_id="0_cb89_5_0_0")}
+    assert (
+        resolve_cover_parameters(
+            objects, {0xCB89: FOUR_CHANNEL}, {}, {0xCB89: (3, 9)}, frozenset(), {}
+        )
+        == {}
+    )
+
+
+def test_a_colliding_mac_resolves_nothing() -> None:
+    objects = {10: _object(id=10, leaf_id="0_cb89_5_0_0")}
+    assert (
+        resolve_cover_parameters(
+            objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset({0xCB89}), {}
+        )
+        == {}
+    )
+
+
+def test_a_contradicted_channel_count_resolves_nothing() -> None:
+    """A board that disagrees with its own table entry stays silent."""
+    objects = {10: _object(id=10, leaf_id="0_cb89_5_0_0")}
+    caps = {0xCB89: {ModuleFunction.ROLLER: 2}}
+    assert (
+        resolve_cover_parameters(
+            objects, {0xCB89: FOUR_CHANNEL}, caps, HARDWARE, frozenset(), {}
+        )
+        == {}
+    )
+
+
+def test_a_board_that_advertises_no_roller_still_resolves() -> None:
+    """The four-channel board advertises none, so the count comes from the table."""
+    objects = {10: _object(id=10, leaf_id="0_cb89_5_0_0")}
+    caps = {0xCB89: {ModuleFunction.OUT_BIN: 4}}
+    resolved = resolve_cover_parameters(
+        objects, {0xCB89: FOUR_CHANNEL}, caps, HARDWARE, frozenset(), {}
+    )
+    assert resolved[10].open_time_s == 52
