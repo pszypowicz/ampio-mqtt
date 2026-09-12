@@ -145,6 +145,17 @@ class FakeBroker:
         self.published_qos.append(qos)
         self.log.append(("publish", topic))
 
+    def deliver(
+        self, topic: str, payload: bytes | str, *, retain: bool = False
+    ) -> None:
+        """Push one message into the live stream, as the broker would.
+
+        The scripted list replays at connect only, so a reply that has to
+        follow its request goes in through here.
+        """
+        raw = payload.encode() if isinstance(payload, str) else payload
+        self._queue.put_nowait(Message(topic, raw, retain=retain))
+
     @property
     def messages(self) -> Self:
         return self
