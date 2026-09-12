@@ -36,6 +36,15 @@ library does not subscribe. A subscription would add about 0.3 messages per
 second and would give `last_seen` to the M-SERV row and to that one module.
 Probe notes: [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/188).
 
+**The rest of the `params` blob.** Every module's stored settings ride a base64
+`params` field in the `device_api` list reply. The library decodes the touch
+panel section and the roller section. The other sections are the power-on
+defaults for a module's outputs and flags, the open-collector and LED curves,
+the relay and output maps, the real-time clock, and the serial port mode. The
+Designer's own layout table gives the offsets, and the meaning of every one of
+those sections is unverified. Each needs a live proof before it can ship:
+[tracker](https://github.com/pszypowicz/ampio-mqtt/issues/195).
+
 Picking one up takes three steps.
 
 1. Find the topic. The M-SERV serves the Designer at its own root. That bundle

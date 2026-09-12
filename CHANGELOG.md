@@ -12,6 +12,24 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.58.0
+
+A cover now reports how long it takes to travel. The module stores the opening
+and closing time of every roller channel, and the Designer has always shown
+them, but nothing in the library could read them. Position estimation needs
+them, so a consumer had to ask the user to measure by hand.
+
+### Added
+
+- **`AmpioObject.cover_parameters`** holds one cover channel's stored travel
+  configuration: work mode, opening and closing time, additional calibration,
+  slat movement time, reversal lag, and the two motor start lags. Admin sweep
+  only, and None on a board whose roller layout the library has not proven. The
+  proven boards are the M-ROL-4s and the M-REL-2.
+- **`CoverParameters`** is the value type. Travel time reads in seconds, the
+  sub-second fields in milliseconds, and calibration verbatim, because the
+  Designer shows it without a unit.
+
 ## 0.57.0
 
 Every reading the broker already holds now arrives at `connect()`. The retained
