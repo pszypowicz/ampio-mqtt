@@ -1909,8 +1909,9 @@ def test_updated_at_takes_the_report_date() -> None:
 
 
 def test_raw_owned_tracks_the_bridge_coverage() -> None:
-    """Set by the first raw edge; cleared when the rebuilt index stops
-    covering the object, so it goes back to per-object updates."""
+    """Set by the first raw value the channel reports, replay included;
+    cleared when the rebuilt index stops covering the object, so it goes
+    back to per-object updates."""
     store = _panel_store()
     assert store.objects[50].raw_owned is False
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
@@ -1929,6 +1930,114 @@ def test_clearing_raw_owned_dispatches_the_final_state() -> None:
     applied = _apply(store, DETAILS_TOPIC, details(retyped))
     assert store.objects[50].raw_owned is False
     assert any(o.id == 50 and o.raw_owned is False for o in _updated(applied))
+
+
+# --- the retained replay lands before the catalogue -------------------------
+
+# One module's health frame: 0.2 V steps and a 100 degree offset, so this
+# reads 27.0 V and 23.0 degrees.
+_DIAGNOSTICS = '{"d":[254,79,135,123],"m":51966}'
+
+
+def test_a_retained_edge_before_the_catalogue_applies_at_the_fold() -> None:
+    """The broker replays its retained channel values within a second of the
+    subscribe, before any catalogue reply. Holding them is what makes the
+    bridge live from the first connect instead of from the first press."""
+    store = _store()
+    _apply(store, "ampio/from/CAFE/state/f/32", "1", retained=True)
+    assert store.objects == {}
+
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    applied = _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32)))
+    obj = store.objects[50]
+    assert obj.state == "1" and obj.raw_owned is True
+    # The reply creates the object and the fold then fills it, so the last
+    # event for it carries the replayed value.
+    assert [o for o in _updated(applied) if o.id == 50][-1].state == "1"
+    # A replay carries the value, not evidence that the module is alive.
+    assert store.modules[7].last_seen is None
+
+
+def test_a_retained_diagnostics_frame_before_the_module_list_applies_at_the_fold() -> (
+    None
+):
+    store = _store()
+    _apply(store, "ampio/from/CAFE/b/4F", _DIAGNOSTICS, retained=True)
+    assert store.modules == {}
+
+    applied = _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    module = store.modules[7]
+    assert module.supply_voltage == 27.0 and module.temperature == 23.0
+    assert module.last_seen is None
+    assert [m for m in _mod_updated(applied) if m.id == 7][-1].supply_voltage == 27.0
+
+
+def test_a_live_frame_for_an_unknown_channel_is_dropped() -> None:
+    """Only a replay waits for the catalogue. A live frame for a channel no
+    object exposes is one nothing will ever route."""
+    store = _store()
+    _apply(store, "ampio/from/CAFE/state/f/32", "1")
+    _apply(store, "ampio/from/CAFE/b/4F", _DIAGNOSTICS)
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32)))
+    assert store.objects[50].state is None
+    assert store.modules[7].supply_voltage is None
+
+
+def test_the_held_replay_is_spent_once() -> None:
+    """The fold clears what it applied, so a later catalogue reply does not
+    re-apply a value the object has since moved past."""
+    store = _store()
+    _apply(store, "ampio/from/CAFE/state/f/32", "1", retained=True)
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32)))
+    _apply(store, "ampio/from/CAFE/state/f/32", "0")
+    assert store.objects[50].state == "0"
+    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32)))
+    assert store.objects[50].state == "0"
+
+
+def test_a_held_frame_for_an_unlisted_module_waits_for_its_row() -> None:
+    """The two catalogue replies arrive in no fixed order, so a held frame
+    keeps waiting through a rebuild that does not list its module, and lands
+    when one does."""
+    store = _store()
+    _apply(store, "ampio/from/BEEF/b/4F", _DIAGNOSTICS, retained=True)
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # mac CAFE, not BEEF
+    assert store.modules[7].supply_voltage is None
+
+    _apply(store, DEVICES_TOPIC, devices(_PANEL, {"id": 8, "mac": 0xBEEF}))
+    assert store.modules[8].supply_voltage == 27.0
+
+
+def test_a_held_channel_no_object_exposes_is_discarded() -> None:
+    """Once the routing table exists, both catalogue replies have landed, so
+    a held value nothing routes is stale weight rather than a value waiting
+    for an object a later Designer save might add."""
+    store = _store()
+    _apply(store, "ampio/from/CAFE/state/f/99", "1", retained=True)
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32)))
+    assert store._pending_raw == {}
+
+    # The object for that channel appears later and stays on its own path.
+    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32), _flaga_row(52, 99)))
+    assert store.objects[52].state is None and store.objects[52].raw_owned is False
+
+
+def test_a_channel_the_replay_skipped_keeps_the_per_object_path() -> None:
+    """A channel the broker holds no frame for leaves its object unclaimed,
+    so the per-object topic still feeds it. Nothing goes dark for want of a
+    replay."""
+    store = _store()
+    _apply(store, "ampio/from/CAFE/state/f/32", "1", retained=True)
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32), _flaga_row(51, 33)))
+    assert store.objects[50].raw_owned is True and store.objects[50].state == "1"
+    assert store.objects[51].raw_owned is False
+
+    _apply(store, f"ampio/fromDB/{USER}/ob/51/state", '{"state":"255","on":1700}')
+    assert store.objects[51].state == "255"
 
 
 def test_a_formerly_raw_owned_value_survives_a_skewed_snapshot() -> None:
