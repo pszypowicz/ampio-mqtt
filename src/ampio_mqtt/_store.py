@@ -126,6 +126,14 @@ class AmpioStore:
         # clears the guard; a server-stamped report clears both.
         self._local_stamped: set[int] = set()
         self._guarded: set[int] = set()
+        # The broker replays its retained raw tree within a second of the
+        # subscribe, before any catalogue reply, so the routing tables above
+        # are still empty when those frames land. They wait here, keyed the
+        # way the tables key them, and `_rebuild_indexes` folds them in once
+        # the catalogue builds the routing. Both stay empty on the app-sync
+        # tier, which is served no raw tree.
+        self._pending_raw: dict[tuple[int, str, int], str] = {}
+        self._pending_diagnostics: dict[int, _protocol.ModuleDiagnostics] = {}
         # This tier's endpoints whose reply mutates state. The rest are pure
         # request/response, parsed by the dispatcher with the endpoint's own
         # `parses` gate and never sent here.
@@ -597,9 +605,14 @@ class AmpioStore:
     def _apply_raw_channel(
         self, edge: _protocol.RawChannelEdge, applied: Applied, *, retained: bool
     ) -> None:
-        oid = self._input_index.get((edge.mac, edge.prefix, edge.channel))
+        key = (edge.mac, edge.prefix, edge.channel)
+        oid = self._input_index.get(key)
         if oid is None:
-            return  # channel has no exposed Designer object - ignore
+            # A replay waits for the routing table; a live frame for a
+            # channel no object exposes is one nothing will ever route.
+            if retained:
+                self._pending_raw[key] = edge.state
+            return
         obj = replace(
             self.objects[oid],
             raw_owned=True,
@@ -623,7 +636,11 @@ class AmpioStore:
     ) -> None:
         mid = self._module_id_by_mac.get(mac)
         if mid is None:
-            return  # a module the catalogue does not list
+            # The same rule as a raw channel edge: a replay waits for the
+            # module list, a live frame for an unlisted module drops.
+            if retained:
+                self._pending_diagnostics[mac] = diagnostics
+            return
         previous = self.modules[mid]
         module = replace(
             previous,
@@ -767,6 +784,49 @@ class AmpioStore:
                 obj = replace(obj, raw_owned=False)
                 self.objects[oid] = obj
                 self._record(obj, applied)
+        self._fold_pending_diagnostics(applied)
+        self._fold_pending_raw(index, applied)
+
+    def _fold_pending_raw(
+        self, index: Mapping[tuple[int, str, int], int], applied: Applied
+    ) -> None:
+        """Apply the held channel values the fresh index can now route.
+
+        Each lands exactly as the live replay of it would have: the value,
+        the bridge claim on the object, and no touch of the module's
+        `last_seen`, because a replay says what the channel last reported
+        rather than that the module is alive now.
+        """
+        for key, state in list(self._pending_raw.items()):
+            if key not in index:
+                continue
+            del self._pending_raw[key]
+            mac, prefix, channel = key
+            self._apply_raw_channel(
+                _protocol.RawChannelEdge(
+                    mac=mac, prefix=prefix, channel=channel, state=state
+                ),
+                applied,
+                retained=True,
+            )
+        if index:
+            # The routing table exists, so both catalogue replies have
+            # landed, and whatever is still held is a channel no object
+            # exposes. Holding it would let an arbitrarily old value reach
+            # an object a later Designer save exposes.
+            self._pending_raw.clear()
+
+    def _fold_pending_diagnostics(self, applied: Applied) -> None:
+        """Apply the held health frames for modules the list now carries.
+
+        A replay says what a module last reported, not that it is alive now,
+        so it leaves `last_seen` alone exactly as a live replay does (#174).
+        """
+        for mac, diagnostics in list(self._pending_diagnostics.items()):
+            if mac not in self._module_id_by_mac:
+                continue
+            del self._pending_diagnostics[mac]
+            self._apply_diagnostics(mac, diagnostics, applied, retained=True)
 
     def _record(self, obj: AmpioObject, applied: Applied) -> None:
         applied.events.append(ObjectUpdated(obj))

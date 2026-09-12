@@ -28,12 +28,22 @@ replays retained values into a QoS 1 subscription through a queue of 1000
 messages per client. The `f` prefix alone holds more values than that on the
 baseline install. A QoS 0 subscription takes no queue slot, so its replay is
 complete. A raw edge lost on a socket drop returns with the next replay, because
-every channel is retained. On the first connect the retained tables arrive
-before the catalogues can build that index. Initial values thus come from the
-snapshot, and raw ownership begins with the object's first raw message. An input
-whose module publishes no raw state (the M-SERV's own virtual objects) never
-becomes raw-owned. It lives on the per-object path with snapshot resync,
-unchanged.
+every channel is retained.
+
+The replay arrives before the catalogues can build that index. The broker sends
+it within a second of the subscribe, and a catalogue reply is later. So the
+store holds a replayed value whose channel it cannot route yet, keyed the way
+the index keys it, and folds the held values in as soon as the catalogue builds
+the routing. Every bridged object therefore carries its value and its raw
+ownership by the time `connect()` returns, and the bridge is live from the first
+connect rather than from the first press. A **live** frame for a channel no
+object exposes still drops, because nothing will ever route it.
+
+An input whose module publishes no raw state (the M-SERV's own virtual objects)
+never becomes raw-owned. It lives on the per-object path with snapshot resync,
+unchanged. The same holds for a channel the broker happens to hold no frame for:
+the object stays on the per-object path until a raw value arrives, so nothing
+goes dark for want of a replay.
 
 The M-SERV serves the raw tree only to **administrator** accounts. The broker
 ACL delivers nothing on `ampio/from/#` to a standard account, retained or live,
@@ -111,9 +121,11 @@ Each live frame also refreshes the module's `last_seen`. Subscribe to
 sensor (relays, panels) report voltage only.
 
 The broker retains the last frame of each sending module, so the fields are
-present from the subscribe replay on every connect. The broadcasts then refresh
-them. A replayed frame updates the values but not `last_seen`, because a replay
-says nothing about whether the module is alive now. The same holds for a
+present from the subscribe replay on every connect. The replay arrives before
+the module list, so the store holds each frame by mac and folds it in when the
+list lands, the same way it holds a replayed channel value. The broadcasts then
+refresh them. A replayed frame updates the values but not `last_seen`, because a
+replay says nothing about whether the module is alive now. The same holds for a
 replayed raw channel value.
 
 ### Which modules send the frame

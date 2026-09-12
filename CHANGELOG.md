@@ -44,6 +44,22 @@ not served this".
   `params_gap` lists the granted objects the `params_devices` table carries no
   row for.
 
+### Fixed
+
+- **The retained raw replay is no longer thrown away.** The broker replays its
+  retained raw tree within a second of the subscribe, which is before any
+  catalogue reply, so every replayed value used to hit an empty routing table
+  and drop. On the reference install that discarded 2997 channel values and 27
+  module health frames on every connect. The store now holds a replayed frame
+  until the catalogue builds the routing, then folds it in. A live frame for a
+  channel no object exposes still drops, because nothing will ever route it.
+
+  What a consumer sees changes at connect. Before: no object bridged, no voltage
+  or temperature, and both filling in over minutes as modules happened to
+  broadcast again. After: 92 bridged objects and 27 voltage readings the moment
+  `connect()` returns. The low-latency input path is live from the first connect
+  rather than from the first press of each button (#204).
+
 ### Changed
 
 - **One source per fact, per tier.** The administrator catalogue carries
