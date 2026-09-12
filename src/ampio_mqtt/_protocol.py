@@ -868,12 +868,8 @@ def resolve_cover_parameters(
             mac = obj.module_mac
             channel = obj.leaf_io_no
         else:
-            mac = (
-                mac_by_device_id.get(obj.id_urzadzenia)
-                if obj.id_urzadzenia is not None
-                else None
-            )
-            channel = obj.funkcja - 1 if obj.funkcja is not None else None
+            mac = mac_by_device_id.get(obj.id_urzadzenia)
+            channel = obj.funkcja - 1
         if mac is None or channel is None:
             continue
         channels = channels_by_mac.get(mac)
@@ -1544,9 +1540,6 @@ DEVICE_API_LIST_PAYLOAD = b"0"
 DEVICE_API_LIST_TOPIC = "device_api/from/list"
 
 
-# typ_komponentu -> description class (descType), live-proven pairs only
-# (docs/description-records.md): an unlisted kind resolves no location.
-# Extend only with a live-proven pair.
 # The description class the Designer gives a roller channel. Named so the
 # cover decode derives its kind gate from this table instead of repeating
 # the kind names.
