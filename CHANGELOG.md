@@ -14,6 +14,31 @@ explicit beta posture above and is no longer the supported upgrade path.
 
 ## Unreleased
 
+A cover can be locked. A Designer logic rule can block a cover's movement, and
+the module then drops every command for the blocked direction, the API included.
+The state push already carried the flag and the library dropped it, so a
+consumer saw a normal cover that quietly refused to move (#202).
+
+### Added
+
+- **`AmpioObject.block`** holds the module's roller lock, verbatim. The module
+  keeps two bits per cover. Bit 0 blocks closing and bit 1 blocks opening, so
+  the value runs 0 to 3. None on everything that is not a cover.
+- **`AmpioObject.blocks_closing`** and **`AmpioObject.blocks_opening`** read one
+  bit each. Both read False when no lock is reported.
+
+### Notes
+
+The bits are independent. A cover with `block` 2 refuses an opening command and
+runs a closing one. Designer sets them through three roller actions it names
+"Disable movement", "Disable closing" and "Disable opening", and a rule holds
+the lock for as long as its trigger holds. A wind alarm can leave a cover
+blocked for a long time.
+
+No `/api` verb sets or clears the flag, so this is a read. Both the live push
+and the bulk `data/states` snapshot carry it, and a push without the field keeps
+the last value, the way `lammel` does.
+
 ### Tools
 
 - **`tools/modules.py`** prints the module inventory an admin account receives:

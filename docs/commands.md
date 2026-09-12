@@ -146,3 +146,33 @@ sentinel only means "send no angle", not "hold the angle". The slats end
 wherever the travel leaves them: closed (`lammel` 0) after a downward move, open
 (100) after an upward one. To land on a chosen angle instead, pass an explicit
 `lamella` in the same command.
+
+## A blocked cover refuses every command
+
+A cover state payload carries a `block` field next to `state`. The module keeps
+two lock bits per cover, and the field is their value:
+
+| `block` | Meaning                     | Reads as                              |
+| ------- | --------------------------- | ------------------------------------- |
+| 0       | No lock                     | Neither property is true              |
+| 1       | Closing is blocked          | `blocks_closing`                      |
+| 2       | Opening is blocked          | `blocks_opening`                      |
+| 3       | Both directions are blocked | `blocks_closing` and `blocks_opening` |
+
+The bits are independent. A cover with `block` 2 refuses an opening command and
+runs a closing one, and the reverse holds for `block` 1.
+
+**A blocked direction refuses the `/api` verbs too.** The module drops the
+command. There is no error and no reply, so a consumer that only watches `state`
+sees a cover that agreed to move and then did not. `block` is the only way to
+tell the two apart.
+
+Designer sets these bits from a logic rule, through three roller actions it
+names "Disable movement", "Disable closing" and "Disable opening". A rule holds
+the lock for as long as its trigger holds. A wind alarm or a fire alarm can
+therefore leave a cover blocked for a long time. No `/api` verb sets or clears
+the flag, so the library reads it and never writes it.
+
+A blocked cover keeps reporting its position, and the position stays correct. A
+consumer must mark the cover unavailable for the blocked direction rather than
+hide it.
