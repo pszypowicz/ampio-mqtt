@@ -53,7 +53,7 @@ from ._protocol import (
 from ._store import AmpioStore
 from .classification import OutputKind
 from .device_types import is_hub
-from .errors import AmpioConnectionError, AmpioTimeoutError
+from .errors import AmpioConnectionError, AmpioProtocolError, AmpioTimeoutError
 from .events import (
     AuthFailed,
     AvailabilityChanged,
@@ -103,9 +103,11 @@ def _retained(endpoint: _protocol.Endpoint, payload: str) -> str:
 class _ReplyChannel:
     """One endpoint's reply tracking.
 
-    ``received`` latches on the first parsed reply and never clears;
-    ``last_payload`` keeps the retained payload for diagnostics;
-    ``waiters`` are fetch futures awaiting the next parsed reply.
+    ``received`` latches on the first reply the parse accepted and never
+    clears; ``last_payload`` keeps the retained payload for diagnostics;
+    ``waiters`` are fetch futures awaiting the next accepted reply. A
+    refused reply latches nothing and resolves no waiter, so the fetch
+    times out into the same retryable error as silence.
     """
 
     __slots__ = ("last_payload", "received", "waiters")
@@ -115,28 +117,22 @@ class _ReplyChannel:
         self.last_payload: str | None = None
         self.waiters: list[asyncio.Future[Any]] = []
 
-    def deliver(self, payload: str, parsed: object | None) -> None:
-        """Record one reply; ``parsed`` is None when the payload could not
-        be read. A malformed reply neither latches discovery nor resolves
-        a waiter - the fetch times out into the same retryable error as
-        silence - but its bytes still land in ``last_payload``."""
-        self.last_payload = payload
-        if parsed is None:
-            return
-        self.received.set()
+    def deliver(self, parsed: object) -> None:
+        """Latch discovery and hand one parsed reply to every waiter."""
+        self.latch()
         waiters, self.waiters = self.waiters, []
         for future in waiters:
             if not future.done():
                 future.set_result(parsed)
 
-    def record(self, payload: str, parsed_ok: bool) -> None:
-        """Record a store-gated reply: latch discovery when it parsed and
-        keep the payload either way. These endpoints produce no
-        fetchable value, so no waiter is resolved - ``_fetch`` rejects
-        their names outright."""
-        self.last_payload = payload
-        if parsed_ok:
-            self.received.set()
+    def latch(self) -> None:
+        """Mark this endpoint as answered.
+
+        What a store-gated reply needs on its own: those endpoints produce
+        no fetchable value, so no waiter is resolved - ``_fetch`` rejects
+        their names outright.
+        """
+        self.received.set()
 
 
 class AmpioClient:
@@ -193,7 +189,7 @@ class AmpioClient:
             ep for ep in self._served if ep.initial and ep.tier is AccessTier.ADMIN
         )
         self._router = _protocol.Router(username, self._served)
-        self._store = AmpioStore()
+        self._store = AmpioStore(self._tier)
         self._stats = ConnectionStats()
         self._connection = _connection.Connection(
             host,
@@ -293,43 +289,43 @@ class AmpioClient:
 
         ``retained`` marks a broker replay from its retained store rather
         than a live push. Guarded per message: a processing bug costs the
-        one message that triggered it, never the connection. The traceback
-        logs once per topic and repeats at debug; bugs in the connection
-        loop itself remain terminal.
+        one message that triggered it, never the connection. A reply the
+        parse refuses is reported and dropped the same way. The traceback of
+        anything else logs once per topic and repeats at debug; bugs in the
+        connection loop itself remain terminal.
         """
         self._stats.last_message_at = time.time()
         try:
             msg = self._router.route(topic, payload)
             if msg is None:
                 return
-            if (
-                isinstance(msg, _protocol.EndpointReply)
-                and msg.endpoint.parses is not None
-            ):
-                # Pure request/response: the endpoint's parser runs once
-                # and its output is what a fetch returns; nothing here
-                # mutates the store.
-                parsed = msg.endpoint.parses(payload)
-                if parsed is None:
-                    _LOGGER.warning("Could not parse Ampio %s reply", msg.endpoint.name)
-                self._channels[msg.endpoint.name].deliver(
-                    _retained(msg.endpoint, payload), parsed
-                )
-                return
-            if isinstance(msg, _protocol.DeviceList):
+            if isinstance(msg, _protocol.EndpointReply):
+                channel = self._channels[msg.endpoint.name]
+                # The bytes are kept before any parse runs, so a refusal
+                # report carries the payload that caused it.
+                channel.last_payload = _retained(msg.endpoint, payload)
+                if msg.endpoint.parses is not None:
+                    # Pure request/response: the endpoint's parser runs once
+                    # and its output is what a fetch returns; nothing here
+                    # mutates the store.
+                    channel.deliver(msg.endpoint.parses(payload))
+                    return
+                applied = self._store.apply(msg, retained=retained)
+                channel.latch()
+            elif isinstance(msg, _protocol.DeviceList):
                 waiters, self._device_list_waiters = self._device_list_waiters, []
                 for future in waiters:
                     if not future.done():
                         future.set_result(msg.devices)
                 return
-            if isinstance(msg, _protocol.CatalogueDigest):
+            elif isinstance(msg, _protocol.CatalogueDigest):
                 self._note_digest(msg)
                 return
-            applied = self._store.apply(msg, retained=retained)
-            if isinstance(msg, _protocol.EndpointReply):
-                self._channels[msg.endpoint.name].record(
-                    _retained(msg.endpoint, payload), applied.parsed
-                )
+            else:
+                applied = self._store.apply(msg, retained=retained)
+        except AmpioProtocolError as err:
+            self._note_protocol_violation(topic, err)
+            return
         except Exception:
             if topic in self._poisoned_topics:
                 _LOGGER.debug("Dropped another failing Ampio message on %s", topic)
@@ -344,6 +340,19 @@ class AmpioClient:
             return
         for event in applied.events:
             self._dispatch(event)
+
+    def _note_protocol_violation(self, topic: str, err: AmpioProtocolError) -> None:
+        """Report a refused reply and keep the connection up.
+
+        The reply lacked what its surface always serves, so the library
+        refuses to read it (see :class:`AmpioProtocolError`). The message is
+        dropped whole: discovery does not latch on it, a fetch waiting on it
+        times out, and held state stays untouched. The report is this log
+        line plus the ``protocol_violations`` entry a consumer can surface
+        from :meth:`diagnostics_snapshot`.
+        """
+        self._stats.protocol_violations[topic] = str(err)
+        _LOGGER.error("Refused an Ampio reply on %s: %s", topic, err)
 
     def _handle_availability(self, available: bool) -> None:
         self._dispatch(AvailabilityChanged(available))
@@ -532,8 +541,15 @@ class AmpioClient:
           ``last_error`` and ``last_message_at`` roll across runs.
           ``subscribe_failures`` maps each topic the broker rejected in
           the latest SUBACK to its reason code.
+          ``protocol_violations`` maps each topic whose reply the library
+          refused to the reason, and rolls across runs.
         - ``mac_collisions``: override macs shared by two or more module
           rows, on which raw traffic cannot be attributed reliably.
+        - ``params_gap``: objects the ``params_devices`` table carries no
+          row for, on the app-sync tier. The table covers the whole
+          catalogue, so a non-empty list is a server fault: those objects
+          read every Designer config flag as unset. Always empty on the
+          admin tier, whose catalogue carries the columns inline.
         - ``modules``: one row per known module, sorted by id, with the
           :class:`AmpioModule` fields ``id``, ``mac``, ``typ_urzadzenia``,
           ``model``, ``last_seen``, ``supply_voltage``, and
@@ -559,8 +575,10 @@ class AmpioClient:
                 "last_message_at": self._stats.last_message_at,
                 "last_error": self._stats.last_error,
                 "subscribe_failures": dict(self._stats.subscribe_failures),
+                "protocol_violations": dict(self._stats.protocol_violations),
             },
             "mac_collisions": sorted(self._store.colliding_macs),
+            "params_gap": sorted(self._store.missing_params_ids),
             "modules": [
                 {
                     "id": module.id,
@@ -755,13 +773,14 @@ class AmpioClient:
             raise AmpioTimeoutError(
                 f"No server-info reply from the Ampio broker within {info_timeout}s"
             )
-        parsed = _protocol.parse_server_info(payload)
-        if parsed is None:
-            # A corrupt reply gets the same retryable shape as silence:
+        try:
+            parsed = _protocol.parse_server_info(payload)
+        except AmpioProtocolError as err:
+            # A refused reply gets the same retryable shape as silence:
             # something answered, but not with an info document.
             raise AmpioTimeoutError(
-                "The Ampio broker answered with an unparseable server-info reply"
-            )
+                "The Ampio broker answered with an unreadable server-info reply"
+            ) from err
         _protocol.warn_if_below_baseline(parsed.server_version)
         return parsed
 

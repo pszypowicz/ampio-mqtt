@@ -8,11 +8,10 @@ rather than about any single message.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 
 import pytest
-from conftest import USER, FakeBroker, feed, make_client
+from conftest import USER, FakeBroker, details, devices, feed, make_client
 
 from ampio_mqtt import AmpioClient, ConnectionDied, ObjectUpdated
 
@@ -26,7 +25,7 @@ def _establish(client: AmpioClient, *oids: int) -> None:
     feed(
         client,
         f"ampio/fromDB/{USER}/data/devices",
-        json.dumps({"List": [{"id": oid} for oid in oids]}),
+        details(*({"id": oid} for oid in oids)),
     )
 
 
@@ -81,9 +80,21 @@ def test_malformed_replies_never_escape_the_dispatcher(
 def test_a_malformed_reply_does_not_stop_later_messages() -> None:
     client = _client()
     _establish(client, 41)
-    feed(client, f"ampio/fromDB/{USER}/config/devicesDetails", b"null")
+    feed(client, f"ampio/fromDB/{USER}/data/devices", b"null")
     feed(client, f"ampio/fromDB/{USER}/ob/41/state", b'{"state":"77"}')
     assert client.objects[41].state == "77"
+
+
+def test_a_refused_reply_is_reported_in_the_diagnostics() -> None:
+    """A consumer reads the refusal without scraping the log, and the bytes
+    that caused it stay in the retained payload."""
+    client = _client()
+    topic = f"ampio/fromDB/{USER}/data/devices"
+    feed(client, topic, b'{"List": [{"id": 5}]}')
+    snapshot = client.diagnostics_snapshot()
+    assert "id_urzadzenia" in snapshot["connection"]["protocol_violations"][topic]
+    assert snapshot["last_payloads"]["data_devices"] == '{"List": [{"id": 5}]}'
+    assert client.objects == {}
 
 
 @pytest.mark.parametrize(
@@ -92,11 +103,7 @@ def test_a_malformed_reply_does_not_stop_later_messages() -> None:
 )
 def test_malformed_diagnostics_frames_are_ignored(payload: bytes) -> None:
     client = AmpioClient("host", username="admin")
-    feed(
-        client,
-        "ampio/fromDB/admin/config/devices",
-        b'{"List":[{"id":7,"mac":51966}]}',
-    )
+    feed(client, "ampio/fromDB/admin/config/devices", devices({"id": 7, "mac": 0xCAFE}))
     feed(client, "ampio/from/CAFE/b/4F", payload)  # must not raise
     assert client.modules[7].supply_voltage is None
 

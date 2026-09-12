@@ -43,6 +43,8 @@ from conftest import (
     devices,
     feed,
     make_client,
+    params_table,
+    snapshot,
 )
 from paho.mqtt.enums import MQTTErrorCode
 from paho.mqtt.packettypes import PacketTypes
@@ -388,27 +390,21 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
     broker.scripted_messages = [
         Message(
             ADMIN_DEVICES_TOPIC,
-            json.dumps(
-                {"List": [{"id": 17, "mac": 52111, "typ_urzadzenia": 44}]}
-            ).encode(),
+            devices({"id": 17, "mac": 52111, "typ_urzadzenia": 44}).encode(),
         ),
         Message(
             ADMIN_DETAILS_TOPIC,
-            json.dumps(
+            details(
                 {
-                    "List": [
-                        {
-                            "id": 41,
-                            "id_urzadzenia": 17,
-                            "typ_komponentu": "temp",
-                            "interpretacja": 1,
-                            "opis_menu": "Salon",
-                        }
-                    ]
+                    "id": 41,
+                    "id_urzadzenia": 17,
+                    "typ_komponentu": "temp",
+                    "interpretacja": 1,
+                    "opis_menu": "Salon",
                 }
             ).encode(),
         ),
-        Message(ADMIN_STATES_TOPIC, json.dumps({"List": []}).encode()),
+        Message(ADMIN_STATES_TOPIC, snapshot().encode()),
         Message(
             ADMIN_INFO_TOPIC,
             json.dumps({"Results": {"mac": 99, "userId": "-1"}}).encode(),
@@ -444,27 +440,20 @@ async def test_restricted_account_completes_via_data_surface_fallback() -> None:
     broker.scripted_messages = [
         Message(
             DATA_DEVICES_TOPIC,
-            json.dumps(
+            details(
                 {
-                    "List": [
-                        {
-                            "id": 24,
-                            "id_urzadzenia": 20,
-                            "typ_komponentu": "lin_wej",
-                            "interpretacja": 7,
-                            "funkcja": 5,
-                            "leafId": "0_cb9b_75_0_0",
-                            "opis_menu": "CO2",
-                        }
-                    ]
+                    "id": 24,
+                    "id_urzadzenia": 20,
+                    "typ_komponentu": "lin_wej",
+                    "interpretacja": 7,
+                    "funkcja": 5,
+                    "leafId": "0_cb9b_75_0_0",
+                    "opis_menu": "CO2",
                 }
             ).encode(),
         ),
-        Message(
-            PARAMS_DEVICES_TOPIC,
-            json.dumps({"List": [{"id": 24, "params": 1}]}).encode(),
-        ),
-        Message(STATES_TOPIC, json.dumps({"List": []}).encode()),
+        Message(PARAMS_DEVICES_TOPIC, params_table({"id": 24, "params": 1}).encode()),
+        Message(STATES_TOPIC, snapshot().encode()),
         Message(
             INFO_TOPIC, json.dumps({"Results": {"mac": 99, "userId": "4"}}).encode()
         ),
@@ -708,7 +697,7 @@ async def test_wait_for_initial_discovery_returns_false_on_timeout() -> None:
     broker.scripted_messages = [
         Message(DEVICES_TOPIC, json.dumps({"List": []}).encode()),
         Message(DETAILS_TOPIC, json.dumps({"List": []}).encode()),
-        Message(STATES_TOPIC, json.dumps({"List": []}).encode()),
+        Message(STATES_TOPIC, snapshot().encode()),
     ]
     client = make_client(broker, reconnect_interval=0.001)
     await client.connect(timeout=2.0, discovery_timeout=0.1)

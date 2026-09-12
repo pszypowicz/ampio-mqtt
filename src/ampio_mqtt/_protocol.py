@@ -30,8 +30,10 @@ import logging
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from functools import partial
+from typing import Any, cast
 
+from .errors import AmpioProtocolError
 from .events import BusEventRaised
 from .models import (
     AccessTier,
@@ -49,46 +51,56 @@ from .models import (
 
 @dataclass(slots=True)
 class ObjectMetadata:
-    """Per-object metadata from a `devicesDetails` payload."""
+    """One object-catalogue row, in the columns both surfaces serve."""
 
     id: int
-    id_urzadzenia: int | None
-    typ_komponentu: str | None
-    opis_menu: str | None
-    interpretacja: int | None
-    funkcja: int | None  # physical channel index within the module
+    id_urzadzenia: int  # physical module
+    typ_komponentu: str
+    interpretacja: int
+    funkcja: int  # physical channel index within the module
     leaf_id: str  # `leafId`; empty for system objects, and after a Matter uncheck
-    # `params` bitfield; bit 4 = hidden/stub, bit 37 = matter-exposed. None
-    # when the reply carried no such column, which the app-sync catalogue never
-    # does - the client then keeps whatever `params_devices` supplied.
-    params: int | None
+    opis_menu: str | None  # empty reads None: the object carries no name
     # `type` column: the Matter device type ID assigned in Designer, carried
     # as a decimal string on the wire ("256" = 0x0100 On/Off Light). Empty or
     # null when the object has no tag - both read as None.
     # docs/description-records.md holds the vocabulary.
     matter_device_type: int | None
-    # `czas` column as served, in 10 ms ticks; `AmpioObject.pulse_ms` reads
-    # it by component type. None when the reply carried no such column,
-    # which the app-sync catalogue never does - the client then keeps
-    # whatever `params_devices` supplied.
-    czas: int | None
-    # Designer's "Unit" column, verbatim. None when the reply carried no such
-    # column: the app-sync catalogue omits it, and `data/params_devices`
-    # supplies it. `AmpioObject.unit` reads it.
-    url: str | None
     # Designer's "String format" column (a printf conversion, optionally
-    # followed by a unit), verbatim; both catalogues carry it. Empty when
-    # unset. `AmpioObject.unit` and `AmpioObject.decimals` read it.
+    # followed by a unit), verbatim. Empty when unset. `AmpioObject.unit`
+    # and `AmpioObject.decimals` read it.
     format: str
-    stan_json: str | None  # raw seed for the initial value, applied by the client
+
+
+@dataclass(slots=True)
+class AdminObjectMetadata:
+    """A `config/devicesDetails` row: the shared columns plus three more.
+
+    The app-sync catalogue serves none of the three, and
+    `data/params_devices` is the app-sync tier's source for them. Which
+    surface answers follows from the account tier, so each of these facts
+    has exactly one source per tier (docs/account-tiers.md).
+    """
+
+    shared: ObjectMetadata
+    # `params` bitfield; bit 4 = hidden/stub, bit 37 = matter-exposed.
+    params: int
+    # `czas` column as served, in 10 ms ticks; `AmpioObject.pulse_ms` reads
+    # it by component type.
+    czas: int
+    # Designer's "Unit" column, verbatim. `AmpioObject.unit` reads it.
+    url: str
 
 
 @dataclass(slots=True)
 class SnapshotEntry:
-    """One object's entry in a bulk `data/states` snapshot."""
+    """One object's entry in a bulk `data/states` snapshot.
+
+    The snapshot lists the objects that hold a value, so every row carries
+    its `stan_json`. An object with no value is absent from the reply.
+    """
 
     id: int
-    stan_json: str | None
+    stan_json: str
 
 
 @dataclass(slots=True)
@@ -153,118 +165,166 @@ def warn_if_below_baseline(version: str | None) -> None:
         )
 
 
-def list_rows(payload: str) -> list[Any] | None:
-    """Rows of a ``{"List": [...]}`` reply, or None if the payload is not one.
+def require_rows(payload: str, surface: str) -> list[dict[str, Any]]:
+    """The rows of a ``{"List": [...]}`` reply.
 
     The M-SERV is the only expected publisher on these topics, but nothing on
     the broker enforces that, and a reply of the wrong shape must not reach the
-    row loops - they index and attribute-access every row.
+    row loops - they index and attribute-access every row. Every such reply
+    raises :class:`AmpioProtocolError` instead, because no caller can tell a
+    tolerated malformed reply from an empty one.
     """
     try:
         data = json.loads(payload)
-    except (ValueError, TypeError):
-        return None
+    except (ValueError, TypeError) as err:
+        raise AmpioProtocolError(f"The Ampio {surface} reply is not JSON") from err
     if not isinstance(data, dict):
-        return None
+        raise AmpioProtocolError(f"The Ampio {surface} reply is not a JSON object")
     rows = data.get("List")
-    return rows if isinstance(rows, list) else None
+    if not isinstance(rows, list):
+        raise AmpioProtocolError(f"The Ampio {surface} reply carries no `List` array")
+    if not all(isinstance(row, dict) for row in rows):
+        raise AmpioProtocolError(f"An Ampio {surface} row is not a JSON object")
+    return cast("list[dict[str, Any]]", rows)
+
+
+def _rows_parser(surface: str) -> Callable[[str], list[dict[str, Any]]]:
+    """An endpoint parser handing a reply's rows to the caller, strictly.
+
+    For a table whose row shape this library has not pinned live: the
+    envelope is checked, the rows pass through, and the consumer's own join
+    reads what it needs.
+    """
+    return partial(require_rows, surface=surface)
 
 
 def to_int(value: Any) -> int | None:
-    """Best-effort int coercion that returns None on bad input."""
+    """Int coercion for a column whose absence is a value, None on bad input."""
     try:
         return int(value)
     except (TypeError, ValueError):
         return None
 
 
-def parse_details(payload: str) -> list[ObjectMetadata] | None:
-    """Parse a `devicesDetails` payload into per-object metadata.
+def _column(row: Mapping[str, Any], column: str, surface: str) -> Any:
+    """One served column's raw value, naming it when the row drops it."""
+    if column not in row:
+        raise AmpioProtocolError(f"An Ampio {surface} row carries no `{column}` column")
+    return row[column]
 
-    Also parses the app-sync `data/devices` catalogue, which shares the row
-    shape minus the `params` and `stan_json` columns (those read as 0 / None).
 
-    Returns None when the payload is not parseable JSON; an empty list is a
-    valid (empty) response.
-    """
-    rows = list_rows(payload)
-    if rows is None:
-        return None
-    out: list[ObjectMetadata] = []
-    for item in rows:
-        if not isinstance(item, dict):
-            continue
-        oid = to_int(item.get("id"))
-        if oid is None:
-            continue
-        out.append(
-            ObjectMetadata(
-                id=oid,
-                id_urzadzenia=to_int(item.get("id_urzadzenia")),
-                typ_komponentu=item.get("typ_komponentu"),
-                opis_menu=item.get("opis_menu") or None,
-                interpretacja=to_int(item.get("interpretacja")),
-                funkcja=to_int(item.get("funkcja")),
-                leaf_id=_parse_leaf_id(item.get("leafId")),
-                # `params` can exceed 32 bits (the matter-exposed flag is bit
-                # 37), which Python ints handle natively.
-                params=to_int(item.get("params")),
-                matter_device_type=to_int(item.get("type")),
-                czas=to_int(item.get("czas")),
-                url=_text(item.get("url")),
-                format=_text(item.get("format")) or "",
-                stan_json=item.get("stan_json") or None,
-            )
+def _int_column(row: Mapping[str, Any], column: str, surface: str) -> int:
+    """One served column as an integer. The wire spells some of them as text."""
+    value = to_int(_column(row, column, surface))
+    if value is None:
+        raise AmpioProtocolError(
+            f"The `{column}` column of an Ampio {surface} row is not an integer"
         )
-    return out
+    return value
 
 
-def _text(value: Any) -> str | None:
-    """A text column as served; None when it is absent or not text."""
-    return value if isinstance(value, str) else None
+def _text_column(row: Mapping[str, Any], column: str, surface: str) -> str:
+    """One served column as text. An empty string is a value."""
+    value = _column(row, column, surface)
+    if not isinstance(value, str):
+        raise AmpioProtocolError(
+            f"The `{column}` column of an Ampio {surface} row is not text"
+        )
+    return value
 
 
-def _parse_leaf_id(value: Any) -> str:
-    """Coerce the `leafId` field to a string.
+def _nullable_text_column(row: Mapping[str, Any], column: str, surface: str) -> str:
+    """One served text column whose null reads as empty.
 
-    The M-SERV emits an empty string or null for system objects (presence
-    simulation / detection types) and for an object whose Matter box was
-    unchecked in Designer. For everything else the value is a short
-    underscored token like ``0_cb8f_76_0_0``, which the Designer reads as
-    ``macGroup``, ``mac``, ``sfId``, ``subSfId``, and ``ioNo``. This parse
-    keeps the raw string.
+    The M-SERV writes null in place of an empty string on some rows of
+    ``leafId``, ``opis_menu``, and ``format``. The column must still be
+    there: an absent one is a different reply shape.
     """
+    value = _column(row, column, surface)
     return value if isinstance(value, str) else ""
 
 
-def parse_devices(payload: str) -> list[AmpioModule] | None:
+# The surface names the protocol errors speak, one per reply shape.
+_CATALOGUE = "object catalogue"
+_MODULE_LIST = "module list"
+_PARAMS_TABLE = "params_devices table"
+_SNAPSHOT = "states snapshot"
+_SCENES = "scene catalogue"
+_LOCATIONS = "locations table"
+_INFO = "server info"
+
+
+def _shared_columns(row: Mapping[str, Any]) -> ObjectMetadata:
+    """The object-catalogue columns both surfaces serve on every row.
+
+    ``leafId`` holds an empty string for a system object and for one whose
+    Matter box is unchecked in Designer. Otherwise it is a short
+    underscored token like ``0_cb8f_76_0_0``, which the Designer reads as
+    ``macGroup``, ``mac``, ``sfId``, ``subSfId``, and ``ioNo``. The parse
+    keeps the raw string.
+    """
+    return ObjectMetadata(
+        id=_int_column(row, "id", _CATALOGUE),
+        id_urzadzenia=_int_column(row, "id_urzadzenia", _CATALOGUE),
+        typ_komponentu=_text_column(row, "typ_komponentu", _CATALOGUE),
+        interpretacja=_int_column(row, "interpretacja", _CATALOGUE),
+        funkcja=_int_column(row, "funkcja", _CATALOGUE),
+        leaf_id=_nullable_text_column(row, "leafId", _CATALOGUE),
+        opis_menu=_nullable_text_column(row, "opis_menu", _CATALOGUE) or None,
+        matter_device_type=to_int(_column(row, "type", _CATALOGUE)),
+        format=_nullable_text_column(row, "format", _CATALOGUE),
+    )
+
+
+def parse_details(payload: str) -> list[AdminObjectMetadata]:
+    """Every row of a `config/devicesDetails` reply, the admin catalogue.
+
+    An empty list is a valid reply that lists nothing. `params` can exceed
+    32 bits (the matter-exposed flag is bit 37), which Python ints handle
+    natively.
+    """
+    return [
+        AdminObjectMetadata(
+            shared=_shared_columns(row),
+            params=_int_column(row, "params", _CATALOGUE),
+            czas=_int_column(row, "czas", _CATALOGUE),
+            url=_text_column(row, "url", _CATALOGUE),
+        )
+        for row in require_rows(payload, _CATALOGUE)
+    ]
+
+
+def parse_app_sync_devices(payload: str) -> list[ObjectMetadata]:
+    """Every row of a `data/devices` reply, the app-sync catalogue.
+
+    The rows are the objects the account was granted in the Ampio app. The
+    surface serves no `params`, `czas`, or `url` column, so nothing here
+    reads one - `data/params_devices` is this tier's source for the three.
+    """
+    return [_shared_columns(row) for row in require_rows(payload, _CATALOGUE)]
+
+
+def parse_devices(payload: str) -> list[AmpioModule]:
     """Parse a `devices` payload into a list of physical modules.
 
     Returned modules have `last_seen=None`; the caller preserves any existing
     `last_seen` from a prior discovery.
     """
-    rows = list_rows(payload)
-    if rows is None:
-        return None
-    out: list[AmpioModule] = []
-    for item in rows:
-        if not isinstance(item, dict):
-            continue
-        mid = to_int(item.get("id"))
-        if mid is None:
-            continue
-        out.append(
-            AmpioModule(
-                id=mid,
-                mac=to_int(item.get("mac")),
-                mac_global=to_int(item.get("mac_global")),
-                nazwa_urzadzenia=item.get("nazwa_urzadzenia") or None,
-                typ_urzadzenia=to_int(item.get("typ_urzadzenia")),
-                wersja_softu=to_int(item.get("wersja_softu")),
-                wersja_pcb=to_int(item.get("wersja_pcb")),
+    return [
+        AmpioModule(
+            id=_int_column(row, "id", _MODULE_LIST),
+            mac=_int_column(row, "mac", _MODULE_LIST),
+            mac_global=_int_column(row, "mac_global", _MODULE_LIST),
+            nazwa_urzadzenia=_nullable_text_column(
+                row, "nazwa_urzadzenia", _MODULE_LIST
             )
+            or None,
+            typ_urzadzenia=_int_column(row, "typ_urzadzenia", _MODULE_LIST),
+            wersja_softu=_int_column(row, "wersja_softu", _MODULE_LIST),
+            wersja_pcb=_int_column(row, "wersja_pcb", _MODULE_LIST),
         )
-    return out
+        for row in require_rows(payload, _MODULE_LIST)
+    ]
 
 
 @dataclass(slots=True, frozen=True)
@@ -276,54 +336,41 @@ class ParamsEntry:
     url: str
 
 
-def parse_params_devices(payload: str) -> dict[int, ParamsEntry] | None:
+def parse_params_devices(payload: str) -> dict[int, ParamsEntry]:
     """Parse a `data/params_devices` payload into per-object config facts.
 
     The table covers the full object catalogue regardless of the account's
-    grants, and it is complete: an absent column reads as the off value, not
-    as unknown. Returns None when the payload is not parseable JSON.
+    grants, so it carries a row for every object an app-sync catalogue can
+    list, and every row carries all three columns.
     """
-    rows = list_rows(payload)
-    if rows is None:
-        return None
-    out: dict[int, ParamsEntry] = {}
-    for item in rows:
-        if not isinstance(item, dict):
-            continue
-        oid = to_int(item.get("id"))
-        if oid is None:
-            continue
-        out[oid] = ParamsEntry(
-            params=to_int(item.get("params")) or 0,
-            czas=to_int(item.get("czas")) or 0,
-            url=_text(item.get("url")) or "",
+    return {
+        _int_column(row, "id", _PARAMS_TABLE): ParamsEntry(
+            params=_int_column(row, "params", _PARAMS_TABLE),
+            czas=_int_column(row, "czas", _PARAMS_TABLE),
+            url=_text_column(row, "url", _PARAMS_TABLE),
         )
-    return out
+        for row in require_rows(payload, _PARAMS_TABLE)
+    }
 
 
-def parse_scenes(payload: str) -> list[AmpioScene] | None:
+def parse_scenes(payload: str) -> list[AmpioScene]:
     """Parse a `data/scenes` payload into the scene catalogue.
 
     Each row carries its actions twice - `Actions` as the wire command strings
     and `Infos` as their structured form. Only the object ids are kept, since
     the M-SERV replays the actions itself when a scene is run.
     """
-    rows = list_rows(payload)
-    if rows is None:
-        return None
     out: list[AmpioScene] = []
-    for item in rows:
-        if not isinstance(item, dict):
-            continue
+    for item in require_rows(payload, _SCENES):
         sid = to_int(item.get("id"))
         if sid is None:
             continue
         parent = to_int(item.get("parentId"))
         # Malformed row fields degrade instead of hiding the scene: it is
-        # real and runnable (the M-SERV replays its actions server-side),
-        # and the parse gate covers only the outer List shape, so nothing
-        # row-shaped may escape fetch_scenes as a bare exception. A row
-        # without `active` reads enabled, the state the app creates.
+        # real and runnable (the M-SERV replays its actions server-side).
+        # This row shape is not pinned live, so only the envelope is
+        # strict. A row without `active` reads enabled, the state the app
+        # creates.
         raw_active = to_int(item.get("active"))
         infos = item.get("Infos")
         objects = {
@@ -379,20 +426,15 @@ def parse_rooms(
     return room_map
 
 
-def parse_locations(payload: str) -> dict[int, str] | None:
+def parse_locations(payload: str) -> dict[int, str]:
     """``{location_id: name}`` from a `config/locations` reply.
 
-    The name table behind the Designer's "Lokalizacja" dropdown; rows with
-    a missing id or an empty name are skipped. None when the payload is
-    not a ``{"List": [...]}`` document.
+    The name table behind the Designer's "Lokalizacja" dropdown. This row
+    shape is not pinned live, so only the envelope is strict: a row with a
+    missing id or an empty name is skipped.
     """
-    rows = list_rows(payload)
-    if rows is None:
-        return None
     out: dict[int, str] = {}
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
+    for row in require_rows(payload, _LOCATIONS):
         lid = to_int(row.get("id"))
         name = row.get("opis_menu")
         if lid is not None and isinstance(name, str) and name:
@@ -752,27 +794,24 @@ def _to_str(value: Any) -> str | None:
     return str(value) if value not in (None, "") else None
 
 
-def parse_server_info(payload: str) -> AmpioServerInfo | None:
+def parse_server_info(payload: str) -> AmpioServerInfo:
     """Parse a server-info payload, keeping only the safe fields.
 
     The baseline server wraps the fields in a ``Results`` object and always
     reports its ``mac`` - the identity every consumer scopes a registry by.
-    A payload without either is unparseable, exactly as the sibling parsers
-    report a corrupt reply, so a parsed info always carries a populated
+    A payload without either is refused, so every
+    :class:`AmpioServerInfo` carries a populated
     :pyattr:`AmpioServerInfo.server_key`.
     """
     try:
         outer = json.loads(payload)
-    except (ValueError, TypeError):
-        return None
+    except (ValueError, TypeError) as err:
+        raise AmpioProtocolError(f"The Ampio {_INFO} reply is not JSON") from err
     data = outer.get("Results") if isinstance(outer, dict) else None
     if not isinstance(data, dict):
-        return None
-    mac = to_int(data.get("mac"))
-    if mac is None:
-        return None
+        raise AmpioProtocolError(f"The Ampio {_INFO} reply carries no `Results` object")
     return AmpioServerInfo(
-        mac=mac,
+        mac=_int_column(data, "mac", _INFO),
         user_id=to_int(data.get("userId")),
         server_version=_to_str(data.get("serverVersion")),
         server_revision=_to_str(data.get("serverRevision")),
@@ -824,20 +863,19 @@ def redact_info_payload(payload: str) -> str:
     return json.dumps(masked)
 
 
-def parse_states_snapshot(payload: str) -> list[SnapshotEntry] | None:
-    """Parse a bulk `data/states` snapshot."""
-    rows = list_rows(payload)
-    if rows is None:
-        return None
-    out: list[SnapshotEntry] = []
-    for item in rows:
-        if not isinstance(item, dict):
-            continue
-        oid = to_int(item.get("id"))
-        if oid is None:
-            continue
-        out.append(SnapshotEntry(id=oid, stan_json=item.get("stan_json") or None))
-    return out
+def parse_states_snapshot(payload: str) -> list[SnapshotEntry]:
+    """Parse a bulk `data/states` snapshot.
+
+    The reply lists the objects that hold a value, so every row carries
+    its own `stan_json`.
+    """
+    return [
+        SnapshotEntry(
+            id=_int_column(row, "id", _SNAPSHOT),
+            stan_json=_text_column(row, "stan_json", _SNAPSHOT),
+        )
+        for row in require_rows(payload, _SNAPSHOT)
+    ]
 
 
 def _finite_float(raw: object) -> float | None:
@@ -1001,11 +1039,11 @@ class Endpoint:
     # session never needs the app-sync pair (it repeats the `config` view).
     tier: AccessTier | None = None
     # The reply parser for a pure request/response endpoint. The dispatcher
-    # runs it exactly once: a reply that does not parse neither resolves a
-    # fetch nor latches discovery, and the parsed value is what a fetch
-    # returns. None marks an endpoint whose reply mutates state - its
-    # AmpioStore handler is the gate instead.
-    parses: Callable[[str], object | None] | None = None
+    # runs it exactly once, and the parsed value is what a fetch returns. A
+    # reply the parser refuses raises `AmpioProtocolError`, which neither
+    # resolves a fetch nor latches discovery. None marks an endpoint whose
+    # reply mutates state - its AmpioStore handler is the gate instead.
+    parses: Callable[[str], object] | None = None
     # Rewrites the reply before it is retained for diagnostics_snapshot().
     # Set on an endpoint whose reply carries private fields: the retained
     # copy is one string a consumer's key-based redactor cannot reach
@@ -1061,14 +1099,16 @@ ENDPOINTS: tuple[Endpoint, ...] = (
         initial=True,
         tier=AccessTier.RESTRICTED,
     ),
-    Endpoint("groups", "data", "groups", "data", "groups", parses=list_rows),
+    Endpoint(
+        "groups", "data", "groups", "data", "groups", parses=_rows_parser("room table")
+    ),
     Endpoint(
         "group_devices",
         "data",
         "group_devices",
         "data",
         "group_devices",
-        parses=list_rows,
+        parses=_rows_parser("room membership table"),
     ),
     Endpoint("scenes", "data", "scenes", "data", "scenes", parses=parse_scenes),
     # The Designer "Lokalizacja" name table. On-demand; the per-output

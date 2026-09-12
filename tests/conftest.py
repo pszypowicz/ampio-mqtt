@@ -221,15 +221,65 @@ async def connected() -> AsyncIterator[tuple[AmpioClient, FakeBroker]]:
     await client.disconnect()
 
 
+def rows(*items: dict) -> str:
+    """A bare ``{"List": [...]}`` payload, the envelope every table shares."""
+    return json.dumps({"List": list(items)})
+
+
+# Each surface serves a fixed column set, and the parse refuses a row that
+# drops one (docs/protocol.md). The builders below fill that set, so a test
+# overrides only what it is about, and a test that deletes a column is
+# making a point about the missing column.
+_CATALOGUE_ROW = {
+    "id_urzadzenia": 1,
+    # Empty: a test that cares about the kind names its own component type,
+    # and one that does not gets the generic value sensor an unknown type
+    # classifies as.
+    "typ_komponentu": "",
+    "interpretacja": 0,
+    "funkcja": 1,
+    "leafId": "",
+    "opis_menu": "",
+    "type": None,
+    "format": "",
+    "params": 0,
+    "czas": 0,
+    "url": "",
+}
+_MODULE_ROW = {
+    "mac": 0xCAFE,
+    "mac_global": 0xBEEF,
+    "nazwa_urzadzenia": "module",
+    "typ_urzadzenia": 44,
+    "wersja_softu": 908,
+    "wersja_pcb": 1,
+}
+_PARAMS_ROW = {"params": 0, "czas": 0, "url": ""}
+_SNAPSHOT_ROW = {"stan_json": json.dumps({"state": "0"})}
+
+
 def details(*items: dict) -> str:
-    """A `devicesDetails` / `data/devices` catalogue payload."""
-    return json.dumps({"Status": 0, "List": list(items)})
+    """An object-catalogue payload, serving either tier's topic.
+
+    Carries the admin `devicesDetails` column set. The app-sync parse reads
+    the shared columns alone, so the same builder feeds `data/devices`.
+    """
+    return json.dumps({"Status": 0, "List": [{**_CATALOGUE_ROW, **i} for i in items]})
 
 
 def devices(*items: dict) -> str:
-    """A bare ``{"List": [...]}`` payload: the `devices` module list, the
-    `data` tables, and the `data/states` snapshot all share this envelope."""
-    return json.dumps({"List": list(items)})
+    """A `devices` module-list payload."""
+    return rows(*({**_MODULE_ROW, **i} for i in items))
+
+
+def params_table(*items: dict) -> str:
+    """A `data/params_devices` payload."""
+    return rows(*({**_PARAMS_ROW, **i} for i in items))
+
+
+def snapshot(*items: dict) -> str:
+    """A `data/states` snapshot payload."""
+    return rows(*({**_SNAPSHOT_ROW, **i} for i in items))
 
 
 def info(**fields: object) -> str:

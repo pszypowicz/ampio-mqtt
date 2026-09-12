@@ -7,7 +7,7 @@ import json
 import pytest
 from conftest import ADMIN_USER, FakeBroker, deliver_later
 
-from ampio_mqtt import AmpioClient
+from ampio_mqtt import AmpioClient, AmpioProtocolError
 from ampio_mqtt._protocol import parse_locations
 
 LOCATIONS_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/locations"
@@ -26,22 +26,24 @@ def test_parse_locations_happy_path() -> None:
 
 
 def test_parse_locations_skips_malformed_rows() -> None:
+    """This row shape is not pinned live, so a row without an id or a name
+    is skipped rather than refused."""
     payload = json.dumps(
         {
             "List": [
                 {"id": 1, "opis_menu": "OK"},
                 {"id": None, "opis_menu": "x"},
                 {"id": 2, "opis_menu": ""},
-                "not a dict",
             ]
         }
     )
     assert parse_locations(payload) == {1: "OK"}
 
 
-def test_parse_locations_rejects_non_list_payload() -> None:
-    assert parse_locations("not-json") is None
-    assert parse_locations(json.dumps({"Status": 0})) is None
+@pytest.mark.parametrize("payload", ["not-json", json.dumps({"Status": 0})])
+def test_parse_locations_refuses_a_reply_of_the_wrong_shape(payload: str) -> None:
+    with pytest.raises(AmpioProtocolError):
+        parse_locations(payload)
 
 
 async def test_fetch_locations_requests_and_parses() -> None:

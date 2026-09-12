@@ -810,3 +810,7 @@ class ConnectionStats:
     # The subscribe set is tier-shaped, so every filter should be granted;
     # a rejection is warned but does not fail the connection.
     subscribe_failures: dict[str, int] = field(default_factory=dict)
+    # Replies the library refused to read, as topic -> the reason. One entry
+    # per topic, the latest refusal on it, and the map rolls across runs
+    # like `last_error` - a bug report wants the whole session's faults.
+    protocol_violations: dict[str, str] = field(default_factory=dict)

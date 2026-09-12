@@ -27,6 +27,7 @@ from .errors import (
     AmpioAuthError,
     AmpioConnectionError,
     AmpioError,
+    AmpioProtocolError,
     AmpioTimeoutError,
 )
 from .events import (
@@ -70,6 +71,7 @@ __all__ = [
     "AmpioError",
     "AmpioModule",
     "AmpioObject",
+    "AmpioProtocolError",
     "AmpioScene",
     "AmpioServerInfo",
     "AmpioTimeoutError",

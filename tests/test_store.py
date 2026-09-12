@@ -27,6 +27,8 @@ from conftest import (
     details,
     devices,
     info,
+    params_table,
+    snapshot,
 )
 
 from ampio_mqtt import _protocol
@@ -38,6 +40,7 @@ from ampio_mqtt.classification import (
     SensorKind,
     ThermostatKind,
 )
+from ampio_mqtt.errors import AmpioProtocolError
 from ampio_mqtt.events import (
     BusEventRaised,
     ModuleRemoved,
@@ -98,55 +101,58 @@ def _apply(
 
 
 def _store() -> AmpioStore:
-    return AmpioStore()
+    """A store on the admin tier, whose catalogue is `devicesDetails`."""
+    return AmpioStore(AccessTier.ADMIN)
+
+
+def _app_store() -> AmpioStore:
+    """A store on the app-sync tier, whose catalogue pair is the `data` one."""
+    return AmpioStore(AccessTier.RESTRICTED)
 
 
 def _devices(*macs: int) -> str:
-    return json.dumps(
-        {
-            "List": [
-                {
-                    "id": i,
-                    "mac": mac,
-                    "mac_global": 100 + i,
-                    "nazwa_urzadzenia": chr(ord("A") + i - 1),
-                    "typ_urzadzenia": 11,
-                }
-                for i, mac in enumerate(macs, start=1)
-            ]
-        }
+    return devices(
+        *(
+            {
+                "id": i,
+                "mac": mac,
+                "mac_global": 100 + i,
+                "nazwa_urzadzenia": chr(ord("A") + i - 1),
+                "typ_urzadzenia": 11,
+            }
+            for i, mac in enumerate(macs, start=1)
+        )
     )
 
 
 def _flaga_details(*object_module_pairs: tuple[int, int]) -> str:
-    return json.dumps(
-        {
-            "List": [
-                {
-                    "id": oid,
-                    "id_urzadzenia": dev,
-                    "typ_komponentu": "flaga",
-                    "interpretacja": 1,
-                    "funkcja": 3,
-                    "opis_menu": f"flag-{oid}",
-                }
-                for oid, dev in object_module_pairs
-            ]
-        }
+    return details(
+        *(
+            {
+                "id": oid,
+                "id_urzadzenia": dev,
+                "typ_komponentu": "flaga",
+                "interpretacja": 1,
+                "funkcja": 3,
+                "opis_menu": f"flag-{oid}",
+            }
+            for oid, dev in object_module_pairs
+        )
     )
 
 
 def _catalogue(**overrides: object) -> str:
-    row = {
-        "id": 41,
-        "typ_komponentu": "przekaznik",
-        "interpretacja": 1,
-        "leafId": "0_a_1_0_0",
-        "opis_menu": "Lamp",
-        "params": 1,
-    }
-    row.update(overrides)
-    return json.dumps({"List": [row]})
+    return details(
+        {
+            "id": 41,
+            "typ_komponentu": "przekaznik",
+            "interpretacja": 1,
+            "leafId": "0_a_1_0_0",
+            "opis_menu": "Lamp",
+            "params": 1,
+            **overrides,
+        }
+    )
 
 
 # A module whose mac is 0xCAFE, so its raw topics are `ampio/from/CAFE/...`.
@@ -164,11 +170,10 @@ def _flaga_row(oid: int, funkcja: int, dev: int = 7) -> dict:
     }
 
 
-def test_a_catalogue_reply_reports_parsed_and_the_rows_it_changed() -> None:
+def test_a_catalogue_reply_reports_the_rows_it_changed() -> None:
     applied = _apply(
         _store(), f"ampio/fromDB/{USER}/config/devicesDetails", _catalogue()
     )
-    assert applied.parsed is True
     assert [o.id for o in _updated(applied)] == [41]
 
 
@@ -187,11 +192,11 @@ def test_a_changed_row_reports_only_that_row() -> None:
     assert [o.opis_menu for o in _updated(applied)] == ["Renamed"]
 
 
-def test_an_unreadable_reply_reports_not_parsed() -> None:
-    """The caller uses this to keep discovery from latching on a bad payload."""
-    applied = _apply(_store(), f"ampio/fromDB/{USER}/config/devicesDetails", "null")
-    assert applied.parsed is False
-    assert _updated(applied) == []
+def test_an_unreadable_reply_is_refused() -> None:
+    """The caller catches this to keep discovery from latching on a bad
+    payload, and to report the fault."""
+    with pytest.raises(AmpioProtocolError):
+        _apply(_store(), f"ampio/fromDB/{USER}/config/devicesDetails", "null")
 
 
 @pytest.mark.parametrize(
@@ -225,28 +230,8 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
     come back as something else entirely - which no raw channel feeds.
     """
     store = _store()
-    _apply(
-        store,
-        f"ampio/fromDB/{USER}/config/devices",
-        json.dumps({"List": [{"id": 7, "mac": 0xCAFE, "typ_urzadzenia": 11}]}),
-    )
-    _apply(
-        store,
-        f"ampio/fromDB/{USER}/config/devicesDetails",
-        json.dumps(
-            {
-                "List": [
-                    {
-                        "id": 50,
-                        "id_urzadzenia": 7,
-                        "typ_komponentu": "flaga",
-                        "interpretacja": 1,
-                        "funkcja": 32,
-                    }
-                ]
-            }
-        ),
-    )
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32)))
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
     assert store.objects[50].state == "1"
 
@@ -254,18 +239,14 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
     # feeds, so its only updates are the per-object ones.
     _apply(
         store,
-        f"ampio/fromDB/{USER}/config/devicesDetails",
-        json.dumps(
+        DETAILS_TOPIC,
+        details(
             {
-                "List": [
-                    {
-                        "id": 50,
-                        "id_urzadzenia": 7,
-                        "typ_komponentu": "roleta_procenty",
-                        "interpretacja": 1,
-                        "funkcja": 2,
-                    }
-                ]
+                "id": 50,
+                "id_urzadzenia": 7,
+                "typ_komponentu": "roleta_procenty",
+                "interpretacja": 1,
+                "funkcja": 2,
             }
         ),
     )
@@ -307,41 +288,34 @@ def test_a_baseline_server_does_not_warn(caplog: pytest.LogCaptureFixture) -> No
     assert caplog.records == []
 
 
-def test_a_corrupt_info_reply_never_wipes_held_identity(
-    caplog: pytest.LogCaptureFixture,
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "not json at all",
+        # A reply without a server mac carries no identity to scope a
+        # consumer's registry by, so it is refused like any other.
+        '{"Results": {}}',
+    ],
+)
+def test_a_refused_info_reply_never_wipes_held_identity(
+    caplog: pytest.LogCaptureFixture, payload: str
 ) -> None:
     """The discovery latch never clears, so a True wait_for_initial_discovery
-    must keep implying a populated identity on every later read - an
-    unparseable info reply must not take it away, and must not trip the
-    below-baseline warning off the wiped version."""
+    must keep implying a populated identity on every later read. A refused
+    info reply must not take it away, and must not trip the below-baseline
+    warning off the wiped version."""
     store = _store()
     topic = f"ampio/fromDB/{USER}/data/info"
     _apply(store, topic, '{"Results": {"mac": 1, "serverVersion": "1865"}}')
-    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
-        applied = _apply(store, topic, "not json at all")
-    assert applied.parsed is False
+    with (
+        caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"),
+        pytest.raises(AmpioProtocolError),
+    ):
+        _apply(store, topic, payload)
     assert store.server_info is not None
     assert store.server_info.mac == 1
     assert store.server_info.server_version == "1865"
     assert not any("baseline" in r.getMessage() for r in caplog.records)
-    assert any("Could not parse" in r.getMessage() for r in caplog.records)
-
-
-def test_an_identityless_info_reply_never_wipes_held_identity(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A reply without a server mac is unparseable, so it neither takes a
-    held identity away nor is stored - `AmpioServerInfo.server_key` stays
-    populated by construction."""
-    store = _store()
-    topic = f"ampio/fromDB/{USER}/data/info"
-    _apply(store, topic, '{"Results": {"mac": 1, "serverVersion": "1865"}}')
-    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
-        applied = _apply(store, topic, '{"Results": {}}')
-    assert applied.parsed is False
-    assert store.server_info is not None
-    assert store.server_info.mac == 1
-    assert any("Could not parse" in r.getMessage() for r in caplog.records)
 
 
 def test_below_baseline_warning_survives_an_identityless_reply_arriving_first(
@@ -352,7 +326,8 @@ def test_below_baseline_warning_survives_an_identityless_reply_arriving_first(
     store = _store()
     topic = f"ampio/fromDB/{USER}/data/info"
     with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
-        _apply(store, topic, '{"Results": {"serverVersion": "100"}}')
+        with pytest.raises(AmpioProtocolError):
+            _apply(store, topic, '{"Results": {"serverVersion": "100"}}')
         _apply(store, topic, '{"Results": {"mac": 1, "serverVersion": "100"}}')
     warnings = [r for r in caplog.records if "baseline" in r.getMessage()]
     assert len(warnings) == 1
@@ -368,7 +343,7 @@ def test_handler_table_misalignment_fails_at_construction(
     rogue = _protocol.Endpoint("rogue", "data", "rogue", "data", "rogue")
     monkeypatch.setattr(_protocol, "ENDPOINTS", (*ENDPOINTS, rogue))
     with pytest.raises(RuntimeError, match="rogue"):
-        AmpioStore()
+        AmpioStore(AccessTier.ADMIN)
 
 
 def _raw_owned_flag(store: AmpioStore, mac: int = 0xCAFE) -> None:
@@ -378,11 +353,11 @@ def _raw_owned_flag(store: AmpioStore, mac: int = 0xCAFE) -> None:
     _apply(store, f"ampio/from/{mac:X}/state/f/3", "1")
 
 
-def _snapshot(state: str, on_ms: int | None) -> str:
+def _snapshot(state: str, on_ms: int | None, oid: int = 10) -> str:
     stan: dict[str, object] = {"state": state}
     if on_ms is not None:
         stan["on"] = on_ms
-    return json.dumps({"List": [{"id": 10, "stan_json": json.dumps(stan)}]})
+    return snapshot({"id": oid, "stan_json": json.dumps(stan)})
 
 
 def test_snapshots_never_touch_a_raw_owned_object() -> None:
@@ -476,14 +451,14 @@ def test_begin_refresh_lets_the_snapshot_resync_an_undated_value() -> None:
     assert store.objects[10].state == "0"
 
 
-def test_a_buffered_undated_push_beats_a_skewed_stan_json_seed() -> None:
+def test_a_buffered_undated_push_beats_a_skewed_snapshot_seed() -> None:
     """The pending replay makes no cross-clock comparison either: the
-    push arrived live in this session, so the row's dated seed loses."""
+    push arrived live in this session, so the dated seed loses."""
     store = _store()
     far_future = int((time.time() + 3600) * 1000)
     _apply(store, f"ampio/fromDB/{USER}/ob/93/state", '{"state":"live"}')
-    row = {"id": 93, "stan_json": json.dumps({"state": "stale", "on": far_future})}
-    _apply(store, DETAILS_TOPIC, details(row))
+    _apply(store, STATES_TOPIC, _snapshot("stale", far_future, oid=93))
+    _apply(store, DETAILS_TOPIC, details({"id": 93}))
     assert store.objects[93].state == "live"
 
 
@@ -561,7 +536,7 @@ def test_a_tier_scoped_router_leaves_the_other_tiers_surfaces_unroutable() -> No
 def test_the_app_sync_catalogue_evicts_what_the_grant_revoked() -> None:
     # The grant bounds a restricted store, so the reply is complete for
     # the account and a vanished row is a revocation.
-    store = _store()
+    store = _app_store()
     data_topic = f"ampio/fromDB/{USER}/data/devices"
     _apply(store, data_topic, _flaga_details((10, 1), (11, 1)))
     applied = _apply(store, data_topic, _flaga_details((10, 1)))
@@ -845,7 +820,7 @@ def test_states_snapshot_does_not_overwrite_live_value() -> None:
 def test_sibling_module_mac_comes_from_leafed_rows_on_the_same_module() -> None:
     """A leafless row reads the mac its leafed siblings embed, a row without
     a leafed sibling reads None, and a leafed row reads its own module's mac."""
-    store = _store()
+    store = _app_store()
     _apply(
         store,
         DATA_DEVICES_TOPIC,
@@ -894,7 +869,7 @@ def test_states_snapshot_creates_nothing_for_unknown_ids() -> None:
     """Only the catalogues decide which objects exist. The snapshot replays
     DB rows, unlisted ids included - creating from it would later evict an
     object no consumer was ever told existed."""
-    store = _store()
+    store = _app_store()
     _apply(
         store,
         DATA_DEVICES_TOPIC,
@@ -926,7 +901,7 @@ def test_snapshot_before_catalogue_seeds_the_value_at_merge() -> None:
     app-sync catalogue carries no stan_json column - a snapshot that lands
     first must still hand the object its value when the catalogue
     establishes it, in the one update that also carries the metadata."""
-    store = _store()
+    store = _app_store()
     applied = _apply(
         store,
         STATES_TOPIC,
@@ -949,7 +924,7 @@ def test_snapshot_before_catalogue_seeds_the_value_at_merge() -> None:
 def test_eviction_prunes_the_buffered_snapshot_value() -> None:
     """An evicted object's buffered seed must not resurface if a later
     catalogue re-establishes the id."""
-    store = _store()
+    store = _app_store()
     _apply(
         store,
         DATA_DEVICES_TOPIC,
@@ -982,33 +957,6 @@ def test_eviction_prunes_the_buffered_snapshot_value() -> None:
         ),
     )
     assert store.objects[6].state is None
-
-
-def test_details_stan_json_seed_does_not_touch_last_seen() -> None:
-    """The catalogue's stan_json seed carries state, not liveness - like the
-    bulk snapshot, it replays DB rows and leaves last_seen alone."""
-    store = _store()
-    _apply(
-        store,
-        DEVICES_TOPIC,
-        devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
-    )
-    _apply(
-        store,
-        DETAILS_TOPIC,
-        details(
-            {
-                "id": 41,
-                "id_urzadzenia": 17,
-                "typ_komponentu": "temp",
-                "interpretacja": 1,
-                "opis_menu": "T",
-                "stan_json": '{"state": "22.5", "on": 1779560000000}',
-            }
-        ),
-    )
-    assert store.objects[41].state == "22.5"
-    assert store.modules[17].last_seen is None
 
 
 def test_info_parses_only_safe_fields() -> None:
@@ -1082,19 +1030,20 @@ def test_a_push_for_an_uncatalogued_id_waits_for_its_catalogue_row() -> None:
     assert [o.state for o in _updated(applied)] == ["187.6"]
 
 
-def test_a_buffered_push_loses_to_a_newer_dated_stan_json_seed() -> None:
-    """The catalogue replay uses the same dated-supersedes rule as the
-    snapshot: the fresher of push and stan_json seed wins."""
+def test_a_buffered_push_loses_to_a_newer_dated_snapshot_seed() -> None:
+    """The catalogue merge replays the buffered push and the buffered
+    snapshot value under one dated-supersedes rule: the fresher wins."""
     store = _store()
     state_topic = f"ampio/fromDB/{USER}/ob/93/state"
     _apply(store, state_topic, '{"state":"old","on":1000}')
-    row = {"id": 93, "stan_json": json.dumps({"state": "new", "on": 2000})}
-    _apply(store, DETAILS_TOPIC, details(row))
+    _apply(store, STATES_TOPIC, _snapshot("new", 2000, oid=93))
+    _apply(store, DETAILS_TOPIC, details({"id": 93}))
     assert store.objects[93].state == "new"
 
     fresh = _store()
     _apply(fresh, state_topic, '{"state":"newer","on":3000}')
-    _apply(fresh, DETAILS_TOPIC, details(row))
+    _apply(fresh, STATES_TOPIC, _snapshot("new", 2000, oid=93))
+    _apply(fresh, DETAILS_TOPIC, details({"id": 93}))
     assert fresh.objects[93].state == "newer"
 
 
@@ -1110,22 +1059,43 @@ def test_a_buffered_push_for_an_unlisted_id_is_pruned() -> None:
 
 
 @pytest.mark.parametrize(
-    "topic_suffix",
+    ("tier", "topic_suffix"),
     [
-        "config/devicesDetails",
-        "config/devices",
-        "data/states",
-        "data/devices",
-        "data/params_devices",
+        (AccessTier.ADMIN, "config/devicesDetails"),
+        (AccessTier.ADMIN, "config/devices"),
+        (AccessTier.ADMIN, "data/states"),
+        (AccessTier.RESTRICTED, "data/devices"),
+        (AccessTier.RESTRICTED, "data/params_devices"),
+        (AccessTier.RESTRICTED, "data/states"),
     ],
 )
-def test_handlers_log_and_skip_unparseable_payloads(
-    caplog: pytest.LogCaptureFixture, topic_suffix: str
+def test_every_handler_refuses_an_unparseable_payload(
+    tier: AccessTier, topic_suffix: str
 ) -> None:
-    store = _store()
-    with caplog.at_level("WARNING", logger="ampio_mqtt._store"):
-        _apply(store, f"ampio/fromDB/{USER}/{topic_suffix}", "not json")
-    assert "Could not parse" in caplog.text
+    """No handler reads a reply it cannot trust. The caller reports the
+    refusal and drops the message."""
+    with pytest.raises(AmpioProtocolError):
+        _apply(AmpioStore(tier), f"ampio/fromDB/{USER}/{topic_suffix}", "not json")
+
+
+@pytest.mark.parametrize(
+    ("tier", "served", "unserved"),
+    [
+        (AccessTier.ADMIN, DETAILS_TOPIC, DATA_DEVICES_TOPIC),
+        (AccessTier.RESTRICTED, DATA_DEVICES_TOPIC, DETAILS_TOPIC),
+    ],
+)
+def test_a_store_applies_only_its_own_tiers_catalogue(
+    tier: AccessTier, served: str, unserved: str
+) -> None:
+    """One catalogue answers per tier, so the store holds that handler
+    alone. The other surface's reply cannot reach this account, and an
+    attempt is a routing fault to report."""
+    store = AmpioStore(tier)
+    _apply(store, served, details({"id": 24}))
+    assert 24 in store.objects
+    with pytest.raises(AmpioProtocolError, match="tier"):
+        _apply(store, unserved, details({"id": 25}))
 
 
 def test_state_with_unparseable_payload_is_dropped() -> None:
@@ -1222,22 +1192,6 @@ def test_index_rebuilds_when_devices_arrive_after_details() -> None:
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
     assert store.objects[50].state == "1"
-
-
-def test_flag_without_funkcja_is_not_bridged() -> None:
-    """No channel index means no raw route - an edge must change nothing."""
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    no_funkcja = {
-        "id": 51,
-        "id_urzadzenia": 7,
-        "typ_komponentu": "flaga",
-        "interpretacja": 1,
-        "opis_menu": "Flag",
-    }
-    _apply(store, DETAILS_TOPIC, details(no_funkcja))
-    applied = _apply(store, "ampio/from/CAFE/state/f/1", "1")
-    assert store.objects[51].state is None and _updated(applied) == []
 
 
 def test_mapped_input_without_raw_uses_per_object_fallback() -> None:
@@ -1427,11 +1381,11 @@ def test_symulacja_classifies_but_is_not_bridged() -> None:
     assert store.objects[61].state is None and _updated(applied) == []
 
 
-# --- app-sync data-surface fallback (non-admin accounts) --------------------
+# --- the app-sync data surface (standard accounts) --------------------------
 
 
 def _app_row(oid: int, leaf: str, name: str = "Air quality", interp: int = 5) -> dict:
-    """One `data/devices` row: the devicesDetails shape minus params/stan_json/url."""
+    """One `data/devices` row: the catalogue shape minus the config columns."""
     return {
         "id": oid,
         "id_urzadzenia": 20,
@@ -1444,8 +1398,8 @@ def _app_row(oid: int, leaf: str, name: str = "Air quality", interp: int = 5) ->
 
 
 def test_data_devices_populate_and_classify() -> None:
-    store = _store()
-    _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1", interp=7)))
+    store = _app_store()
+    _apply(store, DATA_DEVICES_TOPIC, details(_app_row(24, "0_cb9b_74_0_1", interp=7)))
     obj = store.objects[24]
     assert obj.opis_menu == "Air quality"
     assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
@@ -1453,13 +1407,17 @@ def test_data_devices_populate_and_classify() -> None:
     assert obj.leaf_id == "0_cb9b_74_0_1"
 
 
-def test_params_table_before_catalogue_supplies_hidden_flag() -> None:
-    """A params table that arrives first is applied when the catalogue lands."""
-    store = _store()
+def test_the_config_table_before_the_catalogue_applies_at_the_merge() -> None:
+    """`data/params_devices` is the app-sync tier's one source for the
+    Designer config columns, and the two replies arrive in no fixed order.
+    A table that lands first is held and applied when the catalogue lands."""
+    store = _app_store()
     _apply(
         store,
         PARAMS_DEVICES_TOPIC,
-        devices({"id": 24, "params": 17}, {"id": 25, "params": 1}),
+        params_table(
+            {"id": 24, "params": 17, "czas": 500, "url": "IAQ"}, {"id": 25, "params": 1}
+        ),
     )
     # The table is not grant-filtered; unknown ids create no placeholders.
     assert store.objects == {}
@@ -1467,24 +1425,70 @@ def test_params_table_before_catalogue_supplies_hidden_flag() -> None:
     _apply(
         store,
         DATA_DEVICES_TOPIC,
-        devices(_app_row(24, "0_cb9b_74_0_1"), _app_row(25, "0_cb9b_74_0_2")),
+        details(_app_row(24, "0_cb9b_74_0_1"), _app_row(25, "0_cb9b_74_0_2")),
     )
     assert store.objects[24].hidden is True and store.objects[24].visible is False
+    assert store.objects[24].czas == 500 and store.objects[24].url == "IAQ"
     assert store.objects[25].hidden is False and store.objects[25].visible is True
 
 
-def test_params_table_after_catalogue_updates_objects_and_notifies() -> None:
-    store = _store()
-    _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1")))
+def test_the_config_table_after_the_catalogue_updates_objects_and_notifies() -> None:
+    store = _app_store()
+    _apply(store, DATA_DEVICES_TOPIC, details(_app_row(24, "0_cb9b_74_0_1")))
+    assert store.objects[24].czas == 0 and store.objects[24].url == ""
 
     applied = _apply(
         store,
         PARAMS_DEVICES_TOPIC,
-        devices({"id": 24, "params": 17}, {"id": 999, "params": 1}),
+        params_table(
+            {"id": 24, "params": 17, "czas": 500, "url": "IAQ"},
+            {"id": 999, "params": 1},
+        ),
     )
-    assert store.objects[24].hidden is True
-    assert _updated(applied) == [store.objects[24]]
+    obj = store.objects[24]
+    assert obj.hidden is True and obj.czas == 500 and obj.url == "IAQ"
+    assert _updated(applied) == [obj]
     assert 999 not in store.objects
+
+
+def test_the_held_config_table_survives_an_eviction() -> None:
+    """The catalogue carries no config column on this tier, so the held
+    table re-applies on the re-creation after an eviction."""
+    store = _app_store()
+    _apply(store, PARAMS_DEVICES_TOPIC, params_table({"id": 24, "params": 17}))
+    row = _app_row(24, "0_cb9b_74_0_1")
+    _apply(store, DATA_DEVICES_TOPIC, details(row))
+    _apply(store, DATA_DEVICES_TOPIC, details())  # the grant is revoked
+    assert store.objects == {}
+    _apply(store, DATA_DEVICES_TOPIC, details(row))  # and granted again
+    assert store.objects[24].hidden is True
+
+
+def test_a_granted_object_the_config_table_misses_is_reported(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The table covers the whole catalogue, so every granted object has a
+    row. A gap leaves the object reading every config flag as unset, which
+    is a server fault to name."""
+    store = _app_store()
+    _apply(store, DATA_DEVICES_TOPIC, details(_app_row(24, "0_cb9b_74_0_1")))
+    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
+        _apply(store, PARAMS_DEVICES_TOPIC, params_table({"id": 999, "params": 1}))
+    assert store.missing_params_ids == frozenset({24})
+    assert "[24]" in caplog.text
+    # Warned once per change: the same gap on a refresh says nothing new.
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
+        _apply(store, PARAMS_DEVICES_TOPIC, params_table({"id": 999, "params": 1}))
+    assert caplog.text == ""
+
+
+def test_a_catalogue_row_with_no_config_row_yet_reports_no_gap() -> None:
+    """A table still in flight is not a gap: the ids are unknown until it
+    answers once."""
+    store = _app_store()
+    _apply(store, DATA_DEVICES_TOPIC, details(_app_row(24, "0_cb9b_74_0_1")))
+    assert store.missing_params_ids == frozenset()
 
 
 def test_details_row_czas_lands_raw_and_pulse_ms_reads_it_by_type() -> None:
@@ -1503,23 +1507,18 @@ def test_details_row_czas_lands_raw_and_pulse_ms_reads_it_by_type() -> None:
     assert store.objects[42].pulse_ms == 0
 
 
-def test_params_table_supplies_czas_when_catalogue_lacks_the_column() -> None:
+def test_the_admin_catalogue_is_the_one_source_of_the_config_columns() -> None:
+    """Every `devicesDetails` row carries the three inline, so the admin
+    store never reads a config table - it is not served one."""
     store = _store()
-    _apply(store, PARAMS_DEVICES_TOPIC, devices({"id": 24, "params": 1, "czas": 500}))
-    _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1")))
-    assert store.objects[24].czas == 500
-
-
-def test_params_table_after_catalogue_updates_czas_and_notifies() -> None:
-    store = _store()
-    _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1")))
-    assert store.objects[24].czas == 0
-
-    applied = _apply(
-        store, PARAMS_DEVICES_TOPIC, devices({"id": 24, "params": 1, "czas": 500})
+    _apply(
+        store,
+        DETAILS_TOPIC,
+        details({"id": 128, "params": 17, "czas": 500, "url": "IAQ"}),
     )
-    assert store.objects[24].czas == 500
-    assert _updated(applied) == [store.objects[24]]
+    obj = store.objects[128]
+    assert obj.params == 17 and obj.czas == 500 and obj.url == "IAQ"
+    assert store.missing_params_ids == frozenset()
 
 
 def test_details_row_url_and_format_land_on_the_object() -> None:
@@ -1531,25 +1530,6 @@ def test_details_row_url_and_format_land_on_the_object() -> None:
     )
     assert store.objects[128].url == ""
     assert store.objects[128].format == "%.3f A"
-
-
-def test_params_table_supplies_url_when_catalogue_lacks_the_column() -> None:
-    store = _store()
-    _apply(store, PARAMS_DEVICES_TOPIC, devices({"id": 24, "params": 1, "url": "IAQ"}))
-    _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1")))
-    assert store.objects[24].url == "IAQ"
-
-
-def test_params_table_after_catalogue_updates_url_and_notifies() -> None:
-    store = _store()
-    _apply(store, DATA_DEVICES_TOPIC, devices(_app_row(24, "0_cb9b_74_0_1")))
-    assert store.objects[24].url == ""
-
-    applied = _apply(
-        store, PARAMS_DEVICES_TOPIC, devices({"id": 24, "params": 1, "url": "IAQ"})
-    )
-    assert store.objects[24].url == "IAQ"
-    assert _updated(applied) == [store.objects[24]]
 
 
 # --- cover tilt state ------------------------------------------------------
@@ -1972,7 +1952,7 @@ def _seed_catalogue(store: AmpioStore, *rows: dict) -> Applied:
 
 
 def test_apply_designer_records_sets_the_bundle() -> None:
-    store = AmpioStore()
+    store = AmpioStore(AccessTier.ADMIN)
     _seed_catalogue(
         store, {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     )
@@ -1985,7 +1965,7 @@ def test_apply_designer_records_sets_the_bundle() -> None:
 
 
 def test_sweep_never_touches_the_catalogue_type_column() -> None:
-    store = AmpioStore()
+    store = AmpioStore(AccessTier.ADMIN)
     _seed_catalogue(
         store,
         {
@@ -2005,7 +1985,7 @@ def test_sweep_never_touches_the_catalogue_type_column() -> None:
 
 
 def test_record_replaces_wholesale() -> None:
-    store = AmpioStore()
+    store = AmpioStore(AccessTier.ADMIN)
     row = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     _seed_catalogue(store, row)
     store.apply_designer_records(
@@ -2017,7 +1997,7 @@ def test_record_replaces_wholesale() -> None:
 
 
 def test_held_records_accumulate_across_partial_sweeps() -> None:
-    store = AmpioStore()
+    store = AmpioStore(AccessTier.ADMIN)
     row_a = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     row_b = {"id": 48, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_1"}
     _seed_catalogue(store, row_a, row_b)
@@ -2033,7 +2013,7 @@ def test_record_for_an_unknown_id_waits_for_the_catalogue() -> None:
     """A resolution racing ahead of the catalogue (or arriving for an
     object just evicted) creates no placeholder - the held table applies
     it once the id's own catalogue row lands."""
-    store = AmpioStore()
+    store = AmpioStore(AccessTier.ADMIN)
     applied = store.apply_designer_records({999: DesignerRecord(location="X")})
     assert applied.events == []
     assert store.objects == {}
@@ -2047,7 +2027,7 @@ def test_record_for_an_unknown_id_waits_for_the_catalogue() -> None:
 
 
 def test_new_catalogue_row_dispatches_object_added() -> None:
-    store = AmpioStore()
+    store = AmpioStore(AccessTier.ADMIN)
     applied = _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
     assert [type(e) for e in applied.events] == [ObjectAdded]
     assert applied.events[0].object.id == 7
@@ -2056,7 +2036,7 @@ def test_new_catalogue_row_dispatches_object_added() -> None:
 
 
 def test_known_row_change_dispatches_updated_not_added() -> None:
-    store = AmpioStore()
+    store = AmpioStore(AccessTier.ADMIN)
     _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
     applied = _seed_catalogue(
         store, {"id": 7, "typ_komponentu": "flaga", "opis_menu": "x"}
@@ -2065,7 +2045,7 @@ def test_known_row_change_dispatches_updated_not_added() -> None:
 
 
 def test_recreation_after_eviction_dispatches_added_again() -> None:
-    store = AmpioStore()
+    store = AmpioStore(AccessTier.ADMIN)
     _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
     removed = _seed_catalogue(store)  # empty catalogue evicts
     assert [type(e) for e in removed.events] == [ObjectRemoved]
@@ -2074,7 +2054,7 @@ def test_recreation_after_eviction_dispatches_added_again() -> None:
 
 
 def test_bare_row_creation_still_dispatches_added() -> None:
-    store = AmpioStore()
+    store = AmpioStore(AccessTier.ADMIN)
     applied = _seed_catalogue(store, {"id": 9})
     assert [type(e) for e in applied.events] == [ObjectAdded]
 
