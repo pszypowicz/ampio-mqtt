@@ -40,6 +40,7 @@ from .models import (
     AmpioObject,
     AmpioScene,
     AmpioServerInfo,
+    CoverParameters,
     DesignerRecord,
     ModuleFunction,
     ModuleRecord,
@@ -758,6 +759,67 @@ def resolve_panel_settings(
         if settings is not None:
             out[mac] = settings
     return out
+
+
+@dataclass(slots=True, frozen=True)
+class _CoverLayout:
+    """Where one board keeps its roller section, and how wide a channel is."""
+
+    offset: int
+    channels: int
+    stride: int
+
+
+# The `(typ_urzadzenia, wersja_pcb)` pairs whose roller params layout is
+# live-proven. The Designer keys the layout by the same pair, and the
+# boards differ in all three numbers. A stride of 10 ends the section
+# before the two motor start lags, which that board does not hold.
+# Reading one board with another's layout would produce confident wrong
+# values, so an unlisted pair resolves nothing. Extend only with a pair
+# read off real hardware.
+COVER_PARAMS_LAYOUTS: Mapping[tuple[int, int], _CoverLayout] = {
+    (3, 8): _CoverLayout(offset=5, channels=4, stride=10),  # M-ROL-4s
+    (24, 11): _CoverLayout(offset=33, channels=1, stride=12),  # M-REL-2
+}
+
+
+def parse_cover_parameters(
+    blob: bytes, layout: _CoverLayout
+) -> tuple[CoverParameters, ...] | None:
+    """One board's roller section, one entry per channel in channel order.
+
+    The section interleaves by field rather than by channel: every
+    channel's work mode, then every channel's opening time, and so on.
+    None when the blob is too short to hold the whole section - a
+    truncated blob must not read as confident values.
+    docs/description-records.md carries the offsets.
+    """
+    count = layout.channels
+    end = layout.offset + layout.stride * count
+    if count <= 0 or len(blob) < end:
+        return None
+    section = blob[layout.offset : end]
+
+    def u16(index: int) -> int:
+        return section[index] | section[index + 1] << 8
+
+    def lag(index: int) -> int | None:
+        # A stride of 10 ends the section before both lag fields.
+        return section[index] * 10 if index < len(section) else None
+
+    return tuple(
+        CoverParameters(
+            with_slats=bool(section[channel]),
+            open_time_s=u16(count + 2 * channel),
+            close_time_s=u16(3 * count + 2 * channel),
+            calibration=section[5 * count + channel],
+            slat_time_ms=u16(6 * count + 2 * channel) * 10,
+            reversal_lag_ms=section[8 * count + channel] * 10,
+            start_lag_same_ms=lag(10 * count + channel),
+            start_lag_other_ms=lag(11 * count + channel),
+        )
+        for channel in range(count)
+    )
 
 
 def resolve_module_capabilities(
