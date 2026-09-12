@@ -39,6 +39,17 @@ No `/api` verb sets or clears the flag, so this is a read. Both the live push
 and the bulk `data/states` snapshot carry it, and a push without the field keeps
 the last value, the way `lammel` does.
 
+### Tools
+
+- **`tools/modules.py`** prints the module inventory an admin account receives:
+  one row per module with the model, the firmware version, the supply voltage,
+  the temperature, and the size of the capability map. `--function BUZZER`
+  narrows the list to the modules that carry one capability, `--module <row>`
+  prints one module's whole map, and `--watch <seconds>` counts how many modules
+  broadcast a reading while the connection stays open. The script needs the
+  admin login, because the description sweep behind it reads the `device_api`
+  tree. It sends no command to any module.
+
 ## 0.56.0
 
 A touch panel's colours and its touch lock are settings you change in the
