@@ -910,18 +910,34 @@ async def test_set_panel_backlight_rides_the_backlight_action() -> None:
         await client.disconnect()
 
 
-async def test_panel_mask_narrows_to_the_advertised_field_count() -> None:
-    """After a sweep the frame carries the panel's own width, as Designer sends."""
+async def test_the_panel_mask_is_one_width_whatever_the_module_reports() -> None:
+    """A panel reads the width its own field count needs and ignores the
+    rest, so the frame carries the full width even after a sweep has read
+    the count. One width means no panel write depends on a sweep."""
     client, broker = await _admin_with_panel_module()
     try:
+        await client.set_panel_backlight(7, 0, 255, 0)
         client._store.apply_module_sweep(
             {}, {0xCAFE: {ModuleFunction.BACKLIGHT_RGBW: 4}}, {}
         )
         await client.set_panel_backlight(7, 0, 255, 0)
-        assert broker.published == [(PANEL_RAW_TOPIC, b"0c0703500100ff0000ff")]
-        # The mask is one byte now, so field 9 is past the panel's end.
-        with pytest.raises(ValueError):
-            await client.set_panel_backlight(7, 0, 255, 0, fields=[9])
+        assert broker.published == [
+            (PANEL_RAW_TOPIC, b"0c07035001" + b"00ff0000" + b"ffffff"),
+            (PANEL_RAW_TOPIC, b"0c07035001" + b"00ff0000" + b"ffffff"),
+        ]
+    finally:
+        await client.disconnect()
+
+
+async def test_a_field_beyond_the_frame_is_refused() -> None:
+    """The frame addresses 24 fields, the most a panel reports. A panel with
+    fewer ignores the surplus bits, so the only rejection is a field no
+    frame can carry."""
+    client, _broker = await _admin_with_panel_module()
+    try:
+        with pytest.raises(ValueError, match="field"):
+            await client.set_panel_backlight(7, 0, 255, 0, fields=[25])
+        await client.set_panel_backlight(7, 0, 255, 0, fields=[24])
     finally:
         await client.disconnect()
 
