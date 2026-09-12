@@ -139,7 +139,9 @@ A `roleta_lamelki` object carries its lamella angle in a `lammel` field next to
 second, runtime signal that an object has slats.
 
 Covers stream intermediate positions in 5% steps during travel, so a consumer
-sees the movement rather than one jump to the target.
+sees the movement rather than one jump to the target. See the Cover parameters
+section of [`description-records.md`](description-records.md) for a cover's
+stored travel time and other settings.
 
 A position move on a blind drags its slats along mechanically, and the `101`
 sentinel only means "send no angle", not "hold the angle". The slats end

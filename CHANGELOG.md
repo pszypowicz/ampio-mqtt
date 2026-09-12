@@ -27,8 +27,8 @@ had to ask the user to measure by hand.
   Admin sweep only, and None on a board whose roller layout the library has not
   proven. The proven boards are the M-ROL-4s and the M-REL-2.
 - **`CoverParameters`** is the value type. Travel time reads in seconds, the
-  sub-second fields in milliseconds, and calibration verbatim, because the
-  Designer shows it without a unit.
+  sub-second fields in milliseconds, and calibration as a percent, 0 to 50,
+  stored as the Designer shows it.
 
 ## 0.57.0
 

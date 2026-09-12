@@ -293,7 +293,7 @@ class CoverParameters:
     close_time_s: int
     # Designer "Additional calibration" field shows 0 to 50 percent. The
     # library stores this value as the Designer displays it.
-    calibration: int
+    calibration_percent: int
     # One full turn of the slats.
     slat_time_ms: int
     # How long the module waits before it drives the other way.

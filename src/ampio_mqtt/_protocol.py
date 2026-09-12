@@ -622,6 +622,28 @@ def _entry_desc(entry: OutputDescription) -> str | None:
     return None if entry.desc in ("", _EMPTY_DESC) else entry.desc
 
 
+def _object_channel(
+    obj: AmpioObject, mac_by_device_id: Mapping[int, int]
+) -> tuple[int, int] | None:
+    """The `(mac, channel)` pair an object joins through.
+
+    This is the one join rule `resolve_designer` and
+    `resolve_cover_parameters` both share. A leafed object joins through
+    its own `module_mac` and `leaf_io_no`. A leafless object joins through
+    `mac_by_device_id[id_urzadzenia]` and `funkcja` minus one. Returns
+    None when either part is missing.
+    """
+    if obj.leaf_id:
+        mac = obj.module_mac
+        channel = obj.leaf_io_no
+    else:
+        mac = mac_by_device_id.get(obj.id_urzadzenia)
+        channel = obj.funkcja - 1
+    if mac is None or channel is None:
+        return None
+    return mac, channel
+
+
 def resolve_designer(
     objects: Mapping[int, AmpioObject],
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
@@ -650,14 +672,10 @@ def resolve_designer(
         desc_type = DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "")
         if desc_type is None:
             continue
-        if obj.leaf_id:
-            mac = obj.module_mac
-            out_no = obj.leaf_io_no
-        else:
-            mac = mac_by_device_id.get(obj.id_urzadzenia)
-            out_no = obj.funkcja - 1
-        if mac is None or out_no is None:
+        joined = _object_channel(obj, mac_by_device_id)
+        if joined is None:
             continue
+        mac, out_no = joined
         if mac in colliding_macs:
             continue
         entry = entries_by_key.get(mac, {}).get((desc_type, out_no))
@@ -763,7 +781,12 @@ def resolve_panel_settings(
 
 @dataclass(slots=True, frozen=True)
 class _CoverLayout:
-    """Where one board keeps its roller section, and how wide a channel is."""
+    """Where one board keeps its roller section, and how wide a channel is.
+
+    The stride must leave every field index at `8N + t` and below inside
+    the section, since `parse_cover_parameters` reads them with no bounds
+    check.
+    """
 
     offset: int
     channels: int
@@ -812,7 +835,7 @@ def parse_cover_parameters(
             with_slats=bool(section[channel]),
             open_time_s=u16(count + 2 * channel),
             close_time_s=u16(3 * count + 2 * channel),
-            calibration=section[5 * count + channel],
+            calibration_percent=section[5 * count + channel],
             slat_time_ms=u16(6 * count + 2 * channel) * 10,
             reversal_lag_ms=section[8 * count + channel] * 10,
             start_lag_same_ms=lag(10 * count + channel),
@@ -864,14 +887,10 @@ def resolve_cover_parameters(
     for obj in objects.values():
         if DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "") != ROLLER_DESC_TYPE:
             continue
-        if obj.leaf_id:
-            mac = obj.module_mac
-            channel = obj.leaf_io_no
-        else:
-            mac = mac_by_device_id.get(obj.id_urzadzenia)
-            channel = obj.funkcja - 1
-        if mac is None or channel is None:
+        joined = _object_channel(obj, mac_by_device_id)
+        if joined is None:
             continue
+        mac, channel = joined
         channels = channels_by_mac.get(mac)
         if channels is None or not 0 <= channel < len(channels):
             continue

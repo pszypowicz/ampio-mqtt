@@ -980,6 +980,10 @@ class AmpioClient:
         ``opis_menu``) are never touched: the record is the separate,
         admin-guarded fact (#133).
 
+        The same pass also fills :pyattr:`AmpioModule.capabilities`,
+        :pyattr:`AmpioModule.panel_settings`, and
+        :pyattr:`AmpioObject.cover_parameters` from the same reply.
+
         Returns a :class:`RecordSweep`. Its ``records`` map is
         ``{object_id: DesignerRecord}`` for what resolved, and its two
         mac sets say which modules the reply listed and which catalogued
