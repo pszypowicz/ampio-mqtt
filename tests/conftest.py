@@ -25,6 +25,15 @@ from ampio_mqtt import AmpioClient
 USER = "u"
 ADMIN_USER = "admin"
 
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--mqtt",
+        action="store_true",
+        help="Run integration tests against a local Mosquitto process",
+    )
+
+
 ADMIN_DETAILS_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/devicesDetails"
 ADMIN_DEVICES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/devices"
 ADMIN_STATES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/data/states"

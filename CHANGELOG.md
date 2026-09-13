@@ -14,6 +14,12 @@ explicit beta posture above and is no longer the supported upgrade path.
 
 ## Unreleased
 
+### Added
+
+- MQTT integration tests cover discovery, live updates, reconnection,
+  authentication failures, and retained state through a local Mosquitto broker.
+  CI runs them on each supported Python version (#226).
+
 ### Fixed
 
 - `connect()` stops the connection attempt when canceled before the first

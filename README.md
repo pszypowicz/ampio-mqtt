@@ -128,6 +128,21 @@ CAN surfaces on the wire. A defect in this library cannot widen that boundary.
 Bus events are the one exception (see
 [Choosing an account](#choosing-an-account)).
 
+## Development tests
+
+Install the development dependencies with `uv sync --group dev`. Run the unit
+tests with `uv run pytest`.
+
+The MQTT integration tests start temporary Mosquitto processes on loopback
+addresses. They use synthetic replies and credentials and need no Ampio
+hardware. Install Mosquitto with `brew install mosquitto` on macOS or
+`sudo apt-get install mosquitto` on Debian or Ubuntu. Make sure that `mosquitto`
+and `mosquitto_passwd` are on `PATH`, then run `uv run pytest --mqtt -m mqtt`.
+
+Run `uv run pytest --mqtt` to include both suites. Without `--mqtt`, pytest
+skips the broker tests. With `--mqtt`, missing broker executables fail the
+suite. CI runs both suites on each supported Python version.
+
 ## License
 
 MIT
