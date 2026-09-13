@@ -363,6 +363,38 @@ async def test_canceled_connect_stops_the_attempt_and_allows_a_fresh_connect() -
         await client.disconnect()
 
 
+async def test_canceled_discovery_wait_stops_the_session_and_the_refresh() -> None:
+    """Canceling connect() while discovery is filling stops the session and the
+    periodic refresh, neither of which the caller still holds a handle on."""
+    broker = FakeBroker()
+    client = make_client(broker, refresh_interval=0.01)
+    waiting = asyncio.Event()
+
+    async def never_completes(*, timeout: float = 8.0) -> bool:
+        # Pins the cancel to the window after open() returned and after the
+        # refresh task was created, which no timing loop can hit reliably.
+        waiting.set()
+        await asyncio.Event().wait()
+        return True
+
+    client.wait_for_initial_discovery = never_completes  # type: ignore[method-assign]
+    task = asyncio.create_task(client.connect(timeout=2.0, discovery_timeout=30.0))
+    try:
+        async with asyncio.timeout(2.0):
+            await waiting.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert client.available is False
+        settled = len(broker.published)
+        await asyncio.sleep(0.1)
+        assert len(broker.published) == settled
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await client.disconnect()
+
+
 async def test_disconnect_during_connect_aborts_the_connect_promptly() -> None:
     """disconnect() while connect() is mid-connect wakes the connect wait instead
     of leaving it to run out its full timeout budget."""

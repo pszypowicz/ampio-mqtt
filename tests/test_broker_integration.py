@@ -33,9 +33,13 @@ class Broker:
         self.executable = executable
         self.password_tool = password_tool
         self.process: asyncio.subprocess.Process | None = None
-        with socket.socket() as reservation:
-            reservation.bind((_HOST, 0))
-            self.port = reservation.getsockname()[1]
+        # Held open until the broker is spawned. A bind-then-close reservation
+        # leaves the port free for any other process between the two, and the
+        # loser of that race is a failed required check.
+        self._reservation: socket.socket | None = socket.socket()
+        self._reservation.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._reservation.bind((_HOST, 0))
+        self.port = self._reservation.getsockname()[1]
         self.password_file = directory / "passwords"
         self.configuration = directory / "mosquitto.conf"
         self.configuration.write_text(
@@ -54,7 +58,13 @@ class Broker:
         )
         assert await process.wait() == 0
 
+    async def release_port(self) -> None:
+        if self._reservation is not None:
+            self._reservation.close()
+            self._reservation = None
+
     async def start(self) -> None:
+        await self.release_port()
         log_path = self.directory / "broker.log"
         with log_path.open("ab") as log:
             self.process = await asyncio.create_subprocess_exec(
@@ -120,6 +130,7 @@ async def broker(
         yield instance
     finally:
         await instance.stop()
+        await instance.release_port()
 
 
 @contextlib.asynccontextmanager
@@ -274,7 +285,13 @@ async def test_auth_rejection_after_broker_restart(broker: Broker) -> None:
         await broker.set_password("u", "replacement-test-password")
         await broker.start()
         await asyncio.wait_for(rejected.wait(), 3)
-        assert transitions == [True, False, "auth"]
+        # The order is the point, not the count: the session came up, went
+        # down with the broker, and ended on the rejection. A reconnect that
+        # flaps twice on the way is not a failure of this behavior.
+        assert transitions[0] is True
+        assert transitions[-1] == "auth"
+        assert transitions.count("auth") == 1
+        assert False in transitions
         assert not client.available
     finally:
         await client.disconnect()

@@ -341,11 +341,15 @@ class AmpioClient:
                 _LOGGER.debug("Dropped another failing Ampio message on %s", topic)
             else:
                 self._poisoned_topics.add(topic)
+                # The size stands in for the reply itself. A consumer
+                # attaches its log to the same report as the diagnostics
+                # download, and a table reply opens on the device names
+                # that the retained summary leaves out.
                 _LOGGER.exception(
                     "Dropped an Ampio message that failed processing "
-                    "(topic %s, payload %.200r); the connection stays up",
+                    "(topic %s, %d characters); the connection stays up",
                     topic,
-                    payload,
+                    len(payload),
                 )
             return
         for event in applied.events:
@@ -839,12 +843,19 @@ class AmpioClient:
         building on the client checks this result or awaits that method.
         """
         await self._connection.open(timeout)
-        await self._cancel_refresh_task()
-        if self._refresh_interval is not None:
-            self._refresh_task = asyncio.get_running_loop().create_task(
-                self._refresh_periodically(self._refresh_interval)
-            )
-        return await self.wait_for_initial_discovery(timeout=discovery_timeout)
+        try:
+            await self._cancel_refresh_task()
+            if self._refresh_interval is not None:
+                self._refresh_task = asyncio.get_running_loop().create_task(
+                    self._refresh_periodically(self._refresh_interval)
+                )
+            return await self.wait_for_initial_discovery(timeout=discovery_timeout)
+        except asyncio.CancelledError:
+            # The session is up and the refresh task can be running, and a
+            # caller that abandons the setup holds neither. The shield keeps
+            # a second cancel from leaving the teardown half-done.
+            await asyncio.shield(self.disconnect())
+            raise
 
     async def wait_for_initial_discovery(self, *, timeout: float = 8.0) -> bool:
         """Block until the initial discovery cycle has populated the client.

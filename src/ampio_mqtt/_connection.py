@@ -227,8 +227,11 @@ class Connection:
         if runner is None:
             return
         runner.cancel()
-        with suppress(asyncio.CancelledError):
-            await runner
+        # The runner's own cancellation is read off the finished task rather
+        # than raised here, which `await runner` cannot separate from a second
+        # cancel landing on this task. Swallowing that second cancel would let
+        # this return as if the reap had finished on its own terms.
+        await asyncio.wait([runner])
 
     async def publish(self, topic: str, payload: bytes) -> None:
         """Publish at QoS 1, returning once the broker acknowledges it.
