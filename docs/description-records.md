@@ -247,7 +247,8 @@ Where a module does report one and it disagrees with the layout, the module
 reads None rather than guessing.
 
 `AmpioObject.block` is a different fact. It is the live roller lock the module
-pushes, and it says nothing about travel.
+pushes, and it reports whether a cover will move at all. The fields here hold
+the configuration, and the two never describe each other.
 
 ### The join rule
 
