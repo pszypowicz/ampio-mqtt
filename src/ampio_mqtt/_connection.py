@@ -183,6 +183,9 @@ class Connection:
                 await asyncio.wait(
                     waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
                 )
+            except asyncio.CancelledError:
+                await self._shutdown()
+                raise
             finally:
                 for task in waiters:
                     if not task.done():

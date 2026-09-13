@@ -14,6 +14,12 @@ explicit beta posture above and is no longer the supported upgrade path.
 
 ## Unreleased
 
+### Fixed
+
+- `connect()` stops the connection attempt when canceled before the first
+  connection, so the client cannot connect and publish discovery requests after
+  cancellation (#224).
+
 ### Documentation
 
 - The roller lock gates the slat axis, and the `block` section of
