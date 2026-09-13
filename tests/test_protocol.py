@@ -28,6 +28,7 @@ from ampio_mqtt._protocol import (
     RawChannelEdge,
     Router,
     StateUpdate,
+    account_free_topic,
     md5_topic,
     parse_app_sync_devices,
     parse_details,
@@ -560,6 +561,24 @@ def test_state_route_coerces_numeric_state_to_str(
 )
 def test_state_route_invalid_topic(topic: str) -> None:
     assert _route(topic, "x") is None
+
+
+@pytest.mark.parametrize(
+    ("topic", "expected"),
+    [
+        ("ampio/fromDB/u/ob/+/state", "ampio/fromDB/<account>/ob/+/state"),
+        ("ampio/fromDB/u/md5/devices", "ampio/fromDB/<account>/md5/devices"),
+        ("ampio/control/u/api", "ampio/control/<account>/api"),
+        ("ampio/from/+/state/f/+", "ampio/from/+/state/f/+"),
+        ("device_api/from/list", "device_api/from/list"),
+    ],
+)
+def test_account_free_topic_masks_the_namespaced_trees(
+    topic: str, expected: str
+) -> None:
+    """The account segment goes, the surface stays, and a global topic is
+    left whole (#221)."""
+    assert account_free_topic(topic) == expected
 
 
 def test_parse_stan_json_extracts_state_and_timestamp() -> None:

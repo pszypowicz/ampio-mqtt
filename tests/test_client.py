@@ -754,6 +754,18 @@ def test_diagnostics_snapshot_is_credential_free_and_complete() -> None:
     assert "s3cr3t-pw" not in flat
 
 
+def test_diagnostics_keys_carry_no_account() -> None:
+    """The topic-keyed entries mask the account segment, so a consumer
+    publishes the snapshot without rewriting keys of its own (#221). The
+    surface stays readable, and a global topic keeps its whole form."""
+    client = AmpioClient("h", username="acct-9f2")
+    feed(client, "ampio/fromDB/acct-9f2/data/devices", '{"List": [{"id": 5}]}')
+    snap = client.diagnostics_snapshot()
+    violations = snap["connection"]["protocol_violations"]
+    assert list(violations) == ["ampio/fromDB/<account>/data/devices"]
+    assert "acct-9f2" not in json.dumps(snap)
+
+
 def test_diagnostics_snapshot_module_rows_mirror_liveness() -> None:
     """One row per module sorted by id, copying the store's liveness and
     health fields: a live push for the module's object moves the row's

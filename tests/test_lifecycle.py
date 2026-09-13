@@ -906,7 +906,8 @@ async def test_a_rejected_namespace_filter_warns(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A rejected fromDB filter means a broken broker or ACL - loud on any
-    tier."""
+    tier. The stats key masks the account segment, while the warning keeps
+    the real topic for the operator reading the log (#221)."""
     denied = STATES_TOPIC
     broker = FakeBroker()
     broker.suback_codes = {denied: 0x87}
@@ -916,7 +917,7 @@ async def test_a_rejected_namespace_filter_warns(
         try:
             assert client.diagnostics_snapshot()["connection"][
                 "subscribe_failures"
-            ] == {denied: 0x87}
+            ] == {"ampio/fromDB/<account>/data/states": 0x87}
         finally:
             await client.disconnect()
     assert any(denied in r.getMessage() for r in caplog.records)

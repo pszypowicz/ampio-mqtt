@@ -23,9 +23,11 @@ from conftest import (
 
 from ampio_mqtt import (
     HEATING_MODES,
+    MAX_PANEL_FIELD,
     AmpioClient,
     AmpioConnectionError,
     AmpioTimeoutError,
+    AmpioValueError,
     ModuleFunction,
 )
 
@@ -132,7 +134,7 @@ async def test_out_of_range_arguments_are_rejected(
     connected: tuple[AmpioClient, FakeBroker], call
 ) -> None:
     client, broker = connected
-    with pytest.raises(ValueError):
+    with pytest.raises(AmpioValueError):
         await call(client)
     assert broker.published == []
 
@@ -155,7 +157,7 @@ async def test_bool_arguments_are_rejected(
     encoding is str(), so it would go out as the literal 'True' - a
     malformed command the M-SERV silently drops."""
     client, broker = connected
-    with pytest.raises(ValueError):
+    with pytest.raises(AmpioValueError):
         await call(client)
     assert broker.published == []
 
@@ -195,11 +197,14 @@ async def test_turn_on_and_switch_on_rgbw_are_rejected(
     """`turnOn` and `switch` are dropped silently by the M-SERV for rgbw,
     and turning a color light on means choosing a color - the consumer's
     call via `set_colors()`. Rejecting before the wire beats a silent no-op,
-    exactly as the range checks do."""
+    exactly as the range checks do. The kind comes from the catalogue, so
+    this is the install refusing a well-formed call and stays a plain
+    ``ValueError``."""
     client, broker = connected
     _learn(client, 50, "rgbw")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError) as refused:
         await call(client)
+    assert not isinstance(refused.value, AmpioValueError)
     assert broker.published == []
 
 
@@ -938,14 +943,29 @@ async def test_the_panel_mask_is_one_width_whatever_the_module_reports() -> None
 
 
 async def test_a_field_beyond_the_frame_is_refused() -> None:
-    """The frame addresses 24 fields, the most a panel reports. A panel with
-    fewer ignores the surplus bits, so the only rejection is a field no
-    frame can carry."""
+    """The frame addresses ``MAX_PANEL_FIELD`` fields, the most a panel
+    reports. A panel with fewer ignores the surplus bits, so the only
+    rejection is a field no frame can carry."""
     client, _broker = await _admin_with_panel_module()
     try:
-        with pytest.raises(ValueError, match="field"):
-            await client.set_panel_backlight(7, 0, 255, 0, fields=[25])
-        await client.set_panel_backlight(7, 0, 255, 0, fields=[24])
+        with pytest.raises(AmpioValueError, match="field"):
+            await client.set_panel_backlight(7, 0, 255, 0, fields=[MAX_PANEL_FIELD + 1])
+        await client.set_panel_backlight(7, 0, 255, 0, fields=[MAX_PANEL_FIELD])
+    finally:
+        await client.disconnect()
+
+
+async def test_a_bad_field_and_an_unknown_module_raise_apart() -> None:
+    """A consumer validates against ``MAX_PANEL_FIELD`` before it publishes,
+    and the two rejections no longer look alike: the argument fault is an
+    ``AmpioValueError``, the install-state one is not (#220)."""
+    client, _broker = await _admin_with_panel_module()
+    try:
+        with pytest.raises(AmpioValueError):
+            await client.set_panel_status_light(7, 0, 255, 0, fields=[0])
+        with pytest.raises(ValueError) as unknown:
+            await client.set_panel_status_light(9, 0, 255, 0, fields=[1])
+        assert not isinstance(unknown.value, AmpioValueError)
     finally:
         await client.disconnect()
 

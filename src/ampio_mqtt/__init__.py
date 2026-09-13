@@ -22,13 +22,14 @@ from .classification import (
     SensorKind,
     ThermostatKind,
 )
-from .client import HEATING_MODES, AmpioClient
+from .client import HEATING_MODES, MAX_PANEL_FIELD, AmpioClient
 from .errors import (
     AmpioAuthError,
     AmpioConnectionError,
     AmpioError,
     AmpioProtocolError,
     AmpioTimeoutError,
+    AmpioValueError,
 )
 from .events import (
     AuthFailed,
@@ -61,6 +62,7 @@ from .models import (
 __all__ = [
     "HEATING_MODES",
     "INPUT_KIND_KEYS",
+    "MAX_PANEL_FIELD",
     "OUTPUT_KIND_KEYS",
     "SENSOR_KIND_KEYS",
     "SENSOR_KIND_KEY_PREFIXES",
@@ -76,6 +78,7 @@ __all__ = [
     "AmpioScene",
     "AmpioServerInfo",
     "AmpioTimeoutError",
+    "AmpioValueError",
     "AuthFailed",
     "AvailabilityChanged",
     "BusEventRaised",
@@ -103,7 +106,7 @@ __all__ = [
     "discover",
 ]
 
-__version__ = "0.58.0"
+__version__ = "0.59.0"
 
 
 def __getattr__(name: str) -> object:

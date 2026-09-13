@@ -12,6 +12,43 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.59.0
+
+A diagnostics snapshot carries no account name any more. Two of its entries key
+on the MQTT topic, and every topic on an account's own tree holds the username
+in the middle. A consumer cannot redact a secret that is itself a key, so it had
+to rewrite those keys before it published anything. The library masks the
+account segment itself now (#221).
+
+### Added
+
+- **`MAX_PANEL_FIELD`** is the highest touch field a panel write can address. A
+  consumer checks a field number against it before the call, instead of holding
+  a copy of a private constant (#220).
+- **`AmpioValueError`** names an argument the API does not accept. Every check a
+  caller can make first raises it: a value outside the range the frame carries,
+  a mis-typed argument, an unlisted heating mode. `ValueError` is a base, so a
+  handler that catches the builtin keeps working. What the install refuses still
+  raises a plain `ValueError`, which is a module id no catalogue carries, or an
+  output whose kind does not answer the verb. A consumer that catches
+  `AmpioValueError` first tells a bad field number from a module that is not
+  there (#220).
+
+### Changed
+
+- **`diagnostics_snapshot()`** masks the account segment of every topic key in
+  `subscribe_failures` and `protocol_violations`, as in
+  `ampio/fromDB/<account>/ob/+/state`. The masked key names the surface just as
+  well. The log lines keep the real topic for the operator, and the global
+  `ampio/from` tree carries no account and is untouched.
+
+### Fixed
+
+- **`AmpioObject.cover_parameters`** no longer survives a change of the object's
+  component kind. A cover is the only kind that can carry travel parameters. A
+  catalogue re-seed used to fold the old value back onto a row that had left the
+  roller class, which contradicted the field's own contract (#219).
+
 ## 0.58.0
 
 A cover now reports how long it takes to travel. The module stores the opening

@@ -100,7 +100,8 @@ def test_a_refused_reply_is_reported_in_the_diagnostics() -> None:
     topic = f"ampio/fromDB/{USER}/data/devices"
     feed(client, topic, b'{"List": [{"id": 5}]}')
     snapshot = client.diagnostics_snapshot()
-    assert "id_urzadzenia" in snapshot["connection"]["protocol_violations"][topic]
+    violations = snapshot["connection"]["protocol_violations"]
+    assert "id_urzadzenia" in violations["ampio/fromDB/<account>/data/devices"]
     assert snapshot["last_payloads"]["data_devices"] == '{"List": [{"id": 5}]}'
     assert client.objects == {}
 

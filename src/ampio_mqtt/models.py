@@ -845,6 +845,9 @@ class ConnectionStats:
     a deliberate disconnect/connect restarts them, so a snapshot never reads a
     consumer-initiated restart as a flapping connection. `last_error` and
     `last_message_at` roll across runs.
+
+    The two topic-keyed maps arrive masked (`account_free_topic`), so the
+    account never enters what the snapshot publishes.
     """
 
     reconnect_count: int = 0  # reconnects within the current run

@@ -885,7 +885,7 @@ def resolve_cover_parameters(
 
     out: dict[int, CoverParameters] = {}
     for obj in objects.values():
-        if DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "") != ROLLER_DESC_TYPE:
+        if not joins_roller_records(obj.typ_komponentu):
             continue
         joined = _object_channel(obj, mac_by_device_id)
         if joined is None:
@@ -1527,6 +1527,28 @@ def md5_topic(user: str, keyword: str) -> str:
     return f"ampio/fromDB/{user}/md5/{keyword}"
 
 
+ACCOUNT_PLACEHOLDER = "<account>"
+
+# The two trees whose third segment is the connecting account: the
+# `control` requests and the `fromDB` replies are both namespaced by it.
+_ACCOUNT_TREES = ("control", "fromDB")
+
+
+def account_free_topic(topic: str) -> str:
+    """`topic` with its account segment replaced by the placeholder.
+
+    A diagnostics entry keyed on a topic names the surface that failed, and
+    the account segment inside that key is a credential no key-based
+    redactor can reach. The masked form names the surface just as well. The
+    global `ampio/from` tree carries no account and returns unchanged.
+    """
+    parts = topic.split("/")
+    if len(parts) > 2 and parts[0] == "ampio" and parts[1] in _ACCOUNT_TREES:
+        parts[2] = ACCOUNT_PLACEHOLDER
+        return "/".join(parts)
+    return topic
+
+
 # The raw `ampio/from/<MAC>/...` tree: global (not user-namespaced), retained,
 # admin-only. docs/raw-channel-bridge.md is the home for which prefixes are
 # subscribed and bridged, and which stay on the per-object topic.
@@ -1575,6 +1597,16 @@ DESC_TYPE_BY_KIND: dict[str, int] = {
     "rgbw": 34,  # RGBW output class; no symbolic name in the recovered enum
     "flaga": 6,  # FLAG_BIN
 }
+
+
+def joins_roller_records(typ_komponentu: str | None) -> bool:
+    """Whether a component kind joins the roller description class.
+
+    The gate for every roller-only fact: the cover decode reads it to know
+    which objects a params blob can join, and the store reads it to know
+    which objects may keep what that decode produced.
+    """
+    return DESC_TYPE_BY_KIND.get(typ_komponentu or "") == ROLLER_DESC_TYPE
 
 
 # --- topic routing ---------------------------------------------------------

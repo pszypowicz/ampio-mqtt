@@ -2207,6 +2207,31 @@ def test_held_cover_parameters_survive_an_eviction() -> None:
     assert store.objects[70].cover_parameters == params
 
 
+def test_a_kind_change_drops_the_held_cover_parameters() -> None:
+    """``cover_parameters`` is None on anything outside the roller class, so
+    a row that leaves the class clears the field and the held entry both. A
+    later return to the class waits for a sweep rather than folding the old
+    value back (#219)."""
+    store = AmpioStore(AccessTier.ADMIN)
+    row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
+    _seed_catalogue(store, row)
+    params = CoverParameters(
+        with_slats=False,
+        open_time_s=40,
+        close_time_s=40,
+        calibration_percent=10,
+        slat_time_ms=1000,
+        reversal_lag_ms=500,
+        start_lag_same_ms=None,
+        start_lag_other_ms=None,
+    )
+    store.apply_designer_records({}, {70: params})
+    _seed_catalogue(store, {**row, "typ_komponentu": "przekaznik"})
+    assert store.objects[70].cover_parameters is None
+    _seed_catalogue(store, row)
+    assert store.objects[70].cover_parameters is None
+
+
 def test_a_locked_cover_keeps_both_facts() -> None:
     """The lock is a live push and the parameters are a sweep read."""
     store = AmpioStore(AccessTier.ADMIN)

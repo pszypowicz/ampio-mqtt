@@ -34,6 +34,7 @@ from ._protocol import (
     RAW_OUTPUT_FUNCTION_BY_SF,
     RAW_OUTPUT_WILDCARD,
     Endpoint,
+    account_free_topic,
     command_payload,
     command_topic,
     event_payload,
@@ -52,7 +53,12 @@ from ._protocol import (
 )
 from ._store import AmpioStore
 from .classification import OutputKind
-from .errors import AmpioConnectionError, AmpioProtocolError, AmpioTimeoutError
+from .errors import (
+    AmpioConnectionError,
+    AmpioProtocolError,
+    AmpioTimeoutError,
+    AmpioValueError,
+)
 from .events import (
     AuthFailed,
     AvailabilityChanged,
@@ -77,13 +83,19 @@ _LOGGER = logging.getLogger(__name__)
 # the readback letter is `ThermostatState.mode`.
 HEATING_MODES: Final[frozenset[str]] = frozenset({"A", "S", "M", "H"})
 
+# The highest touch field a panel write can address, as the mask the frame
+# carries allows. A consumer validates a field number against this before
+# it calls, so a bad one never reaches the same rejection an unknown module
+# raises (#220).
+MAX_PANEL_FIELD: Final[int] = PANEL_MASK_MAX_BYTES * 8
+
 EventListener = Callable[[ClientEvent], None]
 _EventT = TypeVar("_EventT", bound=ClientEvent)
 _EventT1 = TypeVar("_EventT1", bound=ClientEvent)
 _EventT2 = TypeVar("_EventT2", bound=ClientEvent)
 
 # Bounded so an `object_id` filter on a class without `.object` fails to
-# type-check, mirroring the runtime ValueError.
+# type-check, mirroring the runtime AmpioValueError.
 _ObjEventT = TypeVar("_ObjEventT", bound=ObjectUpdated | ObjectRemoved)
 _ObjEventT1 = TypeVar("_ObjEventT1", bound=ObjectUpdated | ObjectRemoved)
 _ObjEventT2 = TypeVar("_ObjEventT2", bound=ObjectUpdated | ObjectRemoved)
@@ -155,7 +167,7 @@ class AmpioClient:
         cadence to the consumer. Each cycle re-publishes the
         initial-discovery requests, so Designer additions and evictions
         surface as :class:`ObjectAdded` / :class:`ObjectRemoved` without
-        a reconnect (#80). Zero or negative raises ``ValueError``.
+        a reconnect (#80). Zero or negative raises ``AmpioValueError``.
 
         ``mqtt_client_factory`` is the transport seam: a zero-argument
         callable returning the MQTT session object for one connect
@@ -163,13 +175,13 @@ class AmpioClient:
         injects a fake broker instance here.
         """
         if not username:
-            raise ValueError(
+            raise AmpioValueError(
                 "username is required - the Ampio topics are namespaced by account"
             )
         if reconnect_interval <= 0:
-            raise ValueError("reconnect_interval must be positive seconds")
+            raise AmpioValueError("reconnect_interval must be positive seconds")
         if refresh_interval is not None and refresh_interval <= 0:
-            raise ValueError("refresh_interval must be positive seconds or None")
+            raise AmpioValueError("refresh_interval must be positive seconds or None")
         self._refresh_interval = refresh_interval
         self._refresh_task: asyncio.Task[None] | None = None
         self._username = username
@@ -347,9 +359,11 @@ class AmpioClient:
         dropped whole: discovery does not latch on it, a fetch waiting on it
         times out, and held state stays untouched. The report is this log
         line plus the ``protocol_violations`` entry a consumer can surface
-        from :meth:`diagnostics_snapshot`.
+        from :meth:`diagnostics_snapshot`. The entry is keyed on the masked
+        topic, because a consumer publishes the snapshot. The log line keeps
+        the real one, which the operator matches against the broker.
         """
-        self._stats.protocol_violations[topic] = str(err)
+        self._stats.protocol_violations[account_free_topic(topic)] = str(err)
         _LOGGER.error("Refused an Ampio reply on %s: %s", topic, err)
 
     def _handle_availability(self, available: bool) -> None:
@@ -561,7 +575,10 @@ class AmpioClient:
           ``subscribe_failures`` maps each topic the broker rejected in
           the latest SUBACK to its reason code.
           ``protocol_violations`` maps each topic whose reply the library
-          refused to the reason, and rolls across runs.
+          refused to the reason, and rolls across runs. Both key on the
+          topic with its account segment masked - the account is the one
+          credential a key-based redactor cannot reach, and the masked
+          form names the surface just as well.
         - ``mac_collisions``: override macs shared by two or more module
           rows, on which raw traffic cannot be attributed reliably.
         - ``params_gap``: objects the ``params_devices`` table carries no
@@ -710,7 +727,7 @@ class AmpioClient:
         Only :class:`ObjectUpdated` (and its :class:`ObjectAdded` subclass)
         and :class:`ObjectRemoved` carry the ``.object`` an ID can filter
         on; ``object_id`` with any other class, or with no ``of`` at all,
-        raises ``ValueError`` at registration time.
+        raises ``AmpioValueError`` at registration time.
 
         The returned unsubscribe removes exactly its own registration and
         is idempotent; the same listener registered twice keeps its other
@@ -718,12 +735,12 @@ class AmpioClient:
         """
         only = (of,) if isinstance(of, type) else of
         if only is not None and not only:
-            raise ValueError("of= must name at least one event class")
+            raise AmpioValueError("of= must name at least one event class")
         if object_id is not None and (
             only is None
             or any(not issubclass(cls, ObjectUpdated | ObjectRemoved) for cls in only)
         ):
-            raise ValueError(
+            raise AmpioValueError(
                 "object_id filters on event.object.id, so of= must name only "
                 "ObjectUpdated and/or ObjectRemoved"
             )
@@ -773,7 +790,7 @@ class AmpioClient:
         served before any client exists.
         """
         if not username:
-            raise ValueError(
+            raise AmpioValueError(
                 "username is required - the Ampio topics are namespaced by account"
             )
         info = ENDPOINT_BY_NAME["info"]
@@ -1350,7 +1367,9 @@ class AmpioClient:
     @staticmethod
     def _buzz_ticks(name: str, seconds: float, limit: float) -> int:
         if not 0 <= seconds <= limit:
-            raise ValueError(f"{name} must be within 0 and {limit} s, got {seconds}")
+            raise AmpioValueError(
+                f"{name} must be within 0 and {limit} s, got {seconds}"
+            )
         return round(seconds * 100)
 
     async def buzz(
@@ -1366,16 +1385,17 @@ class AmpioClient:
         on. Use :meth:`buzz_pattern` with ``cycles=0`` for a sound that
         lasts until :meth:`buzz_stop`.
 
-        Admin tier only (``RuntimeError`` otherwise). ``ValueError`` for
-        an unknown module or an argument outside its range, before any
-        publish. No readback exists - the panel confirms nothing on the
-        bus - so there is no ``confirm``. docs/panel-writes.md ("Panel
-        buzzer") carries the frame and the tone table.
+        Admin tier only (``RuntimeError`` otherwise). ``AmpioValueError``
+        for an argument outside its range, ``ValueError`` for an unknown
+        module, both before any publish. No readback exists - the panel
+        confirms nothing on the bus - so there is no ``confirm``.
+        docs/panel-writes.md ("Panel buzzer") carries the frame and the
+        tone table.
         """
         mac = self._raw_write_mac(module_id)
         ticks = self._buzz_ticks("seconds", seconds, 2.55)
         if ticks == 0:
-            raise ValueError(
+            raise AmpioValueError(
                 "seconds must be at least 0.01 - a zero time latches the buzzer on"
             )
         _check_range("tone", tone, 1, 31)
@@ -1467,7 +1487,7 @@ class AmpioClient:
         """
         if fields is not None:
             for number in fields:
-                _check_range("field", number, 1, PANEL_MASK_MAX_BYTES * 8)
+                _check_range("field", number, 1, MAX_PANEL_FIELD)
         return panel_field_mask(fields, PANEL_MASK_MAX_BYTES)
 
     async def set_panel_backlight(
@@ -1493,9 +1513,10 @@ class AmpioClient:
         :pyattr:`AmpioModule.panel_settings`, its stored default. Nothing
         on the bus reports the current colour, so there is no readback.
 
-        Admin tier only (``RuntimeError`` otherwise). ``ValueError`` for
-        an unknown module or an out-of-range value, before any publish.
-        docs/panel-writes.md carries the frame.
+        Admin tier only (``RuntimeError`` otherwise). ``AmpioValueError``
+        for an out-of-range value, including a field above
+        :data:`MAX_PANEL_FIELD`, and ``ValueError`` for an unknown module,
+        both before any publish. docs/panel-writes.md carries the frame.
         """
         mac = self._raw_write_mac(module_id)
         for name, value in (
@@ -1549,13 +1570,14 @@ class AmpioClient:
         is locked, and a locked panel is indistinguishable from an idle
         one, so a consumer cannot read this back.
 
-        Admin tier only (``RuntimeError`` otherwise). ``ValueError`` for
-        an unknown module or an out-of-range time, before any publish.
+        Admin tier only (``RuntimeError`` otherwise). ``AmpioValueError``
+        for an out-of-range time, ``ValueError`` for an unknown module,
+        both before any publish.
         """
         mac = self._raw_write_mac(module_id)
         ticks = self._buzz_ticks("seconds", seconds, 655.35)
         if ticks == 0:
-            raise ValueError(
+            raise AmpioValueError(
                 "seconds must be at least 0.01 - a zero time locks for no time"
             )
         payload = raw_key_lock_payload(True, ticks)
@@ -1638,7 +1660,7 @@ class AmpioClient:
             or not isinstance(temperature, (int, float))
             or not math.isfinite(temperature)
         ):
-            raise ValueError(
+            raise AmpioValueError(
                 f"temperature must be a finite number, got {temperature!r}"
             )
         return await self.command(
@@ -1655,13 +1677,13 @@ class AmpioClient:
         Schedule mode and `M` its Manual mode. The regulator echoes the
         letter in its state push, readable as
         :attr:`ThermostatState.mode`; an unlisted letter raises
-        ``ValueError`` here rather than being dropped by the M-SERV
+        ``AmpioValueError`` here rather than being dropped by the M-SERV
         (:meth:`command` is the escape hatch for experimenting).
         ``confirm`` awaits the state echo exactly as :meth:`command`
         documents.
         """
         if mode not in HEATING_MODES:
-            raise ValueError(
+            raise AmpioValueError(
                 f"mode must be one of {sorted(HEATING_MODES)}, got {mode!r}"
             )
         return await self.command(object_id, "setHeatingMode", mode, confirm=confirm)
@@ -1829,4 +1851,4 @@ def _check_range(name: str, value: int, low: int, high: int) -> None:
         or not isinstance(value, int)
         or not low <= value <= high
     ):
-        raise ValueError(f"{name} must be an int in {low}..{high}, got {value!r}")
+        raise AmpioValueError(f"{name} must be an int in {low}..{high}, got {value!r}")
