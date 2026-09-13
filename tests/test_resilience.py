@@ -94,15 +94,14 @@ def test_a_malformed_reply_does_not_stop_later_messages() -> None:
 
 
 def test_a_refused_reply_is_reported_in_the_diagnostics() -> None:
-    """A consumer reads the refusal without scraping the log, and the bytes
-    that caused it stay in the retained payload."""
+    """Diagnostics retains the refusal reason and the reply's row count."""
     client = _client()
     topic = f"ampio/fromDB/{USER}/data/devices"
     feed(client, topic, b'{"List": [{"id": 5}]}')
     snapshot = client.diagnostics_snapshot()
     violations = snapshot["connection"]["protocol_violations"]
     assert "id_urzadzenia" in violations["ampio/fromDB/<account>/data/devices"]
-    assert snapshot["last_payloads"]["data_devices"] == '{"List": [{"id": 5}]}'
+    assert snapshot["last_payloads"]["data_devices"] == '{"row_count": 1}'
     assert client.objects == {}
 
 

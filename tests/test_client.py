@@ -516,8 +516,7 @@ async def test_connect_times_out_without_auth_error() -> None:
 
 
 def test_last_payloads_retained_for_each_handler() -> None:
-    """Each discovery handler stashes the verbatim payload for diagnostics,
-    keyed by endpoint name and scoped to the endpoints the tier is served."""
+    """Each served endpoint retains a summary of its last reply."""
     admin = AmpioClient("host", username="admin")
     devices_payload = devices({"id": 1, "mac": 1, "typ_urzadzenia": 10})
     details_payload = details(
@@ -525,8 +524,12 @@ def test_last_payloads_retained_for_each_handler() -> None:
     )
     feed(admin, "ampio/fromDB/admin/config/devices", devices_payload)
     feed(admin, "ampio/fromDB/admin/config/devicesDetails", details_payload)
-    assert admin.diagnostics_snapshot()["last_payloads"]["devices"] == devices_payload
-    assert admin.diagnostics_snapshot()["last_payloads"]["details"] == details_payload
+    assert admin.diagnostics_snapshot()["last_payloads"]["devices"] == json.dumps(
+        {"row_count": 1}
+    )
+    assert admin.diagnostics_snapshot()["last_payloads"]["details"] == json.dumps(
+        {"row_count": 1}
+    )
 
     client = _client()
     info_payload = info(mac=12345, userId=4, serverVersion="2025")
@@ -546,21 +549,24 @@ def test_last_payloads_retained_for_each_handler() -> None:
     feed(client, f"ampio/fromDB/{USER}/data/groups", groups_payload)
     feed(client, f"ampio/fromDB/{USER}/data/group_devices", group_devices_payload)
     assert client.diagnostics_snapshot()["last_payloads"]["info"] == info_payload
-    assert client.diagnostics_snapshot()["last_payloads"]["states"] == states_payload
-    assert (
-        client.diagnostics_snapshot()["last_payloads"]["data_devices"]
-        == data_devices_payload
+    assert client.diagnostics_snapshot()["last_payloads"]["states"] == json.dumps(
+        {"row_count": 1}
     )
-    assert (
-        client.diagnostics_snapshot()["last_payloads"]["params_devices"]
-        == params_payload
+    assert client.diagnostics_snapshot()["last_payloads"]["data_devices"] == json.dumps(
+        {"row_count": 1}
     )
-    assert client.diagnostics_snapshot()["last_payloads"]["scenes"] == scenes_payload
-    assert client.diagnostics_snapshot()["last_payloads"]["groups"] == groups_payload
-    assert (
-        client.diagnostics_snapshot()["last_payloads"]["group_devices"]
-        == group_devices_payload
+    assert client.diagnostics_snapshot()["last_payloads"][
+        "params_devices"
+    ] == json.dumps({"row_count": 1})
+    assert client.diagnostics_snapshot()["last_payloads"]["scenes"] == json.dumps(
+        {"row_count": 1}
     )
+    assert client.diagnostics_snapshot()["last_payloads"]["groups"] == json.dumps(
+        {"row_count": 1}
+    )
+    assert client.diagnostics_snapshot()["last_payloads"][
+        "group_devices"
+    ] == json.dumps({"row_count": 1})
 
     # An admin-surface topic on a restricted client is unroutable: the
     # tier is not served that surface, so nothing is retained for it.
@@ -596,8 +602,7 @@ def test_snapshot_retains_the_info_payload_redacted() -> None:
 
 
 def test_snapshot_withholds_unparseable_info_bytes() -> None:
-    """Bad info bytes never reach the snapshot: a truncated info reply can
-    carry the address in clear text, unlike the other endpoints' payloads."""
+    """A truncated info reply is withheld from diagnostics."""
     client = _client()
     feed(client, f"ampio/fromDB/{USER}/data/info", '{"Results": {"city": "Example Str')
     assert client.diagnostics_snapshot()["last_payloads"]["info"] == REDACTED

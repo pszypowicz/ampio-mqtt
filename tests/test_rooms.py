@@ -166,7 +166,7 @@ async def test_fetch_rooms_treats_malformed_response_as_no_response(
 ) -> None:
     """A corrupt reply must end in the retryable timeout, not a fake-valid
     empty map - the same failure contract as a reply that never arrives.
-    The raw bytes are still retained for diagnostics."""
+    Diagnostics withholds the malformed reply."""
     client, _ = connected
 
     delivery = deliver_later(
@@ -179,7 +179,7 @@ async def test_fetch_rooms_treats_malformed_response_as_no_response(
             await client.fetch_rooms(timeout=0.1)
     finally:
         await delivery
-    assert client.diagnostics_snapshot()["last_payloads"]["groups"] == "not-json"
+    assert client.diagnostics_snapshot()["last_payloads"]["groups"] == "**REDACTED**"
 
 
 async def test_concurrent_fetch_does_not_steal_the_first_callers_reply(

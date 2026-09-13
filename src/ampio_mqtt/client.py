@@ -105,16 +105,16 @@ _ListenerEntry = tuple[Callable[[Any], None], tuple[type[ClientEvent], ...] | No
 
 
 def _retained(endpoint: _protocol.Endpoint, payload: str) -> str:
-    """The form of a reply kept for diagnostics: the endpoint's redacted
-    rewrite when it defines one, else the verbatim payload."""
-    return payload if endpoint.redacts is None else endpoint.redacts(payload)
+    """Retain an endpoint's safe copy or a summary of its rows."""
+    redacts = endpoint.redacts or _protocol.summarize_rows_payload
+    return redacts(payload)
 
 
 class _ReplyChannel:
     """One endpoint's reply tracking.
 
     ``received`` latches on the first reply the parse accepted and never
-    clears; ``last_payload`` keeps the retained payload for diagnostics;
+    clears; ``last_payload`` keeps the safe reply summary for diagnostics;
     ``waiters`` are fetch futures awaiting the next accepted reply. A
     refused reply latches nothing and resolves no waiter, so the fetch
     times out into the same retryable error as silence.
@@ -311,8 +311,8 @@ class AmpioClient:
                 return
             if isinstance(msg, _protocol.EndpointReply):
                 channel = self._channels[msg.endpoint.name]
-                # The bytes are kept before any parse runs, so a refusal
-                # report carries the payload that caused it.
+                # Summarize before parsing so refused replies also record
+                # receipt without retaining private payload content.
                 channel.last_payload = _retained(msg.endpoint, payload)
                 if msg.endpoint.parses is not None:
                     # Pure request/response: the endpoint's parser runs once
@@ -590,14 +590,15 @@ class AmpioClient:
           :class:`AmpioModule` fields ``id``, ``mac``, ``typ_urzadzenia``,
           ``model``, ``last_seen``, ``supply_voltage``, and
           ``temperature``. The user-given module name stays out.
-        - ``last_payloads``: each endpoint's verbatim last reply, absent
-          until one lands. A payload that failed to parse is retained
-          too - the bad bytes are what the report needs. The one
-          exception is the ``info`` entry: its reply carries private
-          fields (street address, coordinates, cloud endpoint) that a
-          consumer's key-based redaction cannot reach inside a string,
-          so it is retained with every non-safelisted value masked, and
-          an unparseable info reply is withheld outright.
+        - ``last_payloads``: each endpoint's last reply summary, absent
+          until a reply arrives. Table replies retain a JSON string with
+          ``row_count`` only. Names, URLs, state descriptions, and unknown
+          fields are omitted. Malformed JSON or table envelopes retain
+          ``**REDACTED**``. A valid envelope can summarize rows that the
+          endpoint parser refuses. The ``info`` entry keeps its existing
+          allowed values and masks other values. An unparseable info reply
+          retains ``**REDACTED**``. Summaries do not alter the data that
+          discovery and fetch methods receive.
         """
         server_info = self._store.server_info
         return {

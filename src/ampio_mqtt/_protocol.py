@@ -1023,6 +1023,15 @@ def redact_info_payload(payload: str) -> str:
     return json.dumps(masked)
 
 
+def summarize_rows_payload(payload: str) -> str:
+    """Retain the row count, or withhold a malformed reply."""
+    try:
+        rows = require_rows(payload, "diagnostics")
+    except AmpioProtocolError:
+        return REDACTED
+    return json.dumps({"row_count": len(rows)})
+
+
 def parse_states_snapshot(payload: str) -> list[SnapshotEntry]:
     """Parse a bulk `data/states` snapshot.
 
@@ -1218,10 +1227,10 @@ class Endpoint:
     # resolves a fetch nor latches discovery. None marks an endpoint whose
     # reply mutates state - its AmpioStore handler is the gate instead.
     parses: Callable[[str], object] | None = None
-    # Rewrites the reply before it is retained for diagnostics_snapshot().
-    # Set on an endpoint whose reply carries private fields: the retained
-    # copy is one string a consumer's key-based redactor cannot reach
-    # into. The store and the fetch parsers always read the raw reply.
+    # Overrides the default row-count summary in diagnostics_snapshot().
+    # The retained string must omit private content because a consumer's
+    # key-based redactor cannot reach inside it. Store and fetch parsers
+    # read the raw reply.
     redacts: Callable[[str], str] | None = None
 
 
