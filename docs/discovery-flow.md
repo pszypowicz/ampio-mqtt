@@ -180,28 +180,35 @@ credentials are known, confirm identity with `check_connection()`.
 diagnostics platform emits as-is. It holds the tier, the availability flag, the
 auth-failure reason, and the safe server-info subset. It also holds the
 connection counters, the SUBACK rejections, the mac collisions, and each
-endpoint's verbatim last reply. The `info` entry is the exception. Its reply
-carries the account's address, coordinates, cloud endpoint, and public key, and
-a key-based redactor cannot reach inside one retained string. The snapshot
-therefore masks every info value outside a safe-key set and withholds an
-unparseable info reply. The `connection` entry carries six keys. `started_at`
-and `reconnect_count` cover the current `connect()` run, so a deliberate restart
-never reads as a flapping connection. `last_error` and `last_message_at` roll
-across runs, and `subscribe_failures` maps each topic the latest SUBACK rejected
-to its reason code. `protocol_violations` maps each topic whose reply the
-library refused to the reason, and rolls across runs too. Both maps mask the
-account segment of the key, as in `ampio/fromDB/<account>/ob/+/state`. The
-account names the surface no better than the rest of the topic does, and a
-key-based redactor cannot reach a credential that is itself a key. The global
-`ampio/from` tree carries no account and keeps its whole topic. The counters are
-cheap to update - the dispatch hot path touches only `last_message_at`.
+endpoint's last reply summary.
+
+Table replies retain a JSON string with only `row_count` in `last_payloads`.
+Names, URLs, state descriptions, nested data, and unknown fields are omitted.
+Malformed JSON or table envelopes retain `**REDACTED**`. A valid table envelope
+retains its row count even if the endpoint parser refuses its rows. Discovery
+and fetch methods still receive the full reply.
+
+The `info` entry retains its allowed values and masks other values. An
+unparseable info reply retains `**REDACTED**`.
+
+The `connection` entry carries six keys. `started_at` and `reconnect_count`
+cover the current `connect()` run, so a deliberate restart never reads as a
+flapping connection. `last_error` and `last_message_at` roll across runs, and
+`subscribe_failures` maps each topic the latest SUBACK rejected to its reason
+code. `protocol_violations` maps each topic whose reply the library refused to
+the reason, and rolls across runs too. Both maps mask the account segment of the
+key, as in `ampio/fromDB/<account>/ob/+/state`. The account names the surface no
+better than the rest of the topic does, and a key-based redactor cannot reach a
+credential that is itself a key. The global `ampio/from` tree carries no account
+and keeps its whole topic. The counters are cheap to update - the dispatch hot
+path touches only `last_message_at`.
 
 ## A reply the library refuses
 
 Each surface serves a fixed column set, and the library refuses a reply that
 drops one of them (see [`protocol.md`](protocol.md)). The refusal costs that one
 message. The client logs it, records the masked topic and the reason in
-`protocol_violations`, keeps the payload in `last_payloads`, and holds the
+`protocol_violations`, summarizes the reply in `last_payloads`, and holds the
 connection up. Nothing else changes: the refused reply latches no discovery
 signal, resolves no pending `fetch_*` call, and leaves held state untouched. So
 a refused discovery reply makes `connect()` return False, exactly as silence

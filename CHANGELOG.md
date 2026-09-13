@@ -12,6 +12,13 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Fixed
+
+- Diagnostic reports summarize table replies by row count and withhold malformed
+  replies, so device names and other private payload content stay out (#225).
+
 ## 0.59.0
 
 A diagnostics snapshot carries no account name any more. Two of its entries key
