@@ -12,7 +12,13 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## Unreleased
+## 0.60.0
+
+A diagnostics report no longer carries a table reply. Each entry in
+`last_payloads` holds the row count of that reply and nothing else, and a
+malformed reply is withheld whole. The old form kept the bytes verbatim, so a
+device name or a street address reached every consumer that published the
+report. Discovery and the `fetch_*` methods still read the full reply (#225).
 
 ### Added
 
