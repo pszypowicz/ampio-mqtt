@@ -188,6 +188,9 @@ async def test_poison_message_does_not_kill_the_connection(
         feed(client, topic, poison)  # must not raise
     assert client.available
     assert sum("failed processing" in r.message for r in caplog.records) == 1
+    # The reply itself stays out of the line. A consumer attaches its log to
+    # the same report as the diagnostics download, which carries no payload.
+    assert not any("POISON" in r.getMessage() for r in caplog.records)
 
     feed(client, topic, b'{"state":"42","on":1789000000000}')
     assert client.objects[5].state == "42"

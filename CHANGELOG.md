@@ -12,6 +12,27 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.60.1
+
+A canceled setup leaves nothing behind. 0.60.0 stopped an attempt that was
+canceled before the first connection, and a cancel arriving a moment later still
+left the session up, the discovery requests going out, and the periodic refresh
+running with no handle the caller could reach. `connect()` tears all three down
+before the cancellation reaches the caller (#232).
+
+### Fixed
+
+- `connect()` canceled after the session comes up stops the session and the
+  periodic refresh. A consumer whose setup times out and retries no longer
+  leaves a second client publishing behind the first (#232).
+- A message that fails processing logs its size rather than its first 200
+  characters. A table reply opens on the device names and URLs that 0.60.0 took
+  out of the diagnostics report, and a consumer attaches its log to the same bug
+  report (#233).
+- The broker integration suite holds its reserved port until the broker binds
+  it, and the Mosquitto install rides out a transient archive error. Both sit on
+  a required check (#234).
+
 ## 0.60.0
 
 A diagnostics report no longer carries a table reply. Each entry in
