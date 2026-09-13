@@ -12,6 +12,14 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Added
+
+- MQTT integration tests cover discovery, live updates, reconnection,
+  authentication failures, and retained state through a local Mosquitto broker.
+  CI runs them on each supported Python version (#226).
+
 ## 0.59.0
 
 A diagnostics snapshot carries no account name any more. Two of its entries key

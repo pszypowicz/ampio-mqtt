@@ -28,7 +28,9 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: python -m pip install --group dev -e .
-      - run: python -m pytest --cov=src/ampio_mqtt --cov-report=term-missing --cov-branch --cov-fail-under=95
+      - run: sudo apt-get update
+      - run: sudo apt-get install -y mosquitto
+      - run: python -m pytest --mqtt --cov=src/ampio_mqtt --cov-report=term-missing --cov-branch --cov-fail-under=95
 
   lint:
     name: Lint

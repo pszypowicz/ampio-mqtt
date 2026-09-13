@@ -95,6 +95,7 @@ ignore = ["ASYNC109"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = ["mqtt: integration tests that require a local Mosquitto process"]
 # The scripts in tools/ import as top-level modules in tests/test_tools.py.
 pythonpath = ["tools"]
 
