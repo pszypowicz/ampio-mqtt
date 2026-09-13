@@ -138,18 +138,25 @@ def test_a_leafless_cover_joins_through_funkcja_minus_one() -> None:
     assert resolved[12].open_time_s == 30
 
 
-def test_the_unjoinable_resolves_nothing() -> None:
-    objects = {
-        1: _object(id=1, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
-        2: _object(id=2, leaf_id="0_cb89_5_0_9"),  # channel past the count
-        3: _object(id=3, leaf_id="0_dead_5_0_0"),  # module carries no blob
-    }
-    assert (
-        resolve_cover_parameters(
-            objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset(), {}
-        )
-        == {}
+def _resolve(objects: dict[int, AmpioObject]) -> dict[int, CoverParameters]:
+    return resolve_cover_parameters(
+        objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset(), {}
     )
+
+
+def test_a_kind_outside_the_roller_class_resolves_nothing() -> None:
+    objects = {1: _object(id=1, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0")}
+    assert _resolve(objects) == {}
+
+
+def test_a_channel_past_the_count_resolves_nothing() -> None:
+    objects = {2: _object(id=2, leaf_id="0_cb89_5_0_9")}
+    assert _resolve(objects) == {}
+
+
+def test_a_module_with_no_blob_resolves_nothing() -> None:
+    objects = {3: _object(id=3, leaf_id="0_dead_5_0_0")}
+    assert _resolve(objects) == {}
 
 
 def test_an_unlisted_board_resolves_nothing() -> None:

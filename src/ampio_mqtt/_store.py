@@ -190,7 +190,9 @@ class AmpioStore:
         from one ``device_api`` reply, so an object changed by either
         reports one event. Objects a sweep did not join keep what they
         had, and the held tables accumulate across sweeps so a catalogue
-        re-seed re-folds everything this session learned.
+        re-seed re-folds everything this session learned. A row that left
+        the roller class is the exception: the merge drops its cover
+        parameters, a fact only a roller kind carries.
         """
         applied = Applied()
         self._record_by_id.update(resolved)
@@ -413,9 +415,17 @@ class AmpioStore:
         record = self._record_by_id.get(meta.id)
         if record is not None:
             updates["record"] = record
-        parameters = self._cover_parameters_by_id.get(meta.id)
-        if parameters is not None:
-            updates["cover_parameters"] = parameters
+        # A travel configuration belongs to a roller kind alone. A row that
+        # left the class clears the field and drops the held entry, so a
+        # later return to the class waits for a sweep of its own instead of
+        # folding back what the object no longer is.
+        if _protocol.joins_roller_records(meta.typ_komponentu):
+            parameters = self._cover_parameters_by_id.get(meta.id)
+            if parameters is not None:
+                updates["cover_parameters"] = parameters
+        else:
+            self._cover_parameters_by_id.pop(meta.id, None)
+            updates["cover_parameters"] = None
         changed = any(getattr(obj, name) != value for name, value in updates.items())
         updated = replace(obj, **updates)
         # The states snapshot is the one seed source on both tiers, so a

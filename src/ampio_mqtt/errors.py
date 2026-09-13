@@ -24,6 +24,21 @@ class AmpioAuthError(AmpioError):
     """Raised when the broker rejects the credentials."""
 
 
+class AmpioValueError(AmpioError, ValueError):
+    """Raised when an argument is outside what the API accepts.
+
+    Every check a caller can make on its own raises this: a value beyond
+    the range the frame carries, a mis-typed argument, an unlisted heating
+    mode. ``ValueError`` is a base because that is what a bad argument is
+    in Python, so a handler that catches the builtin keeps working.
+
+    What the install refuses raises a plain ``ValueError``: a module id no
+    catalogue has, or an output whose kind does not answer the verb. The
+    argument is well formed in both, so a consumer that catches this class
+    first tells its own fault from the install's state.
+    """
+
+
 class AmpioProtocolError(AmpioError):
     """Raised when a reply lacks something its surface always serves.
 

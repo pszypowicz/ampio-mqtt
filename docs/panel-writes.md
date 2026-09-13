@@ -121,8 +121,10 @@ payloads.
 field 1 is bit 0. A panel reads the width its own field count needs and ignores
 any surplus. The library therefore always sends the full three bytes, which
 covers the 24 fields a panel can report, and no panel write depends on a record
-sweep. A field number above 24 is refused, because no frame can carry it. A
-field the panel does not have is accepted and the panel ignores it.
+sweep. A field number above 24 is refused with `AmpioValueError`, because no
+frame can carry it. The ceiling is public as `MAX_PANEL_FIELD`, so a consumer
+can check a field number before it calls. A field the panel does not have is
+accepted and the panel ignores it.
 
 These frames write nothing to the module's configuration. The stored settings
 stay untouched, so a panel restart returns the configured colours. Nothing on

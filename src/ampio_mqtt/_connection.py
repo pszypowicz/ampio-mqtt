@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, cast
 
 import aiomqtt
 
+from ._protocol import account_free_topic
 from .errors import AmpioAuthError, AmpioConnectionError, AmpioTimeoutError
 from .models import ConnectionStats
 
@@ -288,14 +289,21 @@ class Connection:
                         "list[ReasonCode]",
                         await client.subscribe(list(self._topics)),
                     )
-                    self._stats.subscribe_failures = {
-                        topic: code.value
+                    rejected = [
+                        (topic, code.value)
                         for (topic, _), code in zip(self._topics, codes, strict=True)
                         if code.is_failure
+                    ]
+                    # The stats key masks the account, because a consumer
+                    # publishes the snapshot. The warning below keeps the
+                    # real topic, which the operator matches against the
+                    # broker's ACL.
+                    self._stats.subscribe_failures = {
+                        account_free_topic(topic): code for topic, code in rejected
                     }
                     # The subscribe set is tier-shaped, so every filter must
                     # be granted; a rejection means a broken broker or ACL.
-                    for topic, code in self._stats.subscribe_failures.items():
+                    for topic, code in rejected:
                         _LOGGER.warning(
                             "Ampio broker rejected subscription to %s "
                             "(reason code %d); no messages will arrive on it",

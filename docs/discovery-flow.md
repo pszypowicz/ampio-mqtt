@@ -133,8 +133,12 @@ publish while the broker is disconnected raises `AmpioConnectionError` too.
 `AmpioTimeoutError` subclasses `AmpioConnectionError`, so a handler that treats
 every connection problem alike keeps working. A rejection after a successful
 `connect()` arrives as the `AuthFailed` event instead (see
-[`events.md`](events.md)). A bad argument raises `ValueError`, and an admin-only
-call on a standard account raises `RuntimeError`.
+[`events.md`](events.md)). A bad argument raises `AmpioValueError`, which
+subclasses `ValueError`. What the install refuses raises a plain `ValueError`
+instead: a module id no catalogue carries, or an output whose kind does not
+answer the verb. A consumer that catches `AmpioValueError` first tells its own
+fault from the install's state. An admin-only call on a standard account raises
+`RuntimeError`.
 
 ## What runs on demand, not automatically
 
@@ -185,14 +189,18 @@ and `reconnect_count` cover the current `connect()` run, so a deliberate restart
 never reads as a flapping connection. `last_error` and `last_message_at` roll
 across runs, and `subscribe_failures` maps each topic the latest SUBACK rejected
 to its reason code. `protocol_violations` maps each topic whose reply the
-library refused to the reason, and rolls across runs too. The counters are cheap
-to update - the dispatch hot path touches only `last_message_at`.
+library refused to the reason, and rolls across runs too. Both maps mask the
+account segment of the key, as in `ampio/fromDB/<account>/ob/+/state`. The
+account names the surface no better than the rest of the topic does, and a
+key-based redactor cannot reach a credential that is itself a key. The global
+`ampio/from` tree carries no account and keeps its whole topic. The counters are
+cheap to update - the dispatch hot path touches only `last_message_at`.
 
 ## A reply the library refuses
 
 Each surface serves a fixed column set, and the library refuses a reply that
 drops one of them (see [`protocol.md`](protocol.md)). The refusal costs that one
-message. The client logs it, records the topic and the reason in
+message. The client logs it, records the masked topic and the reason in
 `protocol_violations`, keeps the payload in `last_payloads`, and holds the
 connection up. Nothing else changes: the refused reply latches no discovery
 signal, resolves no pending `fetch_*` call, and leaves held state untouched. So

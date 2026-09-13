@@ -31,7 +31,7 @@ narrows further, to one object's events, and dispatches in O(1) of the count of
 such registrations. This shape fits a consumer with one listener per object. It
 applies only to the classes that carry `.object` (`ObjectUpdated`, its
 `ObjectAdded` subclass, and `ObjectRemoved`). Any other combination fails with
-`ValueError` at registration time.
+`AmpioValueError` at registration time.
 
 ## What arrives
 

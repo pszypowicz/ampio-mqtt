@@ -231,6 +231,10 @@ key is `leaf_io_no` for a leafed object, and `funkcja` minus one for a leafless
 one. Either cover kind joins the same way, so a cover carries the same values
 whichever type the app has it set to.
 
+Only the two roller kinds carry these values. If the app changes an object to
+another kind, the library drops what it read for that object. The object reads
+None until a later sweep joins it again.
+
 Only a board whose layout is live-proven resolves. The Designer keys the layout
 by `(typ_urzadzenia, wersja_pcb)`, and the boards differ in the offset, the
 channel count, and the stride. Reading one with another's layout produces
