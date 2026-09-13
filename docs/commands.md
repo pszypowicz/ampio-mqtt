@@ -169,12 +169,37 @@ command. There is no error and no reply, so a consumer that only watches `state`
 sees a cover that agreed to move and then did not. `block` is the only way to
 tell the two apart.
 
-Designer sets these bits from a logic rule, through three roller actions it
-names "Disable movement", "Disable closing" and "Disable opening". A rule holds
-the lock for as long as its trigger holds. A wind alarm or a fire alarm can
-therefore leave a cover blocked for a long time. No `/api` verb sets or clears
-the flag, so the library reads it and never writes it.
-
 A blocked cover keeps reporting its position, and the position stays correct. A
 consumer must mark the cover unavailable for the blocked direction rather than
 hide it.
+
+### The bits gate the slat axis as well
+
+The lock gates a direction, and it covers both axes of that direction. A slat
+turn toward open counts as opening, and a turn toward closed counts as closing.
+Both axes ride the same `setRollerPos` frame, so one bit refuses both:
+
+| `block` | Travel open | Travel closed | Slats open | Slats closed |
+| ------- | ----------- | ------------- | ---------- | ------------ |
+| 0       | Runs        | Runs          | Runs       | Runs         |
+| 1       | Runs        | Dropped       | Runs       | Dropped      |
+| 2       | Dropped     | Runs          | Dropped    | Runs         |
+| 3       | Dropped     | Dropped       | Dropped    | Dropped      |
+
+A consumer that disables one control per blocked direction must disable the slat
+controls on the same bit. A cover with `block` 2 keeps a working close control
+and a working slat-toward-closed control.
+
+### Which Designer actions set the bits
+
+Designer sets them from a logic rule, through three roller actions it names
+"Disable movement", "Disable closing" and "Disable opening". A rule holds the
+lock for as long as its trigger holds. A wind alarm or a fire alarm can
+therefore leave a cover blocked for a long time. No `/api` verb sets or clears
+the flag, so the library reads it and never writes it.
+
+The same Designer menu offers eight more roller actions, and none of them
+touches the lock. Two carry names that suggest an override. "Close permanently"
+and "Open permanently" are ordinary moves that latch and run to the end of
+travel. A lock refuses each one in its blocked direction exactly as it refuses
+"Close/stop" and "Open/stop".

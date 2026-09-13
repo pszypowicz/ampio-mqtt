@@ -1760,6 +1760,11 @@ class AmpioClient:
         the cover travels; ``confirm`` awaits the first of them exactly as
         :meth:`command` documents, so its snapshot reads the travel's start,
         not its end.
+
+        A cover whose :pyattr:`AmpioObject.block` bit covers the requested
+        direction drops this command with no error and no reply. The bit
+        gates the slat axis on the same direction, so a blocked cover can
+        refuse the ``lamella`` half as well.
         """
         _check_range("position", position, 0, 100)
         if lamella is not None:
@@ -1779,6 +1784,11 @@ class AmpioClient:
 
         ``confirm`` awaits the state echo exactly as :meth:`command`
         documents.
+
+        A turn toward open counts as opening and a turn toward closed counts
+        as closing, so :pyattr:`AmpioObject.block` gates this command on the
+        same bit travel uses. The module drops a blocked turn with no error
+        and no reply.
         """
         _check_range("lamella", lamella, 0, 100)
         return await self.command(
