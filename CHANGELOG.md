@@ -20,6 +20,19 @@ explicit beta posture above and is no longer the supported upgrade path.
   authentication failures, and retained state through a local Mosquitto broker.
   CI runs them on each supported Python version (#226).
 
+### Documentation
+
+- The roller lock gates the slat axis, and the `block` section of
+  `docs/commands.md` now says so. A lock applies to a direction and not to an
+  axis, so a cover with closing blocked also refuses a slat turn toward closed.
+  The section carries a table for both axes and both directions, and
+  `set_roller_pos()`, `set_roller_lamella()`, `blocks_closing` and
+  `blocks_opening` state it in place. A consumer that disables one control per
+  blocked direction needs the slat controls on the same bit (#223).
+- The same section records that the eight other Designer roller actions leave
+  the lock alone. "Close permanently" and "Open permanently" are ordinary moves
+  that a lock refuses in its blocked direction (#223).
+
 ## 0.59.0
 
 A diagnostics snapshot carries no account name any more. Two of its entries key
