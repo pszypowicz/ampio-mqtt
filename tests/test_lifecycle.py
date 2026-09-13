@@ -19,6 +19,7 @@ import json
 import logging
 import sys
 import threading
+from typing import Self
 
 import aiomqtt
 import pytest
@@ -320,6 +321,45 @@ async def test_concurrent_connects_serialize_and_the_survivor_stays_up() -> None
         assert results[1] is False  # connected; only discovery timed out
         assert client.available is True
     finally:
+        await client.disconnect()
+
+
+async def test_canceled_connect_stops_the_attempt_and_allows_a_fresh_connect() -> None:
+    """Canceling the first connection stops transport work before returning."""
+    entered = asyncio.Event()
+    released = asyncio.Event()
+    exited = asyncio.Event()
+
+    class GatedBroker(FakeBroker):
+        async def __aenter__(self) -> Self:
+            entered.set()
+            try:
+                await released.wait()
+                return await super().__aenter__()
+            finally:
+                exited.set()
+
+    broker = GatedBroker()
+    client = make_client(broker)
+    task = asyncio.create_task(client.connect(timeout=30.0))
+    try:
+        async with asyncio.timeout(2.0):
+            await entered.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert exited.is_set()
+        assert client.available is False
+        assert broker.subscribed == []
+        assert broker.published == []
+
+        released.set()
+        await client.connect(timeout=2.0, discovery_timeout=0.01)
+        assert client.available is True
+        assert broker.published
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
         await client.disconnect()
 
 
