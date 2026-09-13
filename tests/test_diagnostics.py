@@ -3,58 +3,120 @@
 import json
 
 import pytest
-from conftest import devices, feed, rows
+from conftest import details, devices, feed, params_table, rows, snapshot
 
 from ampio_mqtt import AmpioClient
 from ampio_mqtt._protocol import REDACTED
 
+_URL = "https://example.invalid/private-url-token"
 
+
+# Each case carries two rows the surface's parser accepts, so the retained
+# summary is compared against a reply that actually reached the store. Every
+# column that can hold a user-given string holds a `private-` marker.
 @pytest.mark.parametrize(
-    ("endpoint", "surface"),
+    ("endpoint", "surface", "username", "payload"),
     [
-        ("devices", "config/devices"),
-        ("details", "config/devicesDetails"),
-        ("states", "data/states"),
-        ("data_devices", "data/devices"),
-        ("params_devices", "data/params_devices"),
-        ("groups", "data/groups"),
-        ("group_devices", "data/group_devices"),
-        ("scenes", "data/scenes"),
-        ("locations", "config/locations"),
+        (
+            "devices",
+            "config/devices",
+            "admin",
+            devices(
+                {"id": 1, "mac": 10, "nazwa_urzadzenia": "private-module-name"},
+                {"id": 2, "mac": 11, "nazwa_urzadzenia": "private-second-module"},
+            ),
+        ),
+        (
+            "details",
+            "config/devicesDetails",
+            "admin",
+            details(
+                {"id": 1, "opis_menu": "private-object-name", "url": _URL},
+                {"id": 2, "opis_menu": "private-second-object", "url": _URL},
+            ),
+        ),
+        (
+            "states",
+            "data/states",
+            "admin",
+            snapshot(
+                {"id": 1, "stan_json": json.dumps({"state": "private-state-text"})},
+                {"id": 2, "stan_json": json.dumps({"state": "private-second-state"})},
+            ),
+        ),
+        (
+            "data_devices",
+            "data/devices",
+            "u",
+            details(
+                {"id": 1, "opis_menu": "private-object-name", "url": _URL},
+                {"id": 2, "opis_menu": "private-second-object", "url": _URL},
+            ),
+        ),
+        (
+            "params_devices",
+            "data/params_devices",
+            "u",
+            params_table({"id": 1, "url": _URL}, {"id": 2, "url": _URL}),
+        ),
+        (
+            "groups",
+            "data/groups",
+            "admin",
+            rows(
+                {"id": 8, "id_rodzica": 4, "opis_menu": "private-room-name"},
+                {"id": 9, "id_rodzica": 4, "opis_menu": "private-second-room"},
+            ),
+        ),
+        (
+            "group_devices",
+            "data/group_devices",
+            "admin",
+            rows({"id_grupy": 8, "id_obiektu": 31}, {"id_grupy": 9, "id_obiektu": 32}),
+        ),
+        (
+            "scenes",
+            "data/scenes",
+            "admin",
+            rows(
+                {
+                    "id": 3,
+                    "parentId": -1,
+                    "active": 1,
+                    "sceneName": "private-scene",
+                    "Infos": [{"id": 31}],
+                },
+                {
+                    "id": 4,
+                    "parentId": 8,
+                    "active": 0,
+                    "sceneName": "private-scene-2",
+                    "Infos": [{"id": 32}],
+                },
+            ),
+        ),
+        (
+            "locations",
+            "config/locations",
+            "admin",
+            rows(
+                {"id": 1, "opis_menu": "private-location-name"},
+                {"id": 2, "opis_menu": "private-second-location"},
+            ),
+        ),
     ],
 )
 def test_retained_reply_omits_private_keys_and_values(
-    endpoint: str, surface: str
+    endpoint: str, surface: str, username: str, payload: str
 ) -> None:
-    username = "u" if endpoint in {"data_devices", "params_devices"} else "admin"
     client = AmpioClient("host", username=username)
-    payload = json.dumps(
-        {
-            "private-envelope-token": "private-envelope-value",
-            "List": [
-                {
-                    "id": 1,
-                    "nazwa_urzadzenia": "private-module-name",
-                    "opis_menu": "private-room-name",
-                    "sceneName": "private-scene-name",
-                    "name": "private-location-name",
-                    "url": "https://example.invalid/private-url-token",
-                    "stan_json": json.dumps(
-                        {
-                            "state": "private-state-description",
-                            "private-key": ["secret"],
-                        }
-                    ),
-                    "private-row-key": {"nested": "private-nested-value"},
-                },
-                {},
-            ],
-        }
-    )
     feed(client, f"ampio/fromDB/{username}/{surface}", payload)
-    retained = client.diagnostics_snapshot()["last_payloads"][endpoint]
-    assert json.loads(retained) == {"row_count": 2}
-    assert "private-" not in json.dumps(client.diagnostics_snapshot())
+    report = client.diagnostics_snapshot()
+    # A refused row reaches no store, which would let the privacy assertion
+    # below pass on a snapshot that holds nothing.
+    assert report["connection"]["protocol_violations"] == {}
+    assert json.loads(report["last_payloads"][endpoint]) == {"row_count": 2}
+    assert "private-" not in json.dumps(report)
 
 
 @pytest.mark.parametrize(
