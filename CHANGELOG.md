@@ -20,6 +20,14 @@ explicit beta posture above and is no longer the supported upgrade path.
   authentication failures, and retained state through a local Mosquitto broker.
   CI runs them on each supported Python version (#226).
 
+### Fixed
+
+- `connect()` stops the connection attempt when canceled before the first
+  connection, so the client cannot connect and publish discovery requests after
+  cancellation (#224).
+- Diagnostic reports summarize table replies by row count and withhold malformed
+  replies, so device names and other private payload content stay out (#225).
+
 ### Documentation
 
 - The roller lock gates the slat axis, and the `block` section of
