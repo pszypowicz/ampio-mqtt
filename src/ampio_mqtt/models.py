@@ -399,9 +399,10 @@ class AmpioObject:
     lammel: int | None = None
     # The roller lock, verbatim from the wire: two bits the module keeps per
     # cover, so bit 0 blocks closing and bit 1 blocks opening. A blocked
-    # direction refuses every command, the API included. Only covers report
-    # it. `blocks_closing` and `blocks_opening` read the bits.
-    # docs/commands.md holds the Designer actions that set them.
+    # direction refuses every command, the API included, on the slat axis as
+    # well as on travel. Only covers report it. `blocks_closing` and
+    # `blocks_opening` read the bits. docs/commands.md holds the Designer
+    # actions that set them.
     block: int | None = None
     # Climate readback, from the rich state shape only `reg` objects push.
     # None until a reg-shaped report arrives; a later report that lacks the
@@ -423,6 +424,7 @@ class AmpioObject:
     def blocks_closing(self) -> bool:
         """Whether the module refuses to close this cover.
 
+        The refusal covers a slat turn toward closed as well as travel.
         False when no lock is reported, so a non-cover reads False.
         """
         return bool((self.block or 0) & 1)
@@ -431,6 +433,7 @@ class AmpioObject:
     def blocks_opening(self) -> bool:
         """Whether the module refuses to open this cover.
 
+        The refusal covers a slat turn toward open as well as travel.
         False when no lock is reported, so a non-cover reads False.
         """
         return bool((self.block or 0) & 2)
