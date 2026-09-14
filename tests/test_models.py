@@ -407,6 +407,39 @@ def test_rgbw_reads_none_for_non_color_kinds() -> None:
     assert dimmer.rgbw is None
 
 
+def _cct(value: str | None) -> AmpioObject:
+    return _object(id=1, typ_komponentu="ledww", state=value)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("0", (0, 0)),
+        ("21844", (84, 85)),  # 0x5554
+        ("65535", (255, 255)),
+        ("255", (255, 0)),  # power only, coldness at the cold end of 0
+        ("65280", (0, 255)),  # coldness only, power off
+        ("65536", None),  # past 16 bits
+        ("-1", None),
+        ("junk", None),
+        (None, None),
+    ],
+)
+def test_cct_decodes_the_packed_state(
+    value: str | None, expected: tuple[int, int] | None
+) -> None:
+    """`power | coldness<<8`, the form both the per-object topic and the
+    module's own broadcast carry."""
+    assert _cct(value).cct == expected
+
+
+def test_cct_reads_none_for_non_color_temp_kinds() -> None:
+    """A dimmer's level and an RGBW light's packed color must not
+    masquerade as a color temperature."""
+    assert _object(id=1, typ_komponentu="led", state="255").cct is None
+    assert _colored("16777215").cct is None
+
+
 def _cover(value: str | None, typ: str = "roleta_procenty") -> AmpioObject:
     return _object(id=1, typ_komponentu=typ, state=value)
 

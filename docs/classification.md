@@ -40,17 +40,24 @@ classifies, as the generic value sensor or the `analog_<n>` fallback.
   in its state payload, exposed as `AmpioObject.lammel`. Both variants report a
   `block` lock, exposed as `AmpioObject.block`. A locked cover refuses commands
   in the blocked direction (see [`commands.md`](commands.md)).
-- `rgbw` is the one output that ignores the `turnOn`/`turnOff`/`switch` family.
-  The replay pattern Ampio's own consumers use for on/off is in
+- `rgbw` is the one output that ignores the whole `turnOn`/`turnOff`/`switch`
+  family. The replay pattern Ampio's own consumers use for on/off is in
   [`commands.md`](commands.md).
+- `ledww` is a warm/cold white light, which Designer labels "LEDWW". Its state
+  packs two axes into one 16-bit value, `power | coldness<<8`, read as
+  `AmpioObject.cct`. It answers `switch` but ignores `turnOn`, `turnOff`, and
+  `setValue`. That is why `switchable` and `toggleable` are two flags: no single
+  flag can say that one verb of the family works. `coldness` is the raw byte the
+  wire carries and not a temperature in kelvin, because a non-DALI object's
+  `min` and `max` columns read 0 and 255. See [`commands.md`](commands.md).
 - `bit8`, `bit16`, `sbit16`, and `bit32` are the integer sensor slots an
   M-CON-485 lands a Modbus reading in. Designer names them `bit 8`, `bit 16`,
   `sbit 16[+/-]`, and `bit 32`. All four classify into the open
   `value_<interpretacja>` family. The kind carries no unit and no device class,
   because what a slot holds is the installer's choice. `AmpioObject.unit` and
   `AmpioObject.decimals` serve what Designer stores for the object (see below).
-- Ampio's vocabulary also carries `rgb`, `rgbww`, `ledww`, `ac`, `radio`,
-  `ip_radio`, and `satel_alarm` - types absent from `TYPE_PROFILES` that
+- Ampio's vocabulary also carries `rgb`, `rgbww`, `ac`, `radio`, `ip_radio`,
+  `flaga_liniowa`, and `satel_alarm` - types absent from `TYPE_PROFILES` that
   classify as the generic value sensor. `satel_alarm` is the armed/alarmed flag
   pair of an alarm integration (a Jablotron behind an M-CON, so the prefix is
   not Satel-specific).

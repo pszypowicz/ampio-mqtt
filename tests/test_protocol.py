@@ -15,6 +15,7 @@ from ampio_mqtt import (
     ThermostatState,
 )
 from ampio_mqtt._protocol import (
+    CCT_PREFIX,
     ENDPOINTS,
     RAW_BUZZER_OFF,
     RAW_BUZZER_SILENCE,
@@ -23,6 +24,7 @@ from ampio_mqtt._protocol import (
     RAW_OUTPUT_FUNCTION_BY_SF,
     REDACTED,
     CatalogueDigest,
+    ColorTempFrame,
     DiagnosticsReport,
     EndpointReply,
     RawChannelEdge,
@@ -732,6 +734,47 @@ def test_raw_channel_route_ok(topic: str, expected: tuple[int, str, int]) -> Non
 )
 def test_raw_channel_route_malformed(topic: str) -> None:
     assert _route(topic, "1") is None
+
+
+# --- the color-temperature broadcast (`b/62`, `b/63`) ---------------------
+
+
+def test_color_temp_frame_routes_one_edge_per_channel() -> None:
+    """Each byte pair from offset 2 is one channel's `(power, coldness)`,
+    repacked into the same u16 the per-object topic carries. `b/62` starts
+    at channel 1."""
+    frame = _route(
+        "ampio/from/C80C/b/62", json.dumps({"d": [254, 98, 84, 85, 0, 0, 7, 9]})
+    )
+    assert isinstance(frame, ColorTempFrame)
+    assert [(e.mac, e.prefix, e.channel, e.state) for e in frame.edges] == [
+        (0xC80C, CCT_PREFIX, 1, str(84 | 85 << 8)),
+        (0xC80C, CCT_PREFIX, 2, "0"),
+        (0xC80C, CCT_PREFIX, 3, str(7 | 9 << 8)),
+    ]
+
+
+def test_color_temp_frame_second_frame_continues_the_channel_run() -> None:
+    """`b/63` carries channels 4 to 6, so its offset must not restart at 1."""
+    frame = _route("ampio/from/C80C/b/63", json.dumps({"d": [254, 99, 1, 2]}))
+    assert isinstance(frame, ColorTempFrame)
+    assert [(e.channel, e.state) for e in frame.edges] == [(4, str(1 | 2 << 8))]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        json.dumps({"d": [254, 98, 84]}),  # odd length, no complete pair
+        json.dumps({"d": [254, 98]}),  # no channels at all
+        json.dumps({"d": [254, 99, 1, 2, 3]}),  # trailing half pair
+        json.dumps({"d": [1, 98, 0, 0]}),  # not a broadcast frame
+        json.dumps({"d": [254, 97, 0, 0]}),  # wrong function byte for the topic
+        json.dumps({"nope": 1}),
+        "not json",
+    ],
+)
+def test_color_temp_frame_malformed(payload: str) -> None:
+    assert _route("ampio/from/C80C/b/62", payload) is None
 
 
 @pytest.mark.parametrize(

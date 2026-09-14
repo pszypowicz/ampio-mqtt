@@ -495,6 +495,32 @@ class AmpioObject:
         )
 
     @property
+    def cct(self) -> tuple[int, int] | None:
+        """The power and color-temperature axes, decoded from the state value.
+
+        Only a color-temperature output (`OutputKind.color_temp`) reads
+        non-None - a dimmer's level and an RGBW light's packed color must
+        not masquerade as one. The packed form is ``power | coldness<<8``,
+        and both axes are single bytes the vendor names `SF_WW_POWER` and
+        `SF_WW_COLDNESS`. ``coldness`` is the raw byte the wire carries, not
+        a color temperature in kelvin: a non-DALI object's `min` and `max`
+        columns read 0 and 255, so no kelvin range exists to scale it
+        against. None when the value is missing, not an integer, or outside
+        16 bits.
+        """
+        if not (isinstance(self.kind, OutputKind) and self.kind.color_temp):
+            return None
+        if self.state is None:
+            return None
+        try:
+            packed = int(self.state)
+        except ValueError:
+            return None
+        if not 0 <= packed <= 0xFFFF:
+            return None
+        return (packed & 0xFF, (packed >> 8) & 0xFF)
+
+    @property
     def position(self) -> int | None:
         """Cover travel percent (0 closed, 100 open) from the state value.
 

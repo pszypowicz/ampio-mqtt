@@ -12,6 +12,41 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.61.0
+
+A `ledww` light is a supported output. Its state packs a power axis and a color
+temperature axis into one 16-bit value, and two `/api` verbs drive it from
+either account tier. The type classified as the generic value sensor before, so
+a CCT light read as a plain number and nothing could drive it (#237).
+
+### Added
+
+- `AmpioObject.cct` reports a CCT light's `(power, coldness)` axes, decoded from
+  the packed state value. Both are the raw bytes the wire carries. `coldness` is
+  not a temperature in kelvin, because a non-DALI object's `min` and `max`
+  columns read 0 and 255 (#237).
+- `AmpioClient.set_ww()` writes both axes and `set_ww_power()` writes the power
+  axis alone. Holding the color temperature is what makes `set_ww_power(0)` a
+  usable off (#237).
+- `OutputKind.color_temp` marks the new kind, and `OutputKind.toggleable` splits
+  the `switch` verb away from `turnOn` and `turnOff`. A CCT light answers
+  `switch` and ignores the other two, which one flag cannot state (#237).
+- The admin tier bridges the module's own color-temperature broadcast, so a CCT
+  light updates from the raw tree as every other bridged channel does (#237).
+
+### Changed
+
+- `turn_off()` on a CCT light sends `setWWPower 0`, the way it already sends
+  `setColors 0/0/0/0` for an RGBW light. `turn_on()` and `set_value()` raise for
+  both types, because the M-SERV drops those verbs with no effect and no reply
+  (#237).
+
+### Documentation
+
+- The `/api` surface covers CCT. The note that only the admin-only CAN write
+  tree could express it was wrong: `setWW` and `setWWPower` answer a standard
+  account, and neither verb appears in the M-SERV's own OpenAPI enum (#237).
+
 ## 0.60.1
 
 A canceled setup leaves nothing behind. 0.60.0 stopped an attempt that was

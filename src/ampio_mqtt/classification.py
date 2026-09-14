@@ -79,9 +79,9 @@ class OutputKind:
 
     The flags say which command verbs the object answers, so a consumer can
     pick a platform and feature set without a `typ_komponentu` table of its
-    own. ``switchable`` covers the ``turnOn`` / ``turnOff`` / ``switch``
-    family: every output answers it except ``rgbw``, which the M-SERV
-    drives through ``setColors`` alone.
+    own. ``switchable`` and ``toggleable`` split the switch-verb family in
+    two, because ``ledww`` answers ``switch`` while ignoring ``turnOn`` and
+    ``turnOff``. One flag cannot state that, so they are separate fields.
     """
 
     key: str
@@ -90,6 +90,9 @@ class OutputKind:
     dimmable: bool = False
     # Four RGBW channels via `setColors`.
     color: bool = False
+    # A power axis and a color-temperature axis via `setWW` / `setWWPower`,
+    # packed into one u16 state value (`AmpioObject.cct`).
+    color_temp: bool = False
     # `open` / `close` travel commands.
     cover: bool = False
     # Position axis of `setRollerPos`.
@@ -98,11 +101,14 @@ class OutputKind:
     # state payload; `KEEP_POSITION` in _protocol.py is the
     # leave-this-axis-alone sentinel both axes share.
     tilt: bool = False
-    # The `turnOn` / `turnOff` / `switch` verb family. False only for `rgbw`:
-    # the M-SERV ignores all three for it (no effect, no reply), so
-    # `setColors` is its one switching verb - which `AmpioClient.turn_off`
+    # The `turnOn` / `turnOff` verbs. False for `rgbw`, which the M-SERV
+    # drives through `setColors` alone, and for `ledww`, whose power axis
+    # moves through `setWWPower` - both of which `AmpioClient.turn_off`
     # relies on to emulate off.
     switchable: bool = True
+    # The `switch` verb alone. False only for `rgbw`. A `ledww` answers it
+    # as a toggle between two remembered states.
+    toggleable: bool = True
 
 
 # lin_wej (analog input) measurement kind, keyed by `interpretacja`.
@@ -183,8 +189,18 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     "lin_wej": TypeProfile(_Selector.ANALOG),
     "bit32": TypeProfile(_Selector.NUMERIC),
     "przekaznik": TypeProfile(OutputKind("relay", "Relay")),
-    "rgbw": TypeProfile(OutputKind("rgbw", "RGBW light", color=True, switchable=False)),
+    "rgbw": TypeProfile(
+        OutputKind("rgbw", "RGBW light", color=True, switchable=False, toggleable=False)
+    ),
     "led": TypeProfile(OutputKind("dimmer", "Dimmer", dimmable=True)),
+    # Warm/cold white. `switch` is the one verb of the family it answers,
+    # and `setValue` is dead on it, so the power axis moves through
+    # `setWWPower` alone.
+    "ledww": TypeProfile(
+        OutputKind(
+            "cct", "CCT light", color_temp=True, switchable=False, toggleable=True
+        )
+    ),
     "roleta": TypeProfile(OutputKind("cover", "Cover", cover=True)),
     "roleta_procenty": TypeProfile(
         OutputKind("cover_position", "Cover", cover=True, position=True)

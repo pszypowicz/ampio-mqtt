@@ -156,6 +156,7 @@ def _output(typ, interp=1):
         ("przekaznik", "relay", False, False, False, False, False),
         ("led", "dimmer", True, False, False, False, False),
         ("rgbw", "rgbw", False, True, False, False, False),
+        ("ledww", "cct", False, False, False, False, False),
         ("roleta", "cover", False, False, True, False, False),
         ("roleta_procenty", "cover_position", False, False, True, True, False),
         ("roleta_lamelki", "cover_tilt", False, False, True, True, True),
@@ -167,6 +168,37 @@ def test_output_kinds(typ, key, dimmable, color, cover, position, tilt) -> None:
     assert out.key == key
     assert (out.dimmable, out.color) == (dimmable, color)
     assert (out.cover, out.position, out.tilt) == (cover, position, tilt)
+
+
+def test_ledww_is_the_color_temperature_output() -> None:
+    """`color_temp` is its own axis: a CCT light is neither an RGBW color
+    output nor a dimmer, so it must claim neither flag."""
+    out = _output("ledww")
+    assert out is not None
+    assert out.color_temp is True
+    assert (out.color, out.dimmable) == (False, False)
+
+
+@pytest.mark.parametrize(
+    ("typ", "switchable", "toggleable"),
+    [
+        ("przekaznik", True, True),
+        ("led", True, True),
+        ("roleta_procenty", True, True),
+        # `rgbw` answers none of the three; `ledww` answers `switch` alone.
+        ("rgbw", False, False),
+        ("ledww", False, True),
+    ],
+)
+def test_output_switch_verb_families(
+    typ: str, switchable: bool, toggleable: bool
+) -> None:
+    """`switchable` covers `turnOn`/`turnOff` and `toggleable` covers
+    `switch`. They diverge on `ledww`, which is why they are separate
+    fields."""
+    out = _output(typ)
+    assert out is not None
+    assert (out.switchable, out.toggleable) == (switchable, toggleable)
 
 
 @pytest.mark.parametrize(
@@ -227,6 +259,7 @@ def test_kind_key_vocabulary_contents() -> None:
     assert {
         "relay",
         "rgbw",
+        "cct",
         "dimmer",
         "cover",
         "cover_position",
