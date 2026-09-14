@@ -189,7 +189,7 @@ Prefer an administrator account when the install needs:
   [`raw-channel-bridge.md`](raw-channel-bridge.md).
 - **Panel outputs, the panel buzzer, module identify, and the CAN vocabulary** -
   the raw write frames for panel status LEDs, the buzzer, and the identify LED.
-  Also the device classes `/api` cannot express (CCT, DALI, display text). See
+  Also the device classes `/api` cannot express (DALI, display text). See
   [`panel-writes.md`](panel-writes.md) and
   [`untapped-surfaces.md`](untapped-surfaces.md).
 - **Per-object description records** for area assignment - `resolve_records()`

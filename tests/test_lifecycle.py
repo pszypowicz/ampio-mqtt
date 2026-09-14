@@ -73,6 +73,10 @@ RAW_STATE_FILTERS = {
     "ampio/from/+/state/i/+",
     "ampio/from/+/state/o/+",
     "ampio/from/+/state/a/+",
+    # The color-temperature broadcast is retained too, so it joins the
+    # QoS 0 group rather than the acknowledged live leg.
+    "ampio/from/+/b/62",
+    "ampio/from/+/b/63",
 }
 
 

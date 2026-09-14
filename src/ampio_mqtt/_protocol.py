@@ -1149,6 +1149,51 @@ def parse_diagnostics(payload: str) -> ModuleDiagnostics | None:
     )
 
 
+def parse_color_temp_frame(
+    payload: str, mac: int, function: str
+) -> tuple[RawChannelEdge, ...] | None:
+    """Decode a color-temperature broadcast into one edge per channel.
+
+    The frame is `{"d": [0xFE, <function>, power, coldness, ...], "m": mac}`,
+    with one byte pair per channel from offset 2. ``function`` fixes which
+    channel the first pair carries. Each pair repacks to `power |
+    coldness<<8`, the same u16 the per-object topic reports, so both sources
+    decode through `AmpioObject.cct` alone. Returns None when the payload is
+    not a color-temperature frame. An odd-length frame has a half pair in
+    it, which leaves no way to tell which axis the stray byte belongs to, so
+    the whole frame is refused rather than half-read.
+    """
+    first_channel = CCT_FRAME_FUNCTIONS.get(function)
+    if first_channel is None:
+        return None
+    try:
+        data = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    frame = data.get("d")
+    if not isinstance(frame, list) or len(frame) < 4 or len(frame) % 2:
+        return None
+    if frame[0] != 0xFE or frame[1] != int(function, 16):
+        return None
+    edges: list[RawChannelEdge] = []
+    for index in range((len(frame) - 2) // 2):
+        power = to_int(frame[2 + 2 * index])
+        coldness = to_int(frame[2 + 2 * index + 1])
+        if power is None or coldness is None:
+            return None
+        edges.append(
+            RawChannelEdge(
+                mac=mac,
+                prefix=CCT_PREFIX,
+                channel=first_channel + index,
+                state=str(power | coldness << 8),
+            )
+        )
+    return tuple(edges) if edges else None
+
+
 def parse_stan_json(stan_json: str) -> StanJsonSeed:
     """Parse a `stan_json` blob into an initial state and server timestamp.
 
@@ -1575,6 +1620,20 @@ RAW_ANALOG_WILDCARD = "ampio/from/+/state/a/+"
 # Per-module diagnostics broadcasts (CAN supply voltage, own temperature).
 RAW_DIAGNOSTICS_WILDCARD = "ampio/from/+/b/4F"
 
+# The color-temperature (`ledww`) broadcast. The module reports its CCT
+# channels on two function bytes, three channels each, as `(power, coldness)`
+# byte pairs from offset 2. The pair repacks to the same u16 the per-object
+# topic carries, so a channel bridges as an ordinary edge under its own
+# prefix. This is the only retained surface for the axes: the M-SERV bridges
+# no `state/<prefix>/<n>` leaf for the type (docs/raw-channel-bridge.md).
+CCT_PREFIX = "ww"
+CCT_CHANNELS_PER_FRAME = 3
+# Function byte -> the 1-based channel its first pair carries.
+CCT_FRAME_FUNCTIONS: dict[str, int] = {"62": 1, "63": 4}
+RAW_COLOR_TEMP_WILDCARDS = tuple(
+    f"ampio/from/+/b/{function}" for function in CCT_FRAME_FUNCTIONS
+)
+
 # Bus events (1-65535); receiving rides the admin-only raw tree, raising goes
 # to the command surface - the rights model is in docs/bus-events.md.
 RAW_EVENT_WILDCARD = "ampio/from/+/event"
@@ -1604,6 +1663,7 @@ DESC_TYPE_BY_KIND: dict[str, int] = {
     "roleta_lamelki": ROLLER_DESC_TYPE,
     "led": 16,  # OUT_OC_U8
     "rgbw": 34,  # RGBW output class; no symbolic name in the recovered enum
+    "ledww": 81,  # LED_WW_CNT, the same id as the sub-function
     "flaga": 6,  # FLAG_BIN
 }
 
@@ -1646,6 +1706,19 @@ class RawChannelEdge:
 
 
 @dataclass(slots=True, frozen=True)
+class ColorTempFrame:
+    """One color-temperature broadcast, fanned out to one edge per channel.
+
+    The frame carries up to three channels at once, so it resolves to a
+    tuple rather than the single edge a `state/<prefix>/<n>` topic yields.
+    Each edge is an ordinary `RawChannelEdge`, which lets the store apply it
+    through the same path every other bridged channel takes.
+    """
+
+    edges: tuple[RawChannelEdge, ...]
+
+
+@dataclass(slots=True, frozen=True)
 class DiagnosticsReport:
     """A module's parsed `b/4F` health broadcast with its sender mac."""
 
@@ -1674,6 +1747,7 @@ Inbound = (
     EndpointReply
     | StateUpdate
     | RawChannelEdge
+    | ColorTempFrame
     | DiagnosticsReport
     | DeviceList
     | CatalogueDigest
@@ -1749,6 +1823,9 @@ class Router:
             if diagnostics is None:
                 return None
             return DiagnosticsReport(mac=mac, diagnostics=diagnostics)
+        if len(parts) == 5 and parts[3] == "b" and parts[4] in CCT_FRAME_FUNCTIONS:
+            edges = parse_color_temp_frame(payload, mac, parts[4])
+            return None if edges is None else ColorTempFrame(edges=edges)
         if len(parts) == 4 and parts[3] == "event":
             number = to_int(payload.strip())
             return (

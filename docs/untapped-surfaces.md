@@ -22,8 +22,8 @@ updates through the per-object topic. Probe notes:
 **CAN write tree device classes.** The raw write frames for binary outputs, the
 panel buzzer, and module identify are documented in
 [`panel-writes.md`](panel-writes.md) ("Panel outputs", "Panel buzzer", "Module
-identify"). The CCT, DALI, blind-calibration, panel LCD page, and alarm writes
-on the same `ampio/to` tree remain unexplored. Probe notes:
+identify"). The DALI, blind-calibration, panel LCD page, and alarm writes on the
+same `ampio/to` tree remain unexplored. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/60).
 
 **`ampio/from/<MAC>/raw` leaf.** The M-SERV mirrors a CAN frame whose first byte

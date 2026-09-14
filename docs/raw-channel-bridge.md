@@ -89,6 +89,17 @@ relay's outputs share the channel shape, so both gain the raw-first path. The
 event wildcard feeds `BusEventRaised` subscribers - a different surface with its
 own semantics, described in [`bus-events.md`](bus-events.md).
 
+A `ledww` light is the one bridged type that arrives on no `state/<prefix>/<n>`
+topic at all. Its module broadcasts the axes on two function bytes instead,
+`b/62` for channels 1 to 3 and `b/63` for channels 4 to 6. Each frame holds one
+`(power, coldness)` byte pair per channel from offset 2, and the library repacks
+each pair into `power | coldness<<8`. That is the same value the per-object
+topic carries, so `AmpioObject.cct` decodes either source. The frames are
+retained, so they ride the QoS 0 leg with the rest of the retained state. An
+odd-length frame is refused whole, because a half pair leaves no way to tell
+which axis the stray byte belongs to. The bridge indexes these under the `ww`
+prefix, which exists only inside the library: no such topic is on the wire.
+
 Only the `admin` login subscribes to the tree. The SUBACK enforcement is in
 [`account-tiers.md`](account-tiers.md), and the `subscribe_failures` counter in
 [`discovery-flow.md`](discovery-flow.md).

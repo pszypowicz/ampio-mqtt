@@ -26,6 +26,7 @@ from ._protocol import (
     RAW_ANALOG_WILDCARD,
     RAW_BUZZER_OFF,
     RAW_BUZZER_SILENCE,
+    RAW_COLOR_TEMP_WILDCARDS,
     RAW_DIAGNOSTICS_WILDCARD,
     RAW_EVENT_WILDCARD,
     RAW_IDENTIFY_OFF,
@@ -267,7 +268,12 @@ class AmpioClient:
         # The raw tree is served to the admin login alone; any other
         # client never asks, so a SUBACK rejection is always a fault.
         raw_state = (
-            [*RAW_INPUT_WILDCARDS, RAW_OUTPUT_WILDCARD, RAW_ANALOG_WILDCARD]
+            [
+                *RAW_INPUT_WILDCARDS,
+                RAW_OUTPUT_WILDCARD,
+                RAW_ANALOG_WILDCARD,
+                *RAW_COLOR_TEMP_WILDCARDS,
+            ]
             if admin
             else []
         )
@@ -1289,10 +1295,12 @@ class AmpioClient:
         lets a consumer model a writable flag as a switch entity
         (:attr:`InputKind.switchable`). A `wej` is read-only.
 
-        Raises ``ValueError`` for an output whose kind says the switch verbs
-        do not apply (``rgbw``): turning a color light on means choosing a
-        color - the consumer's call, via :meth:`set_colors` (the rgbw
-        replay pattern in docs/commands.md). On the admin tier a binary
+        Raises ``ValueError`` for an output whose kind says this verb does
+        not apply. Turning an ``rgbw`` light on means choosing a color - the
+        consumer's call, via :meth:`set_colors` (the rgbw replay pattern in
+        docs/commands.md). A ``ledww`` light refuses for the matching
+        reason: the power it had before is the consumer's to remember, and
+        :meth:`set_ww_power` is what replays it. On the admin tier a binary
         output on a CAN module is driven over the raw CAN write topic
         instead - the one write that also reaches a panel's status LEDs,
         which ignore `/api` on every tier (docs/panel-writes.md, "Panel
@@ -1317,14 +1325,19 @@ class AmpioClient:
 
         A color output that does not answer the switch verbs (``rgbw``) is
         turned off with ``setColors 0/0/0/0`` instead - off is unambiguous,
-        so the library routes it. An admin session's binary outputs ride
-        the raw CAN write topic, exactly as :meth:`turn_on` documents. An id
-        no catalogue has established gets the plain verb. ``confirm`` awaits
-        the state echo exactly as :meth:`command` documents.
+        so the library routes it. A color-temperature output (``ledww``)
+        is turned off with ``setWWPower 0`` for the same reason, which also
+        holds its color temperature for the next turn-on. An admin
+        session's binary outputs ride the raw CAN write topic, exactly as
+        :meth:`turn_on` documents. An id no catalogue has established gets
+        the plain verb. ``confirm`` awaits the state echo exactly as
+        :meth:`command` documents.
         """
         kind = self._output_kind(object_id)
         if kind is not None and not kind.switchable and kind.color:
             return await self.set_colors(object_id, 0, 0, 0, 0, confirm=confirm)
+        if kind is not None and not kind.switchable and kind.color_temp:
+            return await self.set_ww_power(object_id, 0, confirm=confirm)
         address = self._raw_output_address(object_id)
         if address is not None:
             return await self._raw_output(object_id, address, 0, confirm)
@@ -1614,13 +1627,18 @@ class AmpioClient:
 
     def _check_switchable(self, object_id: int, verb: str) -> None:
         """Reject a switch-family verb for an output known not to answer it -
-        the M-SERV would drop it with no effect and no reply. An id no
-        catalogue has established passes through."""
+        the M-SERV would drop it with no effect and no reply. `switch` is
+        gated separately from `turnOn`/`turnOff`, because a `ledww` answers
+        it and ignores the other two. An id no catalogue has established
+        passes through."""
         kind = self._output_kind(object_id)
-        if kind is not None and not kind.switchable:
+        if kind is None:
+            return
+        answers = kind.toggleable if verb == "switch" else kind.switchable
+        if not answers:
             raise ValueError(
                 f"object {object_id} ({kind.key}) does not answer {verb}; "
-                "drive it with set_colors()"
+                f"drive it with {'set_ww_power()' if kind.color_temp else 'set_colors()'}"
             )
 
     async def set_value(
@@ -1644,8 +1662,20 @@ class AmpioClient:
         :meth:`turn_on` documents. ``confirm`` awaits the state echo as
         :meth:`command` documents - for a pulse that is the set edge, not
         the later revert.
+
+        Raises ``ValueError`` for an output whose level this verb cannot
+        reach: ``rgbw`` (drive it with :meth:`set_colors`) and ``ledww``,
+        whose power axis moves through :meth:`set_ww_power` alone. The
+        M-SERV drops the verb for both with no effect and no reply.
         """
         _check_range("value", value, 0, 255)
+        kind = self._output_kind(object_id)
+        if kind is not None and (kind.color or kind.color_temp):
+            replacement = "set_ww_power()" if kind.color_temp else "set_colors()"
+            raise ValueError(
+                f"object {object_id} ({kind.key}) does not answer setValue; "
+                f"drive it with {replacement}"
+            )
         if pulse_ms is None:
             address = self._raw_output_address(object_id)
             if address is not None:
@@ -1725,6 +1755,41 @@ class AmpioClient:
         return await self.command(
             object_id, "setColors", red, green, blue, white, confirm=confirm
         )
+
+    async def set_ww(
+        self,
+        object_id: int,
+        power: int,
+        coldness: int,
+        *,
+        confirm: float | None = None,
+    ) -> AmpioObject | None:
+        """Set a CCT light's power and color-temperature axes, each 0-255.
+
+        The two axes travel as one packed ``power | coldness<<8`` argument,
+        the same u16 the object reports back as :attr:`AmpioObject.cct`.
+        ``coldness`` is the raw byte the wire carries, not a temperature in
+        kelvin. ``confirm`` awaits the state echo exactly as :meth:`command`
+        documents.
+        """
+        for name, axis in (("power", power), ("coldness", coldness)):
+            _check_range(name, axis, 0, 255)
+        return await self.command(
+            object_id, "setWW", power | coldness << 8, confirm=confirm
+        )
+
+    async def set_ww_power(
+        self, object_id: int, power: int, *, confirm: float | None = None
+    ) -> AmpioObject | None:
+        """Set a CCT light's power axis alone, 0-255.
+
+        The color temperature stays where it stands, which is what makes
+        ``power=0`` a usable off: the next turn-on keeps the temperature the
+        light was last set to. ``confirm`` awaits the state echo exactly as
+        :meth:`command` documents.
+        """
+        _check_range("power", power, 0, 255)
+        return await self.command(object_id, "setWWPower", power, confirm=confirm)
 
     async def open(
         self, object_id: int, *, confirm: float | None = None

@@ -224,6 +224,95 @@ async def test_switch_verbs_pass_through_for_other_outputs(
     ]
 
 
+# --- the ledww color-temperature surface ----------------------------------
+
+
+async def test_set_ww_packs_both_axes(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """One packed argument carries both axes: `power | coldness<<8`."""
+    client, broker = connected
+    await client.set_ww(197, 84, 85)
+    assert broker.published == [(API_TOPIC, b"/api/set/197/setWW/21844")]
+
+
+async def test_set_ww_power_drives_the_power_axis_alone(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """`setWWPower` leaves the color temperature where it stands."""
+    client, broker = connected
+    await client.set_ww_power(197, 35)
+    assert broker.published == [(API_TOPIC, b"/api/set/197/setWWPower/35")]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda c: c.set_ww(197, 256, 0),
+        lambda c: c.set_ww(197, -1, 0),
+        lambda c: c.set_ww(197, 0, 256),
+        lambda c: c.set_ww(197, 0, -1),
+        lambda c: c.set_ww_power(197, 256),
+        lambda c: c.set_ww_power(197, -1),
+    ],
+)
+async def test_ww_axes_are_range_checked(
+    connected: tuple[AmpioClient, FakeBroker], call
+) -> None:
+    """Both axes are single bytes; a value outside 0-255 never reaches the
+    wire."""
+    client, broker = connected
+    with pytest.raises(AmpioValueError):
+        await call(client)
+    assert broker.published == []
+
+
+async def test_turn_off_on_ledww_routes_through_set_ww_power(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """The M-SERV ignores `turnOff` for a CCT light. Off is the power axis
+    at zero, which holds the color temperature for the next turn-on."""
+    client, broker = connected
+    _learn(client, 197, "ledww")
+    await client.turn_off(197)
+    assert broker.published == [(API_TOPIC, b"/api/set/197/setWWPower/0")]
+
+
+async def test_switch_passes_through_for_ledww(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """`switch` is the one verb of the family a CCT light answers."""
+    client, broker = connected
+    _learn(client, 197, "ledww")
+    await client.switch(197)
+    assert broker.published == [(API_TOPIC, b"/api/set/197/switch")]
+
+
+async def test_turn_on_on_ledww_is_rejected(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """`turnOn` is dropped silently by the M-SERV for a CCT light, so the
+    library refuses before the wire and names the verb that works."""
+    client, broker = connected
+    _learn(client, 197, "ledww")
+    with pytest.raises(ValueError) as refused:
+        await client.turn_on(197)
+    assert "set_ww_power" in str(refused.value)
+    assert broker.published == []
+
+
+async def test_set_value_on_ledww_is_rejected(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """`setValue` is dead on a CCT light: the power axis moves through
+    `setWWPower` alone."""
+    client, broker = connected
+    _learn(client, 197, "ledww")
+    with pytest.raises(ValueError):
+        await client.set_value(197, 200)
+    assert broker.published == []
+
+
 async def test_switch_verbs_pass_through_when_kind_is_unknown(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:

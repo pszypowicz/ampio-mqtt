@@ -263,6 +263,51 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
     assert store.objects[50].state == "55"
 
 
+def _ledww_row(oid: int, funkcja: int, dev: int = 7) -> dict:
+    return {
+        "id": oid,
+        "id_urzadzenia": dev,
+        "typ_komponentu": "ledww",
+        "interpretacja": 1,
+        "funkcja": funkcja,
+        "opis_menu": "CCT",
+    }
+
+
+def test_a_color_temp_broadcast_feeds_every_channel_it_carries() -> None:
+    """One frame carries three channels, so each object on the module picks
+    up its own pair. The state it lands is the packed u16 the per-object
+    topic would have reported, which is what lets `cct` decode either
+    source."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(
+        store,
+        DETAILS_TOPIC,
+        details(_ledww_row(60, 1), _ledww_row(61, 3)),
+    )
+    _apply(
+        store,
+        "ampio/from/CAFE/b/62",
+        json.dumps({"d": [254, 98, 84, 85, 0, 0, 7, 9]}),
+    )
+    assert store.objects[60].state == str(84 | 85 << 8)
+    assert store.objects[60].cct == (84, 85)
+    # Channel 2 belongs to no object here, so only channels 1 and 3 land.
+    assert store.objects[61].cct == (7, 9)
+
+
+def test_a_color_temp_broadcast_for_an_unknown_channel_is_dropped() -> None:
+    """A live frame for a channel no object exposes is one nothing will ever
+    route, exactly as an unmatched raw channel edge is."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_ledww_row(60, 1)))
+    applied = _apply(store, "ampio/from/CAFE/b/63", json.dumps({"d": [254, 99, 1, 2]}))
+    assert _updated(applied) == []
+    assert store.objects[60].state is None
+
+
 def test_the_store_is_the_only_thing_holding_state() -> None:
     store = _store()
     _apply(store, f"ampio/fromDB/{USER}/data/info", info(mac="47846"))

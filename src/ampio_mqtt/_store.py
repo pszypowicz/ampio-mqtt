@@ -274,6 +274,9 @@ class AmpioStore:
                 self._apply_state(update, applied)
             case _protocol.RawChannelEdge() as edge:
                 self._apply_raw_channel(edge, applied, retained=retained)
+            case _protocol.ColorTempFrame(edges=edges):
+                for edge in edges:
+                    self._apply_raw_channel(edge, applied, retained=retained)
             case _protocol.DiagnosticsReport(mac=mac, diagnostics=diagnostics):
                 self._apply_diagnostics(mac, diagnostics, applied, retained=retained)
             case BusEventRaised() as event:
@@ -776,8 +779,9 @@ class AmpioStore:
         `przekaznik` outputs on the `o` prefix, or on `a` for an
         open-collector leaf - a panel's status LEDs have no other retained
         surface, an OC output never echoes on its object topic, and every
-        module's outputs share the channel shape. `mac` alone routes a
-        module's own diagnostics broadcast.
+        module's outputs share the channel shape. A `ledww` joins on the
+        color-temperature prefix, whose channels its broadcast fans out to.
+        `mac` alone routes a module's own diagnostics broadcast.
         """
         index: dict[tuple[int, str, int], int] = {}
         for obj in self.objects.values():
@@ -786,6 +790,8 @@ class AmpioStore:
                 # A binary output reports on `o`; an open-collector output
                 # (leaf class 67) reports a u8 on `a`, same 1-based channel.
                 prefix = "a" if obj.sf_id == _protocol.OC_OUTPUT_SF else "o"
+            if prefix is None and obj.typ_komponentu == "ledww":
+                prefix = _protocol.CCT_PREFIX
             if prefix is None:
                 continue
             module = self.modules.get(obj.id_urzadzenia)
