@@ -1699,6 +1699,22 @@ class AmpioClient:
                 f"drive it with {'set_ww_power()' if kind.color_temp else 'set_colors()'}"
             )
 
+    def _check_pulsable(self, object_id: int) -> None:
+        """Reject a `pulse_ms` for a kind no timed write pulses. An analog
+        flag is the case that bites: it takes the timed form, sets the
+        value and never reverts, so the caller would get a permanent write
+        where it asked for a press. `AmpioObject.pulse_ms` reads 0 for
+        every kind this refuses. An id no catalogue has established passes
+        through."""
+        obj = self._store.objects.get(object_id)
+        kind = obj.kind if obj is not None else None
+        if not isinstance(kind, InputKind | OutputKind) or kind.pulsable:
+            return
+        raise ValueError(
+            f"object {object_id} ({kind.key}) does not pulse; "
+            f"the setValue time argument does not revert it"
+        )
+
     async def set_value(
         self,
         object_id: int,
@@ -1730,7 +1746,17 @@ class AmpioClient:
         Raises ``ValueError`` for an output whose level this verb cannot
         reach: ``rgbw`` (drive it with :meth:`set_colors`) and ``ledww``,
         whose power axis moves through :meth:`set_ww_power` alone. The
-        M-SERV drops the verb for both with no effect and no reply.
+        M-SERV drops the plain form for both, with no effect and no reply.
+        On a ``ledww`` the timed form is not a harmless no-op: it sets the
+        power, zeroes the color temperature, and never reverts.
+
+        ``pulse_ms`` reaches the relay, the flag and the dimmer alone,
+        and it raises for every other established kind. The two analog
+        flags are the ones that would surprise a caller: they take the
+        timed form, set the value and latch, so a pulse would land as a
+        permanent write. :pyattr:`AmpioObject.pulse_ms` reads 0 for every
+        kind this refuses, so a consumer that honors that field never
+        trips the check.
         """
         _check_range("value", value, *self._value_range(object_id))
         kind = self._output_kind(object_id)
@@ -1745,6 +1771,7 @@ class AmpioClient:
             if address is not None:
                 return await self._raw_output(object_id, address, value, confirm)
             return await self.command(object_id, "setValue", value, confirm=confirm)
+        self._check_pulsable(object_id)
         _check_range("pulse_ms", pulse_ms, 0, 655350)
         return await self.command(
             object_id, "setValue", value, pulse_ms // 10, confirm=confirm

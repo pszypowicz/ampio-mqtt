@@ -76,6 +76,11 @@ class InputKind:
     # out-of-range write to the field width instead of refusing it, so the
     # range is what a caller must respect, not a hint.
     value_range: tuple[int, int] | None = None
+    # Whether a `setValue` time argument runs a timed pulse. True only for
+    # `flaga`. Both analog flags take the timed form, set the value and
+    # latch: the revert never arrives, at any time argument. `wej`,
+    # `detekcja` and `symulacja` take no value verb at all.
+    pulsable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +119,11 @@ class OutputKind:
     # The `switch` verb alone. False only for `rgbw`. A `ledww` answers it
     # as a toggle between two remembered states.
     toggleable: bool = True
+    # Whether a `setValue` time argument runs a timed pulse. True for the
+    # relay and the dimmer. `rgbw` and the covers answer no `setValue` at
+    # all, and a `ledww` takes the timed form, sets the power and zeroes
+    # the color temperature with no revert (docs/commands.md).
+    pulsable: bool = False
 
 
 # The two halves of an alarm partition, keyed by the leaf sub-function
@@ -214,14 +224,16 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     "temp": TypeProfile(SensorKind("temperature", "Temperature", "°C", "temperature")),
     "lin_wej": TypeProfile(_Selector.ANALOG),
     "bit32": TypeProfile(_Selector.NUMERIC),
-    "przekaznik": TypeProfile(OutputKind("relay", "Relay")),
+    "przekaznik": TypeProfile(OutputKind("relay", "Relay", pulsable=True)),
     "rgbw": TypeProfile(
         OutputKind("rgbw", "RGBW light", color=True, switchable=False, toggleable=False)
     ),
-    "led": TypeProfile(OutputKind("dimmer", "Dimmer", dimmable=True)),
+    "led": TypeProfile(OutputKind("dimmer", "Dimmer", dimmable=True, pulsable=True)),
     # Warm/cold white. `switch` is the one verb of the family it answers,
-    # and `setValue` is dead on it, so the power axis moves through
-    # `setWWPower` alone.
+    # and the plain `setValue` is dead on it, so the power axis moves
+    # through `setWWPower` alone. The timed `setValue` is not dead: it
+    # sets the power and zeroes the coldness, which is why `pulsable` is
+    # False rather than moot.
     "ledww": TypeProfile(
         OutputKind(
             "cct", "CCT light", color_temp=True, switchable=False, toggleable=True
@@ -241,7 +253,8 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     "bit16": TypeProfile(_Selector.NUMERIC),
     "sbit16": TypeProfile(_Selector.NUMERIC),
     "flaga": TypeProfile(
-        InputKind("flaga", "Flag", None, switchable=True), channel_prefix="f"
+        InputKind("flaga", "Flag", None, switchable=True, pulsable=True),
+        channel_prefix="f",
     ),
     # The analog flags, the module's own u8 and signed-i16 variables. Both
     # answer `setValue` and both wrap silently past their field width, so
