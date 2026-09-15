@@ -9,10 +9,12 @@ the work-tracking notes, for contributors only.
 them. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/22).
 
-**Server-side event log.** The M-SERV keeps an event log behind the REST
-`logbook` endpoint of its web app. A read of that log over MQTT (`fetch_logs()`)
-is unexplored. Probe notes:
-[tracker](https://github.com/pszypowicz/ampio-mqtt/issues/23).
+**Server-side event log.** The M-SERV publishes its own event log on
+`logs/v1/ampio-server/info`, as JSON carrying `lvl`, `mod`, `msg` and `ts`. The
+feed is not retained and it is silent until something happens, so there is no
+backlog to fetch. The topic sits outside the account namespace, so an
+administrator account alone receives it. The library does not subscribe. Probe
+notes: [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/23).
 
 **`symulacja` raw prefix.** The presence-simulation object classifies as an
 input, but its raw-channel prefix is unverified on the wire. The object still
@@ -22,9 +24,17 @@ updates through the per-object topic. Probe notes:
 **CAN write tree device classes.** The raw write frames for binary outputs, the
 panel buzzer, and module identify are documented in
 [`panel-writes.md`](panel-writes.md) ("Panel outputs", "Panel buzzer", "Module
-identify"). The DALI, blind-calibration, panel LCD page, and alarm writes on the
-same `ampio/to` tree remain unexplored. Probe notes:
+identify"). The DALI write and the module parameter writes on the same
+`ampio/to` tree remain unexplored. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/60).
+
+**M-SERV display lines.** The OpenAPI spec declares `/api/set/setLcdUp/<text>`
+and `/api/set/setLcdDown/<text>`, for the upper and lower field of a panel
+display. The lower field accepts digits and a comma alone. Neither path carries
+a device id, so one call likely reaches every display. The Designer never calls
+either one. The baseline install carries no display panel, so neither path is
+verified. Probe notes:
+[tracker](https://github.com/pszypowicz/ampio-mqtt/issues/63).
 
 **`ampio/from/<MAC>/raw` leaf.** The M-SERV mirrors a CAN frame whose first byte
 is not the broadcast byte `0xFE` onto this leaf as ASCII hex, at QoS 1 and not

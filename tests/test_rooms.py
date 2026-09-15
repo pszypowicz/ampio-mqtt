@@ -43,13 +43,19 @@ def _members(*rows: dict) -> str:
 
 def test_parse_rooms_happy_path() -> None:
     names = parse_groups(
-        _groups(
-            {"id": 8, "id_rodzica": 4, "opis_menu": "Salon"},
-            {"id": 7, "id_rodzica": 4, "opis_menu": "Jadalnia"},
+        json.loads(
+            _groups(
+                {"id": 8, "id_rodzica": 4, "opis_menu": "Salon"},
+                {"id": 7, "id_rodzica": 4, "opis_menu": "Jadalnia"},
+            )
         )
     )
     members = parse_group_devices(
-        _members({"id_grupy": 8, "id_obiektu": 31}, {"id_grupy": 7, "id_obiektu": 28})
+        json.loads(
+            _members(
+                {"id_grupy": 8, "id_obiektu": 31}, {"id_grupy": 7, "id_obiektu": 28}
+            )
+        )
     )
     assert parse_rooms(names, members) == {31: "Salon", 28: "Jadalnia"}
 
@@ -58,10 +64,18 @@ def test_parse_rooms_first_match_wins_for_multi_group_objects() -> None:
     """An object in two groups takes the first room: the join table marks no
     primary group, and Home Assistant allows one area per device."""
     names = parse_groups(
-        _groups({"id": 15, "opis_menu": "Schody"}, {"id": 11, "opis_menu": "Korytarz"})
+        json.loads(
+            _groups(
+                {"id": 15, "opis_menu": "Schody"}, {"id": 11, "opis_menu": "Korytarz"}
+            )
+        )
     )
     members = parse_group_devices(
-        _members({"id_grupy": 15, "id_obiektu": 50}, {"id_grupy": 11, "id_obiektu": 50})
+        json.loads(
+            _members(
+                {"id_grupy": 15, "id_obiektu": 50}, {"id_grupy": 11, "id_obiektu": 50}
+            )
+        )
     )
     assert parse_rooms(names, members) == {50: "Schody"}
 
@@ -71,14 +85,14 @@ def test_parse_groups_refuses_a_row_without_a_served_column(column: str) -> None
     row = {"id": 1, "opis_menu": "Salon"}
     del row[column]
     with pytest.raises(AmpioProtocolError, match=column):
-        parse_groups(_groups(row))
+        parse_groups(json.loads(_groups(row)))
 
 
 @pytest.mark.parametrize("value", [None, ""])
 def test_parse_groups_refuses_an_unusable_name(value: object) -> None:
     """The name becomes a consumer's area, so an empty one names no room."""
     with pytest.raises(AmpioProtocolError, match="opis_menu"):
-        parse_groups(_groups({"id": 1, "opis_menu": value}))
+        parse_groups(json.loads(_groups({"id": 1, "opis_menu": value})))
 
 
 @pytest.mark.parametrize("column", ["id_grupy", "id_obiektu"])
@@ -88,14 +102,16 @@ def test_parse_group_devices_refuses_a_row_without_a_served_column(
     row = {"id_grupy": 1, "id_obiektu": 100}
     del row[column]
     with pytest.raises(AmpioProtocolError, match=column):
-        parse_group_devices(_members(row))
+        parse_group_devices(json.loads(_members(row)))
 
 
 def test_parse_rooms_ignores_devices_pointing_at_unknown_groups() -> None:
     """A membership row can name a group the names table does not list, which
     leaves that object without a room rather than inventing one."""
-    names = parse_groups(_groups({"id": 1, "opis_menu": "OK"}))
-    members = parse_group_devices(_members({"id_grupy": 99, "id_obiektu": 5}))
+    names = parse_groups(json.loads(_groups({"id": 1, "opis_menu": "OK"})))
+    members = parse_group_devices(
+        json.loads(_members({"id_grupy": 99, "id_obiektu": 5}))
+    )
     assert parse_rooms(names, members) == {}
 
 

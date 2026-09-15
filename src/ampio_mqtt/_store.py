@@ -142,7 +142,7 @@ class AmpioStore:
         # This tier's endpoints whose reply mutates state. The rest are pure
         # request/response, parsed by the dispatcher with the endpoint's own
         # `parses` gate and never sent here.
-        self._handlers: dict[str, Callable[[str, Applied], None]] = {
+        self._handlers: dict[str, Callable[[Mapping[str, Any], Applied], None]] = {
             "states": self._handle_states_snapshot,
             "info": self._handle_info,
         }
@@ -260,16 +260,6 @@ class AmpioStore:
         """
         applied = Applied()
         match msg:
-            case _protocol.EndpointReply(endpoint=endpoint, payload=body):
-                # Only handler-gated replies reach the store - the dispatcher
-                # parses pure request/response replies itself.
-                handler = self._handlers.get(endpoint.name)
-                if handler is None:
-                    raise AmpioProtocolError(
-                        f"The Ampio {endpoint.name!r} reply is not served on "
-                        f"the {self._tier.value} tier"
-                    )
-                handler(body, applied)
             case _protocol.StateUpdate() as update:
                 self._apply_state(update, applied)
             case _protocol.RawChannelEdge() as edge:
@@ -283,15 +273,37 @@ class AmpioStore:
                 applied.events.append(event)
         return applied
 
+    def apply_endpoint(
+        self, endpoint: _protocol.Endpoint, data: Mapping[str, Any]
+    ) -> Applied:
+        """Apply one decoded table reply and report what it changed.
+
+        Takes the decoded envelope rather than the reply bytes, because the
+        dispatcher decodes once for the retained summary and this handler
+        both. Only handler-gated replies reach the store - the dispatcher
+        parses a pure request/response reply itself.
+        """
+        applied = Applied()
+        handler = self._handlers.get(endpoint.name)
+        if handler is None:
+            raise AmpioProtocolError(
+                f"The Ampio {endpoint.name!r} reply is not served on "
+                f"the {self._tier.value} tier"
+            )
+        handler(data, applied)
+        return applied
+
     # --- catalogues -------------------------------------------------------
 
-    def _handle_admin_catalogue(self, payload: str, applied: Applied) -> None:
+    def _handle_admin_catalogue(
+        self, data: Mapping[str, Any], applied: Applied
+    ) -> None:
         """Apply a `config/devicesDetails` reply, the admin object catalogue.
 
         Every row carries the Designer config columns inline, so the row is
         their one source on this tier.
         """
-        served = _protocol.parse_details(payload)
+        served = _protocol.parse_details(data)
         self._apply_catalogue(
             [row.shared for row in served],
             {
@@ -305,7 +317,9 @@ class AmpioStore:
             applied,
         )
 
-    def _handle_app_sync_catalogue(self, payload: str, applied: Applied) -> None:
+    def _handle_app_sync_catalogue(
+        self, data: Mapping[str, Any], applied: Applied
+    ) -> None:
         """Apply a `data/devices` reply, the grant-filtered app-sync catalogue.
 
         The surface serves no Designer config columns, so the held
@@ -313,7 +327,7 @@ class AmpioStore:
         re-applies on every merge, the re-creation after an eviction
         included.
         """
-        served = _protocol.parse_app_sync_devices(payload)
+        served = _protocol.parse_app_sync_devices(data)
         self._apply_catalogue(served, self._held_config(served), applied)
         self._report_params_coverage()
 
@@ -476,8 +490,8 @@ class AmpioStore:
             self._record(updated, applied)
         return changed or created
 
-    def _handle_devices(self, payload: str, applied: Applied) -> None:
-        modules = _protocol.parse_devices(payload)
+    def _handle_devices(self, data: Mapping[str, Any], applied: Applied) -> None:
+        modules = _protocol.parse_devices(data)
         changed = False
         for module in modules:
             previous = self.modules.get(module.id)
@@ -521,7 +535,7 @@ class AmpioStore:
         if changed or evicted:
             self._rebuild_indexes(applied)
 
-    def _handle_params_devices(self, payload: str, applied: Applied) -> None:
+    def _handle_params_devices(self, data: Mapping[str, Any], applied: Applied) -> None:
         """Apply the ``data/params_devices`` config table.
 
         The app-sync tier's one source for `params`, `czas` and `url`. The
@@ -530,7 +544,7 @@ class AmpioStore:
         object creates no placeholder: the table is not grant-filtered, so
         most of it refers to objects the account cannot otherwise see.
         """
-        self._params_by_id = _protocol.parse_params_devices(payload)
+        self._params_by_id = _protocol.parse_params_devices(data)
         self._params_received = True
         for oid, entry in self._params_by_id.items():
             obj = self.objects.get(oid)
@@ -566,7 +580,7 @@ class AmpioStore:
                 sorted(missing),
             )
 
-    def _handle_info(self, payload: str, applied: Applied) -> None:
+    def _handle_info(self, data: Mapping[str, Any], applied: Applied) -> None:
         """Apply a `data/info` reply, the M-SERV's self-report.
 
         The reply names the asking account, which is the wire's own verdict
@@ -575,7 +589,7 @@ class AmpioStore:
         decision, so a disagreement means the session is aimed at the wrong
         surfaces. Nothing in the reply can fix that, so it is refused.
         """
-        info = _protocol.parse_server_info(payload)
+        info = _protocol.parse_server_info(data)
         if info.access_tier is not self._tier:
             raise AmpioProtocolError(
                 f"The Ampio server reports account id {info.user_id}, the "
@@ -589,14 +603,16 @@ class AmpioStore:
             _protocol.warn_if_below_baseline(info.server_version)
         self.server_info = info
 
-    def _handle_states_snapshot(self, payload: str, applied: Applied) -> None:
+    def _handle_states_snapshot(
+        self, data: Mapping[str, Any], applied: Applied
+    ) -> None:
         """Apply a `data/states` reply, the one initial-value source.
 
         The snapshot answers both tiers, so neither catalogue needs to seed
         a value. An id no catalogue established stays out of the store, and
         its value waits here for the catalogue row that may establish it.
         """
-        entries = _protocol.parse_states_snapshot(payload)
+        entries = _protocol.parse_states_snapshot(data)
         self._stan_by_id = {entry.id: entry.stan_json for entry in entries}
         for entry in entries:
             obj = self.objects.get(entry.id)

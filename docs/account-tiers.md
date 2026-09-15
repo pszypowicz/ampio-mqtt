@@ -49,6 +49,7 @@ tier: `AmpioObject.module_mac` carries the key (see
 | `logging` config table (`data` surface)                                                      | yes           | yes (the M-SERV serves the whole `logging` table)        |
 | md5 change-detection tree (the admin client watches `devices` and `params_devices`)          | yes           | yes                                                      |
 | Commands                                                                                     | all objects   | granted objects                                          |
+| Push notification (`send_notification`)                                                      | yes           | yes                                                      |
 | Description record entries (the `device_api` tree, `resolve_records()`, `fetch_locations()`) | yes           | no                                                       |
 | Sibling module mac (`sibling_module_mac`)                                                    | yes           | yes, bounded by the grant                                |
 | **Module catalogue** (`modules`, `mserv`)                                                    | yes           | **no**                                                   |
@@ -64,6 +65,21 @@ over MQTT 3.1.1, where stock mosquitto grants silently and only filters
 delivery. The library never runs into the denial, because a standard client does
 not ask for the raw tree. But the verdict locks the table above to the broker's
 own enforcement, not to convention.
+
+### A standard account sees its own namespace and nothing else
+
+The denial is not limited to the raw tree. A standard account subscribed to `#`
+receives messages on two kinds of topic only: its own `ampio/fromDB/<user>/`
+namespace, and the echo of its own publish on `ampio/control/<user>/api`.
+
+An administrator subscribed to `#` at the same moment receives every other
+account's `ampio/fromDB/<name>/` namespace as well, plus the raw tree, the
+decoded CAN topics, the server heartbeat, the module status notifications and
+the server log feed. The M-SERV fans the same object state into one namespace
+per account.
+
+So any surface published outside `ampio/fromDB/<user>/` is unreachable from a
+standard account. Check that before you plan a consumer for one.
 
 Two of the gaps are narrower than the table suggests. The `data/devices` rows
 carry `id_urzadzenia`, so a standard account still learns the module ids that

@@ -68,10 +68,11 @@ the API detail.
   ([`docs/classification.md`](docs/classification.md)).
 - Replacement-stable identity for objects and modules, so a hardware swap keeps
   its entities ([`docs/identity.md`](docs/identity.md)).
-- Commands for relays, dimmers, RGBW lights, covers with stop and tilt, the
-  regulator setpoint, scenes, and bus events. The M-DOT panel buzzer, its touch
-  field colours and touch lock, and the module identify LED are admin-only. The
-  `command()` escape hatch sends any other `/api` verb
+- Commands for relays, dimmers, RGBW and color-temperature lights, covers with
+  stop and tilt, the regulator setpoint, scenes, and bus events. A push
+  notification to the install's mobile app rides the same surface. The M-DOT
+  panel buzzer, its touch field colours and touch lock, and the module identify
+  LED are admin-only. The `command()` escape hatch sends any other `/api` verb
   ([`docs/commands.md`](docs/commands.md)).
 - A low-latency input bridge from the raw per-channel topics on the admin tier
   ([`docs/raw-channel-bridge.md`](docs/raw-channel-bridge.md)).

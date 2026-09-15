@@ -25,14 +25,28 @@ import contextlib
 import os
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 
 import aiomqtt
 
 
-def _append_lines(path: str, lines: list[str]) -> None:
+@contextlib.contextmanager
+def line_sink(path: str | None) -> Generator[Callable[[str], None]]:
+    """A line writer for ``path``, or one that discards when ``path`` is None.
+
+    Flushes per line so a capture in progress can be read from another
+    shell, and so an interrupted run keeps everything it saw.
+    """
+    if path is None:
+        yield lambda _line: None
+        return
     with open(path, "a", encoding="utf-8") as fh:
-        fh.writelines(lines)
+
+        def write(line: str) -> None:
+            fh.write(line)
+            fh.flush()
+
+        yield write
 
 
 def parse_args() -> argparse.Namespace:
@@ -118,27 +132,24 @@ async def run(
                 await client.publish(request, a.request_payload.encode(), qos=1)
                 print(f"Published {a.request_payload!r} to {request!r}")
 
-            captured: list[str] = []
+            with line_sink(a.outfile) as capture:
 
-            async def reader() -> None:
-                nonlocal count, retained
-                async for message in client.messages:
-                    count += 1
-                    retained += message.retain
-                    flag = "R" if message.retain else " "
-                    payload = message.payload.decode("utf-8", "replace")
-                    topic = str(message.topic)
-                    elapsed = time.monotonic() - started
-                    print(f"  +{elapsed:7.3f}s {flag} {topic}  =  {payload[:200]}")
-                    if a.outfile:
-                        captured.append(f"{flag}\t{topic}\t{payload}\n")
-                    if a.max > 0 and count >= a.max:
-                        return
+                async def reader() -> None:
+                    nonlocal count, retained
+                    async for message in client.messages:
+                        count += 1
+                        retained += message.retain
+                        flag = "R" if message.retain else " "
+                        payload = message.payload.decode("utf-8", "replace")
+                        topic = str(message.topic)
+                        elapsed = time.monotonic() - started
+                        print(f"  +{elapsed:7.3f}s {flag} {topic}  =  {payload[:200]}")
+                        capture(f"{flag}\t{topic}\t{payload}\n")
+                        if a.max > 0 and count >= a.max:
+                            return
 
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(reader(), a.duration)
-            if a.outfile:
-                await asyncio.to_thread(_append_lines, a.outfile, captured)
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(reader(), a.duration)
     except aiomqtt.MqttError as err:
         print(f"MQTT error: {err}")
         return 1

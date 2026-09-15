@@ -32,7 +32,12 @@ from conftest import (
 )
 
 from ampio_mqtt import _protocol
-from ampio_mqtt._protocol import ENDPOINTS, Router
+from ampio_mqtt._protocol import (
+    ENDPOINTS,
+    EndpointReply,
+    Router,
+    decode_envelope,
+)
 from ampio_mqtt._store import AmpioStore, Applied
 from ampio_mqtt.classification import (
     InputKind,
@@ -98,7 +103,16 @@ def _apply(
     ``retained`` marks a broker replay from its retained store.
     """
     msg = _ROUTERS[user].route(topic, payload)
-    return store.apply(msg, retained=retained) if msg is not None else Applied()
+    if msg is None:
+        return Applied()
+    if isinstance(msg, EndpointReply):
+        # The dispatcher decodes a table reply once and hands the store the
+        # envelope, so a test that fed the raw bytes would exercise a path
+        # the client never takes.
+        return store.apply_endpoint(
+            msg.endpoint, decode_envelope(msg.payload, msg.endpoint.name)
+        )
+    return store.apply(msg, retained=retained)
 
 
 def _store() -> AmpioStore:

@@ -161,6 +161,31 @@ wherever the travel leaves them: closed (`lammel` 0) after a downward move, open
 (100) after an upward one. To land on a chosen angle instead, pass an explicit
 `lamella` in the same command.
 
+## Push a notification to the mobile app
+
+The same command topic carries a notification for the install's mobile app. The
+payload addresses no object:
+
+```
+ampio/control/<user>/api      /api/pushNotification/<message>
+```
+
+Both account tiers can send it. The M-SERV answers on no topic, so a sender
+learns nothing about delivery.
+
+The message needs no escaping. A space, a UTF-8 character and a literal `%20`
+all arrive unchanged, because the payload is an MQTT string rather than an HTTP
+request line. A 300 character message arrives whole.
+
+**Do not put a `/` in the message.** The M-SERV reads a second path segment as a
+user name, so it drops the slash and everything after it. `AmpioClient` and
+`send_notification()` refuse such a message rather than truncate it.
+
+Every registered user of the install receives the notification. The OpenAPI spec
+lists a `/api/pushNotification/<message>/<user>` form for one named user. The
+baseline install registers too few push users to tell a targeted send from a
+broadcast, so the library exposes the broadcast form alone.
+
 ## A blocked cover refuses every command
 
 A cover state payload carries a `block` field next to `state`. The module keeps

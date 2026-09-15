@@ -31,6 +31,7 @@ from ampio_mqtt._protocol import (
     Router,
     StateUpdate,
     account_free_topic,
+    decode_envelope,
     md5_topic,
     parse_app_sync_devices,
     parse_details,
@@ -44,7 +45,7 @@ from ampio_mqtt._protocol import (
     raw_buzzer_payload,
     raw_output_payload,
     raw_write_topic,
-    redact_info_payload,
+    redact_info_reply,
     server_below_baseline,
     to_int,
 )
@@ -126,7 +127,7 @@ def _rows(*items: dict[str, object]) -> str:
 
 
 def test_parse_details_returns_metadata() -> None:
-    items = parse_details(_rows(_admin_row()))
+    items = parse_details(json.loads(_rows(_admin_row())))
     assert [row.shared.id for row in items] == [41]
     shared = items[0].shared
     assert shared.id_urzadzenia == 3
@@ -144,7 +145,7 @@ def test_parse_details_returns_metadata() -> None:
 def test_parse_app_sync_devices_returns_the_shared_columns() -> None:
     """The app-sync catalogue serves no `params`, `czas`, or `url` column.
     `data/params_devices` is that tier's source for the three."""
-    items = parse_app_sync_devices(_rows(_app_row()))
+    items = parse_app_sync_devices(json.loads(_rows(_app_row())))
     assert [row.id for row in items] == [41]
     assert items[0].typ_komponentu == "temp"
     assert items[0].funkcja == 7
@@ -158,7 +159,7 @@ def test_parse_details_refuses_a_row_without_a_served_column(column: str) -> Non
     row = _admin_row()
     del row[column]
     with pytest.raises(AmpioProtocolError, match=column):
-        parse_details(_rows(row))
+        parse_details(json.loads(_rows(row)))
 
 
 @pytest.mark.parametrize("column", _APP_SYNC_COLUMNS)
@@ -168,7 +169,7 @@ def test_parse_app_sync_devices_refuses_a_row_without_a_served_column(
     row = _app_row()
     del row[column]
     with pytest.raises(AmpioProtocolError, match=column):
-        parse_app_sync_devices(_rows(row))
+        parse_app_sync_devices(json.loads(_rows(row)))
 
 
 @pytest.mark.parametrize(
@@ -176,13 +177,13 @@ def test_parse_app_sync_devices_refuses_a_row_without_a_served_column(
 )
 def test_parse_details_refuses_a_column_that_is_not_an_integer(column: str) -> None:
     with pytest.raises(AmpioProtocolError, match=column):
-        parse_details(_rows(_admin_row(**{column: "junk"})))
+        parse_details(json.loads(_rows(_admin_row(**{column: "junk"}))))
 
 
 @pytest.mark.parametrize("column", ["typ_komponentu", "url"])
 def test_parse_details_refuses_a_column_that_is_not_text(column: str) -> None:
     with pytest.raises(AmpioProtocolError, match=column):
-        parse_details(_rows(_admin_row(**{column: 7})))
+        parse_details(json.loads(_rows(_admin_row(**{column: 7}))))
 
 
 @pytest.mark.parametrize(
@@ -194,7 +195,9 @@ def test_parse_details_refuses_a_column_that_is_not_text(column: str) -> None:
     ],
 )
 def test_parse_details_params(raw: object, expected: int) -> None:
-    assert parse_details(_rows(_admin_row(params=raw)))[0].params == expected
+    assert (
+        parse_details(json.loads(_rows(_admin_row(params=raw))))[0].params == expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -206,7 +209,7 @@ def test_parse_details_params(raw: object, expected: int) -> None:
     ],
 )
 def test_parse_details_matter_device_type(raw: object, expected: int | None) -> None:
-    items = parse_details(_rows(_admin_row(type=raw)))
+    items = parse_details(json.loads(_rows(_admin_row(type=raw))))
     assert items[0].shared.matter_device_type == expected
 
 
@@ -219,7 +222,7 @@ def test_parse_details_matter_device_type(raw: object, expected: int | None) -> 
     ],
 )
 def test_parse_details_czas(raw: object, expected: int) -> None:
-    assert parse_details(_rows(_admin_row(czas=raw)))[0].czas == expected
+    assert parse_details(json.loads(_rows(_admin_row(czas=raw))))[0].czas == expected
 
 
 def _params_row(**over: object) -> dict[str, object]:
@@ -229,7 +232,7 @@ def _params_row(**over: object) -> dict[str, object]:
 
 
 def test_parse_params_devices_carries_the_config_columns() -> None:
-    table = parse_params_devices(_rows(_params_row()))
+    table = parse_params_devices(json.loads(_rows(_params_row())))
     assert table[5].params == 17
     assert table[5].czas == 500
     assert table[5].url == "kWh"
@@ -242,11 +245,11 @@ def test_parse_params_devices_refuses_a_row_without_a_served_column(
     row = _params_row()
     del row[column]
     with pytest.raises(AmpioProtocolError, match=column):
-        parse_params_devices(_rows(row))
+        parse_params_devices(json.loads(_rows(row)))
 
 
 def test_parse_params_devices_keeps_the_without_unit_sentinel() -> None:
-    assert parse_params_devices(_rows(_params_row(url=" ")))[5].url == " "
+    assert parse_params_devices(json.loads(_rows(_params_row(url=" "))))[5].url == " "
 
 
 @pytest.mark.parametrize(
@@ -259,7 +262,7 @@ def test_parse_params_devices_keeps_the_without_unit_sentinel() -> None:
     ],
 )
 def test_parse_details_url_and_format(row: dict, url: str, fmt: str) -> None:
-    items = parse_details(_rows(_admin_row(**row)))
+    items = parse_details(json.loads(_rows(_admin_row(**row))))
     assert items[0].url == url
     assert items[0].shared.format == fmt
 
@@ -280,7 +283,17 @@ def test_unparseable_payloads_are_refused(parser) -> None:
     """A reply that is not the surface's own document shape is a protocol
     break. Nothing downstream can tell a tolerated one from an empty one."""
     with pytest.raises(AmpioProtocolError):
-        parser("not json")
+        parser({})
+
+
+@pytest.mark.parametrize("payload", ["not json", "null", "[1, 2, 3]", '"text"', ""])
+def test_decode_envelope_refuses_a_reply_that_is_not_a_json_object(
+    payload: str,
+) -> None:
+    """The envelope decode is the one gate on the reply's outer shape, so
+    every parser below it reads a mapping or never runs."""
+    with pytest.raises(AmpioProtocolError):
+        decode_envelope(payload, "test")
 
 
 def _module_row(**over: object) -> dict[str, object]:
@@ -298,7 +311,7 @@ def _module_row(**over: object) -> dict[str, object]:
 
 
 def test_parse_devices_reads_the_module_row() -> None:
-    modules = parse_devices(_rows(_module_row()))
+    modules = parse_devices(json.loads(_rows(_module_row())))
     assert [m.id for m in modules] == [5]
     assert modules[0].mac == 0xCAFE and modules[0].mac_global == 0xBEEF
     assert modules[0].wersja_softu == 908 and modules[0].wersja_pcb == 12
@@ -309,12 +322,12 @@ def test_parse_devices_refuses_a_row_without_a_served_column(column: str) -> Non
     row = _module_row()
     del row[column]
     with pytest.raises(AmpioProtocolError, match=column):
-        parse_devices(_rows(row))
+        parse_devices(json.loads(_rows(row)))
 
 
 def test_parse_states_snapshot_reads_every_row() -> None:
     entries = parse_states_snapshot(
-        _rows({"id": 7, "stan_json": '{"state":"1","on":1789000000000}'})
+        json.loads(_rows({"id": 7, "stan_json": '{"state":"1","on":1789000000000}'}))
     )
     assert [(e.id, e.stan_json) for e in entries] == [
         (7, '{"state":"1","on":1789000000000}')
@@ -328,7 +341,7 @@ def test_parse_states_snapshot_refuses_a_row_without_a_served_column(
     row = {"id": 7, "stan_json": '{"state":"1","on":1789000000000}'}
     del row[column]
     with pytest.raises(AmpioProtocolError, match=column):
-        parse_states_snapshot(_rows(row))
+        parse_states_snapshot(json.loads(_rows(row)))
 
 
 @pytest.mark.parametrize(
@@ -354,9 +367,11 @@ def test_parse_devices_resolves_the_model_name() -> None:
     """The model column is derived from the type code. A type code outside
     the catalogue resolves to None rather than failing the row."""
     modules = parse_devices(
-        _rows(
-            _module_row(id=1, typ_urzadzenia=44),  # M-SENS
-            _module_row(id=5, typ_urzadzenia=999),  # unknown type
+        json.loads(
+            _rows(
+                _module_row(id=1, typ_urzadzenia=44),  # M-SENS
+                _module_row(id=5, typ_urzadzenia=999),  # unknown type
+            )
         )
     )
     by_id = {m.id: m for m in modules}
@@ -365,7 +380,7 @@ def test_parse_devices_resolves_the_model_name() -> None:
 
 
 def test_parse_devices_returns_modules() -> None:
-    [module] = parse_devices(_rows(_module_row(id=3)))
+    [module] = parse_devices(json.loads(_rows(_module_row(id=3))))
     assert isinstance(module, AmpioModule)
     assert module.id == 3 and module.last_seen is None
 
@@ -382,7 +397,7 @@ def test_parse_server_info_extracts_safe_fields() -> None:
             }
         }
     )
-    info = parse_server_info(payload)
+    info = parse_server_info(json.loads(payload))
     assert info.mac == 1234
     assert info.user_id == -1
     assert info.server_version == "3.4.5"
@@ -392,7 +407,6 @@ def test_parse_server_info_extracts_safe_fields() -> None:
 @pytest.mark.parametrize(
     "payload",
     [
-        json.dumps([1, 2, 3]),
         # The baseline server always wraps the fields in `Results`.
         json.dumps({"mac": 1}),
         # ... and always reports its mac: an identity-less reply is refused,
@@ -407,10 +421,10 @@ def test_parse_server_info_extracts_safe_fields() -> None:
 )
 def test_parse_server_info_refuses_a_reply_without_the_identity(payload: str) -> None:
     with pytest.raises(AmpioProtocolError):
-        parse_server_info(payload)
+        parse_server_info(json.loads(payload))
 
 
-def test_redact_info_payload_keeps_only_safelisted_values() -> None:
+def test_redact_info_reply_keeps_only_safelisted_values() -> None:
     """Every value outside the safe-key set is masked with the key kept,
     so the retained copy shows the reply's shape without the private data."""
     payload = json.dumps(
@@ -432,7 +446,7 @@ def test_redact_info_payload_keeps_only_safelisted_values() -> None:
             },
         }
     )
-    redacted = redact_info_payload(payload)
+    redacted = redact_info_reply(json.loads(payload))
     data = json.loads(redacted)
     results = data["Results"]
     assert results["mac"] == 1234
@@ -448,26 +462,21 @@ def test_redact_info_payload_keeps_only_safelisted_values() -> None:
     assert "52.1000" not in redacted
 
 
-def test_redact_info_payload_masks_unknown_top_level_values() -> None:
+def test_redact_info_reply_masks_unknown_top_level_values() -> None:
     """A top-level key outside the safe set is masked too: the allowlist
     covers fields a future firmware adds anywhere in the envelope."""
     payload = json.dumps({"Results": {"mac": 1}, "debugDump": {"ip": "10.0.0.1"}})
-    data = json.loads(redact_info_payload(payload))
+    data = json.loads(redact_info_reply(json.loads(payload)))
     assert data["debugDump"] == REDACTED
     assert data["Results"] == {"mac": 1}
 
 
-def test_redact_info_payload_withholds_unparseable_replies() -> None:
-    """A reply without the parseable envelope is withheld outright: a
-    truncated JSON string can carry the private fields in clear text."""
-    for payload in (
-        "not json",
-        json.dumps([1, 2]),
-        json.dumps({"mac": 1}),
-        json.dumps({"Results": "text"}),
-        '{"Results": {"city": "Example Str',
-    ):
-        assert redact_info_payload(payload) == REDACTED
+def test_redact_info_reply_withholds_a_reply_without_results() -> None:
+    """A reply whose envelope carries no `Results` object is withheld
+    outright, because the shape the safelist walks is not there. A reply
+    the decode itself refuses never reaches this function."""
+    for payload in (json.dumps({"mac": 1}), json.dumps({"Results": "text"})):
+        assert redact_info_reply(json.loads(payload)) == REDACTED
 
 
 def test_parse_server_info_coerces_numeric_version_fields() -> None:
@@ -483,7 +492,7 @@ def test_parse_server_info_coerces_numeric_version_fields() -> None:
             }
         }
     )
-    info = parse_server_info(payload)
+    info = parse_server_info(json.loads(payload))
     assert info.server_version == "1865"
     assert info.server_revision == "409"
 

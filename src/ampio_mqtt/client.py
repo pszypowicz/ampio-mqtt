@@ -39,6 +39,7 @@ from ._protocol import (
     command_payload,
     command_topic,
     event_payload,
+    notification_payload,
     ob_state_wildcard,
     panel_field_mask,
     raw_backlight_payload,
@@ -105,10 +106,10 @@ _ObjEventT2 = TypeVar("_ObjEventT2", bound=ObjectUpdated | ObjectRemoved)
 _ListenerEntry = tuple[Callable[[Any], None], tuple[type[ClientEvent], ...] | None]
 
 
-def _retained(endpoint: _protocol.Endpoint, payload: str) -> str:
+def _retained(endpoint: _protocol.Endpoint, data: Mapping[str, Any]) -> str:
     """Retain an endpoint's safe copy or a summary of its rows."""
-    redacts = endpoint.redacts or _protocol.summarize_rows_payload
-    return redacts(payload)
+    redacts = endpoint.redacts or _protocol.summarize_rows
+    return redacts(data)
 
 
 class _ReplyChannel:
@@ -317,16 +318,23 @@ class AmpioClient:
                 return
             if isinstance(msg, _protocol.EndpointReply):
                 channel = self._channels[msg.endpoint.name]
-                # Summarize before parsing so refused replies also record
-                # receipt without retaining private payload content.
-                channel.last_payload = _retained(msg.endpoint, payload)
+                # One decode feeds the retained summary and whichever of the
+                # two parse paths applies. A reply the decode refuses still
+                # records receipt, and withholds every byte of a payload that
+                # nothing could read.
+                try:
+                    data = _protocol.decode_envelope(payload, msg.endpoint.name)
+                except AmpioProtocolError:
+                    channel.last_payload = _protocol.REDACTED
+                    raise
+                channel.last_payload = _retained(msg.endpoint, data)
                 if msg.endpoint.parses is not None:
                     # Pure request/response: the endpoint's parser runs once
                     # and its output is what a fetch returns; nothing here
                     # mutates the store.
-                    channel.deliver(msg.endpoint.parses(payload))
+                    channel.deliver(msg.endpoint.parses(data))
                     return
-                applied = self._store.apply(msg, retained=retained)
+                applied = self._store.apply_endpoint(msg.endpoint, data)
                 channel.latch()
             elif isinstance(msg, _protocol.DeviceList):
                 waiters, self._device_list_waiters = self._device_list_waiters, []
@@ -821,7 +829,9 @@ class AmpioClient:
                 f"No server-info reply from the Ampio broker within {info_timeout}s"
             )
         try:
-            parsed = _protocol.parse_server_info(payload)
+            parsed = _protocol.parse_server_info(
+                _protocol.decode_envelope(payload, info.name)
+            )
         except AmpioProtocolError as err:
             # A refused reply gets the same retryable shape as silence:
             # something answered, but not with an info document.
@@ -1134,6 +1144,32 @@ class AmpioClient:
         _check_range("event_number", event_number, 1, 65535)
         await self._connection.publish(
             command_topic(self._username), event_payload(event_number).encode()
+        )
+
+    async def send_notification(self, message: str) -> None:
+        """Push a notification to every user of the install's mobile app.
+
+        Reaches the app on both account tiers. The M-SERV answers on no
+        topic, so the call returns once the broker accepts the publish and
+        it can never report delivery.
+
+        Every registered user receives it. The M-SERV also accepts a form
+        that names one user, but the library does not expose it, because
+        nothing yet separates a targeted send from a broadcast on the wire.
+
+        Raises ``AmpioValueError`` for an empty message, and for one that
+        contains ``/``. The M-SERV reads a second path segment as the user
+        name, so a slash would truncate the text with no way to tell.
+        """
+        if not message:
+            raise AmpioValueError("message must not be empty")
+        if "/" in message:
+            raise AmpioValueError(
+                "message must not contain '/' - the M-SERV reads what follows "
+                f"it as a user name and drops it, got {message!r}"
+            )
+        await self._connection.publish(
+            command_topic(self._username), notification_payload(message).encode()
         )
 
     async def run_scene(self, scene_id: int) -> None:

@@ -37,6 +37,7 @@ from ampio_mqtt import (
     ModuleRemoved,
     ObjectRemoved,
     ObjectUpdated,
+    _protocol,
 )
 from ampio_mqtt._protocol import REDACTED
 
@@ -513,6 +514,34 @@ async def test_connect_times_out_without_auth_error() -> None:
     )
     with pytest.raises(AmpioConnectionError):
         await client.connect(timeout=0.1, discovery_timeout=0.05)
+
+
+@pytest.mark.parametrize(
+    ("topic", "payload_of"),
+    [
+        ("config/devices", lambda: devices({"id": 1, "mac": 1, "typ_urzadzenia": 10})),
+        ("data/scenes", lambda: json.dumps({"List": []})),
+        ("data/info", lambda: info(mac=1, userId=-1)),
+    ],
+)
+def test_a_table_reply_is_decoded_once(
+    monkeypatch: pytest.MonkeyPatch, topic: str, payload_of
+) -> None:
+    """The dispatcher runs on the event loop and the largest replies run to
+    megabytes, so the retained summary, the store handler and the fetch
+    parser all read one decode (#235)."""
+    calls = 0
+    real = json.loads
+
+    def counting(payload: str) -> object:
+        nonlocal calls
+        calls += 1
+        return real(payload)
+
+    monkeypatch.setattr(_protocol.json, "loads", counting)
+    client = AmpioClient("host", username="admin")
+    feed(client, f"ampio/fromDB/admin/{topic}", payload_of())
+    assert calls == 1
 
 
 def test_last_payloads_retained_for_each_handler() -> None:

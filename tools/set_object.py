@@ -9,6 +9,7 @@ Usage:
   python tools/set_object.py --object-id 64 --on
   python tools/set_object.py --object-id 48 --position 55 --watch 45
   python tools/set_object.py --object-id 50 --color 10,20,30,40
+  python tools/set_object.py --object-id 72 --ww 200,64
   python tools/set_object.py --object-id 135 --verb setValue --arg 255
 
 Credentials default to AMPIO_HOST / AMPIO_PORT / AMPIO_USERNAME / AMPIO_PASSWORD.
@@ -49,6 +50,10 @@ def parse_args() -> argparse.Namespace:
     action.add_argument("--value", type=int, help="setValue level, 0-255")
     action.add_argument("--position", type=int, help="cover position percent, 0-100")
     action.add_argument("--color", help="RGBW as R,G,B,W (each 0-255)")
+    action.add_argument("--ww", help="CCT light as POWER,COLDNESS (each 0-255)")
+    action.add_argument(
+        "--ww-power", type=int, help="CCT light power alone, 0-255; holds coldness"
+    )
     action.add_argument("--verb", help="raw verb for anything not wrapped above")
 
     p.add_argument(
@@ -92,6 +97,13 @@ async def send(client: AmpioClient, a: argparse.Namespace) -> None:
         if len(channels) != 4:
             raise SystemExit("--color needs four comma-separated values: R,G,B,W")
         await client.set_colors(oid, *channels)
+    elif a.ww is not None:
+        axes = [int(part) for part in a.ww.split(",")]
+        if len(axes) != 2:
+            raise SystemExit("--ww needs two comma-separated values: POWER,COLDNESS")
+        await client.set_ww(oid, *axes)
+    elif a.ww_power is not None:
+        await client.set_ww_power(oid, a.ww_power)
     else:
         await client.command(oid, a.verb, *a.arg)
 

@@ -171,7 +171,23 @@ def warn_if_below_baseline(version: str | None) -> None:
         )
 
 
-def require_rows(payload: str, surface: str) -> list[dict[str, Any]]:
+def decode_envelope(payload: str, surface: str) -> dict[str, Any]:
+    """The JSON object a table reply wraps its content in.
+
+    One decode per reply. The retained summary, the fetch parser and the
+    store handler all read the result, because the dispatcher runs on the
+    event loop and the largest replies run to megabytes.
+    """
+    try:
+        data = json.loads(payload)
+    except (ValueError, TypeError) as err:
+        raise AmpioProtocolError(f"The Ampio {surface} reply is not JSON") from err
+    if not isinstance(data, dict):
+        raise AmpioProtocolError(f"The Ampio {surface} reply is not a JSON object")
+    return cast("dict[str, Any]", data)
+
+
+def require_rows(data: Mapping[str, Any], surface: str) -> list[dict[str, Any]]:
     """The rows of a ``{"List": [...]}`` reply.
 
     The M-SERV is the only expected publisher on these topics, but nothing on
@@ -180,12 +196,6 @@ def require_rows(payload: str, surface: str) -> list[dict[str, Any]]:
     raises :class:`AmpioProtocolError` instead, because no caller can tell a
     tolerated malformed reply from an empty one.
     """
-    try:
-        data = json.loads(payload)
-    except (ValueError, TypeError) as err:
-        raise AmpioProtocolError(f"The Ampio {surface} reply is not JSON") from err
-    if not isinstance(data, dict):
-        raise AmpioProtocolError(f"The Ampio {surface} reply is not a JSON object")
     rows = data.get("List")
     if not isinstance(rows, list):
         raise AmpioProtocolError(f"The Ampio {surface} reply carries no `List` array")
@@ -275,7 +285,7 @@ def _shared_columns(row: Mapping[str, Any]) -> ObjectMetadata:
     )
 
 
-def parse_details(payload: str) -> list[AdminObjectMetadata]:
+def parse_details(data: Mapping[str, Any]) -> list[AdminObjectMetadata]:
     """Every row of a `config/devicesDetails` reply, the admin catalogue.
 
     An empty list is a valid reply that lists nothing. `params` can exceed
@@ -289,21 +299,21 @@ def parse_details(payload: str) -> list[AdminObjectMetadata]:
             czas=_int_column(row, "czas", _CATALOGUE),
             url=_text_column(row, "url", _CATALOGUE),
         )
-        for row in require_rows(payload, _CATALOGUE)
+        for row in require_rows(data, _CATALOGUE)
     ]
 
 
-def parse_app_sync_devices(payload: str) -> list[ObjectMetadata]:
+def parse_app_sync_devices(data: Mapping[str, Any]) -> list[ObjectMetadata]:
     """Every row of a `data/devices` reply, the app-sync catalogue.
 
     The rows are the objects the account was granted in the Ampio app. The
     surface serves no `params`, `czas`, or `url` column, so nothing here
     reads one - `data/params_devices` is this tier's source for the three.
     """
-    return [_shared_columns(row) for row in require_rows(payload, _CATALOGUE)]
+    return [_shared_columns(row) for row in require_rows(data, _CATALOGUE)]
 
 
-def parse_devices(payload: str) -> list[AmpioModule]:
+def parse_devices(data: Mapping[str, Any]) -> list[AmpioModule]:
     """Parse a `devices` payload into a list of physical modules.
 
     Returned modules have `last_seen=None`; the caller preserves any existing
@@ -322,7 +332,7 @@ def parse_devices(payload: str) -> list[AmpioModule]:
             wersja_softu=_int_column(row, "wersja_softu", _MODULE_LIST),
             wersja_pcb=_int_column(row, "wersja_pcb", _MODULE_LIST),
         )
-        for row in require_rows(payload, _MODULE_LIST)
+        for row in require_rows(data, _MODULE_LIST)
     ]
 
 
@@ -335,7 +345,7 @@ class ParamsEntry:
     url: str
 
 
-def parse_params_devices(payload: str) -> dict[int, ParamsEntry]:
+def parse_params_devices(data: Mapping[str, Any]) -> dict[int, ParamsEntry]:
     """Parse a `data/params_devices` payload into per-object config facts.
 
     The table covers the full object catalogue regardless of the account's
@@ -348,11 +358,11 @@ def parse_params_devices(payload: str) -> dict[int, ParamsEntry]:
             czas=_int_column(row, "czas", _PARAMS_TABLE),
             url=_text_column(row, "url", _PARAMS_TABLE),
         )
-        for row in require_rows(payload, _PARAMS_TABLE)
+        for row in require_rows(data, _PARAMS_TABLE)
     }
 
 
-def parse_scenes(payload: str) -> list[AmpioScene]:
+def parse_scenes(data: Mapping[str, Any]) -> list[AmpioScene]:
     """Parse a `data/scenes` payload into the scene catalogue.
 
     Each row carries its actions twice - `Actions` as the wire command strings
@@ -362,7 +372,7 @@ def parse_scenes(payload: str) -> list[AmpioScene]:
     means no room.
     """
     out: list[AmpioScene] = []
-    for item in require_rows(payload, _SCENES):
+    for item in require_rows(data, _SCENES):
         group = _int_column(item, "parentId", _SCENES)
         out.append(
             AmpioScene(
@@ -396,14 +406,14 @@ def _scene_object_ids(row: Mapping[str, Any]) -> frozenset[int]:
     return frozenset(out)
 
 
-def parse_groups(payload: str) -> dict[int, str]:
+def parse_groups(data: Mapping[str, Any]) -> dict[int, str]:
     """``{group_id: name}`` from a `data/groups` reply, the room tree.
 
     Every row carries an id and a name. The name becomes a consumer's area,
     so an empty one names no room and is refused.
     """
     out: dict[int, str] = {}
-    for row in require_rows(payload, _GROUPS):
+    for row in require_rows(data, _GROUPS):
         name = _text_column(row, "opis_menu", _GROUPS)
         if not name:
             raise AmpioProtocolError(
@@ -413,7 +423,7 @@ def parse_groups(payload: str) -> dict[int, str]:
     return out
 
 
-def parse_group_devices(payload: str) -> list[tuple[int, int]]:
+def parse_group_devices(data: Mapping[str, Any]) -> list[tuple[int, int]]:
     """``(object_id, group_id)`` per row of a `data/group_devices` reply.
 
     The order is the reply's own, which is what makes the first room an
@@ -424,7 +434,7 @@ def parse_group_devices(payload: str) -> list[tuple[int, int]]:
             _int_column(row, "id_obiektu", _MEMBERSHIP),
             _int_column(row, "id_grupy", _MEMBERSHIP),
         )
-        for row in require_rows(payload, _MEMBERSHIP)
+        for row in require_rows(data, _MEMBERSHIP)
     ]
 
 
@@ -450,7 +460,7 @@ def parse_rooms(
     return room_map
 
 
-def parse_locations(payload: str) -> dict[int, str]:
+def parse_locations(data: Mapping[str, Any]) -> dict[int, str]:
     """``{location_id: name}`` from a `config/locations` reply.
 
     The name table behind the Designer's "Lokalizacja" dropdown. Every row
@@ -458,7 +468,7 @@ def parse_locations(payload: str) -> dict[int, str]:
     read as an unassigned location.
     """
     out: dict[int, str] = {}
-    for row in require_rows(payload, _LOCATIONS):
+    for row in require_rows(data, _LOCATIONS):
         name = _text_column(row, "opis_menu", _LOCATIONS)
         if not name:
             raise AmpioProtocolError(
@@ -953,31 +963,27 @@ def _to_str(value: Any) -> str | None:
     return str(value) if value not in (None, "") else None
 
 
-def parse_server_info(payload: str) -> AmpioServerInfo:
-    """Parse a server-info payload, keeping only the safe fields.
+def parse_server_info(data: Mapping[str, Any]) -> AmpioServerInfo:
+    """Parse a server-info reply, keeping only the safe fields.
 
     The baseline server wraps the fields in a ``Results`` object and always
     reports two things: its ``mac``, the identity every consumer scopes a
-    registry by, and ``userId``, the asking account. A payload missing any
+    registry by, and ``userId``, the asking account. A reply missing any
     of the three is refused, so every :class:`AmpioServerInfo` carries a
     populated :pyattr:`AmpioServerInfo.server_key` and a readable
     :pyattr:`AmpioServerInfo.access_tier`.
     """
-    try:
-        outer = json.loads(payload)
-    except (ValueError, TypeError) as err:
-        raise AmpioProtocolError(f"The Ampio {_INFO} reply is not JSON") from err
-    data = outer.get("Results") if isinstance(outer, dict) else None
-    if not isinstance(data, dict):
+    results = data.get("Results")
+    if not isinstance(results, dict):
         raise AmpioProtocolError(f"The Ampio {_INFO} reply carries no `Results` object")
     return AmpioServerInfo(
-        mac=_int_column(data, "mac", _INFO),
-        user_id=_int_column(data, "userId", _INFO),
-        server_version=_to_str(data.get("serverVersion")),
-        server_revision=_to_str(data.get("serverRevision")),
-        mqtt_version=_to_str(data.get("mqttVersion")),
-        local_ip=_to_str(data.get("local_ip")),
-        device_id=_to_str(data.get("device_id")),
+        mac=_int_column(results, "mac", _INFO),
+        user_id=_int_column(results, "userId", _INFO),
+        server_version=_to_str(results.get("serverVersion")),
+        server_revision=_to_str(results.get("serverRevision")),
+        mqtt_version=_to_str(results.get("mqttVersion")),
+        local_ip=_to_str(results.get("local_ip")),
+        device_id=_to_str(results.get("device_id")),
     )
 
 
@@ -994,20 +1000,14 @@ _INFO_SAFE_KEYS = frozenset(
 )
 
 
-def redact_info_payload(payload: str) -> str:
+def redact_info_reply(data: Mapping[str, Any]) -> str:
     """The server-info reply with every non-safelisted value masked.
 
     Keys stay visible, so a report still shows the reply's shape. A reply
-    without the parseable envelope is withheld outright: a truncated JSON
+    without the expected envelope is withheld outright: a truncated JSON
     string can carry the private fields in clear text.
     """
-    try:
-        outer = json.loads(payload)
-    except (ValueError, TypeError):
-        return REDACTED
-    if not isinstance(outer, dict):
-        return REDACTED
-    results = outer.get("Results")
+    results = data.get("Results")
     if not isinstance(results, dict):
         return REDACTED
     masked_results = {
@@ -1018,21 +1018,21 @@ def redact_info_payload(payload: str) -> str:
         key: masked_results
         if key == "Results"
         else (value if key in _INFO_SAFE_KEYS else REDACTED)
-        for key, value in outer.items()
+        for key, value in data.items()
     }
     return json.dumps(masked)
 
 
-def summarize_rows_payload(payload: str) -> str:
-    """Retain the row count, or withhold a malformed reply."""
+def summarize_rows(data: Mapping[str, Any]) -> str:
+    """Retain the row count, or withhold a reply that carries no rows."""
     try:
-        rows = require_rows(payload, "diagnostics")
+        rows = require_rows(data, "diagnostics")
     except AmpioProtocolError:
         return REDACTED
     return json.dumps({"row_count": len(rows)})
 
 
-def parse_states_snapshot(payload: str) -> list[SnapshotEntry]:
+def parse_states_snapshot(data: Mapping[str, Any]) -> list[SnapshotEntry]:
     """Parse a bulk `data/states` snapshot.
 
     The reply lists the objects that hold a value, so every row carries
@@ -1043,7 +1043,7 @@ def parse_states_snapshot(payload: str) -> list[SnapshotEntry]:
             id=_int_column(row, "id", _SNAPSHOT),
             stan_json=_text_column(row, "stan_json", _SNAPSHOT),
         )
-        for row in require_rows(payload, _SNAPSHOT)
+        for row in require_rows(data, _SNAPSHOT)
     ]
 
 
@@ -1271,12 +1271,12 @@ class Endpoint:
     # reply the parser refuses raises `AmpioProtocolError`, which neither
     # resolves a fetch nor latches discovery. None marks an endpoint whose
     # reply mutates state - its AmpioStore handler is the gate instead.
-    parses: Callable[[str], object] | None = None
+    parses: Callable[[Mapping[str, Any]], object] | None = None
     # Overrides the default row-count summary in diagnostics_snapshot().
     # The retained string must omit private content because a consumer's
-    # key-based redactor cannot reach inside it. Store and fetch parsers
-    # read the raw reply.
-    redacts: Callable[[str], str] | None = None
+    # key-based redactor cannot reach inside it. This reads the same decoded
+    # envelope the parser reads, so a reply is decoded once per arrival.
+    redacts: Callable[[Mapping[str, Any]], str] | None = None
 
 
 ENDPOINTS: tuple[Endpoint, ...] = (
@@ -1300,7 +1300,7 @@ ENDPOINTS: tuple[Endpoint, ...] = (
     ),
     Endpoint("states", "states", "", "data", "states", initial=True),
     Endpoint(
-        "info", "info", "", "data", "info", initial=True, redacts=redact_info_payload
+        "info", "info", "", "data", "info", initial=True, redacts=redact_info_reply
     ),
     # App-sync object catalogue. Same wire keyword as the module list above but
     # on the `data` surface, and a different payload: DB objects (the
@@ -1388,6 +1388,16 @@ def command_payload(object_id: int, verb: str, args: Sequence[object] = ()) -> s
 def event_payload(event_number: int) -> str:
     """Build the payload that raises a bus event."""
     return f"/api/setEvent/{event_number}"
+
+
+def notification_payload(message: str) -> str:
+    """Build the payload that pushes a notification to the Ampio app.
+
+    The message rides a path segment but needs no escaping: the payload is
+    an MQTT string rather than an HTTP request line, and the M-SERV passes
+    spaces, UTF-8 and a literal `%20` straight through to the app.
+    """
+    return f"/api/pushNotification/{message}"
 
 
 def scene_payload(scene_id: int, verb: str) -> str:
