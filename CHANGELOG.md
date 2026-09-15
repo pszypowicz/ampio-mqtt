@@ -12,6 +12,32 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Added
+
+- `flaga_liniowa` and `flaga_liniowa16` classify as analog flags instead of
+  falling back to the generic value sensor. `InputKind.value_range` carries the
+  width each one holds, 0 to 255 and -32768 to 32767 (#239).
+- `satel_alarm` classifies into `alarm_armed` and `alarm_alarmed`. The catalogue
+  row cannot tell the halves apart, because both carry the same
+  `typ_komponentu`, `funkcja` and `interpretacja`, so this is the one type that
+  classifies on the leaf sub-function. A sub-function outside the proven two
+  stays the generic value sensor (#239).
+
+### Changed
+
+- `set_value()` takes the range the object actually holds. It was fixed at 0 to
+  255, which refused every negative value a `flaga_liniowa16` accepts. The
+  M-SERV truncates an out-of-range write to the field width rather than refusing
+  it, so a 300 landed as 44 with no error, which is why the check belongs in the
+  library (#239).
+
+### Documentation
+
+- `docs/classification.md` describes both analog flags and both alarm halves,
+  including why the alarmed half takes no device class.
+
 ## 0.63.0
 
 A cover's roller lock is writable. `AmpioObject.block` has reported it since

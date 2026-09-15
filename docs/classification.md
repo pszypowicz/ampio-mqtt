@@ -34,6 +34,13 @@ classifies, as the generic value sensor or the `analog_<n>` fallback.
 - `flaga` is the one input that answers the switch verbs, so `switchable` is
   True. A consumer can model a writable flag as a switch. See
   [`commands.md`](commands.md).
+- `flaga_liniowa` and `flaga_liniowa16` are the analog flags, the module's own
+  u8 and signed 16-bit variables. Both answer `setValue` and neither answers the
+  switch verbs, so `switchable` is False and `value_range` carries the width: 0
+  to 255, and -32768 to 32767. Respect the range. The M-SERV truncates an
+  out-of-range write to the field width rather than refusing it, so a 300 on a
+  u8 flag lands as 44 with no error. `AmpioClient.set_value` refuses such a
+  value before the wire.
 - `roleta_lamelki` is what the Ampio app writes when a cover's type is set to
   "blinds - slats". The same cover reads back as `roleta_procenty` while it is
   set to "blinds - percentage". Only the slats variant reports a `lammel` angle
@@ -56,11 +63,19 @@ classifies, as the generic value sensor or the `analog_<n>` fallback.
   `value_<interpretacja>` family. The kind carries no unit and no device class,
   because what a slot holds is the installer's choice. `AmpioObject.unit` and
   `AmpioObject.decimals` serve what Designer stores for the object (see below).
-- Ampio's vocabulary also carries `rgb`, `rgbww`, `ac`, `radio`, `ip_radio`,
-  `flaga_liniowa`, and `satel_alarm` - types absent from `TYPE_PROFILES` that
-  classify as the generic value sensor. `satel_alarm` is the armed/alarmed flag
-  pair of an alarm integration (a Jablotron behind an M-CON, so the prefix is
-  not Satel-specific).
+- `satel_alarm` is the armed and alarmed pair of an alarm partition. The prefix
+  is not Satel-specific: a Jablotron behind an M-CON lands here too. The
+  catalogue row cannot tell the two halves apart, because both carry the same
+  `typ_komponentu`, `funkcja` and `interpretacja`. Only the leaf sub-function
+  differs, 3 for armed and 4 for alarmed, so this is the one type that
+  classifies on `AmpioObject.sub_sf_id`. Designer marks both halves read-only
+  and neither takes a device class, because the alarmed half also reads 1
+  through the panel's exit delay and so is not a safety indicator on its own. A
+  sub-function outside those two classifies as the generic value sensor. The
+  `arm` and `disarm` verbs still reach the armed half (see
+  [`commands.md`](commands.md)).
+- Ampio's vocabulary also carries `rgb`, `rgbww`, `ac`, `radio`, and `ip_radio`
+  - types absent from `TYPE_PROFILES` that classify as the generic value sensor.
 
 ## Units and display precision
 

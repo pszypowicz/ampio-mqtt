@@ -255,7 +255,16 @@ def test_bit8_is_a_numeric_measurement() -> None:
 def test_kind_key_vocabulary_contents() -> None:
     """The exhaustiveness tripwire: adding a kind must update this list,
     exactly as a consumer's own mapping test will demand of its mapping."""
-    assert {"flaga", "detekcja", "symulacja", "wej"} == INPUT_KIND_KEYS
+    assert {
+        "flaga",
+        "flaga_liniowa",
+        "flaga_liniowa16",
+        "alarm_armed",
+        "alarm_alarmed",
+        "detekcja",
+        "symulacja",
+        "wej",
+    } == INPUT_KIND_KEYS
     assert {
         "relay",
         "rgbw",
@@ -295,3 +304,46 @@ def test_classify_never_leaves_the_exported_vocabulary() -> None:
             assert key in vocab[type(kind)] or key.startswith(
                 SENSOR_KIND_KEY_PREFIXES
             ), (typ, interp, key)
+
+
+# --- the analog flags and the alarm halves (#239) ---------------------------
+
+
+@pytest.mark.parametrize(
+    ("typ", "key", "low", "high"),
+    [
+        ("flaga_liniowa", "flaga_liniowa", 0, 255),
+        ("flaga_liniowa16", "flaga_liniowa16", -32768, 32767),
+    ],
+)
+def test_analog_flags_carry_their_own_width(
+    typ: str, key: str, low: int, high: int
+) -> None:
+    """Both answer setValue, and the 16-bit one is signed, so one shared
+    0-255 range would reject half of its legal values."""
+    kind = classify(typ, 1)
+    assert isinstance(kind, InputKind)
+    assert kind.key == key
+    assert kind.value_range == (low, high)
+    # A flag holds a value; it does not answer the switch verbs.
+    assert kind.switchable is False
+
+
+@pytest.mark.parametrize(
+    ("sub_sf_id", "key"),
+    [(3, "alarm_armed"), (4, "alarm_alarmed")],
+)
+def test_alarm_halves_split_on_the_leaf_sub_function(sub_sf_id: int, key: str) -> None:
+    """The catalogue row cannot tell the halves apart: both carry the same
+    typ_komponentu, funkcja and interpretacja. Only the leaf differs."""
+    kind = classify("satel_alarm", 1, sub_sf_id)
+    assert isinstance(kind, InputKind)
+    assert kind.key == key
+    assert kind.device_class is None
+
+
+@pytest.mark.parametrize("sub_sf_id", [None, 1, 2, 9])
+def test_an_unproven_alarm_sub_function_stays_a_sensor(sub_sf_id: int | None) -> None:
+    """Minting a kind on a sub-function the wire has not shown would claim
+    a shape nothing verified."""
+    assert classify("satel_alarm", 1, sub_sf_id).key == "value"

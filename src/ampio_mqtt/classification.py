@@ -71,6 +71,11 @@ class InputKind:
     # the M-SERV drops all three verbs for it on both account tiers, with no
     # effect and no reply. `detekcja` and `symulacja` have never been driven.
     switchable: bool = False
+    # The inclusive range `setValue` holds, for a flag with a value axis;
+    # None for a flag that carries no value. The M-SERV truncates an
+    # out-of-range write to the field width instead of refusing it, so the
+    # range is what a caller must respect, not a hint.
+    value_range: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +115,18 @@ class OutputKind:
     # as a toggle between two remembered states.
     toggleable: bool = True
 
+
+# The two halves of an alarm partition, keyed by the leaf sub-function
+# (`AmpioObject.sub_sf_id`). The catalogue row cannot tell them apart: both
+# carry the same `typ_komponentu`, `funkcja` and `interpretacja`, and only
+# the leaf's fourth segment differs. The Designer names the special function
+# after the alarm panel family, and marks both halves read-only. Neither
+# takes a device class: "alarmed" also reads 1 through the panel's exit
+# delay, so it is not a safety indicator on its own (docs/commands.md).
+_ALARM_BY_SUB_SF: dict[int, InputKind] = {
+    3: InputKind("alarm_armed", "Alarm armed"),
+    4: InputKind("alarm_alarmed", "Alarm triggered"),
+}
 
 # lin_wej (analog input) measurement kind, keyed by `interpretacja`.
 # The M-SENS channel map (4=lux, 5=IAQ, 7=CO2).
@@ -160,6 +177,7 @@ class _Selector(Enum):
 
     ANALOG = auto()  # the interpretacja-keyed lin_wej map
     NUMERIC = auto()  # generic value_<interpretacja> measurement (integer slots)
+    ALARM = auto()  # the sub_sf_id-keyed alarm partition halves
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +235,20 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     "flaga": TypeProfile(
         InputKind("flaga", "Flag", None, switchable=True), channel_prefix="f"
     ),
+    # The analog flags, the module's own u8 and signed-i16 variables. Both
+    # answer `setValue` and both wrap silently past their field width, so
+    # the range is a contract rather than a hint.
+    "flaga_liniowa": TypeProfile(
+        InputKind("flaga_liniowa", "Analog flag", value_range=(0, 255)),
+        channel_prefix="afu8",
+    ),
+    "flaga_liniowa16": TypeProfile(
+        InputKind(
+            "flaga_liniowa16", "Analog flag (16-bit)", value_range=(-32768, 32767)
+        ),
+        channel_prefix="afi16",
+    ),
+    "satel_alarm": TypeProfile(_Selector.ALARM),
     # The per-channel physical-input object (a wall button wired to a module
     # terminal). Same 255/0 payload as flags on the per-object topic; the
     # raw mirror rides the digital-input prefix (#117).
@@ -245,6 +277,8 @@ def _kind_keys() -> tuple[
                 sensor.update(kind.key for kind in _LIN_WEJ_BY_INTERP.values())
             case _Selector.NUMERIC:
                 pass  # the open value_<interpretacja> family
+            case _Selector.ALARM:
+                inputs.update(kind.key for kind in _ALARM_BY_SUB_SF.values())
             case InputKind() as kind:
                 inputs.add(kind.key)
             case OutputKind() as kind:
@@ -271,7 +305,11 @@ SENSOR_KIND_KEYS, INPUT_KIND_KEYS, OUTPUT_KIND_KEYS, THERMOSTAT_KIND_KEYS = _kin
 SENSOR_KIND_KEY_PREFIXES: tuple[str, ...] = ("analog_", "value_")
 
 
-def classify(typ_komponentu: str | None, interpretacja: int | None) -> ObjectKind:
+def classify(
+    typ_komponentu: str | None,
+    interpretacja: int | None,
+    sub_sf_id: int | None = None,
+) -> ObjectKind:
     """Classify a DB object into the one kind it is.
 
     ``interpretacja`` selects the lin_wej measurement. A ``typ_komponentu``
@@ -288,6 +326,10 @@ def classify(typ_komponentu: str | None, interpretacja: int | None) -> ObjectKin
             return SensorKind(f"analog_{interpretacja}", "Analog input", None, None)
         case _Selector.NUMERIC:
             return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
+        case _Selector.ALARM:
+            # A half the wire has not shown stays the generic sensor rather
+            # than minting a kind on a sub-function nothing has proven.
+            return _ALARM_BY_SUB_SF.get(sub_sf_id, _GENERIC_SENSOR)
         case kind:
             return kind
 
