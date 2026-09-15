@@ -1213,3 +1213,47 @@ async def test_panel_writes_need_the_admin_tier(
     with pytest.raises(RuntimeError):
         await client.unlock_panel(7)
     assert broker.published == []
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("Laundry done", b"/api/pushNotification/Laundry done"),
+        ("Zazolc gesla jazn", b"/api/pushNotification/Zazolc gesla jazn"),
+        ("100% humidity", b"/api/pushNotification/100% humidity"),
+        ("pct%20encoded", b"/api/pushNotification/pct%20encoded"),
+        ("x" * 300, b"/api/pushNotification/" + b"x" * 300),
+    ],
+)
+async def test_send_notification_passes_the_message_through(
+    connected: tuple[AmpioClient, FakeBroker], message: str, expected: bytes
+) -> None:
+    """The payload is an MQTT string, not an HTTP request line, so the
+    M-SERV delivers a space, a percent sequence and a long message
+    unchanged."""
+    client, broker = connected
+    await client.send_notification(message)
+    assert broker.published == [(API_TOPIC, expected)]
+
+
+async def test_send_notification_carries_utf8(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """Polish diacritics reach the app intact, so the payload is UTF-8."""
+    client, broker = connected
+    await client.send_notification("Zażółć gęślą jaźń")
+    assert broker.published == [
+        (API_TOPIC, "/api/pushNotification/Zażółć gęślą jaźń".encode())
+    ]
+
+
+@pytest.mark.parametrize("message", ["", "Zone 1/2 open", "/leading", "trailing/"])
+async def test_send_notification_rejects_an_ambiguous_message(
+    connected: tuple[AmpioClient, FakeBroker], message: str
+) -> None:
+    """A slash starts the optional user segment, so the M-SERV would drop
+    everything after it. An empty message has nothing to deliver."""
+    client, broker = connected
+    with pytest.raises(AmpioValueError):
+        await client.send_notification(message)
+    assert broker.published == []
