@@ -245,6 +245,15 @@ async def test_set_ww_power_drives_the_power_axis_alone(
     assert broker.published == [(API_TOPIC, b"/api/set/197/setWWPower/35")]
 
 
+async def test_set_ww_coldness_drives_the_temperature_axis_alone(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """`setWWColdness` leaves the power where it stands."""
+    client, broker = connected
+    await client.set_ww_coldness(197, 150)
+    assert broker.published == [(API_TOPIC, b"/api/set/197/setWWColdness/150")]
+
+
 @pytest.mark.parametrize(
     "call",
     [
@@ -254,6 +263,8 @@ async def test_set_ww_power_drives_the_power_axis_alone(
         lambda c: c.set_ww(197, 0, -1),
         lambda c: c.set_ww_power(197, 256),
         lambda c: c.set_ww_power(197, -1),
+        lambda c: c.set_ww_coldness(197, 256),
+        lambda c: c.set_ww_coldness(197, -1),
     ],
 )
 async def test_ww_axes_are_range_checked(

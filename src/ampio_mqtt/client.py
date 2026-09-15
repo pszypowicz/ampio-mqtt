@@ -1882,6 +1882,20 @@ class AmpioClient:
         _check_range("power", power, 0, 255)
         return await self.command(object_id, "setWWPower", power, confirm=confirm)
 
+    async def set_ww_coldness(
+        self, object_id: int, coldness: int, *, confirm: float | None = None
+    ) -> AmpioObject | None:
+        """Set a CCT light's color-temperature axis alone, 0-255.
+
+        The power stays where it stands, so a consumer that changes the
+        temperature never has to read the power back and pack it into
+        :meth:`set_ww`. ``coldness`` is the raw byte the wire carries, not a
+        temperature in kelvin. ``confirm`` awaits the state echo exactly as
+        :meth:`command` documents.
+        """
+        _check_range("coldness", coldness, 0, 255)
+        return await self.command(object_id, "setWWColdness", coldness, confirm=confirm)
+
     async def open(
         self, object_id: int, *, confirm: float | None = None
     ) -> AmpioObject | None:

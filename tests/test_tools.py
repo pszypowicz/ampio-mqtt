@@ -238,6 +238,7 @@ async def test_set_object_rejects_a_color_without_four_channels(
     [
         ("--ww", "200,64", b"/api/set/72/setWW/16584"),
         ("--ww-power", "0", b"/api/set/72/setWWPower/0"),
+        ("--ww-coldness", "150", b"/api/set/72/setWWColdness/150"),
     ],
 )
 async def test_set_object_drives_a_cct_light(

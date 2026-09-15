@@ -12,6 +12,27 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.68.0
+
+A consumer that changed only a CCT light's color temperature had to read the
+current power out of `AmpioObject.cct` and pack it back into `set_ww()`. The
+power can change between that read and the write, and the caller then reasserts
+a stale value. The M-SERV has a verb for the temperature axis alone (#251).
+
+### Added
+
+- `AmpioClient.set_ww_coldness()` writes a CCT light's color-temperature axis
+  alone, the way `set_ww_power()` already writes the power axis. The power byte
+  holds, so the read disappears. `tools/set_object.py` gains the matching
+  `--ww-coldness` flag (#251).
+
+### Documentation
+
+- `docs/commands.md` carries the `setWWColdness` row. The verb answers a
+  standard account, as its two siblings do. A second argument in the `setValue`
+  `time` style is dropped with no effect and no reply, so this axis is safe
+  where `setWWPower` is not.
+
 ## 0.67.0
 
 `AmpioObject.pulse_ms` reported a pulse length for objects that never pulse. The
