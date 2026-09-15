@@ -224,23 +224,21 @@ the gate, and it is also the number the mask needs.
 
 #### The destination is not the reason
 
-A cover on a module that drops the lock took each frame below. `block` stayed at
-0 after every one of them.
+A cover on a module that drops the lock took every combination of these three
+axes, which is twelve frames:
 
-| Sub-function | Destination | Mask width |
-| ------------ | ----------- | ---------- |
-| 10           | `f0 05`     | 1 byte     |
-| 10           | `00`        | 1 byte     |
-| 10           | `f0 05`     | 2 bytes    |
-| 10           | `00`        | 2 bytes    |
-| 9            | `f0 05`     | 1 byte     |
-| 9            | `00`        | 1 byte     |
-| 8            | `f0 05`     | 1 byte     |
+| Axis         | Values sent        |
+| ------------ | ------------------ |
+| Sub-function | 8, 9 and 10        |
+| Destination  | `f0 05` and `00`   |
+| Mask width   | 1 byte and 2 bytes |
 
-The same run sent one lock frame to a cover on a module that advertises a count.
-That cover moved `block` to 2, and the release frame returned it to 0. The
-topic, the envelope and the mask are therefore all correct as this library
-builds them.
+`block` stayed at 0 after each frame, and the matching release frame changed
+nothing either.
+
+A lock frame also went to a cover on a module that advertises a count. That
+cover moved `block` to 2, and the release frame returned it to 0. The topic, the
+envelope and the mask are therefore all correct as this library builds them.
 
 `00` is the destination that the dropping module's own stored rules carry, and
 an ordinary move sub-function on that destination runs its motor. The frame
