@@ -4,12 +4,14 @@ The `devicesDetails` payload returns one row per logical object. The library
 classifies each row into exactly one kind. The kinds are `SensorKind`
 (sensor-side platforms), `InputKind` (binary or boolean platforms), `OutputKind`
 (controllable platforms), and `ThermostatKind` (the `reg` temperature
-controllers, climate platform). `classify(typ_komponentu, interpretacja)` in
+controllers, climate platform).
+`classify(typ_komponentu, interpretacja, sub_sf_id)` in
 `ampio_mqtt.classification` returns it. The lookup input is the object type (the
-wire's `typ_komponentu`) plus `interpretacja` (a refinement for analog inputs
-and the integer slots). A component type is a measurement, a boolean input,
-something controllable, or a thermostat, and never two of these. The four kinds
-are thus alternatives, not optional slots on the object.
+wire's `typ_komponentu`) plus two refinements. `interpretacja` refines the
+analog inputs and the integer slots. `sub_sf_id` refines the alarm halves. A
+component type is a measurement, a boolean input, something controllable, or a
+thermostat, and never two of these. The four kinds are thus alternatives, not
+optional slots on the object.
 
 The tables themselves live in
 [`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py) and
@@ -71,9 +73,12 @@ classifies, as the generic value sensor or the `analog_<n>` fallback.
   classifies on `AmpioObject.sub_sf_id`. Designer marks both halves read-only
   and neither takes a device class, because the alarmed half also reads 1
   through the panel's exit delay and so is not a safety indicator on its own. A
-  sub-function outside those two classifies as the generic value sensor. The
-  `arm` and `disarm` verbs still reach the armed half (see
-  [`commands.md`](commands.md)).
+  sub-function outside those two, and a row with no leaf at all, classify as the
+  base `alarm` kind, which takes no device class either. `leafId` is not
+  durable, because Designer clears it on a Matter uncheck (see
+  [`identity.md`](identity.md)). The family must therefore come from
+  `typ_komponentu` alone, and the leaf must only refine the name. The `arm` and
+  `disarm` verbs still reach the armed half (see [`commands.md`](commands.md)).
 - Ampio's vocabulary also carries `rgb`, `rgbww`, `ac`, `radio`, and `ip_radio`
   - types absent from `TYPE_PROFILES` that classify as the generic value sensor.
 
@@ -154,12 +159,16 @@ vanishes.
 
 ## What classification keys on (and what it ignores)
 
-Classification uses exactly two wire fields:
+Classification uses exactly three wire fields:
 
-- **`typ_komponentu`** - the object type, the primary discriminator.
+- **`typ_komponentu`** - the object type, the primary discriminator. It alone
+  decides the family.
 - **`interpretacja`** - a refinement. For `lin_wej` it selects the measurement,
   or names the `analog_<n>` fallback. For `bit8`, `bit16`, `sbit16`, and `bit32`
   it names the `value_<n>` key.
+- **`sub_sf_id`** - a refinement for `satel_alarm` only. It names the armed half
+  or the alarmed half. It reads None on a row with no leaf, and the object then
+  classifies as the base `alarm` kind.
 
 It does **not** use:
 
