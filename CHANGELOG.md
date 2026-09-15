@@ -12,6 +12,38 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.67.0
+
+`AmpioObject.pulse_ms` reported a pulse length for objects that never pulse. The
+analog flags take a timed `setValue`, set the value and hold it. A consumer that
+honored the field on one of them got a permanent write where it asked for a
+press (#248).
+
+### Changed
+
+- `pulse_ms` now reports the pulse length a timed write honors, and 0 everywhere
+  else. It reads the new `InputKind.pulsable` / `OutputKind.pulsable` flag
+  instead of Designer's editor list. The flag is true for the relay, the flag
+  and the dimmer alone. `flaga_liniowa`, `flaga_liniowa16` and `ledww` now read
+  0, and so do `flaga_l`, `flaga_p`, `rgb` and `rgbww`, which carry no
+  classification row at all. `AmpioObject.czas` still serves the raw Designer
+  column for a caller that wants it (#248).
+- `set_value()` raises for a `pulse_ms` aimed at a kind that discards the time
+  argument, the way it already refuses a switch verb an object does not answer.
+  An object whose type no catalogue has established still passes through (#248).
+
+### Documentation
+
+- `commands.md` corrects the `setValue` row. The analog flags take the value and
+  discard the time. A timed `setValue` on a `ledww` is not dropped. It sets the
+  power and writes 0 into the coldness axis. The `setWWPower` row records that a
+  second argument is accepted and overwrites the coldness axis with 143 or 144,
+  which is unexplained (#248).
+- `visibility.md` separates Designer's ten-type editor list, which `czas`
+  serves, from the three kinds a timed write pulses (#248).
+- `classification.md` documents `pulsable` and carries the corrected `ledww`
+  claim. The plain `setValue` is ignored and the timed form is not (#248).
+
 ## 0.66.0
 
 A consumer can ask whether a cover takes a roller lock before it writes one. The

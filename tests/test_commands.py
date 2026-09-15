@@ -313,6 +313,41 @@ async def test_set_value_on_ledww_is_rejected(
     assert broker.published == []
 
 
+@pytest.mark.parametrize("typ", ["flaga_liniowa", "flaga_liniowa16", "roleta_procenty"])
+async def test_pulse_is_refused_where_nothing_reverts(
+    connected: tuple[AmpioClient, FakeBroker], typ: str
+) -> None:
+    """An analog flag takes the timed `setValue`, sets the value and never
+    reverts, so a caller asking for a pulse would get a permanent write. A
+    cover answers no level verb at all (#248)."""
+    client, broker = connected
+    _learn(client, 198, typ)
+    with pytest.raises(ValueError) as refused:
+        await client.set_value(198, 100, pulse_ms=500)
+    assert "does not pulse" in str(refused.value)
+    assert broker.published == []
+
+
+async def test_pulse_on_an_analog_flag_leaves_the_plain_write_alone(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """Only the time argument is refused. The value still writes."""
+    client, broker = connected
+    _learn(client, 198, "flaga_liniowa")
+    await client.set_value(198, 100)
+    assert broker.published == [(API_TOPIC, b"/api/set/198/setValue/100")]
+
+
+async def test_pulse_on_a_relay_still_writes_the_timed_form(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """A relay reverts after the time argument, so the guard must pass it."""
+    client, broker = connected
+    _learn(client, 199, "przekaznik")
+    await client.set_value(199, 255, pulse_ms=500)
+    assert broker.published == [(API_TOPIC, b"/api/set/199/setValue/255/50")]
+
+
 async def test_switch_verbs_pass_through_when_kind_is_unknown(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:

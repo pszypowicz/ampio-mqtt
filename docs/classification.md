@@ -19,9 +19,11 @@ are not repeated here. `TYPE_PROFILES` is one row per known `typ_komponentu`:
 its kind, its raw-bridge channel prefix, and its system flag.
 `_LIN_WEJ_BY_INTERP` maps a `lin_wej` object's `interpretacja` to its
 measurement. The `OutputKind` flags say which command verbs an output answers,
-and `InputKind.switchable` says the same for an input. A type absent from
-`TYPE_PROFILES` (or an `interpretacja` absent from the analog map) still
-classifies, as the generic value sensor or the `analog_<n>` fallback.
+and `InputKind.switchable` says the same for an input. `pulsable` sits on both
+classes. It says whether a `setValue` time argument reverts the object, and
+`AmpioObject.pulse_ms` gates on it. A type absent from `TYPE_PROFILES` (or an
+`interpretacja` absent from the analog map) still classifies, as the generic
+value sensor or the `analog_<n>` fallback.
 
 ## Wire notes the tables cannot carry
 
@@ -42,7 +44,9 @@ classifies, as the generic value sensor or the `analog_<n>` fallback.
   to 255, and -32768 to 32767. Respect the range. The M-SERV truncates an
   out-of-range write to the field width rather than refusing it, so a 300 on a
   u8 flag lands as 44 with no error. `AmpioClient.set_value` refuses such a
-  value before the wire.
+  value before the wire. Neither flag honors a `setValue` time argument. Both
+  take the timed form, set the value and hold it, so `pulsable` is False and
+  `AmpioClient.set_value` refuses a `pulse_ms` for them.
 - `roleta_lamelki` is what the Ampio app writes when a cover's type is set to
   "blinds - slats". The same cover reads back as `roleta_procenty` while it is
   set to "blinds - percentage". Only the slats variant reports a `lammel` angle
@@ -55,10 +59,12 @@ classifies, as the generic value sensor or the `analog_<n>` fallback.
 - `ledww` is a warm/cold white light, which Designer labels "LEDWW". Its state
   packs two axes into one 16-bit value, `power | coldness<<8`, read as
   `AmpioObject.cct`. It answers `switch` but ignores `turnOn`, `turnOff`, and
-  `setValue`. That is why `switchable` and `toggleable` are two flags: no single
-  flag can say that one verb of the family works. `coldness` is the raw byte the
-  wire carries and not a temperature in kelvin, because a non-DALI object's
-  `min` and `max` columns read 0 and 255. See [`commands.md`](commands.md).
+  the plain `setValue`. That is why `switchable` and `toggleable` are two flags:
+  no single flag can say that one verb of the family works. A timed `setValue`
+  is not ignored. It sets the power, writes 0 into the coldness axis and never
+  reverts, so `pulsable` is False too. `coldness` is the raw byte the wire
+  carries and not a temperature in kelvin, because a non-DALI object's `min` and
+  `max` columns read 0 and 255. See [`commands.md`](commands.md).
 - `bit8`, `bit16`, `sbit16`, and `bit32` are the integer sensor slots an
   M-CON-485 lands a Modbus reading in. Designer names them `bit 8`, `bit 16`,
   `sbit 16[+/-]`, and `bit 32`. All four classify into the open

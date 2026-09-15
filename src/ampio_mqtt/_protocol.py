@@ -85,7 +85,7 @@ class AdminObjectMetadata:
     # `params` bitfield; bit 4 = hidden/stub, bit 37 = matter-exposed.
     params: int
     # `czas` column as served, in 10 ms ticks; `AmpioObject.pulse_ms` reads
-    # it by component type.
+    # it on the kinds a timed write pulses.
     czas: int
     # Designer's "Unit" column, verbatim. `AmpioObject.unit` reads it.
     url: str

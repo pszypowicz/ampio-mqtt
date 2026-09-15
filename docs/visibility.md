@@ -101,20 +101,28 @@ meaning follows the component type. The Designer editor renders the column as
 `flaga_p`, `przekaznik`, `led`, `flaga_liniowa`, `flaga_liniowa16`, `rgb`,
 `rgbww`, and `ledww`. A camera reads the same column as a refresh time in
 milliseconds. No other type gets the field, so a cover never carries a value.
-The library exposes the turn-on time as `AmpioObject.pulse_ms`, in milliseconds,
-on the listed types only. Every other type reads 0, whatever the column holds.
+The column rides `devicesDetails`, and the unfiltered `data/params_devices`
+table supplies it where the app-sync catalogue omits it.
 
-The M-SERV never applies the value server-side: a plain `turnOn` or `setValue`
-latches the object even when `czas` is set. Only an explicit time argument
-pulses, and that argument is authoritative - `czas` neither stretches nor caps
-it. With `czas` = 500 (5 s), a time argument of 100 runs 990 ms and an argument
-of 1000 runs 10011 ms. The timed form works on every switchable output type
-(relay, flag, dimmer), independent of the bell marker. The field is therefore
-the app's default pulse length. The app reads it and sends the timed command
-itself. A consumer honors it by passing the value to
-`AmpioClient.set_value(pulse_ms=...)`. The column rides `devicesDetails`, and
-the unfiltered `data/params_devices` table supplies it where the app-sync
-catalogue omits it.
+That editor list is a catalogue fact. It is wider than the set of types that a
+timed write pulses. The M-SERV never applies the value server-side: a plain
+`turnOn` or `setValue` latches the object even when `czas` is set. Only an
+explicit time argument pulses, and that argument is authoritative - `czas`
+neither stretches nor caps it. With `czas` = 500 (5 s), a time argument of 100
+runs 990 ms and an argument of 1000 runs 10011 ms. The revert reaches a relay, a
+flag and a dimmer, independent of the bell marker. It does not reach the analog
+flags. A `flaga_liniowa` and a `flaga_liniowa16` take the timed form, set the
+value and hold it. A `ledww` holds the same way, and the timed form also zeroes
+its color temperature (see [`commands.md`](commands.md)).
+
+`AmpioObject.pulse_ms` therefore reports the pulse length a timed write honors,
+in milliseconds. It reads `czas` on the three kinds that revert, and 0
+everywhere else. Four of the ten editor types (`flaga_l`, `flaga_p`, `rgb` and
+`rgbww`) carry no classification row, so they read 0 with no claim about their
+wire behavior. The field is the app's default pulse length. The app reads it and
+sends the timed command itself. A consumer honors it by passing the value to
+`AmpioClient.set_value(pulse_ms=...)`, which raises for a kind that discards the
+time. Read `AmpioObject.czas` for the raw column on any type.
 
 The M-SERV ships its own Matter bridge (a matter.js app launched by
 `ampio-server`). That bridge's production gate corroborates the enum: it exposes

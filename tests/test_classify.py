@@ -145,6 +145,23 @@ def test_input_switchability(typ: str, switchable: bool) -> None:
     assert kind.switchable is switchable
 
 
+@pytest.mark.parametrize(
+    ("typ", "pulsable"),
+    [
+        ("flaga", True),
+        ("flaga_liniowa", False),
+        ("flaga_liniowa16", False),
+        ("wej", False),
+    ],
+)
+def test_input_pulsability(typ: str, pulsable: bool) -> None:
+    """A `setValue` time argument reverts a plain `flaga`. Both analog
+    flags take the timed form, set the value and latch."""
+    kind = _input(typ, 1)
+    assert kind is not None
+    assert kind.pulsable is pulsable
+
+
 def _output(typ, interp=1):
     kind = classify(typ, interp)
     return kind if isinstance(kind, OutputKind) else None
@@ -199,6 +216,26 @@ def test_output_switch_verb_families(
     out = _output(typ)
     assert out is not None
     assert (out.switchable, out.toggleable) == (switchable, toggleable)
+
+
+@pytest.mark.parametrize(
+    ("typ", "pulsable"),
+    [
+        ("przekaznik", True),
+        ("led", True),
+        # `rgbw` and the covers answer no `setValue` at all. A `ledww`
+        # answers the timed form, and it zeroes the coldness rather than
+        # reverting.
+        ("rgbw", False),
+        ("ledww", False),
+        ("roleta_procenty", False),
+    ],
+)
+def test_output_pulsability(typ: str, pulsable: bool) -> None:
+    """`pulsable` names the outputs a `setValue` time argument reverts."""
+    out = _output(typ)
+    assert out is not None
+    assert out.pulsable is pulsable
 
 
 @pytest.mark.parametrize(
