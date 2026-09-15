@@ -404,6 +404,15 @@ class AmpioObject:
     # `blocks_opening` read the bits. docs/commands.md holds the Designer
     # actions that set them.
     block: int | None = None
+    # Whether a lock write for this cover reaches its module, read from the
+    # module's capability map during a sweep. True when the module answered
+    # and advertises a roller channel count covering this channel, False when
+    # it answered and does not, None until a sweep covers it - so a consumer
+    # that builds controls before `resolve_records()` must not read None as
+    # False. The count both gates the write and sizes its channel mask.
+    # Admin sweep only, and None on anything that is not a cover.
+    # docs/panel-writes.md carries what the wire answered.
+    block_writable: bool | None = None
     # Climate readback, from the rich state shape only `reg` objects push.
     # None until a reg-shaped report arrives; a later report that lacks the
     # shape keeps the last readback, like `lammel` does.

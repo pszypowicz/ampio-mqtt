@@ -54,6 +54,7 @@ from ._protocol import (
     raw_write_topic,
     request_topic,
     response_topic,
+    roller_lock_channels,
     scene_payload,
 )
 from ._store import AmpioStore
@@ -1120,6 +1121,9 @@ class AmpioClient:
                 self._store.colliding_macs,
                 mac_by_device_id,
             ),
+            _protocol.resolve_roller_lock_support(
+                self._store.objects, capabilities, mac_by_device_id
+            ),
         )
         module_applied = self._store.apply_module_sweep(
             _protocol.resolve_module_records(by_mac, names, self._store.colliding_macs),
@@ -1941,6 +1945,10 @@ class AmpioClient:
         the ordinary roller moves on the same destination and discards a
         lock frame in silence (docs/panel-writes.md, "Cover roller lock").
         Raising beats publishing a frame that vanishes.
+
+        :pyattr:`AmpioObject.block_writable` answers the same question
+        without raising, from the same rule, so a consumer can leave the
+        control out instead of catching this.
         """
         if self._tier is not AccessTier.ADMIN:
             raise RuntimeError(
@@ -1956,22 +1964,20 @@ class AmpioClient:
                 f"object {object_id} carries no leaf, so no module channel addresses it"
             )
         module = self.module_for(obj)
-        channels = (
-            module.capabilities.get(ModuleFunction.ROLLER)
-            if module is not None
-            else None
-        )
+        capabilities = module.capabilities if module is not None else {}
+        channels = roller_lock_channels(capabilities, channel)
         if channels is None:
-            raise AmpioValueError(
-                f"the module behind object {object_id} advertises no roller "
-                "channel count, so it does not implement the lock - call "
-                "resolve_records() first if no sweep has run, because that is "
-                "what fills the capability map"
-            )
-        if channel >= channels:
+            advertised = capabilities.get(ModuleFunction.ROLLER)
+            if advertised is None:
+                raise AmpioValueError(
+                    f"the module behind object {object_id} advertises no roller "
+                    "channel count, so it does not implement the lock - call "
+                    "resolve_records() first if no sweep has run, because that is "
+                    "what fills the capability map"
+                )
             raise AmpioValueError(
                 f"object {object_id} sits on roller channel {channel}, past "
-                f"the {channels} its module advertises"
+                f"the {advertised} its module advertises"
             )
         return mac, channel, channels
 
