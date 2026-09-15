@@ -12,7 +12,11 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## Unreleased
+## 0.66.0
+
+A consumer can ask whether a cover takes a roller lock before it writes one. The
+write raises on the module generation that drops the lock, and a caller had no
+way to tell in advance (#247).
 
 ### Added
 
