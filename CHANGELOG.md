@@ -21,7 +21,7 @@ as an untyped value sensor (#245).
 ### Changed
 
 - A `satel_alarm` object with no proven leaf sub-function classifies as the new
-  base `alarm` input kind, not the generic value sensor. `leafId` is not
+  base `alarm` input kind instead of the generic value sensor. `leafId` is not
   durable, because Designer clears it on any object whose Matter box is
   unchecked. One edit with no relation to the alarm therefore moved a boolean
   input to an untyped value, and a consumer that picks its platform from
