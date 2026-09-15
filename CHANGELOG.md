@@ -12,6 +12,27 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Added
+
+- `AmpioObject.block_writable` says whether a lock write reaches one cover's
+  module. `True` and `False` are both answers from the sweep, and `None` means
+  that no sweep covered the module yet. A consumer that builds a lock control
+  reads the field instead of calling and catching `AmpioValueError`, and it must
+  not read `None` as `False`. The field and the four lock methods share one
+  rule, so they cannot disagree (#247).
+
+### Documentation
+
+- `docs/panel-writes.md` records why a module that advertises no roller channel
+  count drops the lock. Every combination of the three lock sub-functions, the
+  two destination forms and the two mask widths leaves `block` unchanged on such
+  a module, while an ordinary move sub-function on the same destination runs its
+  motor. The destination is not the reason, and the lock sub-functions are
+  absent from that firmware (#247).
+- `docs/commands.md` and `docs/account-tiers.md` name the new field.
+
 ## 0.65.0
 
 A `satel_alarm` object keeps its family through a Designer edit that clears the

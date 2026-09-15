@@ -100,6 +100,9 @@ class AmpioStore:
         # for the same reason as the record table: the catalogue never
         # carries the params blob either.
         self._cover_parameters_by_id: dict[int, CoverParameters] = {}
+        # `{object_id: bool}` accumulated across sweeps, on the same terms.
+        # False is an answer, so absence is the only unresolved state.
+        self._lock_support_by_id: dict[int, bool] = {}
         # `{mac: ModuleRecord}` accumulated across sweeps, kept for the
         # same reason on the module side; an empty bundle is an
         # authoritative "answered, unassigned".
@@ -182,24 +185,27 @@ class AmpioStore:
         self,
         resolved: Mapping[int, DesignerRecord],
         cover_parameters: Mapping[int, CoverParameters],
+        lock_support: Mapping[int, bool],
     ) -> Applied:
         """Hold one sweep's per-object facts and fold them into known objects.
 
         A joined object's ``record`` is replaced wholesale - the entry is
-        what its module answered, None fields included. Both maps come
-        from one ``device_api`` reply, so an object changed by either
-        reports one event. Objects a sweep did not join keep what they
-        had, and the held tables accumulate across sweeps so a catalogue
-        re-seed re-folds everything this session learned. A row that left
-        the roller class is the exception: the merge drops its cover
-        parameters, a fact only a roller kind carries.
+        what its module answered, None fields included. All three maps
+        come from one ``device_api`` reply, so an object changed by any of
+        them reports one event. Objects a sweep did not join keep what
+        they had, and the held tables accumulate across sweeps so a
+        catalogue re-seed re-folds everything this session learned. A row
+        that left the roller class is the exception: the merge drops its
+        cover parameters and its lock support, facts only a roller kind
+        carries.
         """
         applied = Applied()
         self._record_by_id.update(resolved)
         self._cover_parameters_by_id.update(cover_parameters)
+        self._lock_support_by_id.update(lock_support)
         # Insertion order, so the event order follows the maps rather than
         # a set's hash order.
-        for oid in dict.fromkeys((*resolved, *cover_parameters)):
+        for oid in dict.fromkeys((*resolved, *cover_parameters, *lock_support)):
             obj = self.objects.get(oid)
             if obj is None:
                 continue
@@ -211,6 +217,8 @@ class AmpioStore:
                 and updated.cover_parameters != cover_parameters[oid]
             ):
                 updated = replace(updated, cover_parameters=cover_parameters[oid])
+            if oid in lock_support and updated.block_writable != lock_support[oid]:
+                updated = replace(updated, block_writable=lock_support[oid])
             if updated is not obj:
                 self.objects[oid] = updated
                 self._record(updated, applied)
@@ -432,17 +440,22 @@ class AmpioStore:
         record = self._record_by_id.get(meta.id)
         if record is not None:
             updates["record"] = record
-        # A travel configuration belongs to a roller kind alone. A row that
-        # left the class clears the field and drops the held entry, so a
-        # later return to the class waits for a sweep of its own instead of
-        # folding back what the object no longer is.
+        # A travel configuration and a lock answer belong to a roller kind
+        # alone. A row that left the class clears both fields and drops both
+        # held entries, so a later return to the class waits for a sweep of
+        # its own instead of folding back what the object no longer is.
         if _protocol.joins_roller_records(meta.typ_komponentu):
             parameters = self._cover_parameters_by_id.get(meta.id)
             if parameters is not None:
                 updates["cover_parameters"] = parameters
+            writable = self._lock_support_by_id.get(meta.id)
+            if writable is not None:
+                updates["block_writable"] = writable
         else:
             self._cover_parameters_by_id.pop(meta.id, None)
             updates["cover_parameters"] = None
+            self._lock_support_by_id.pop(meta.id, None)
+            updates["block_writable"] = None
         changed = any(getattr(obj, name) != value for name, value in updates.items())
         updated = replace(obj, **updates)
         # The states snapshot is the one seed source on both tiers, so a

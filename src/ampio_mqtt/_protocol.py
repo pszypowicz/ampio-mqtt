@@ -925,6 +925,37 @@ def resolve_module_capabilities(
     }
 
 
+def resolve_roller_lock_support(
+    objects: Mapping[int, AmpioObject],
+    capabilities_by_mac: Mapping[int, Mapping[int, int]],
+    mac_by_device_id: Mapping[int, int],
+) -> dict[int, bool]:
+    """Whether each cover's module takes a roller lock write, by object id.
+
+    ``capabilities_by_mac`` is the resolved map, so a mac in it answered
+    the sweep and a colliding mac is already gone. An object is therefore
+    absent when no answer is known, and present and False when the module
+    answered and cannot hold a lock on that channel. A row outside the
+    roller class is absent as well.
+
+    The channel key matches ``resolve_designer``: ``leaf_io_no`` for a
+    leafed object, ``funkcja`` minus one for a leafless one.
+    """
+    out: dict[int, bool] = {}
+    for obj in objects.values():
+        if not joins_roller_records(obj.typ_komponentu):
+            continue
+        joined = _object_channel(obj, mac_by_device_id)
+        if joined is None:
+            continue
+        mac, channel = joined
+        capabilities = capabilities_by_mac.get(mac)
+        if capabilities is None:
+            continue
+        out[obj.id] = roller_lock_channels(capabilities, channel) is not None
+    return out
+
+
 def resolve_module_records(
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
     location_names: Mapping[int, str],
@@ -1548,16 +1579,32 @@ def raw_status_light_payload(red: int, green: int, blue: int, mask: str) -> str:
 # once and needs no wrapper, because two calls say the same thing.
 ROLLER_BLOCK_CLOSING = 9
 ROLLER_BLOCK_OPENING = 10
-# The roller action's destination. The module's own action table decides
-# it, and no module that answers the lock lists a roller entry, so every
-# one falls through to the special function's default. 261 is above one
-# byte, so the frame carries the escape form.
+# The roller action's destination. A module whose own action table lists
+# a roller entry takes the destination from there. Every module measured
+# so far carries no such entry and falls through to the special
+# function's default, 261, which is above one byte and so travels in the
+# escape form. docs/panel-writes.md records what the wire answered.
 _ROLLER_ACTION_DST = 261
 # The time function of the roller action, the one the lock rides.
 _ROLLER_ACTION_FUNC = 0
 # The delay and time fields the time function ends with. Designer hides
 # both inputs for the lock sub-functions, so a lock never expires.
 _ROLLER_LOCK_UNUSED_TAIL = "00000000"
+
+
+def roller_lock_channels(capabilities: Mapping[int, int], channel: int) -> int | None:
+    """The roller channel count a lock frame for ``channel`` can use.
+
+    None when that module cannot hold a lock on that channel. The count
+    is both the gate and the mask width, so one answer settles both: a
+    module that advertises none drops every lock sub-function, and a
+    frame for it could not be sized anyway. docs/panel-writes.md carries
+    the measurement behind the gate.
+    """
+    channels = capabilities.get(ModuleFunction.ROLLER)
+    if channels is None or not 0 <= channel < channels:
+        return None
+    return channels
 
 
 def raw_roller_lock_payload(
