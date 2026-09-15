@@ -185,3 +185,52 @@ wall-mounted panel gives no visible sign of identify.
 No readback exists. The module confirms nothing on any topic, so `identify()`
 and `identify_stop()` take no `confirm=`. Both publish on the admin tier,
 addressed by `AmpioModule.id`, and any catalogued module is a valid address.
+
+## Cover roller lock
+
+The roller lock is the only write on this tree that addresses a cover channel
+rather than a module. `AmpioObject.block` reads it back.
+
+```
+ampio/to/<machex>/raw   0c07 <state> f0 05 <sub> <mask> 00 00 00 00
+```
+
+`state` is `03` to set the lock and `00` to release it. `f0 05` is the escape
+form of the roller action's destination, which is 261. `sub` is `0a` to gate
+opening and `09` to gate closing. `mask` is one bit per roller channel, lowest
+channel first, and the mask is as many bytes as the channel count needs. The
+last four bytes are the delay and the time the roller time function ends with.
+Designer hides both inputs for these sub-functions, so a lock set this way never
+expires.
+
+The bits are additive and each release clears its own bit alone. A cover locked
+in both directions reads `block` 3, and releasing the opening bit leaves it at
+
+1.
+
+### Only one module generation implements it
+
+A module states its roller channel count in its capability map. That count sizes
+the mask, and it also decides whether the write works at all.
+
+| Module reports          | Ordinary roller moves | Roller lock |
+| ----------------------- | --------------------- | ----------- |
+| A roller channel count  | Runs                  | Runs        |
+| No roller channel count | Runs                  | Dropped     |
+
+The second row is a real module generation, not a fault. Those modules take the
+same envelope, the same destination and the same mask for an ordinary move, and
+they discard the three lock sub-functions in silence. So the capability count is
+the gate, and it is also the number the mask needs.
+
+`block_opening()`, `unblock_opening()`, `block_closing()` and
+`unblock_closing()` raise `AmpioValueError` for a module that advertises no
+count, rather than publish a frame that vanishes. All four need
+`resolve_records()` to have run, because that is what fills the capability map.
+
+### A stored rule beats a runtime write
+
+A module re-applies a saved condition's action state on every evaluation. A rule
+whose action gates a direction, and whose trigger is false, clears a lock
+written this way within a few seconds. Read `block` back twice before you trust
+it, because the read straight after the frame always agrees with the frame.

@@ -1257,3 +1257,134 @@ async def test_send_notification_rejects_an_ambiguous_message(
     with pytest.raises(AmpioValueError):
         await client.send_notification(message)
     assert broker.published == []
+
+
+# --- the cover roller lock (#208) -------------------------------------------
+
+ROLLER_RAW_TOPIC = "ampio/to/be82/raw"
+
+
+async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
+    """Admin client holding two covers on a module that advertises four
+    roller channels, and one on a module that advertises none."""
+    broker = FakeBroker()
+    client = AmpioClient(
+        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
+    )
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    feed(
+        client,
+        ADMIN_DEVICES_TOPIC,
+        devices(
+            {"id": 3, "mac": 0xBE82, "typ_urzadzenia": 4, "nazwa_urzadzenia": "new"},
+            {"id": 15, "mac": 0xCB86, "typ_urzadzenia": 3, "nazwa_urzadzenia": "old"},
+        ),
+    )
+    feed(
+        client,
+        ADMIN_DETAILS_TOPIC,
+        details(
+            {
+                "id": 193,
+                "id_urzadzenia": 3,
+                "typ_komponentu": "roleta_procenty",
+                "interpretacja": 1,
+                "funkcja": 1,
+                "leafId": "0_be82_5_0_0",
+                "opis_menu": "First",
+            },
+            {
+                "id": 194,
+                "id_urzadzenia": 3,
+                "typ_komponentu": "roleta_lamelki",
+                "interpretacja": 2,
+                "funkcja": 2,
+                "leafId": "0_be82_5_0_1",
+                "opis_menu": "Second",
+            },
+            {
+                "id": 48,
+                "id_urzadzenia": 15,
+                "typ_komponentu": "roleta_procenty",
+                "interpretacja": 2,
+                "funkcja": 2,
+                "leafId": "0_cb86_5_0_1",
+                "opis_menu": "Old",
+            },
+        ),
+    )
+    # The newer module advertises its four roller channels; the older one
+    # advertises none, which is what tells the two generations apart.
+    client._store.apply_module_sweep({}, {0xBE82: {ModuleFunction.ROLLER: 4}}, {})
+    broker.published.clear()
+    broker.published_qos.clear()
+    return client, broker
+
+
+@pytest.mark.parametrize(
+    ("call", "expected"),
+    [
+        (lambda c: c.block_opening(193), b"0c0703f0050a0100000000"),
+        (lambda c: c.block_closing(193), b"0c0703f005090100000000"),
+        (lambda c: c.unblock_opening(193), b"0c0700f0050a0100000000"),
+        (lambda c: c.unblock_closing(193), b"0c0700f005090100000000"),
+        # The mask is one bit per channel, lowest channel first.
+        (lambda c: c.block_opening(194), b"0c0703f0050a0200000000"),
+    ],
+)
+async def test_roller_lock_frames(call, expected: bytes) -> None:
+    """Each frame is the one the wire answered, byte for byte."""
+    client, broker = await _admin_with_covers()
+    try:
+        await call(client)
+        assert broker.published == [(ROLLER_RAW_TOPIC, expected)]
+    finally:
+        await client.disconnect()
+
+
+async def test_roller_lock_refuses_a_module_without_a_roller_count() -> None:
+    """That module generation takes the ordinary roller moves on the same
+    destination and discards a lock frame in silence, so a raise beats a
+    publish that vanishes."""
+    client, broker = await _admin_with_covers()
+    try:
+        with pytest.raises(AmpioValueError, match="roller channel count"):
+            await client.block_opening(48)
+        assert broker.published == []
+    finally:
+        await client.disconnect()
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda c: c.block_opening(4242),
+        lambda c: c.unblock_opening(4242),
+        lambda c: c.block_closing(4242),
+        lambda c: c.unblock_closing(4242),
+    ],
+)
+async def test_roller_lock_refuses_an_unknown_object(call) -> None:
+    client, broker = await _admin_with_covers()
+    try:
+        with pytest.raises(AmpioValueError):
+            await call(client)
+        assert broker.published == []
+    finally:
+        await client.disconnect()
+
+
+async def test_roller_lock_needs_the_admin_tier(
+    connected: tuple[AmpioClient, FakeBroker],
+) -> None:
+    """The lock rides the CAN write tree, admin only."""
+    client, broker = connected
+    for call in (
+        client.block_opening,
+        client.unblock_opening,
+        client.block_closing,
+        client.unblock_closing,
+    ):
+        with pytest.raises(RuntimeError):
+            await call(193)
+    assert broker.published == []

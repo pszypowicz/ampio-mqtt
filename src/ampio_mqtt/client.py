@@ -34,6 +34,8 @@ from ._protocol import (
     RAW_INPUT_WILDCARDS,
     RAW_OUTPUT_FUNCTION_BY_SF,
     RAW_OUTPUT_WILDCARD,
+    ROLLER_BLOCK_CLOSING,
+    ROLLER_BLOCK_OPENING,
     Endpoint,
     account_free_topic,
     command_payload,
@@ -47,6 +49,7 @@ from ._protocol import (
     raw_buzzer_payload,
     raw_key_lock_payload,
     raw_output_payload,
+    raw_roller_lock_payload,
     raw_status_light_payload,
     raw_write_topic,
     request_topic,
@@ -76,6 +79,7 @@ from .models import (
     AmpioScene,
     AmpioServerInfo,
     ConnectionStats,
+    ModuleFunction,
     RecordSweep,
 )
 
@@ -1907,6 +1911,97 @@ class AmpioClient:
         return await self.command(
             object_id, "setRollerPos", KEEP_POSITION, lamella, confirm=confirm
         )
+
+    def _roller_lock_address(self, object_id: int) -> tuple[int, int, int]:
+        """The (mac, channel, roller channel count) a lock frame needs.
+
+        The count comes from the module's own capability map, and it is
+        the gate as well as the mask width. A module that advertises no
+        roller count does not implement the lock sub-functions: it takes
+        the ordinary roller moves on the same destination and discards a
+        lock frame in silence (docs/panel-writes.md, "Cover roller lock").
+        Raising beats publishing a frame that vanishes.
+        """
+        if self._tier is not AccessTier.ADMIN:
+            raise RuntimeError(
+                "the roller lock rides the CAN write tree, which answers "
+                "the reserved admin login only"
+            )
+        obj = self._store.objects.get(object_id)
+        if obj is None:
+            raise AmpioValueError(f"object {object_id} is not in the catalogue")
+        mac, channel = obj.module_mac, obj.leaf_io_no
+        if mac is None or channel is None:
+            raise AmpioValueError(
+                f"object {object_id} carries no leaf, so no module channel addresses it"
+            )
+        module = self.module_for(obj)
+        channels = (
+            module.capabilities.get(ModuleFunction.ROLLER)
+            if module is not None
+            else None
+        )
+        if channels is None:
+            raise AmpioValueError(
+                f"the module behind object {object_id} advertises no roller "
+                "channel count, so it does not implement the lock - call "
+                "resolve_records() first if no sweep has run, because that is "
+                "what fills the capability map"
+            )
+        if channel >= channels:
+            raise AmpioValueError(
+                f"object {object_id} sits on roller channel {channel}, past "
+                f"the {channels} its module advertises"
+            )
+        return mac, channel, channels
+
+    async def _roller_lock(
+        self, object_id: int, sub_function: int, *, assert_lock: bool
+    ) -> None:
+        """Publish one roller lock frame for an object's own channel."""
+        mac, channel, channels = self._roller_lock_address(object_id)
+        await self._connection.publish(
+            raw_write_topic(mac),
+            raw_roller_lock_payload(
+                sub_function, channel, channels, assert_lock=assert_lock
+            ).encode(),
+        )
+
+    async def block_opening(self, object_id: int) -> None:
+        """Stop a cover from opening until something releases it.
+
+        The module then drops every opening command for that cover, the
+        `/api` verbs included, with no error and no reply. A slat turn
+        toward open counts as opening and is dropped on the same bit.
+        The closing direction keeps working.
+
+        The lock never expires. A consumer that sets one owns releasing
+        it. :pyattr:`AmpioObject.blocks_opening` reads it back.
+
+        Needs :meth:`resolve_records` to have run, because the module's
+        roller channel count both gates the write and sizes the frame's
+        channel mask. Raises ``AmpioValueError`` when the module
+        advertises no such count: that module generation takes the
+        ordinary roller moves on the same destination and discards a lock
+        frame in silence, so a raise beats a publish that vanishes.
+        """
+        await self._roller_lock(object_id, ROLLER_BLOCK_OPENING, assert_lock=True)
+
+    async def unblock_opening(self, object_id: int) -> None:
+        """Let a cover open again, leaving any closing lock in place."""
+        await self._roller_lock(object_id, ROLLER_BLOCK_OPENING, assert_lock=False)
+
+    async def block_closing(self, object_id: int) -> None:
+        """Stop a cover from closing until something releases it.
+
+        The opening direction keeps working. Everything :meth:`block_opening`
+        documents applies to this direction.
+        """
+        await self._roller_lock(object_id, ROLLER_BLOCK_CLOSING, assert_lock=True)
+
+    async def unblock_closing(self, object_id: int) -> None:
+        """Let a cover close again, leaving any opening lock in place."""
+        await self._roller_lock(object_id, ROLLER_BLOCK_CLOSING, assert_lock=False)
 
     async def _publish(self, ep: Endpoint) -> None:
         """Publish an endpoint's request keyword to its control topic."""
