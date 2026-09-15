@@ -233,6 +233,35 @@ async def test_set_object_rejects_a_color_without_four_channels(
         await set_object.send(AmpioClient("h", username=USER), a)
 
 
+@pytest.mark.parametrize(
+    ("flag", "value", "expected"),
+    [
+        ("--ww", "200,64", b"/api/set/72/setWW/16584"),
+        ("--ww-power", "0", b"/api/set/72/setWWPower/0"),
+    ],
+)
+async def test_set_object_drives_a_cct_light(
+    monkeypatch: pytest.MonkeyPatch, flag: str, value: str, expected: bytes
+) -> None:
+    """The two axes travel packed, so the flag takes them apart and the
+    client packs them - the caller never writes `power | coldness<<8`."""
+    broker = FakeBroker()
+    broker.scripted_messages = _discovery()
+    a = _parse(
+        monkeypatch, set_object, "--object-id", "72", flag, value, "--watch", "0.01"
+    )
+    assert await set_object.run(a, client_factory=broker.factory) == 0
+    assert (API_TOPIC, expected) in broker.published
+
+
+async def test_set_object_rejects_a_ww_without_both_axes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    a = _parse(monkeypatch, set_object, "--object-id", "72", "--ww", "200")
+    with pytest.raises(SystemExit):
+        await set_object.send(AmpioClient("h", username=USER), a)
+
+
 # --- smoke_test.py ----------------------------------------------------------
 
 

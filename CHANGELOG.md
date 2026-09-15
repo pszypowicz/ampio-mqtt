@@ -12,6 +12,43 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Added
+
+- `AmpioClient.send_notification()` pushes a message to the install's mobile
+  app. Both account tiers can send it, and the M-SERV answers on no topic, so
+  the call reports the publish and never delivery. The message needs no
+  escaping: a space, a UTF-8 character and a literal `%20` all arrive unchanged.
+  A message containing `/` raises `AmpioValueError`, because the M-SERV reads a
+  second path segment as a user name and drops the rest (#241).
+
+### Changed
+
+- A table reply is decoded once. The retained diagnostics summary, the fetch
+  parser and the store handler now read one decoded envelope instead of each
+  running `json.loads` over the same bytes. The largest replies run to megabytes
+  and the work happens on the event loop, so the second pass cost a consumer on
+  every connect, every reconnect and every digest refresh (#235).
+
+### Documentation
+
+- `docs/account-tiers.md` states that a standard account receives its own
+  `ampio/fromDB/<user>/` namespace and nothing else. Any surface outside that
+  namespace is unreachable from the tier a Home Assistant install runs.
+- `docs/untapped-surfaces.md` names the server event log feed and its shape, and
+  records that the M-SERV display lines cannot be verified without a panel that
+  carries a display.
+
+### Tools
+
+- `tools/set_object.py` gains `--ww POWER,COLDNESS` and `--ww-power`, so
+  reaching a color-temperature light no longer means packing the two axes by
+  hand (#240).
+- `tools/dump.py --outfile` writes and flushes per message. A capture in
+  progress can be read from another shell, and an interrupted run keeps
+  everything it saw.
+
 ## 0.61.0
 
 A `ledww` light is a supported output. Its state packs a power axis and a color
