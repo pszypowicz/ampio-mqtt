@@ -1342,6 +1342,31 @@ async def test_roller_lock_frames(call, expected: bytes) -> None:
         await client.disconnect()
 
 
+async def test_roller_lock_mask_is_as_wide_as_the_channel_count_needs() -> None:
+    """A module with one roller channel takes a one-byte mask, the same
+    width as a four-channel module: both round up to one byte."""
+    client, broker = await _admin_with_covers()
+    try:
+        client._store.apply_module_sweep({}, {0xBE82: {ModuleFunction.ROLLER: 1}}, {})
+        await client.block_opening(193)
+        assert broker.published == [(ROLLER_RAW_TOPIC, b"0c0703f0050a0100000000")]
+    finally:
+        await client.disconnect()
+
+
+async def test_roller_lock_refuses_a_channel_past_the_advertised_count() -> None:
+    """A single-channel module cannot address a second channel, so the
+    mask would silently land on a channel that does not exist."""
+    client, broker = await _admin_with_covers()
+    try:
+        client._store.apply_module_sweep({}, {0xBE82: {ModuleFunction.ROLLER: 1}}, {})
+        with pytest.raises(AmpioValueError, match="past the 1"):
+            await client.block_opening(194)
+        assert broker.published == []
+    finally:
+        await client.disconnect()
+
+
 async def test_roller_lock_refuses_a_module_without_a_roller_count() -> None:
     """That module generation takes the ordinary roller moves on the same
     destination and discards a lock frame in silence, so a raise beats a
