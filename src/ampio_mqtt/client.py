@@ -57,7 +57,7 @@ from ._protocol import (
     scene_payload,
 )
 from ._store import AmpioStore
-from .classification import OutputKind
+from .classification import InputKind, OutputKind
 from .errors import (
     AmpioConnectionError,
     AmpioProtocolError,
@@ -1665,6 +1665,20 @@ class AmpioClient:
         kind = obj.kind if obj is not None else None
         return kind if isinstance(kind, OutputKind) else None
 
+    def _value_range(self, object_id: int) -> tuple[int, int]:
+        """The inclusive range `setValue` holds for one object.
+
+        An analog flag carries its own width, and the signed 16-bit one
+        reaches below zero, so the 0-255 default would reject legal
+        values. The M-SERV truncates an out-of-range write to the field
+        width rather than refusing it, which is why the check is here.
+        """
+        obj = self._store.objects.get(object_id)
+        kind = obj.kind if obj is not None else None
+        if isinstance(kind, InputKind) and kind.value_range is not None:
+            return kind.value_range
+        return 0, 255
+
     def _check_switchable(self, object_id: int, verb: str) -> None:
         """Reject a switch-family verb for an output known not to answer it -
         the M-SERV would drop it with no effect and no reply. `switch` is
@@ -1689,7 +1703,13 @@ class AmpioClient:
         pulse_ms: int | None = None,
         confirm: float | None = None,
     ) -> AmpioObject | None:
-        """Set an object's 0-255 level (relay, flag, dimmer).
+        """Set an object's level (relay, flag, dimmer).
+
+        The range is 0-255 for everything but the analog flags, which
+        carry their own width: a `flaga_liniowa16` reaches -32768 to
+        32767. :pyattr:`InputKind.value_range` states it, and a value
+        past it raises rather than reaching the M-SERV, which truncates
+        to the field width instead of refusing.
 
         With ``pulse_ms`` the M-SERV reverts the object to its previous state
         after that many milliseconds - a timed pulse, not a fade. The wire unit
@@ -1708,7 +1728,7 @@ class AmpioClient:
         whose power axis moves through :meth:`set_ww_power` alone. The
         M-SERV drops the verb for both with no effect and no reply.
         """
-        _check_range("value", value, 0, 255)
+        _check_range("value", value, *self._value_range(object_id))
         kind = self._output_kind(object_id)
         if kind is not None and (kind.color or kind.color_temp):
             replacement = "set_ww_power()" if kind.color_temp else "set_colors()"

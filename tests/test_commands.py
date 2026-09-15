@@ -1413,3 +1413,80 @@ async def test_roller_lock_needs_the_admin_tier(
         with pytest.raises(RuntimeError):
             await call(193)
     assert broker.published == []
+
+
+ADMIN_API_TOPIC = f"ampio/control/{ADMIN_USER}/api"
+
+
+async def _admin_with_flags() -> tuple[AmpioClient, FakeBroker]:
+    """Admin client holding the u8 and the signed i16 analog flags."""
+    broker = FakeBroker()
+    client = AmpioClient(
+        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
+    )
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    feed(
+        client,
+        ADMIN_DETAILS_TOPIC,
+        details(
+            {
+                "id": 199,
+                "typ_komponentu": "flaga_liniowa",
+                "interpretacja": 1,
+                "funkcja": 1,
+                "leafId": "0_1_4_0_0",
+                "opis_menu": "u8",
+            },
+            {
+                "id": 200,
+                "typ_komponentu": "flaga_liniowa16",
+                "interpretacja": 1,
+                "funkcja": 1,
+                "leafId": "0_1_18_0_0",
+                "opis_menu": "i16",
+            },
+        ),
+    )
+    broker.published.clear()
+    return client, broker
+
+
+@pytest.mark.parametrize(
+    ("oid", "value", "expected"),
+    [
+        (199, 0, b"/api/set/199/setValue/0"),
+        (199, 255, b"/api/set/199/setValue/255"),
+        (200, -32768, b"/api/set/200/setValue/-32768"),
+        (200, -1, b"/api/set/200/setValue/-1"),
+        (200, 32767, b"/api/set/200/setValue/32767"),
+    ],
+)
+async def test_set_value_spans_each_flag_width(
+    oid: int, value: int, expected: bytes
+) -> None:
+    """The signed flag reaches below zero, which the shared 0-255 range
+    would have rejected."""
+    client, broker = await _admin_with_flags()
+    try:
+        await client.set_value(oid, value)
+        assert broker.published == [(ADMIN_API_TOPIC, expected)]
+    finally:
+        await client.disconnect()
+
+
+@pytest.mark.parametrize(
+    ("oid", "value"),
+    [(199, 256), (199, -1), (200, 32768), (200, -32769)],
+)
+async def test_set_value_refuses_a_value_past_the_flag_width(
+    oid: int, value: int
+) -> None:
+    """The M-SERV truncates to the field width instead of refusing, so a
+    300 would land as 44. The library refuses before the wire."""
+    client, broker = await _admin_with_flags()
+    try:
+        with pytest.raises(AmpioValueError):
+            await client.set_value(oid, value)
+        assert broker.published == []
+    finally:
+        await client.disconnect()

@@ -412,7 +412,9 @@ class AmpioObject:
     def __post_init__(self) -> None:
         # Derived fields are set once, here, and nowhere else.
         object.__setattr__(
-            self, "kind", classify(self.typ_komponentu, self.interpretacja)
+            self,
+            "kind",
+            classify(self.typ_komponentu, self.interpretacja, self.sub_sf_id),
         )
 
     @property
