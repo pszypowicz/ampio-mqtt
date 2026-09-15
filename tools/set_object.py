@@ -54,6 +54,9 @@ def parse_args() -> argparse.Namespace:
     action.add_argument(
         "--ww-power", type=int, help="CCT light power alone, 0-255; holds coldness"
     )
+    action.add_argument(
+        "--ww-coldness", type=int, help="CCT light coldness alone, 0-255; holds power"
+    )
     action.add_argument("--verb", help="raw verb for anything not wrapped above")
 
     p.add_argument(
@@ -104,6 +107,8 @@ async def send(client: AmpioClient, a: argparse.Namespace) -> None:
         await client.set_ww(oid, *axes)
     elif a.ww_power is not None:
         await client.set_ww_power(oid, a.ww_power)
+    elif a.ww_coldness is not None:
+        await client.set_ww_coldness(oid, a.ww_coldness)
     else:
         await client.command(oid, a.verb, *a.arg)
 
