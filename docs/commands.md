@@ -232,8 +232,13 @@ and a working slat-toward-closed control.
 Designer sets them from a logic rule, through three roller actions it names
 "Disable movement", "Disable closing" and "Disable opening". A rule holds the
 lock for as long as its trigger holds. A wind alarm or a fire alarm can
-therefore leave a cover blocked for a long time. No `/api` verb sets or clears
-the flag, so the library reads it and never writes it.
+therefore leave a cover blocked for a long time.
+
+No `/api` verb sets or clears the flag. The CAN write tree does, through the
+same three actions, so `block_opening()`, `unblock_opening()`, `block_closing()`
+and `unblock_closing()` write it on the administrator tier. Only one module
+generation implements those actions, and the wire form and the gate are in the
+"Cover roller lock" section of [`panel-writes.md`](panel-writes.md).
 
 The same Designer menu offers eight more roller actions, and none of them
 touches the lock. Two carry names that suggest an override. "Close permanently"

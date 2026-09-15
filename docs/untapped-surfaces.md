@@ -22,10 +22,10 @@ updates through the per-object topic. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/26).
 
 **CAN write tree device classes.** The raw write frames for binary outputs, the
-panel buzzer, and module identify are documented in
+panel buzzer, module identify and the cover roller lock are documented in
 [`panel-writes.md`](panel-writes.md) ("Panel outputs", "Panel buzzer", "Module
-identify"). The DALI write and the module parameter writes on the same
-`ampio/to` tree remain unexplored. Probe notes:
+identify", "Cover roller lock"). The DALI write and the module parameter writes
+on the same `ampio/to` tree remain unexplored. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/60).
 
 **M-SERV display lines.** The OpenAPI spec declares `/api/set/setLcdUp/<text>`

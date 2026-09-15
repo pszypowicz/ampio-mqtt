@@ -12,6 +12,32 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.63.0
+
+A cover's roller lock is writable. `AmpioObject.block` has reported it since
+0.57.0, and no command in the library could set or clear it, so a consumer could
+see that a cover would refuse to move and could do nothing about it. Only one
+module generation implements the lock, and the module's own capability map is
+what tells the generations apart (#208).
+
+### Added
+
+- `AmpioClient.block_opening()`, `unblock_opening()`, `block_closing()` and
+  `unblock_closing()` write a cover's roller lock on the administrator tier.
+  `AmpioObject.block` read it since 0.57.0 and nothing could set it. The lock
+  never expires, so a consumer that sets one owns releasing it (#208).
+- The four methods raise `AmpioValueError` for a module that advertises no
+  roller channel count. That module generation takes the ordinary roller moves
+  on the same destination and discards a lock frame in silence, so a raise beats
+  a publish that vanishes. The count is also what sizes the frame's channel
+  mask, so `resolve_records()` must have run first (#208).
+
+### Documentation
+
+- `docs/panel-writes.md` gains the "Cover roller lock" section with the frame,
+  the mask convention and the capability gate. The `block` section of
+  `docs/commands.md` no longer says the flag is read-only to this library.
+
 ## 0.62.0
 
 The M-SERV can push a notification to the install's mobile app, and the MQTT

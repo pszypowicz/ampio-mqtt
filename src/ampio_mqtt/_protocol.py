@@ -1542,6 +1542,43 @@ def raw_status_light_payload(red: int, green: int, blue: int, mask: str) -> str:
     )
 
 
+# The roller lock, three of the eleven sub-functions the roller time
+# function carries. The Designer dropdown index is the wire byte, and only
+# these touch the lock (#223). Sub-function 8 blocks both directions at
+# once and needs no wrapper, because two calls say the same thing.
+ROLLER_BLOCK_CLOSING = 9
+ROLLER_BLOCK_OPENING = 10
+# The roller action's destination. The module's own action table decides
+# it, and no module that answers the lock lists a roller entry, so every
+# one falls through to the special function's default. 261 is above one
+# byte, so the frame carries the escape form.
+_ROLLER_ACTION_DST = 261
+# The time function of the roller action, the one the lock rides.
+_ROLLER_ACTION_FUNC = 0
+# The delay and time fields the time function ends with. Designer hides
+# both inputs for the lock sub-functions, so a lock never expires.
+_ROLLER_LOCK_UNUSED_TAIL = "00000000"
+
+
+def raw_roller_lock_payload(
+    sub_function: int, channel: int, channels: int, *, assert_lock: bool
+) -> str:
+    """The roller lock action as the wire's ASCII hex form.
+
+    ``channels`` is the module's roller channel count, which sizes the
+    mask: one bit per channel, lowest channel first. ``assert_lock``
+    False sends the release state, which clears that sub-function's bit
+    and leaves the other one alone.
+    """
+    mask = bytearray((channels + 7) // 8)
+    mask[channel >> 3] |= 1 << (channel & 7)
+    return (
+        f"0c07{3 if assert_lock else 0:02x}"
+        f"{0xF0 | _ROLLER_ACTION_FUNC:02x}{_ROLLER_ACTION_DST & 0xFF:02x}"
+        f"{sub_function:02x}{mask.hex()}{_ROLLER_LOCK_UNUSED_TAIL}"
+    )
+
+
 def raw_key_lock_payload(on: bool, ticks: int) -> str:
     """The touch lock action as ASCII hex.
 
