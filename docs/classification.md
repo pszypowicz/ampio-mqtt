@@ -52,7 +52,9 @@ value sensor or the `analog_<n>` fallback.
   set to "blinds - percentage". Only the slats variant reports a `lammel` angle
   in its state payload, exposed as `AmpioObject.lammel`. Both variants report a
   `block` lock, exposed as `AmpioObject.block`. A locked cover refuses commands
-  in the blocked direction (see [`commands.md`](commands.md)).
+  in the blocked direction (see [`commands.md`](commands.md)). No cover type
+  answers `setValue` in either form, so `cover` is also the predicate that makes
+  `AmpioClient.set_value` refuse and name `set_roller_pos()`.
 - `rgbw` is the one output that ignores the whole `turnOn`/`turnOff`/`switch`
   family. The replay pattern Ampio's own consumers use for on/off is in
   [`commands.md`](commands.md).
