@@ -12,7 +12,11 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## Unreleased
+## 0.64.0
+
+Four component types the install carries classified as the generic value sensor,
+because none had a profile. Two of them hold a value that shape cannot describe,
+and two are booleans a value sensor misreads entirely (#239).
 
 ### Added
 
