@@ -12,7 +12,13 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## Unreleased
+## 0.63.0
+
+A cover's roller lock is writable. `AmpioObject.block` has reported it since
+0.57.0, and no command in the library could set or clear it, so a consumer could
+see that a cover would refuse to move and could do nothing about it. Only one
+module generation implements the lock, and the module's own capability map is
+what tells the generations apart (#208).
 
 ### Added
 
