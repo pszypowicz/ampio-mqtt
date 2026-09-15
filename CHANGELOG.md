@@ -12,7 +12,13 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## Unreleased
+## 0.62.0
+
+The M-SERV can push a notification to the install's mobile app, and the MQTT
+bridge accepts the call from a standard account. The library reached nothing on
+that surface. Alongside it, the dispatcher stops decoding every table reply
+twice: the object catalogue and the state snapshot run to megabytes, and both
+passes happened on the event loop (#241, #235).
 
 ### Added
 
