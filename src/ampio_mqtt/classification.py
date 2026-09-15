@@ -328,7 +328,10 @@ def classify(
             return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
         case _Selector.ALARM:
             # A half the wire has not shown stays the generic sensor rather
-            # than minting a kind on a sub-function nothing has proven.
+            # than minting a kind on a sub-function nothing has proven. A
+            # leafless row has no sub-function at all and lands here too.
+            if sub_sf_id is None:
+                return _GENERIC_SENSOR
             return _ALARM_BY_SUB_SF.get(sub_sf_id, _GENERIC_SENSOR)
         case kind:
             return kind
