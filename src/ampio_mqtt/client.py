@@ -1744,11 +1744,14 @@ class AmpioClient:
         the later revert.
 
         Raises ``ValueError`` for an output whose level this verb cannot
-        reach: ``rgbw`` (drive it with :meth:`set_colors`) and ``ledww``,
-        whose power axis moves through :meth:`set_ww_power` alone. The
-        M-SERV drops the plain form for both, with no effect and no reply.
-        On a ``ledww`` the timed form is not a harmless no-op: it sets the
-        power, zeroes the color temperature, and never reverts.
+        reach: ``rgbw`` (drive it with :meth:`set_colors`), ``ledww``,
+        whose power axis moves through :meth:`set_ww_power` alone, and
+        every cover, whose position axis moves through
+        :meth:`set_roller_pos`. The M-SERV drops the plain form for all
+        three, with no effect and no reply. A cover drops the timed form
+        the same way. On a ``ledww`` the timed form is not a harmless
+        no-op: it sets the power, zeroes the color temperature, and never
+        reverts.
 
         ``pulse_ms`` reaches the relay, the flag and the dimmer alone,
         and it raises for every other established kind. The two analog
@@ -1760,8 +1763,13 @@ class AmpioClient:
         """
         _check_range("value", value, *self._value_range(object_id))
         kind = self._output_kind(object_id)
-        if kind is not None and (kind.color or kind.color_temp):
-            replacement = "set_ww_power()" if kind.color_temp else "set_colors()"
+        if kind is not None and (kind.color or kind.color_temp or kind.cover):
+            if kind.cover:
+                replacement = "set_roller_pos()"
+            elif kind.color_temp:
+                replacement = "set_ww_power()"
+            else:
+                replacement = "set_colors()"
             raise ValueError(
                 f"object {object_id} ({kind.key}) does not answer setValue; "
                 f"drive it with {replacement}"

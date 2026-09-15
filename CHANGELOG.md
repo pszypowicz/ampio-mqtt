@@ -12,6 +12,27 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.69.0
+
+`set_value()` accepted a cover and sent a command the M-SERV drops. A consumer
+that called it got a silent no-op (#253).
+
+### Changed
+
+- `set_value()` raises for every cover type and names `set_roller_pos()`, the
+  way it already names `set_colors()` for an `rgbw`. The M-SERV drops `setValue`
+  on a `roleta`, a `roleta_procenty` and a `roleta_lamelki`, with and without a
+  time argument, with no effect and no reply. `setRollerPos` moves the same
+  object from the same start, so the drop is the verb and not the object (#253).
+
+### Documentation
+
+- `commands.md` records that `setValue` is dropped on every cover type in both
+  forms, and that `setRollerPos` is the only verb that moves a cover's position
+  (#253).
+- `classification.md` records that `cover` is the predicate behind the refusal
+  (#253).
+
 ## 0.68.0
 
 A consumer that changed only a CCT light's color temperature had to read the

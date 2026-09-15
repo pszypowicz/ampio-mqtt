@@ -324,18 +324,34 @@ async def test_set_value_on_ledww_is_rejected(
     assert broker.published == []
 
 
-@pytest.mark.parametrize("typ", ["flaga_liniowa", "flaga_liniowa16", "roleta_procenty"])
+@pytest.mark.parametrize("typ", ["flaga_liniowa", "flaga_liniowa16"])
 async def test_pulse_is_refused_where_nothing_reverts(
     connected: tuple[AmpioClient, FakeBroker], typ: str
 ) -> None:
     """An analog flag takes the timed `setValue`, sets the value and never
-    reverts, so a caller asking for a pulse would get a permanent write. A
-    cover answers no level verb at all (#248)."""
+    reverts, so a caller asking for a pulse would get a permanent write
+    (#248)."""
     client, broker = connected
     _learn(client, 198, typ)
     with pytest.raises(ValueError) as refused:
         await client.set_value(198, 100, pulse_ms=500)
     assert "does not pulse" in str(refused.value)
+    assert broker.published == []
+
+
+@pytest.mark.parametrize("typ", ["roleta", "roleta_procenty", "roleta_lamelki"])
+@pytest.mark.parametrize("pulse_ms", [None, 500])
+async def test_set_value_on_a_cover_is_rejected(
+    connected: tuple[AmpioClient, FakeBroker], typ: str, pulse_ms: int | None
+) -> None:
+    """The M-SERV drops `setValue` on a cover in both forms, with no effect
+    and no reply, so the position axis moves through `setRollerPos` alone
+    (#253)."""
+    client, broker = connected
+    _learn(client, 193, typ)
+    with pytest.raises(ValueError) as refused:
+        await client.set_value(193, 80, pulse_ms=pulse_ms)
+    assert "set_roller_pos()" in str(refused.value)
     assert broker.published == []
 
 
