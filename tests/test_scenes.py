@@ -83,7 +83,7 @@ _PAYLOAD = _catalogue(
 
 
 def test_parses_the_catalogue() -> None:
-    first, second = parse_scenes(_PAYLOAD)
+    first, second = parse_scenes(json.loads(_PAYLOAD))
     assert (first.id, first.scene_name, first.active) == (1, "Evening", True)
     assert first.group_id is None  # -1 means the scene is filed under no room
     assert first.object_ids == frozenset({50})
@@ -97,7 +97,7 @@ def test_a_scene_row_without_a_served_column_is_refused(column: str) -> None:
     row = _scene()
     del row[column]
     with pytest.raises(AmpioProtocolError, match=column):
-        parse_scenes(_catalogue(row))
+        parse_scenes(json.loads(_catalogue(row)))
 
 
 @pytest.mark.parametrize("infos", [5, "x", None, {"id": 1}, [{"value": 1}], [7]])
@@ -106,37 +106,37 @@ def test_a_malformed_infos_annex_is_refused(infos: object) -> None:
     what relate a scene to its objects. A shape that carries none of them
     would read as a scene that touches nothing."""
     with pytest.raises(AmpioProtocolError, match="Infos"):
-        parse_scenes(_catalogue(_scene(Infos=infos)))
+        parse_scenes(json.loads(_catalogue(_scene(Infos=infos))))
 
 
 @pytest.mark.parametrize(
     "payload",
     [
-        "not json",
-        "null",
-        "[]",  # a reply of the wrong shape is not an empty catalogue
-        "{}",  # no List key either
+        "{}",  # no List key is not an empty catalogue
+        '{"List": "text"}',  # nor is a List that is not an array
         '{"List": [1, "x"]}',  # a row that is not an object is not a scene
     ],
 )
 def test_a_reply_of_the_wrong_shape_is_refused(payload: str) -> None:
     with pytest.raises(AmpioProtocolError):
-        parse_scenes(payload)
+        parse_scenes(json.loads(payload))
 
 
 def test_an_empty_catalogue_reads_as_no_scenes() -> None:
-    assert parse_scenes('{"List": []}') == []
+    assert parse_scenes(json.loads('{"List": []}')) == []
 
 
 def test_a_non_text_scene_name_is_refused() -> None:
     with pytest.raises(AmpioProtocolError, match="sceneName"):
-        parse_scenes(_catalogue(_scene(sceneName=7)))
+        parse_scenes(json.loads(_catalogue(_scene(sceneName=7))))
 
 
 def test_an_empty_scene_name_reads_through() -> None:
     """The app asks for a name, but an empty one names no value the library
     has to resolve, so it passes through as the empty string."""
-    assert parse_scenes(_catalogue(_scene(sceneName="")))[0].scene_name == ""
+    assert (
+        parse_scenes(json.loads(_catalogue(_scene(sceneName=""))))[0].scene_name == ""
+    )
 
 
 async def test_fetch_scenes_maps_a_refused_reply_to_the_retryable_error(
