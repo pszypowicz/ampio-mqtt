@@ -128,6 +128,14 @@ _ALARM_BY_SUB_SF: dict[int, InputKind] = {
     4: InputKind("alarm_alarmed", "Alarm triggered"),
 }
 
+# The alarm family when the leaf names no half. `leafId` is not durable,
+# because Designer clears it on any object whose Matter box is unchecked
+# (docs/identity.md), and `sub_sf_id` then reads None. Such an object still
+# publishes the same boolean, so `typ_komponentu` alone holds the family and
+# the leaf only refines the name. No device class, for the reason the two
+# halves take none.
+_BASE_ALARM = InputKind("alarm", "Alarm")
+
 # lin_wej (analog input) measurement kind, keyed by `interpretacja`.
 # The M-SENS channel map (4=lux, 5=IAQ, 7=CO2).
 _LIN_WEJ_BY_INTERP: dict[int, SensorKind] = {
@@ -171,11 +179,11 @@ ObjectKind = SensorKind | InputKind | OutputKind | ThermostatKind
 
 
 class _Selector(Enum):
-    """The two ``interpretacja``-driven kind families a profile can carry
-    in place of a fixed kind instance - their keys are minted at classify
-    time, so no instance can sit in the table."""
+    """The kind families a profile carries in place of a fixed kind
+    instance, because one ``typ_komponentu`` covers several kinds. A second
+    wire field picks the member."""
 
-    ANALOG = auto()  # the interpretacja-keyed lin_wej map
+    ANALOG = auto()  # the interpretacja-keyed lin_wej map, open below it
     NUMERIC = auto()  # generic value_<interpretacja> measurement (integer slots)
     ALARM = auto()  # the sub_sf_id-keyed alarm partition halves
 
@@ -278,6 +286,7 @@ def _kind_keys() -> tuple[
             case _Selector.NUMERIC:
                 pass  # the open value_<interpretacja> family
             case _Selector.ALARM:
+                inputs.add(_BASE_ALARM.key)
                 inputs.update(kind.key for kind in _ALARM_BY_SUB_SF.values())
             case InputKind() as kind:
                 inputs.add(kind.key)
@@ -327,12 +336,11 @@ def classify(
         case _Selector.NUMERIC:
             return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
         case _Selector.ALARM:
-            # A half the wire has not shown stays the generic sensor rather
-            # than minting a kind on a sub-function nothing has proven. A
-            # leafless row has no sub-function at all and lands here too.
+            # A leafless row carries no sub-function, and the guard narrows
+            # the type for the int-keyed lookup below.
             if sub_sf_id is None:
-                return _GENERIC_SENSOR
-            return _ALARM_BY_SUB_SF.get(sub_sf_id, _GENERIC_SENSOR)
+                return _BASE_ALARM
+            return _ALARM_BY_SUB_SF.get(sub_sf_id, _BASE_ALARM)
         case kind:
             return kind
 

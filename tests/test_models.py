@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 
 from ampio_mqtt import AmpioModule, AmpioObject, AmpioServerInfo
-from ampio_mqtt.classification import ThermostatKind, classify
+from ampio_mqtt.classification import InputKind, ThermostatKind, classify
 from ampio_mqtt.device_types import module_model
 from ampio_mqtt.models import DesignerRecord, ModuleRecord
 
@@ -494,6 +494,17 @@ def test_sf_id_reads_none_for_an_empty_leaf_id():
     obj = _object(id=1, leaf_id="")
     assert obj.sf_id is None
     assert obj.sub_sf_id is None
+
+
+def test_a_leafless_alarm_object_keeps_the_alarm_family():
+    """Designer clears leafId on a Matter uncheck, so sub_sf_id reads None
+    on a row that did not change otherwise. The leaf refines the name and
+    never decides the family."""
+    leafless = _object(id=1, typ_komponentu="satel_alarm", leaf_id="")
+    assert leafless.sub_sf_id is None
+    assert leafless.kind == InputKind("alarm", "Alarm")
+    armed = _object(id=1, typ_komponentu="satel_alarm", leaf_id="0_1f2e_296_3_0")
+    assert armed.kind == InputKind("alarm_armed", "Alarm armed")
 
 
 def test_sf_id_reads_none_when_the_segment_is_not_a_number():

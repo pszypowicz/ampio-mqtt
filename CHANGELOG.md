@@ -12,6 +12,30 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.65.0
+
+A `satel_alarm` object keeps its family through a Designer edit that clears the
+leaf. Since 0.64.0 such an object left the input family and reached the consumer
+as an untyped value sensor (#245).
+
+### Changed
+
+- A `satel_alarm` object with no proven leaf sub-function classifies as the new
+  base `alarm` input kind, not the generic value sensor. `leafId` is not
+  durable, because Designer clears it on any object whose Matter box is
+  unchecked. One edit with no relation to the alarm therefore moved a boolean
+  input to an untyped value, and a consumer that picks its platform from
+  `kind.key` lost the object. `typ_komponentu` alone now decides the family, and
+  the leaf only refines the name. Sub-functions 3 and 4 keep `alarm_armed` and
+  `alarm_alarmed`. The base kind takes no device class, for the reason the two
+  halves take none (#245).
+- `INPUT_KIND_KEYS` gains `alarm`. A consumer exhaustiveness test must map it.
+
+### Documentation
+
+- `docs/classification.md` describes the base kind. It also names `sub_sf_id` as
+  the third wire field classification keys on.
+
 ## 0.64.0
 
 Four component types the install carries classified as the generic value sensor,

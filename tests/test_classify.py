@@ -259,6 +259,7 @@ def test_kind_key_vocabulary_contents() -> None:
         "flaga",
         "flaga_liniowa",
         "flaga_liniowa16",
+        "alarm",
         "alarm_armed",
         "alarm_alarmed",
         "detekcja",
@@ -343,7 +344,10 @@ def test_alarm_halves_split_on_the_leaf_sub_function(sub_sf_id: int, key: str) -
 
 
 @pytest.mark.parametrize("sub_sf_id", [None, 1, 2, 9])
-def test_an_unproven_alarm_sub_function_stays_a_sensor(sub_sf_id: int | None) -> None:
-    """Minting a kind on a sub-function the wire has not shown would claim
-    a shape nothing verified."""
-    assert classify("satel_alarm", 1, sub_sf_id).key == "value"
+def test_an_unproven_alarm_sub_function_keeps_the_family(sub_sf_id: int | None) -> None:
+    """typ_komponentu alone decides the family, so an object with no proven
+    half stays an alarm input. The leaf only refines the name."""
+    kind = classify("satel_alarm", 1, sub_sf_id)
+    assert isinstance(kind, InputKind)
+    assert (kind.key, kind.name) == ("alarm", "Alarm")
+    assert kind.device_class is None
