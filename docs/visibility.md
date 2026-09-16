@@ -46,9 +46,10 @@ both types but cannot create, delete or configure them. The Ampio app is the
 configuration surface. Its presence-detection page picks the sensors that decide
 whether someone is at home, and its presence-simulation page switches the
 feature on and off and picks the devices that take part. The presence-detection
-object is one whole-home boolean, and "on" means someone is home. The devices
-that take part in either feature ride the `powiazane` field of the system
-object's row in `data/params_devices`. The library does not decode that field. A
+object is one whole-home boolean, and "on" means someone is home. The
+`powiazane` field of the system object's row in `data/params_devices` is where
+the devices that take part land. That is unverified. On the baseline install
+nothing is linked, the field reads null, and the library does not decode it. A
 detection sensor's role is a `params` bit on the sensor itself. Bit 11
 (`params & 2048`) is Designer's "Entrance sensor" and bit 12 (`params & 4096`)
 is its "Inside sensor". On the baseline install nothing is linked, and neither
