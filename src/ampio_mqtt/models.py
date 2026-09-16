@@ -358,6 +358,14 @@ class AmpioObject:
     # replacement-stable but NOT unique - objects can share one. Routes raw
     # channel events to this object.
     funkcja: int
+    # Where the object sits on the bus, parsed from its Designer leaf at the
+    # door. Every admitted object carries one on both tiers, so nothing
+    # downstream tests for its absence. docs/identity.md.
+    address: ModuleAddress
+    # The physical output this object drives, `leaf_<leafId>`. Several
+    # Designer views of one output share it by design, so it is not an
+    # identity for the row: `object_key` is. docs/identity.md.
+    leaf_key: str
     opis_menu: str | None = None
     # `leafId`, identical on both discovery surfaces. Designer clears it when
     # an object's Matter box is unchecked. The physical-output key (`leaf_key`)
@@ -674,18 +682,6 @@ class AmpioObject:
             return None
         precision = conversion.group("precision")
         return int(precision) if precision is not None else None
-
-    @property
-    def leaf_key(self) -> str | None:
-        """The physical output this object drives (``leaf_<leaf_id>``), or None.
-
-        Identical on both access tiers. It is not an identity for the
-        object row. Several Designer views of one output share one
-        ``leafId``, so two objects can return the same key. The
-        per-object identity is :pyattr:`object_key`. None for an empty
-        ``leaf_id`` (Matter box unchecked). See docs/identity.md.
-        """
-        return f"leaf_{self.leaf_id}" if self.leaf_id else None
 
     @property
     def object_key(self) -> str:

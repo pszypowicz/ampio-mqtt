@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import get_args
 
 import pytest
-from conftest import API_TOPIC, USER, FakeBroker, details, feed
+from conftest import API_TOPIC, USER, FakeBroker, catalogue, feed
 
 from ampio_mqtt import (
     AmpioClient,
@@ -71,19 +71,11 @@ async def test_object_added_flows_through_both_filters() -> None:
         added: list[ObjectAdded] = []
         client.subscribe(updated.append, of=ObjectUpdated)
         client.subscribe(added.append, of=ObjectAdded)
-        feed(
-            client,
-            "ampio/fromDB/u/data/devices",
-            details({"id": 5, "typ_komponentu": "flaga"}),
-        )
+        catalogue(client, {"id": 5, "typ_komponentu": "flaga"})
         assert [type(e) for e in added] == [ObjectAdded]
         # The subclass relationship keeps existing subscriptions whole.
         assert [type(e) for e in updated] == [ObjectAdded]
-        feed(
-            client,
-            "ampio/fromDB/u/data/devices",
-            details({"id": 5, "typ_komponentu": "flaga", "opis_menu": "x"}),
-        )
+        catalogue(client, {"id": 5, "typ_komponentu": "flaga", "opis_menu": "x"})
         assert [type(e) for e in added] == [ObjectAdded]
         assert [type(e) for e in updated] == [ObjectAdded, ObjectUpdated]
     finally:
@@ -97,13 +89,10 @@ async def test_object_added_object_id_filter() -> None:
     try:
         events: list[ObjectAdded] = []
         client.subscribe(events.append, of=ObjectAdded, object_id=5)
-        feed(
+        catalogue(
             client,
-            "ampio/fromDB/u/data/devices",
-            details(
-                {"id": 5, "typ_komponentu": "flaga"},
-                {"id": 6, "typ_komponentu": "flaga"},
-            ),
+            {"id": 5, "typ_komponentu": "flaga"},
+            {"id": 6, "typ_komponentu": "flaga"},
         )
         assert [e.object.id for e in events] == [5]
     finally:
@@ -117,30 +106,19 @@ async def test_reconnect_replay_does_not_redispatch_object_added() -> None:
     client = AmpioClient("host", username="u", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
-        feed(
-            client,
-            "ampio/fromDB/u/data/devices",
-            details({"id": 5, "typ_komponentu": "flaga"}),
-        )
+        catalogue(client, {"id": 5, "typ_komponentu": "flaga"})
         added: list[ObjectAdded] = []
         client.subscribe(added.append, of=ObjectAdded)
 
         # A reconnect's replay of the same catalogue must not re-add object 5.
-        feed(
-            client,
-            "ampio/fromDB/u/data/devices",
-            details({"id": 5, "typ_komponentu": "flaga"}),
-        )
+        catalogue(client, {"id": 5, "typ_komponentu": "flaga"})
         assert added == []
 
         # A genuinely new row (6) alongside the known one (5) adds only 6.
-        feed(
+        catalogue(
             client,
-            "ampio/fromDB/u/data/devices",
-            details(
-                {"id": 5, "typ_komponentu": "flaga"},
-                {"id": 6, "typ_komponentu": "flaga"},
-            ),
+            {"id": 5, "typ_komponentu": "flaga"},
+            {"id": 6, "typ_komponentu": "flaga"},
         )
         assert [e.object.id for e in added] == [6]
     finally:

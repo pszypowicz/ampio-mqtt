@@ -20,6 +20,7 @@ from .events import (
     BusEventRaised,
     ModuleRemoved,
     ModuleUpdated,
+    NotConfigured,
     ObjectAdded,
     ObjectRemoved,
     ObjectUpdated,
@@ -34,11 +35,11 @@ from .models import (
     AmpioServerInfo,
     CoverParameters,
     DesignerRecord,
+    ModuleAddress,
     ModuleRecord,
     PanelSettings,
     PresenceDetection,
     PresenceSimulation,
-    leaf_mac,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,6 +84,13 @@ class AmpioStore:
         # params push can rebuild them and a state push can find the
         # detection row.
         self._presence_rows: dict[int, _protocol.ObjectMetadata] = {}
+        # The last `data/devices` reply, held whole so a `data/params_devices`
+        # push alone re-runs the door on it. None until the first reply.
+        self._catalogue: list[_protocol.ObjectMetadata] | None = None
+        # The `(id, name)` pairs of the rows the door left out because they
+        # carry no leaf, from the last apply. Empty when every listed row
+        # was admitted or hidden. The client raises and reports from it.
+        self.not_configured: tuple[tuple[int, str | None], ...] = ()
         # Override macs shared by two or more catalogue rows. The raw
         # routing tables are keyed by mac, so edges and diagnostics on a
         # colliding mac cannot be attributed reliably; the collision is
@@ -133,10 +141,10 @@ class AmpioStore:
         # sweep could not resolve, which includes everything that is not a
         # touch panel.
         self._panel_settings_by_mac: dict[int, PanelSettings] = {}
-        # `{object_id: stan_json}` from the last `data/states` snapshot,
+        # `{object_id: seed}` from the last `data/states` snapshot,
         # kept for the same reason; a snapshot row for an id no catalogue
         # established creates nothing.
-        self._stan_by_id: dict[int, str] = {}
+        self._stan_by_id: dict[int, _protocol.StanJsonSeed] = {}
         # Latest live push per id no catalogue has established. Only the
         # catalogues decide which objects exist, so a push that races ahead
         # of them waits here and surfaces with the catalogue row.
@@ -322,25 +330,49 @@ class AmpioStore:
     # --- catalogues -------------------------------------------------------
 
     def _handle_catalogue(self, data: Mapping[str, Any], applied: Applied) -> None:
-        """Apply a `data/devices` reply, the object catalogue.
+        """Apply a `data/devices` reply through the door, then hold it.
 
-        The surface serves no Designer config columns on any tier, so the
-        held `data/params_devices` table is their one source. The table
-        re-applies on every merge, the re-creation after an eviction
-        included.
+        The door runs once the params table is in hand, and the reply is
+        held only after the door admitted it, so a refused reply leaves
+        every held field as it was.
         """
         served = _protocol.parse_app_sync_devices(data)
-        self._apply_catalogue(served, self._held_config(served), applied)
+        if self._params_received:
+            self._apply_catalogue(
+                served, self._config_for(served, self._params_by_id), applied
+            )
+        self._catalogue = served
         self._report_params_coverage()
 
-    def _held_config(
-        self, served: list[_protocol.ObjectMetadata]
+    def _handle_params_devices(self, data: Mapping[str, Any], applied: Applied) -> None:
+        """Apply the `data/params_devices` table through the door, then hold it.
+
+        The table is this store's one source for `params`, `czas` and `url`
+        on both tiers, the hidden bit included, so the door waits for it. A
+        push of the table alone re-runs the door on the held catalogue: a
+        hidden bit that changes evicts or admits its row, and the two
+        presence rows settle from the same table. The table is held only
+        after the door admitted the result.
+        """
+        params = _protocol.parse_params_devices(data)
+        if self._catalogue is not None:
+            self._apply_catalogue(
+                self._catalogue, self._config_for(self._catalogue, params), applied
+            )
+        self._params_by_id = params
+        self._params_received = True
+        self._report_params_coverage()
+
+    def _config_for(
+        self,
+        served: list[_protocol.ObjectMetadata],
+        params: Mapping[int, _protocol.ParamsEntry],
     ) -> dict[int, Mapping[str, Any]]:
-        """The config columns the held table holds for the served rows."""
+        """The config columns one params table holds for the served rows."""
         return {
             meta.id: {"params": entry.params, "czas": entry.czas, "url": entry.url}
             for meta in served
-            if (entry := self._params_by_id.get(meta.id)) is not None
+            if (entry := params.get(meta.id)) is not None
         }
 
     def _apply_catalogue(
@@ -349,45 +381,81 @@ class AmpioStore:
         config: Mapping[int, Mapping[str, Any]],
         applied: Applied,
     ) -> None:
-        """Fold one tier's whole object catalogue into the store.
+        """Fold the whole object catalogue into the store, through the door.
 
-        ``config`` carries the Designer config columns per object id, from
-        whichever source this tier serves them on. An id absent from it is
-        one whose columns have not arrived yet, which leaves the object
-        reading the unset values until they do. The two presence rows are
-        routed to their own attributes before the merge and never enter
-        ``objects``. The presence merge runs first: a malformed buffered
-        detection code raises out of it before any object mutation, so the
-        catalogue and this call's events are left untouched.
+        The door decides admission in one order on both tiers: the two
+        presence rows go to their own types, a hidden row drops, and every
+        remaining row must carry a leaf that parses. A row with an empty
+        leaf is recorded on ``not_configured`` and left out, and
+        :class:`NotConfigured` reports the set when it changes to a
+        non-empty one. A leaf that does not parse is a server fault, raised
+        here before any store field changes, so the reply is refused whole.
         """
         presence = [m for m in served if m.typ_komponentu in _protocol.PRESENCE_TYPES]
-        served = [m for m in served if m.typ_komponentu not in _protocol.PRESENCE_TYPES]
+        rows = [m for m in served if m.typ_komponentu not in _protocol.PRESENCE_TYPES]
+        admitted: list[tuple[_protocol.ObjectMetadata, ModuleAddress]] = []
+        rejected: list[tuple[int, str | None]] = []
+        for meta in rows:
+            if config.get(meta.id, {}).get("params", 0) & HIDDEN_FLAG:
+                continue
+            if not meta.leaf_id:
+                rejected.append((meta.id, meta.opis_menu))
+                continue
+            admitted.append((meta, _protocol.parse_module_address(meta.leaf_id)))
+        # The presence merge parses the detection code before it mutates
+        # anything, and nothing after it raises: the snapshot table holds
+        # parsed seeds and a buffered push is already typed.
         self._merge_presence(presence, config, applied)
         # One reply is the whole catalogue this tier holds, so its leafed
         # rows are every sibling a leafless row can learn its module from.
         sibling_macs: dict[int, int] = {}
-        for meta in served:
-            mac = leaf_mac(meta.leaf_id)
-            if mac is not None:
-                sibling_macs[meta.id_urzadzenia] = mac
+        for meta, address in admitted:
+            sibling_macs[meta.id_urzadzenia] = address.mac
         touched = False
-        for meta in served:
+        for meta, address in admitted:
             touched |= self._merge_metadata(
-                meta, config.get(meta.id, {}), sibling_macs, applied
+                meta, address, config.get(meta.id, {}), sibling_macs, applied
             )
-        evicted = self._evict_missing_objects({meta.id for meta in served}, applied)
+        evicted = self._evict_missing_objects(
+            {meta.id for meta, _ in admitted}, applied
+        )
         if touched or evicted:
             self._rebuild_indexes(applied)
+        self._set_not_configured(tuple(sorted(rejected)), applied)
+
+    def _set_not_configured(
+        self, rejected: tuple[tuple[int, str | None], ...], applied: Applied
+    ) -> None:
+        """Record the rows the door left out and report a change to a non-empty set.
+
+        ``rejected`` is sorted by id, so the order the reply listed the
+        rows in never reads as a change.
+        """
+        if rejected == self.not_configured:
+            return
+        self.not_configured = rejected
+        if rejected:
+            applied.events.append(NotConfigured(objects=rejected))
+
+    def _drop_sweep_entries(self, oid: int) -> None:
+        """Forget what a sweep proved for one object.
+
+        A sweep result belongs to an admitted object at one address, so an
+        eviction and an address change both drop it until a later sweep
+        covers the object again.
+        """
+        self._record_by_id.pop(oid, None)
+        self._cover_parameters_by_id.pop(oid, None)
+        self._lock_support_by_id.pop(oid, None)
 
     def _evict_missing_objects(self, present: set[int], applied: Applied) -> bool:
-        """Drop objects the authoritative catalogue no longer lists.
+        """Drop the objects the door did not admit this time.
 
-        Each tier's catalogue is complete for its account: the reserved
-        admin login's view is every object in a room plus the two presence
-        rows, and a restricted account's view is bounded by its grant.
-        Either way a reply's arrival is the authority to evict what it
-        stopped listing, an empty reply included (a full grant revocation
-        empties a restricted view).
+        The admitted set is the authority: a row the reply stopped listing,
+        a row that now carries the hidden bit, and a row the door rejected
+        all leave here, an empty reply included (a full grant revocation
+        empties a restricted view). Each evicted id also drops its held
+        sweep entries.
         """
         # The same completeness proves a buffered push's id will never gain
         # a catalogue row; without the prune, pushes for such ids accumulate.
@@ -405,6 +473,7 @@ class AmpioStore:
             self._stan_by_id.pop(oid, None)
             self._local_stamped.discard(oid)
             self._guarded.discard(oid)
+            self._drop_sweep_entries(oid)
             applied.events.append(ObjectRemoved(obj))
         return True
 
@@ -430,11 +499,9 @@ class AmpioStore:
             if pending is not None:
                 home_status = _home_status(pending.state)
             elif self._home_status is None:
-                stan_json = self._stan_by_id.get(detection_meta.id)
-                if stan_json is not None:
-                    home_status = _home_status(
-                        _protocol.parse_stan_json(stan_json).state
-                    )
+                seed = self._stan_by_id.get(detection_meta.id)
+                if seed is not None:
+                    home_status = _home_status(seed.state)
         # No code below this line raises.
         previous_detection_id, previous_simulation_id = self._presence_ids()
         new_rows = {meta.id: meta for meta in rows}
@@ -523,6 +590,7 @@ class AmpioStore:
     def _merge_metadata(
         self,
         meta: _protocol.ObjectMetadata,
+        address: ModuleAddress,
         config: Mapping[str, Any],
         sibling_macs: Mapping[int, int],
         applied: Applied,
@@ -542,42 +610,40 @@ class AmpioStore:
                 typ_komponentu=meta.typ_komponentu,
                 interpretacja=meta.interpretacja,
                 funkcja=meta.funkcja,
+                address=address,
+                leaf_key=f"leaf_{meta.leaf_id}",
             )
+        elif obj.address != address:
+            # A leaf that moved the object to another channel invalidates
+            # what a sweep proved for the old one.
+            self._drop_sweep_entries(meta.id)
         updates: dict[str, Any] = {
             name: getattr(meta, name) for name in _METADATA_FIELDS
         }
         updates["sibling_module_mac"] = sibling_macs.get(meta.id_urzadzenia)
         updates.update(config)
-        # The catalogue never carries the record entry, so the held table
-        # re-applies it on every merge - including the re-creation after
-        # an eviction.
-        record = self._record_by_id.get(meta.id)
-        if record is not None:
-            updates["record"] = record
+        updates["address"] = address
+        updates["leaf_key"] = f"leaf_{meta.leaf_id}"
+        # The catalogue never carries a sweep result, so the held tables
+        # re-apply on every merge, the re-creation after an eviction
+        # included, and an entry dropped since the last merge clears.
+        updates["record"] = self._record_by_id.get(meta.id)
         # A travel configuration and a lock answer belong to a roller kind
-        # alone. A row that left the class clears both fields and drops both
-        # held entries, so a later return to the class waits for a sweep of
-        # its own instead of folding back what the object no longer is.
-        if _protocol.joins_roller_records(meta.typ_komponentu):
-            parameters = self._cover_parameters_by_id.get(meta.id)
-            if parameters is not None:
-                updates["cover_parameters"] = parameters
-            writable = self._lock_support_by_id.get(meta.id)
-            if writable is not None:
-                updates["block_writable"] = writable
-        else:
+        # alone. A row that left the class drops both held entries, so a
+        # later return to the class waits for a sweep of its own.
+        if not _protocol.joins_roller_records(meta.typ_komponentu):
             self._cover_parameters_by_id.pop(meta.id, None)
-            updates["cover_parameters"] = None
             self._lock_support_by_id.pop(meta.id, None)
-            updates["block_writable"] = None
+        updates["cover_parameters"] = self._cover_parameters_by_id.get(meta.id)
+        updates["block_writable"] = self._lock_support_by_id.get(meta.id)
         changed = any(getattr(obj, name) != value for name, value in updates.items())
         updated = replace(obj, **updates)
         # The states snapshot is the one seed source on both tiers, so a
         # buffered snapshot value applies here and reply order never decides
         # whether an object starts with its state.
-        stan_json = self._stan_by_id.get(meta.id)
-        if stan_json is not None:
-            updated, seeded = self._apply_stan_json(updated, stan_json)
+        seed = self._stan_by_id.get(meta.id)
+        if seed is not None:
+            updated, seeded = self._apply_stan_json(updated, seed)
             changed |= seeded
         # Replay a buffered push under the same stamp-supersedes rule the
         # seed follows: both carry the M-SERV's own clock.
@@ -662,35 +728,6 @@ class AmpioStore:
         if changed or evicted:
             self._rebuild_indexes(applied)
 
-    def _handle_params_devices(self, data: Mapping[str, Any], applied: Applied) -> None:
-        """Apply the ``data/params_devices`` config table.
-
-        This store's one source for `params`, `czas` and `url` on both
-        tiers. The whole table is held for catalogue rows that arrive
-        later, and objects already known are updated in place. An id with
-        no known object creates no placeholder: the table is not
-        grant-filtered, so most of it refers to objects the account cannot
-        otherwise see. The same push rebuilds the two presence rows from
-        the held catalogue table, so their switch and their hidden state
-        settle from it too.
-        """
-        self._params_by_id = _protocol.parse_params_devices(data)
-        self._params_received = True
-        for oid, entry in self._params_by_id.items():
-            obj = self.objects.get(oid)
-            if obj is not None and (
-                obj.params != entry.params
-                or obj.czas != entry.czas
-                or obj.url != entry.url
-            ):
-                obj = replace(obj, params=entry.params, czas=entry.czas, url=entry.url)
-                self.objects[oid] = obj
-                self._record(obj, applied)
-        rows = list(self._presence_rows.values())
-        if rows:
-            self._merge_presence(rows, self._held_config(rows), applied)
-        self._report_params_coverage()
-
     def _report_params_coverage(self) -> None:
         """Name the catalogue objects the params table carries no row for.
 
@@ -742,25 +779,31 @@ class AmpioStore:
         """Apply a `data/states` reply, the one initial-value source.
 
         The snapshot answers both tiers, so neither catalogue needs to seed
-        a value. An id no catalogue established stays out of the store, and
-        its value waits here for the catalogue row that may establish it.
+        a value. Every row parses before any field changes, so a reply
+        with one malformed row is refused whole and the held table stays.
+        An id no catalogue established stays out of the store, and its
+        seed waits here for the catalogue row that may establish it.
         """
         entries = _protocol.parse_states_snapshot(data)
-        self._stan_by_id = {entry.id: entry.stan_json for entry in entries}
+        seeds = {
+            entry.id: _protocol.parse_stan_json(entry.stan_json) for entry in entries
+        }
         detection_id, _ = self._presence_ids()
         home_status = self._home_status
         if detection_id is not None and (
             self._home_status is None or not self._detection_pushed
         ):
-            stan_json = self._stan_by_id.get(detection_id)
-            if stan_json is not None:
-                home_status = _home_status(_protocol.parse_stan_json(stan_json).state)
-        for entry in entries:
-            obj = self.objects.get(entry.id)
+            seed = seeds.get(detection_id)
+            if seed is not None:
+                home_status = _home_status(seed.state)
+        # No code below this line raises.
+        self._stan_by_id = seeds
+        for oid, seed in seeds.items():
+            obj = self.objects.get(oid)
             if obj is None:
                 continue
-            obj, changed = self._apply_stan_json(obj, entry.stan_json)
-            self.objects[entry.id] = obj
+            obj, changed = self._apply_stan_json(obj, seed)
+            self.objects[oid] = obj
             if changed:
                 self._record(obj, applied)
         self._home_status = home_status
@@ -859,7 +902,7 @@ class AmpioStore:
     # --- helpers ----------------------------------------------------------
 
     def _apply_stan_json(
-        self, obj: AmpioObject, stan_json: str
+        self, obj: AmpioObject, seed: _protocol.StanJsonSeed
     ) -> tuple[AmpioObject, bool]:
         """Return `obj` with a bulk-snapshot value applied when it supersedes.
 
@@ -875,7 +918,6 @@ class AmpioStore:
         """
         if obj.raw_owned:
             return obj, False
-        seed = _protocol.parse_stan_json(stan_json)
         reported_at = float(seed.on_ms) / 1000.0
         if not self._supersedes(obj, reported_at):
             return obj, False

@@ -42,6 +42,7 @@ from conftest import (
     details,
     devices,
     feed,
+    info,
     make_client,
     params_of,
     params_table,
@@ -55,12 +56,15 @@ from ampio_mqtt import (
     AccessTier,
     AmpioClient,
     AmpioConnectionError,
+    AmpioNotConfigured,
     AmpioTimeoutError,
     AuthFailed,
     AvailabilityChanged,
     ClientEvent,
     ConnectionDied,
+    NotConfigured,
     ObjectAdded,
+    ObjectRemoved,
     ObjectUpdated,
 )
 from ampio_mqtt._connection import _is_auth_error, _mqtt_client
@@ -530,6 +534,51 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
         await asyncio.sleep(0.05)
         broker.stream_error = None
         assert await client.wait_for_initial_discovery(timeout=0.01) is True
+    finally:
+        await client.disconnect()
+
+
+def _feed_initial(client: AmpioClient, *rows: dict) -> None:
+    feed(client, INFO_TOPIC, info(mac=555, userId=4, serverVersion="1865"))
+    feed(client, STATES_TOPIC, snapshot())
+    feed(client, PARAMS_DEVICES_TOPIC, params_of(*rows))
+    feed(client, DATA_DEVICES_TOPIC, details(*rows))
+
+
+async def test_wait_for_initial_discovery_raises_on_a_leafless_row() -> None:
+    broker = FakeBroker()
+    client = make_client(broker)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    try:
+        _feed_initial(client, {"id": 10, "leafId": "", "opis_menu": "Lamp"}, {"id": 11})
+        with pytest.raises(AmpioNotConfigured) as caught:
+            await client.wait_for_initial_discovery(timeout=1.0)
+        assert caught.value.objects == ((10, "Lamp"),)
+        assert list(client.objects) == [11]
+        assert client.diagnostics_snapshot()["not_configured"] == [[10, "Lamp"]]
+        feed(client, PARAMS_DEVICES_TOPIC, params_of({"id": 10}, {"id": 11}))
+        feed(client, DATA_DEVICES_TOPIC, details({"id": 10}, {"id": 11}))
+        assert await client.wait_for_initial_discovery(timeout=1.0) is True
+        assert sorted(client.objects) == [10, 11]
+    finally:
+        await client.disconnect()
+
+
+async def test_a_later_failure_is_not_hidden_by_a_latched_success() -> None:
+    broker = FakeBroker()
+    client = make_client(broker)
+    events: list[ClientEvent] = []
+    client.subscribe(events.append)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    try:
+        _feed_initial(client, {"id": 10})
+        assert await client.wait_for_initial_discovery(timeout=1.0) is True
+        events.clear()
+        feed(client, PARAMS_DEVICES_TOPIC, params_of({"id": 10}))
+        feed(client, DATA_DEVICES_TOPIC, details({"id": 10, "leafId": ""}))
+        assert [type(e) for e in events] == [ObjectRemoved, NotConfigured]
+        with pytest.raises(AmpioNotConfigured):
+            await client.wait_for_initial_discovery(timeout=1.0)
     finally:
         await client.disconnect()
 

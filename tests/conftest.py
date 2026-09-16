@@ -247,7 +247,7 @@ _CATALOGUE_ROW = {
     "typ_komponentu": "",
     "interpretacja": 0,
     "funkcja": 1,
-    "leafId": "",
+    "leafId": "0_cafe_257_0_0",
     "opis_menu": "",
     "type": None,
     "format": "",
@@ -302,6 +302,17 @@ def params_of(*items: dict) -> str:
             for item in items
         )
     )
+
+
+def catalogue(client: AmpioClient, *items: dict) -> None:
+    """Feed a client one catalogue reply on its own tier, in wire order.
+
+    The params table lands first so every row merges with its config
+    columns in hand, and the door admits the rows on the second feed.
+    """
+    user = client._username
+    feed(client, f"ampio/fromDB/{user}/data/params_devices", params_of(*items))
+    feed(client, f"ampio/fromDB/{user}/data/devices", details(*items))
 
 
 def snapshot(*items: dict) -> str:

@@ -16,12 +16,12 @@ from conftest import (
     ADMIN_DEVICES_TOPIC,
     ADMIN_PARAMS_DEVICES_TOPIC,
     ADMIN_USER,
-    DATA_DEVICES_TOPIC,
     INFO_TOPIC,
     PARAMS_DEVICES_TOPIC,
     STATES_TOPIC,
     USER,
     FakeBroker,
+    catalogue,
     details,
     devices,
     feed,
@@ -131,7 +131,7 @@ def test_the_module_catalogue_refuses_a_standard_account() -> None:
     standard account reading it is a consumer fault, not an empty install.
     Tier-independent grouping reads `AmpioObject.module_mac`."""
     client = _client()
-    feed(client, DATA_DEVICES_TOPIC, details(_object_row(10, 7, "cafe")))
+    catalogue(client, _object_row(10, 7, "cafe"))
     with pytest.raises(RuntimeError, match="admin"):
         _ = client.modules
     with pytest.raises(RuntimeError, match="admin"):
@@ -171,7 +171,7 @@ def test_module_for_returns_the_mac_agreeing_row() -> None:
     client = _admin_client()
     feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
     feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, 7, "cafe")))
-    feed(client, ADMIN_DATA_DEVICES_TOPIC, details(_object_row(10, 7, "cafe")))
+    catalogue(client, _object_row(10, 7, "cafe"))
     module = client.module_for(client.objects[10])
     assert module is not None
     assert module.id == 7
@@ -184,23 +184,8 @@ def test_module_for_rejects_a_mac_disagreement() -> None:
     client = _admin_client()
     feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
     feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, 7, "beef")))
-    feed(client, ADMIN_DATA_DEVICES_TOPIC, details(_object_row(10, 7, "beef")))
+    catalogue(client, _object_row(10, 7, "beef"))
     assert client.module_for(client.objects[10]) is None
-
-
-@pytest.mark.parametrize("module_mac", [0xCAFE, None])
-def test_module_for_joins_a_leafless_object_without_the_mac_gate(
-    module_mac: int | None,
-) -> None:
-    """An object with no leafId (its Matter box unchecked in Designer) has
-    no leaf mac to gate on, so the id_urzadzenia join stands as is."""
-    client = _admin_client()
-    feed(client, ADMIN_DEVICES, devices(_module_row(7, module_mac)))
-    feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, 7, None)))
-    feed(client, ADMIN_DATA_DEVICES_TOPIC, details(_object_row(10, 7, None)))
-    module = client.module_for(client.objects[10])
-    assert module is not None
-    assert module.id == 7
 
 
 def test_module_for_without_a_join_key() -> None:
@@ -231,7 +216,7 @@ def test_module_for_resolves_colliding_macs_by_the_join() -> None:
         devices(_module_row(7, 0xCAFE, "FIRST"), _module_row(8, 0xCAFE, "SECOND")),
     )
     feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, 8, "cafe")))
-    feed(client, ADMIN_DATA_DEVICES_TOPIC, details(_object_row(10, 8, "cafe")))
+    catalogue(client, _object_row(10, 8, "cafe"))
     module = client.module_for(client.objects[10])
     assert module is not None
     assert (module.id, module.nazwa_urzadzenia) == (8, "SECOND")
@@ -265,7 +250,7 @@ def test_read_surface_is_immutable() -> None:
     from consumer code - the promise core builds its entity layer on."""
     client = _admin_client()
     feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_flaga(41, 3)))
-    feed(client, ADMIN_DATA_DEVICES_TOPIC, details(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3))
     feed(
         client,
         f"ampio/fromDB/{ADMIN_USER}/config/devices",
@@ -298,17 +283,14 @@ def test_mserv_reads_none_when_no_row_carries_the_server_mac() -> None:
 
 def test_state_updates_object_and_notifies() -> None:
     client = _client()
-    feed(
+    catalogue(
         client,
-        DATA_DEVICES_TOPIC,
-        details(
-            {
-                "id": 41,
-                "typ_komponentu": "temp",
-                "interpretacja": 1,
-                "opis_menu": "Salon",
-            }
-        ),
+        {
+            "id": 41,
+            "typ_komponentu": "temp",
+            "interpretacja": 1,
+            "opis_menu": "Salon",
+        },
     )
     received: list = []
     client.subscribe(lambda e: received.append(e.object), of=ObjectUpdated)
@@ -329,15 +311,14 @@ def test_object_removal_listener_fires_after_eviction() -> None:
     unsubscribe = client.subscribe(
         lambda e: removed.append(e.object.id), of=ObjectRemoved
     )
-    topic = DATA_DEVICES_TOPIC
-    feed(client, topic, details(_flaga(41, 3), _flaga(42, 4)))
-    feed(client, topic, details(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3), _flaga(42, 4))
+    catalogue(client, _flaga(41, 3))
     assert removed == [42]
     assert 42 not in client.objects
 
     unsubscribe()
-    feed(client, topic, details(_flaga(41, 3), _flaga(42, 4)))
-    feed(client, topic, details(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3), _flaga(42, 4))
+    catalogue(client, _flaga(41, 3))
     assert removed == [42]
 
 
@@ -361,13 +342,12 @@ def test_unsubscribe_removes_only_its_own_registration() -> None:
 
     first = client.subscribe(listener, of=ObjectUpdated)
     client.subscribe(listener, of=ObjectUpdated)
-    topic = DATA_DEVICES_TOPIC
-    feed(client, topic, details(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3))
     assert seen == [41, 41]
 
     first()
     first()  # repeat must not touch the surviving registration
-    feed(client, topic, details(_flaga(41, 4)))
+    catalogue(client, _flaga(41, 4))
     assert seen == [41, 41, 41]
 
 
@@ -389,9 +369,8 @@ def test_subscribe_filters_and_preserves_order() -> None:
     only_updates: list[object] = []
     client.subscribe(everything.append)
     client.subscribe(only_updates.append, of=ObjectUpdated)
-    topic = DATA_DEVICES_TOPIC
-    feed(client, topic, details(_flaga(41, 3), _flaga(42, 4)))
-    feed(client, topic, details(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3), _flaga(42, 4))
+    catalogue(client, _flaga(41, 3))
     assert [type(e).__name__ for e in everything] == [
         "ObjectAdded",
         "ObjectAdded",
@@ -413,7 +392,7 @@ def test_subscribe_object_id_dispatches_only_matching_object() -> None:
     client.subscribe(
         lambda e: other.append(e.object.id), of=ObjectUpdated, object_id=42
     )
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3), _flaga(42, 4)))
+    catalogue(client, _flaga(41, 3), _flaga(42, 4))
     assert mine == [41]
     assert other == [42]
 
@@ -428,8 +407,8 @@ def test_subscribe_object_id_tuple_covers_update_and_removal() -> None:
         of=(ObjectUpdated, ObjectRemoved),
         object_id=42,
     )
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3), _flaga(42, 4)))
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3), _flaga(42, 4))
+    catalogue(client, _flaga(41, 3))
     assert seen == ["ObjectAdded", "ObjectRemoved"]
 
 
@@ -466,12 +445,12 @@ def test_subscribe_object_id_unsubscribe_contract() -> None:
 
     first = client.subscribe(listener, of=ObjectUpdated, object_id=41)
     client.subscribe(listener, of=ObjectUpdated, object_id=41)
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3))
     assert seen == [41, 41]
 
     first()
     first()  # repeat must not touch the surviving registration
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 4)))
+    catalogue(client, _flaga(41, 4))
     assert seen == [41, 41, 41]
 
 
@@ -499,8 +478,8 @@ def test_subscribe_object_id_listener_can_unsubscribe_mid_dispatch() -> None:
 
     unsub = client.subscribe(one_shot, of=ObjectUpdated, object_id=41)
     client.subscribe(lambda e: calls.append("steady"), of=ObjectUpdated, object_id=41)
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3)))
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 4)))
+    catalogue(client, _flaga(41, 3))
+    catalogue(client, _flaga(41, 4))
     assert calls == ["one_shot", "steady", "steady"]
 
 
@@ -515,7 +494,7 @@ def test_subscribe_object_id_listener_exception_is_isolated() -> None:
 
     client.subscribe(broken, of=ObjectUpdated, object_id=41)
     client.subscribe(lambda e: seen.append(e.object.id), of=ObjectUpdated, object_id=41)
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3))
     assert seen == [41]
 
 
@@ -720,7 +699,7 @@ async def test_discovery_stays_incomplete_without_server_identity(
     client, _broker = connected
     feed(client, STATES_TOPIC, devices())
     feed(client, INFO_TOPIC, info())  # unparseable: carries no identity
-    feed(client, DATA_DEVICES_TOPIC, details())
+    catalogue(client)
     feed(client, PARAMS_DEVICES_TOPIC, devices())
     assert await client.wait_for_initial_discovery(timeout=0.05) is False
     assert client.server_info is None
@@ -832,7 +811,7 @@ def test_diagnostics_snapshot_module_rows_mirror_liveness() -> None:
         devices(_module_row(9, 0xBEEF), _module_row(7, 0xCAFE)),
     )
     feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, 7, "cafe")))
-    feed(client, ADMIN_DATA_DEVICES_TOPIC, details(_object_row(10, 7, "cafe")))
+    catalogue(client, _object_row(10, 7, "cafe"))
     rows = client.diagnostics_snapshot()["modules"]
     assert [row["id"] for row in rows] == [7, 9]
     assert rows[0]["last_seen"] is None

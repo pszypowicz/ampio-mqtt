@@ -16,6 +16,7 @@ from conftest import (
     DATA_DEVICES_TOPIC,
     USER,
     FakeBroker,
+    catalogue,
     deliver_later,
     details,
     devices,
@@ -175,7 +176,7 @@ async def test_command_requires_a_connection() -> None:
 
 def _learn(client: AmpioClient, oid: int, typ: str) -> None:
     """Teach the store one object's type via a catalogue reply."""
-    feed(client, DATA_DEVICES_TOPIC, details({"id": oid, "typ_komponentu": typ}))
+    catalogue(client, {"id": oid, "typ_komponentu": typ})
 
 
 async def test_turn_off_on_rgbw_routes_through_set_colors(
@@ -522,13 +523,10 @@ async def test_confirm_ignores_updates_for_other_objects(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, _ = connected
-    feed(
+    catalogue(
         client,
-        DATA_DEVICES_TOPIC,
-        details(
-            {"id": 64, "typ_komponentu": "przekaznik"},
-            {"id": 65, "typ_komponentu": "przekaznik"},
-        ),
+        {"id": 64, "typ_komponentu": "przekaznik"},
+        {"id": 65, "typ_komponentu": "przekaznik"},
     )
     task = asyncio.create_task(client.turn_on(64, confirm=1.0))
     delivery = deliver_later(
@@ -617,7 +615,7 @@ async def test_confirm_survives_the_catalogue_race(
     await asyncio.sleep(0)  # the waiter arms before the publish
     feed(client, _ob_state(70), _push("255"))
     assert not task.done()
-    feed(client, DATA_DEVICES_TOPIC, details({"id": 70, "typ_komponentu": "flaga"}))
+    catalogue(client, {"id": 70, "typ_komponentu": "flaga"})
     obj = await task
     assert obj is not None
     assert (obj.id, obj.state) == (70, "255")

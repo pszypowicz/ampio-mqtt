@@ -42,7 +42,7 @@ from ampio_mqtt._protocol import (
     resolve_module_capabilities,
     resolve_module_records,
 )
-from ampio_mqtt.models import AmpioObject
+from ampio_mqtt.models import AmpioObject, ModuleAddress
 
 
 def _object(**over: object) -> AmpioObject:
@@ -53,6 +53,8 @@ def _object(**over: object) -> AmpioObject:
         "typ_komponentu": "",
         "interpretacja": 0,
         "funkcja": 1,
+        "address": ModuleAddress(mac=0xCAFE, channel=0, sf_id=257, sub_sf_id=0),
+        "leaf_key": "leaf_0_cafe_257_0_0",
     }
     return AmpioObject(**{**row, **over})  # type: ignore[arg-type]
 
@@ -710,55 +712,6 @@ async def test_resolve_records_joins_by_the_override_mac_the_reply_carries() -> 
         assert result.answered_macs == frozenset({0xCB89, 1})
         assert result.silent_macs == frozenset()
         assert client.modules[1].record == ModuleRecord()
-    finally:
-        await client.disconnect()
-
-
-async def test_resolve_records_joins_a_leafless_object_through_the_catalogue() -> None:
-    client, broker = await _admin_client_with_catalogue()
-    try:
-        feed(
-            client,
-            ADMIN_PARAMS_DEVICES_TOPIC,
-            params_of(
-                {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"},
-                {
-                    "id": 65,
-                    "typ_komponentu": "przekaznik",
-                    "id_urzadzenia": 16,
-                    "funkcja": 2,
-                },
-            ),
-        )
-        feed(
-            client,
-            ADMIN_DATA_DEVICES_TOPIC,
-            details(
-                {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"},
-                {
-                    "id": 65,
-                    "typ_komponentu": "przekaznik",
-                    "id_urzadzenia": 16,
-                    "funkcja": 2,
-                },
-            ),
-        )
-        delivery = asyncio.create_task(
-            _deliver_causally(
-                client,
-                broker,
-                json.dumps({"List": [{"id": 14, "opis_menu": "Potter"}]}),
-                _list(_device(0xCB89, 0xCB89, frame(12, 1, 14, 256, "Second"))),
-            )
-        )
-        try:
-            result = await client.resolve_records(timeout=0.2)
-        finally:
-            await delivery
-        assert result.records == {
-            65: DesignerRecord(location="Potter", matter_device_type=256, desc="Second")
-        }
-        assert client.objects[65].record is not None
     finally:
         await client.disconnect()
 

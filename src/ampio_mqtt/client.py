@@ -62,6 +62,7 @@ from ._store import AmpioStore
 from .classification import InputKind, OutputKind
 from .errors import (
     AmpioConnectionError,
+    AmpioNotConfigured,
     AmpioProtocolError,
     AmpioTimeoutError,
     AmpioValueError,
@@ -632,6 +633,8 @@ class AmpioClient:
           row for. The table covers the whole catalogue on both tiers, so a
           non-empty list is a server fault: those objects read every
           Designer config flag as unset.
+        - ``not_configured``: the ``(id, name)`` pairs of the catalogue
+          rows the door left out because they carry no leaf.
         - ``modules``: one row per known module, sorted by id, with the
           :class:`AmpioModule` fields ``id``, ``mac``, ``typ_urzadzenia``,
           ``model``, ``last_seen``, ``supply_voltage``, and
@@ -662,6 +665,7 @@ class AmpioClient:
             },
             "mac_collisions": sorted(self._store.colliding_macs),
             "params_gap": sorted(self._store.missing_params_ids),
+            "not_configured": [list(pair) for pair in self._store.not_configured],
             "modules": [
                 {
                     "id": module.id,
@@ -885,6 +889,8 @@ class AmpioClient:
         :meth:`wait_for_initial_discovery` rather than restarting. A
         consumer that must read `modules`/`objects`/`server_info` before
         building on the client checks this result or awaits that method.
+        Raises ``AmpioNotConfigured`` as :meth:`wait_for_initial_discovery`
+        does.
         """
         await self._connection.open(timeout)
         try:
@@ -912,11 +918,15 @@ class AmpioClient:
 
         A True guarantees ``objects`` and ``server_info`` (and, on the
         admin tier, ``modules``) are populated, with
-        :pyattr:`AmpioServerInfo.server_key` a string by construction. It
-        never raises on timeout - discovery continues and this returns
-        False.
-        Safe to call repeatedly and after reconnects: the signals latch
-        on first completion, so this then returns immediately.
+        :pyattr:`AmpioServerInfo.server_key` a string by construction.
+        Raises :class:`AmpioNotConfigured` when the catalogue lists a row
+        with no leaf: the other rows are served, the connection stays up,
+        and the pushed catalogue after the installer restores the leaf in
+        Designer admits the row, after which this returns True. It never
+        raises on timeout - discovery continues and this returns False.
+        Safe to call repeatedly and after reconnects: the signals latch on
+        first completion, and the leaf check runs on every call, so a
+        later failure is never hidden by an earlier success.
         """
         try:
             async with asyncio.timeout(timeout):
@@ -928,6 +938,9 @@ class AmpioClient:
                 )
         except TimeoutError:
             return False
+        rejected = self._store.not_configured
+        if rejected:
+            raise AmpioNotConfigured(rejected)
         return True
 
     async def disconnect(self) -> None:

@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 
-from ampio_mqtt import AmpioModule, AmpioObject, AmpioServerInfo
+from ampio_mqtt import AmpioModule, AmpioObject, AmpioServerInfo, ModuleAddress
 from ampio_mqtt.classification import InputKind, ThermostatKind, classify
 from ampio_mqtt.device_types import module_model
 from ampio_mqtt.models import DesignerRecord, ModuleRecord
@@ -21,6 +21,8 @@ def _object(**over: object) -> AmpioObject:
         "typ_komponentu": "",
         "interpretacja": 0,
         "funkcja": 1,
+        "address": ModuleAddress(mac=0xCAFE, channel=0, sf_id=257, sub_sf_id=0),
+        "leaf_key": "leaf_0_cafe_257_0_0",
     }
     return AmpioObject(**{**row, **over})  # type: ignore[arg-type]
 
@@ -66,24 +68,10 @@ def test_numeric_value_interpretation(value, expected) -> None:
     assert _object(id=1, state=value).numeric_value == expected
 
 
-def test_leaf_key_is_the_physical_output_token() -> None:
-    """leaf_key returns leaf_<leaf_id>."""
-    obj = _object(id=1, leaf_id="0_1f2e_257_2_5")
-    assert obj.leaf_key == "leaf_0_1f2e_257_2_5"
-
-
 def test_object_key_is_the_per_object_token() -> None:
     """object_key returns obj_<id>."""
     obj = _object(id=7)
     assert obj.object_key == "obj_7"
-
-
-@pytest.mark.parametrize(
-    ("leaf_id", "expected"),
-    [("0_cb9b_74_0_1", "leaf_0_cb9b_74_0_1"), ("", None)],
-)
-def test_leaf_key_from_leaf_id(leaf_id: str, expected: str | None) -> None:
-    assert _object(id=1, leaf_id=leaf_id).leaf_key == expected
 
 
 def test_object_key_is_the_object_id() -> None:

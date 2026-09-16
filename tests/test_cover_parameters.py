@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ampio_mqtt import AmpioObject, CoverParameters, ModuleFunction
+from ampio_mqtt import AmpioObject, CoverParameters, ModuleAddress, ModuleFunction
 from ampio_mqtt._protocol import (
     COVER_PARAMS_LAYOUTS,
     parse_cover_parameters,
@@ -114,6 +114,8 @@ def _object(**over: object) -> AmpioObject:
         "typ_komponentu": "roleta_procenty",
         "interpretacja": 0,
         "funkcja": 1,
+        "address": ModuleAddress(mac=0xCAFE, channel=0, sf_id=257, sub_sf_id=0),
+        "leaf_key": "leaf_0_cafe_257_0_0",
     }
     return AmpioObject(**{**row, **over})  # type: ignore[arg-type]
 

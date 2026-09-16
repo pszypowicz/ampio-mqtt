@@ -11,7 +11,7 @@ import asyncio
 import logging
 
 import pytest
-from conftest import USER, FakeBroker, details, devices, feed, make_client
+from conftest import USER, FakeBroker, catalogue, devices, feed, make_client
 
 from ampio_mqtt import AmpioClient, ConnectionDied, ObjectUpdated
 
@@ -22,11 +22,7 @@ def _client() -> AmpioClient:
 
 def _establish(client: AmpioClient, *oids: int) -> None:
     """Catalogue rows establishing the objects the live pushes then update."""
-    feed(
-        client,
-        f"ampio/fromDB/{USER}/data/devices",
-        details(*({"id": oid} for oid in oids)),
-    )
+    catalogue(client, *({"id": oid} for oid in oids))
 
 
 # --- listeners are consumer code and may raise ------------------------------

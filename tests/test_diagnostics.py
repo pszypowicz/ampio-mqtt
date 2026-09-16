@@ -31,8 +31,18 @@ _URL = "https://example.invalid/private-url-token"
             "data/states",
             "admin",
             snapshot(
-                {"id": 1, "stan_json": json.dumps({"state": "private-state-text"})},
-                {"id": 2, "stan_json": json.dumps({"state": "private-second-state"})},
+                {
+                    "id": 1,
+                    "stan_json": json.dumps(
+                        {"state": "private-state-text", "on": 1779560000000}
+                    ),
+                },
+                {
+                    "id": 2,
+                    "stan_json": json.dumps(
+                        {"state": "private-second-state", "on": 1779560000000}
+                    ),
+                },
             ),
         ),
         (

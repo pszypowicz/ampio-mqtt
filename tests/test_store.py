@@ -33,7 +33,13 @@ from conftest import (
     snapshot,
 )
 
-from ampio_mqtt import PresenceChanged, PresenceDetection, PresenceSimulation, _protocol
+from ampio_mqtt import (
+    ModuleAddress,
+    PresenceChanged,
+    PresenceDetection,
+    PresenceSimulation,
+    _protocol,
+)
 from ampio_mqtt._protocol import (
     ENDPOINTS,
     EndpointReply,
@@ -52,6 +58,7 @@ from ampio_mqtt.events import (
     BusEventRaised,
     ModuleRemoved,
     ModuleUpdated,
+    NotConfigured,
     ObjectAdded,
     ObjectRemoved,
     ObjectUpdated,
@@ -182,13 +189,15 @@ def _catalogue_row(**overrides: object) -> dict:
 _PANEL = {"id": 7, "mac": 0xCAFE, "typ_urzadzenia": 11, "nazwa_urzadzenia": "panel"}
 
 
-def _flaga_row(oid: int, funkcja: int, dev: int = 7) -> dict:
+def _flaga_row(oid: int, funkcja: int, dev: int = 7, mac: int = 0xCAFE) -> dict:
+    """One flag row whose leaf embeds the mac of the module it names."""
     return {
         "id": oid,
         "id_urzadzenia": dev,
         "typ_komponentu": "flaga",
         "interpretacja": 1,
         "funkcja": funkcja,
+        "leafId": f"0_{mac:x}_3_0_{funkcja - 1}",
         "opis_menu": "Flag",
     }
 
@@ -278,13 +287,15 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
     assert store.objects[50].state == "55"
 
 
-def _ledww_row(oid: int, funkcja: int, dev: int = 7) -> dict:
+def _ledww_row(oid: int, funkcja: int, dev: int = 7, mac: int = 0xCAFE) -> dict:
+    """One CCT row whose leaf embeds the mac of the module it names."""
     return {
         "id": oid,
         "id_urzadzenia": dev,
         "typ_komponentu": "ledww",
         "interpretacja": 1,
         "funkcja": funkcja,
+        "leafId": f"0_{mac:x}_30_0_{funkcja - 1}",
         "opis_menu": "CCT",
     }
 
@@ -609,9 +620,8 @@ def test_the_app_sync_catalogue_evicts_what_the_grant_revoked() -> None:
     # The grant bounds a restricted store, so the reply is complete for
     # the account and a vanished row is a revocation.
     store = _app_store()
-    data_topic = f"ampio/fromDB/{USER}/data/devices"
-    _apply(store, data_topic, details(*_flaga_rows((10, 1), (11, 1))))
-    applied = _apply(store, data_topic, details(*_flaga_rows((10, 1))))
+    _feed_catalogue(store, *_flaga_rows((10, 1), (11, 1)))
+    applied = _feed_catalogue(store, *_flaga_rows((10, 1)))
     assert [o.id for o in _removed(applied)] == [11]
     assert set(store.objects) == {10}
 
@@ -734,8 +744,148 @@ def test_two_catalogue_rows_sharing_one_leaf_id_get_distinct_object_keys() -> No
     )
     assert set(store.objects) == {150, 151}
     first, second = store.objects[150], store.objects[151]
-    assert first.leaf_key == second.leaf_key
+    assert first.leaf_key == second.leaf_key == "leaf_0_be82_257_2_2"
     assert first.object_key != second.object_key
+
+
+# --- the door: one admission path on both tiers -----------------------------
+
+
+def _not_configured(applied: Applied) -> list[NotConfigured]:
+    return [e for e in applied.events if isinstance(e, NotConfigured)]
+
+
+def test_the_door_waits_for_both_replies_of_the_pair() -> None:
+    store = _app_store()
+    first = _apply(store, DATA_DEVICES_TOPIC, details({"id": 41}))
+    assert first.events == []
+    assert store.objects == {}
+    second = _apply(store, PARAMS_DEVICES_TOPIC, params_of({"id": 41}))
+    assert [type(e) for e in second.events] == [ObjectAdded]
+    assert 41 in store.objects
+
+
+def test_the_door_admits_when_the_params_table_lands_first() -> None:
+    store = _store()
+    assert _apply(store, PARAMS_DEVICES_TOPIC, params_of({"id": 41})).events == []
+    applied = _apply(store, DATA_DEVICES_TOPIC, details({"id": 41}))
+    assert [type(e) for e in applied.events] == [ObjectAdded]
+
+
+def test_a_params_push_alone_re_runs_the_door() -> None:
+    store = _store()
+    _feed_catalogue(store, {"id": 41})
+    hidden = _apply(store, PARAMS_DEVICES_TOPIC, params_of({"id": 41, "params": 16}))
+    assert [type(e) for e in hidden.events] == [ObjectRemoved]
+    assert 41 not in store.objects
+    shown = _apply(store, PARAMS_DEVICES_TOPIC, params_of({"id": 41}))
+    assert [type(e) for e in shown.events] == [ObjectAdded]
+
+
+def test_a_hidden_row_never_enters_objects_nor_the_rejected_set() -> None:
+    store = _store()
+    applied = _feed_catalogue(store, {"id": 41, "params": 16, "leafId": ""}, {"id": 42})
+    assert [e.object.id for e in applied.events if isinstance(e, ObjectAdded)] == [42]
+    assert 41 not in store.objects
+    assert store.not_configured == ()
+    assert _not_configured(applied) == []
+
+
+def test_an_empty_leaf_is_recorded_and_left_out() -> None:
+    store = _store()
+    applied = _feed_catalogue(
+        store, {"id": 41, "leafId": "", "opis_menu": "Lamp"}, {"id": 42}
+    )
+    assert list(store.objects) == [42]
+    assert store.not_configured == ((41, "Lamp"),)
+    assert [e.objects for e in _not_configured(applied)] == [((41, "Lamp"),)]
+
+
+def test_a_malformed_leaf_refuses_the_reply_whole() -> None:
+    store = _store()
+    _feed_catalogue(store, {"id": 42})
+    before = dict(store.objects)
+    with pytest.raises(AmpioProtocolError, match="garbage"):
+        _feed_catalogue(store, {"id": 41, "leafId": "garbage"}, {"id": 43})
+    assert store.objects == before
+    assert store.not_configured == ()
+
+
+def test_a_leaf_that_disappears_after_admission_evicts_the_row() -> None:
+    store = _store()
+    _feed_catalogue(store, {"id": 41, "typ_komponentu": "przekaznik"})
+    store.apply_designer_records({41: DesignerRecord(location="Hall")}, {}, {})
+    assert store.objects[41].record is not None
+    applied = _feed_catalogue(store, {"id": 41, "leafId": ""})
+    assert [type(e) for e in applied.events] == [ObjectRemoved, NotConfigured]
+    assert store.not_configured == ((41, None),)
+    restored = _feed_catalogue(store, {"id": 41, "typ_komponentu": "przekaznik"})
+    assert [type(e) for e in restored.events] == [ObjectAdded]
+    assert store.not_configured == ()
+    assert store.objects[41].record is None
+
+
+def test_not_configured_reports_a_change_of_the_rejected_set_only() -> None:
+    store = _store()
+    first = _feed_catalogue(store, {"id": 41, "leafId": ""})
+    again = _feed_catalogue(store, {"id": 41, "leafId": ""})
+    assert len(_not_configured(first)) == 1
+    assert _not_configured(again) == []
+
+
+def test_a_moved_leaf_drops_the_held_sweep_entries() -> None:
+    store = _store()
+    _feed_catalogue(store, {"id": 41, "typ_komponentu": "przekaznik"})
+    store.apply_designer_records({41: DesignerRecord(location="Hall")}, {}, {})
+    applied = _feed_catalogue(
+        store, {"id": 41, "typ_komponentu": "przekaznik", "leafId": "0_cafe_257_0_1"}
+    )
+    obj = _updated(applied)[-1]
+    assert obj.address == ModuleAddress(mac=0xCAFE, channel=1, sf_id=257, sub_sf_id=0)
+    assert obj.record is None
+
+
+def test_a_refused_catalogue_leaves_the_held_reply_untouched() -> None:
+    store = _store()
+    _feed_catalogue(store, {"id": 41})
+    with pytest.raises(AmpioProtocolError):
+        _apply(
+            store,
+            DATA_DEVICES_TOPIC,
+            details({"id": 41}, {"id": 43, "leafId": "garbage"}),
+        )
+    again = _apply(store, PARAMS_DEVICES_TOPIC, params_of({"id": 41}))
+    assert again.events == []
+    assert list(store.objects) == [41]
+
+
+def test_a_malformed_snapshot_row_refuses_the_snapshot_whole() -> None:
+    store = _store()
+    _feed_catalogue(store, {"id": 41}, {"id": 42})
+    _apply(store, STATES_TOPIC, _snapshot("7", 1779560000000, oid=41))
+    with pytest.raises(AmpioProtocolError):
+        _apply(
+            store,
+            STATES_TOPIC,
+            snapshot(
+                {
+                    "id": 41,
+                    "stan_json": json.dumps({"state": "9", "on": 1779560100000}),
+                },
+                {"id": 42, "stan_json": "not json"},
+            ),
+        )
+    assert store.objects[41].state == "7"
+    assert list(store._stan_by_id) == [41]
+
+
+def test_not_configured_ignores_the_order_of_the_rejected_rows() -> None:
+    store = _store()
+    first = _feed_catalogue(store, {"id": 41, "leafId": ""}, {"id": 42, "leafId": ""})
+    second = _feed_catalogue(store, {"id": 42, "leafId": ""}, {"id": 41, "leafId": ""})
+    assert len(_not_configured(first)) == 1
+    assert _not_configured(second) == []
+    assert store.not_configured == ((41, None), (42, None))
 
 
 def test_devices_populate_modules_with_model_and_versions() -> None:
@@ -874,59 +1024,12 @@ def test_states_snapshot_does_not_overwrite_live_value() -> None:
     assert store.objects[41].state == "fresh"
 
 
-def test_sibling_module_mac_comes_from_leafed_rows_on_the_same_module() -> None:
-    """A leafless row reads the mac its leafed siblings embed, a row without
-    a leafed sibling reads None, and a leafed row reads its own module's mac."""
-    store = _app_store()
-    _apply(
-        store,
-        DATA_DEVICES_TOPIC,
-        details(
-            {
-                "id": 1,
-                "typ_komponentu": "przekaznik",
-                "id_urzadzenia": 3,
-                "leafId": "0_be82_257_2_1",
-            },
-            {"id": 2, "typ_komponentu": "przekaznik", "id_urzadzenia": 3},
-            {"id": 3, "typ_komponentu": "flaga", "id_urzadzenia": 7},
-        ),
-    )
-    assert store.objects[1].sibling_module_mac == 0xBE82
-    assert store.objects[2].sibling_module_mac == 0xBE82
-    assert store.objects[3].sibling_module_mac is None
-
-
-def test_sibling_module_mac_follows_the_next_catalogue() -> None:
-    store = _store()
-    _feed_catalogue(
-        store, {"id": 2, "typ_komponentu": "przekaznik", "id_urzadzenia": 3}
-    )
-    assert store.objects[2].sibling_module_mac is None
-    applied = _feed_catalogue(
-        store,
-        {
-            "id": 1,
-            "typ_komponentu": "przekaznik",
-            "id_urzadzenia": 3,
-            "leafId": "0_be82_257_2_1",
-        },
-        {"id": 2, "typ_komponentu": "przekaznik", "id_urzadzenia": 3},
-    )
-    assert store.objects[2].sibling_module_mac == 0xBE82
-    assert 2 in [o.id for o in _updated(applied)]
-
-
 def test_states_snapshot_creates_nothing_for_unknown_ids() -> None:
     """Only the catalogues decide which objects exist. The snapshot replays
     DB rows, unlisted ids included - creating from it would later evict an
     object no consumer was ever told existed."""
     store = _app_store()
-    _apply(
-        store,
-        DATA_DEVICES_TOPIC,
-        details({"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"}),
-    )
+    _feed_catalogue(store, {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"})
     applied = _apply(
         store,
         STATES_TOPIC,
@@ -962,10 +1065,8 @@ def test_snapshot_before_catalogue_seeds_the_value_at_merge() -> None:
     assert 20 not in store.objects
     assert _updated(applied) == []
 
-    applied = _apply(
-        store,
-        DATA_DEVICES_TOPIC,
-        details({"id": 20, "typ_komponentu": "temp", "opis_menu": "T"}),
+    applied = _feed_catalogue(
+        store, {"id": 20, "typ_komponentu": "temp", "opis_menu": "T"}
     )
     assert [o.id for o in _updated(applied)] == [20]
     assert store.objects[20].state == "7"
@@ -977,13 +1078,10 @@ def test_eviction_prunes_the_buffered_snapshot_value() -> None:
     """An evicted object's buffered seed must not resurface if a later
     catalogue re-establishes the id."""
     store = _app_store()
-    _apply(
+    _feed_catalogue(
         store,
-        DATA_DEVICES_TOPIC,
-        details(
-            {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"},
-            {"id": 6, "typ_komponentu": "flaga", "opis_menu": "G"},
-        ),
+        {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"},
+        {"id": 6, "typ_komponentu": "flaga", "opis_menu": "G"},
     )
     _apply(
         store,
@@ -993,20 +1091,15 @@ def test_eviction_prunes_the_buffered_snapshot_value() -> None:
             {"id": 6, "stan_json": '{"state": "1", "on": 1779560000000}'},
         ),
     )
-    applied = _apply(
-        store,
-        DATA_DEVICES_TOPIC,
-        details({"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"}),
+    applied = _feed_catalogue(
+        store, {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"}
     )
     assert [o.id for o in _removed(applied)] == [6]
 
-    _apply(
+    _feed_catalogue(
         store,
-        DATA_DEVICES_TOPIC,
-        details(
-            {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"},
-            {"id": 6, "typ_komponentu": "flaga", "opis_menu": "G"},
-        ),
+        {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"},
+        {"id": 6, "typ_komponentu": "flaga", "opis_menu": "G"},
     )
     assert store.objects[6].state is None
 
@@ -1458,7 +1551,6 @@ def test_presence_rows_leave_the_object_catalogue_on_the_admin_tier() -> None:
 
 def test_presence_rows_leave_the_object_catalogue_on_the_app_sync_tier() -> None:
     store = _app_store()
-    applied_catalogue = _apply(store, DATA_DEVICES_TOPIC, details(_WEJ, _DET, _SIM))
     applied_params = _apply(
         store,
         PARAMS_DEVICES_TOPIC,
@@ -1468,23 +1560,23 @@ def test_presence_rows_leave_the_object_catalogue_on_the_app_sync_tier() -> None
             {"id": 62, "params": 0, "czas": 0},
         ),
     )
+    applied_catalogue = _apply(store, DATA_DEVICES_TOPIC, details(_WEJ, _DET, _SIM))
     assert set(store.objects) == {62}
     assert store.presence_detection is not None
     assert store.presence_detection.id == 60
     assert store.presence_simulation == PresenceSimulation(
         id=61, name="Simulation", active=False
     )
-    # The catalogue settles the simulation row before the params table has
-    # named its switch, so it reads off as False and reports one event.
+    # The table alone establishes nothing: the door waits for the reply
+    # that lists the rows.
+    assert _presence_events(applied_params) == []
+    # The catalogue reply settles both rows and reports one event.
     assert _presence_events(applied_catalogue) == [
         PresenceChanged(
             detection=store.presence_detection,
             simulation=store.presence_simulation,
         )
     ]
-    # The params table names the same False value, a repeat rather than a
-    # change, so it reports none.
-    assert _presence_events(applied_params) == []
 
 
 def test_hidden_presence_row_reads_none() -> None:
@@ -1751,7 +1843,7 @@ def _app_row(oid: int, leaf: str, name: str = "Air quality", interp: int = 5) ->
 
 def test_data_devices_populate_and_classify() -> None:
     store = _app_store()
-    _apply(store, DATA_DEVICES_TOPIC, details(_app_row(24, "0_cb9b_74_0_1", interp=7)))
+    _feed_catalogue(store, _app_row(24, "0_cb9b_74_0_1", interp=7))
     obj = store.objects[24]
     assert obj.opis_menu == "Air quality"
     assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
@@ -1768,7 +1860,8 @@ def test_the_config_table_before_the_catalogue_applies_at_the_merge() -> None:
         store,
         PARAMS_DEVICES_TOPIC,
         params_table(
-            {"id": 24, "params": 17, "czas": 500, "url": "IAQ"}, {"id": 25, "params": 1}
+            {"id": 24, "params": 17},
+            {"id": 25, "params": 1, "czas": 500, "url": "IAQ"},
         ),
     )
     # The table is not grant-filtered; unknown ids create no placeholders.
@@ -1779,13 +1872,14 @@ def test_the_config_table_before_the_catalogue_applies_at_the_merge() -> None:
         DATA_DEVICES_TOPIC,
         details(_app_row(24, "0_cb9b_74_0_1"), _app_row(25, "0_cb9b_74_0_2")),
     )
-    assert store.objects[24].hidden is True and store.objects[24].visible is False
-    assert store.objects[24].czas == 500 and store.objects[24].url == "IAQ"
-    assert store.objects[25].hidden is False and store.objects[25].visible is True
+    # The held table decides the hidden bit too, so row 24 never lands.
+    assert 24 not in store.objects
+    assert store.objects[25].czas == 500 and store.objects[25].url == "IAQ"
 
 
 def test_the_config_table_after_the_catalogue_updates_objects_and_notifies() -> None:
     store = _app_store()
+    _apply(store, PARAMS_DEVICES_TOPIC, params_table({"id": 24, "params": 1}))
     _apply(store, DATA_DEVICES_TOPIC, details(_app_row(24, "0_cb9b_74_0_1")))
     assert store.objects[24].czas == 0 and store.objects[24].url == ""
 
@@ -1793,12 +1887,12 @@ def test_the_config_table_after_the_catalogue_updates_objects_and_notifies() -> 
         store,
         PARAMS_DEVICES_TOPIC,
         params_table(
-            {"id": 24, "params": 17, "czas": 500, "url": "IAQ"},
+            {"id": 24, "params": 1, "czas": 500, "url": "IAQ"},
             {"id": 999, "params": 1},
         ),
     )
     obj = store.objects[24]
-    assert obj.hidden is True and obj.czas == 500 and obj.url == "IAQ"
+    assert obj.czas == 500 and obj.url == "IAQ"
     assert _updated(applied) == [obj]
     assert 999 not in store.objects
 
@@ -1807,13 +1901,13 @@ def test_the_held_config_table_survives_an_eviction() -> None:
     """The catalogue carries no config column on this tier, so the held
     table re-applies on the re-creation after an eviction."""
     store = _app_store()
-    _apply(store, PARAMS_DEVICES_TOPIC, params_table({"id": 24, "params": 17}))
+    _apply(store, PARAMS_DEVICES_TOPIC, params_table({"id": 24, "params": 65}))
     row = _app_row(24, "0_cb9b_74_0_1")
     _apply(store, DATA_DEVICES_TOPIC, details(row))
     _apply(store, DATA_DEVICES_TOPIC, details())  # the grant is revoked
     assert store.objects == {}
     _apply(store, DATA_DEVICES_TOPIC, details(row))  # and granted again
-    assert store.objects[24].hidden is True
+    assert store.objects[24].params == 65 and store.objects[24].read_only is True
 
 
 def test_a_granted_object_the_config_table_misses_is_reported(
@@ -1861,9 +1955,9 @@ def test_the_admin_store_reads_its_config_columns_from_the_params_table() -> Non
     tier, so `data/params_devices` is every account's one source for
     `params`, `czas` and `url`."""
     store = _store()
-    _feed_catalogue(store, {"id": 128, "params": 17, "czas": 500, "url": "IAQ"})
+    _feed_catalogue(store, {"id": 128, "params": 65, "czas": 500, "url": "IAQ"})
     obj = store.objects[128]
-    assert obj.params == 17 and obj.czas == 500 and obj.url == "IAQ"
+    assert obj.params == 65 and obj.czas == 500 and obj.url == "IAQ"
     assert store.missing_params_ids == frozenset()
 
 
@@ -2453,8 +2547,7 @@ def test_held_records_accumulate_across_partial_sweeps() -> None:
     _seed_catalogue(store, row_a, row_b)
     store.apply_designer_records({64: DesignerRecord(location="Potter")}, {}, {})
     store.apply_designer_records({48: DesignerRecord(location="Salon")}, {}, {})
-    _seed_catalogue(store)  # eviction: empty catalogue
-    _seed_catalogue(store, row_a, row_b)  # both return
+    _seed_catalogue(store, row_a, row_b)  # a refresh re-applies both
     assert store.objects[64].record == DesignerRecord(location="Potter")
     assert store.objects[48].record == DesignerRecord(location="Salon")
 
@@ -2498,7 +2591,9 @@ def test_apply_designer_records_folds_both_maps_into_one_event() -> None:
     assert store.apply_designer_records({70: rec}, {70: params}, {}).events == []
 
 
-def test_held_cover_parameters_survive_an_eviction() -> None:
+def test_an_eviction_drops_the_held_cover_parameters() -> None:
+    """A sweep result belongs to an admitted object, so an eviction takes
+    it with the object and the row that returns waits for a fresh sweep."""
     store = AmpioStore(AccessTier.ADMIN)
     row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
     _seed_catalogue(store, row)
@@ -2515,7 +2610,7 @@ def test_held_cover_parameters_survive_an_eviction() -> None:
     store.apply_designer_records({}, {70: params}, {})
     _seed_catalogue(store)  # eviction: empty catalogue
     _seed_catalogue(store, row)  # the row returns
-    assert store.objects[70].cover_parameters == params
+    assert store.objects[70].cover_parameters is None
 
 
 def test_a_kind_change_drops_the_held_cover_parameters() -> None:
@@ -2556,16 +2651,16 @@ def test_apply_designer_records_folds_the_lock_support() -> None:
     assert store.apply_designer_records({}, {}, {70: True}).events == []
 
 
-def test_held_lock_support_survives_an_eviction() -> None:
-    """False is an answer, so the re-creation after an eviction must keep it
-    rather than read it back as the unresolved None."""
+def test_an_eviction_drops_the_held_lock_support() -> None:
+    """False is an answer for the object the sweep covered, so the row that
+    returns reads the unresolved None until a sweep answers for it again."""
     store = AmpioStore(AccessTier.ADMIN)
     row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
     _seed_catalogue(store, row)
     store.apply_designer_records({}, {}, {70: False})
     _seed_catalogue(store)  # eviction: empty catalogue
     _seed_catalogue(store, row)  # the row returns
-    assert store.objects[70].block_writable is False
+    assert store.objects[70].block_writable is None
 
 
 def test_a_kind_change_drops_the_held_lock_support() -> None:

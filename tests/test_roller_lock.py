@@ -1,7 +1,7 @@
 """Which covers can take a roller lock write, and how wide the mask is."""
 
 from ampio_mqtt._protocol import resolve_roller_lock_support, roller_lock_channels
-from ampio_mqtt.models import AmpioObject, ModuleFunction
+from ampio_mqtt.models import AmpioObject, ModuleAddress, ModuleFunction
 
 ROLLER = int(ModuleFunction.ROLLER)
 OUT_BIN = int(ModuleFunction.OUT_BIN)
@@ -22,6 +22,8 @@ def _object(**over: object) -> AmpioObject:
         "typ_komponentu": "roleta_procenty",
         "interpretacja": 0,
         "funkcja": 1,
+        "address": ModuleAddress(mac=0xCAFE, channel=0, sf_id=257, sub_sf_id=0),
+        "leaf_key": "leaf_0_cafe_257_0_0",
     }
     return AmpioObject(**{**row, **over})  # type: ignore[arg-type]
 
