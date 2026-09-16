@@ -1231,32 +1231,49 @@ async def test_a_changed_digest_re_requests_the_module_list(topic: str) -> None:
 
 
 async def test_a_digest_trigger_keeps_the_live_value_guard() -> None:
-    """Unlike refresh(), the trigger opens no snapshot cycle: a value pushed
-    since the last request outranks the stan_json the re-requested
-    catalogue carries, so a Designer save cannot roll a live value back."""
+    """Unlike refresh(), the trigger opens no snapshot cycle: a locally
+    stamped value stays guarded across it, and only a refresh()-driven
+    snapshot may correct it.
+
+    A raw-owned value is immune to a states snapshot outright, guard or no
+    guard, so the guard itself only comes into play once the object leaves
+    the raw index. The re-requested module list dropping the module the
+    `wej` object bridges through does that without touching the guard.
+    """
     broker = FakeBroker()
     client = make_client(broker, username=ADMIN_USER)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
-        stan = json.dumps({"state": "0", "on": 1786700900000})
-        feed(
-            client, ADMIN_PARAMS_DEVICES_TOPIC, params_of({"id": 10, "stan_json": stan})
-        )
-        feed(client, ADMIN_DATA_DEVICES_TOPIC, details({"id": 10, "stan_json": stan}))
+        feed(client, ADMIN_DEVICES_TOPIC, devices({"id": 1, "mac": 0xCAFE}))
+        feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of({"id": 10}))
         feed(
             client,
-            f"ampio/fromDB/{ADMIN_USER}/ob/10/state",
-            '{"state":"live","on":1789000000000}',
+            ADMIN_DATA_DEVICES_TOPIC,
+            details(
+                {"id": 10, "id_urzadzenia": 1, "funkcja": 1, "typ_komponentu": "wej"}
+            ),
         )
+        feed(client, "ampio/from/CAFE/state/i/1", "1")
+        assert client.objects[10].state == "1"
+
         broker.published.clear()
         feed(client, ADMIN_MD5_DEVICES_TOPIC, "a" * 32)
         feed(client, ADMIN_MD5_DEVICES_TOPIC, "b" * 32)
         await _published(broker, 1)
-        feed(
-            client, ADMIN_PARAMS_DEVICES_TOPIC, params_of({"id": 10, "stan_json": stan})
-        )
-        feed(client, ADMIN_DATA_DEVICES_TOPIC, details({"id": 10, "stan_json": stan}))
-        assert client.objects[10].state == "live"
+        assert broker.published == [
+            (f"ampio/control/{ADMIN_USER}/config", b"devices"),
+        ]
+        # The re-requested list comes back without module 1, freeing the
+        # object from raw suppression while leaving the guard untouched.
+        feed(client, ADMIN_DEVICES_TOPIC, devices())
+
+        stan = json.dumps({"state": "0", "on": 1786700900000})
+        feed(client, ADMIN_STATES_TOPIC, snapshot({"id": 10, "stan_json": stan}))
+        assert client.objects[10].state == "1"
+
+        await client.refresh()
+        feed(client, ADMIN_STATES_TOPIC, snapshot({"id": 10, "stan_json": stan}))
+        assert client.objects[10].state == "0"
     finally:
         await client.disconnect()
 
