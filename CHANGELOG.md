@@ -25,6 +25,9 @@ explicit beta posture above and is no longer the supported upgrade path.
   table.
 - `visibility.md` records that the detection state is a home-status code, that
   code 5 is "home empty", and that `is_on` misreads it (#265).
+- `protocol.md` gives the shape of the `logging` table: one row per logged
+  object, and `typ_logowania` is the interval in seconds, with 0 for "logged in
+  turns".
 
 ## 0.70.0
 

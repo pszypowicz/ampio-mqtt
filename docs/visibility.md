@@ -69,12 +69,11 @@ home-status code, not 255 or 0. Code 5 is "home empty" in the Ampio app. The
 other codes are unknown. `AmpioObject.is_on` therefore reads "home empty" as on,
 so do not map the `presence` class onto `is_on` yet. The M-SERV wrote the first
 code fifteen minutes after the sensors were linked and held it through forty
-minutes of sensor pulses. The four linked objects are absent from the M-SERV's
-logging table on the baseline install, and whether the engine needs them logged
-is unverified. Both live outside the room tree, the app-sync catalogue lists
-them unconditionally, and they carry no `leafId`. Neither bridges a raw channel
-(see [`raw-channel-bridge.md`](raw-channel-bridge.md)). The flag does not enter
-`visible`, so a hidden system object stays hidden.
+minutes of single sensor pulses and one pair 62 seconds apart. What moves the
+code is unverified. Both live outside the room tree, the app-sync catalogue
+lists them unconditionally, and they carry no `leafId`. Neither bridges a raw
+channel (see [`raw-channel-bridge.md`](raw-channel-bridge.md)). The flag does
+not enter `visible`, so a hidden system object stays hidden.
 
 Treat `visible` as the discovery filter.
 
