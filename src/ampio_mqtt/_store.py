@@ -661,6 +661,9 @@ class AmpioStore:
                 obj = replace(obj, params=entry.params, czas=entry.czas, url=entry.url)
                 self.objects[oid] = obj
                 self._record(obj, applied)
+        rows = list(self._presence_rows.values())
+        if rows:
+            self._merge_presence(rows, self._held_config(rows), applied)
         self._report_params_coverage()
 
     def _report_params_coverage(self) -> None:

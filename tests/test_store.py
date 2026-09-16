@@ -1566,6 +1566,65 @@ def test_presence_rows_never_enter_the_raw_index() -> None:
     )
 
 
+def _app_with_presence() -> AmpioStore:
+    store = _app_store()
+    _apply(store, DATA_DEVICES_TOPIC, details(_DET, _SIM))
+    _apply(
+        store,
+        PARAMS_DEVICES_TOPIC,
+        params_table(
+            {"id": 60, "params": 1, "czas": 0}, {"id": 61, "params": 1, "czas": 0}
+        ),
+    )
+    return store
+
+
+def test_params_push_flips_the_simulation_switch_and_reports_presence() -> None:
+    store = _app_with_presence()
+    applied = _apply(
+        store,
+        PARAMS_DEVICES_TOPIC,
+        params_table(
+            {"id": 60, "params": 1, "czas": 0}, {"id": 61, "params": 1, "czas": 1}
+        ),
+    )
+    assert store.presence_simulation == PresenceSimulation(
+        id=61, name="Simulation", active=True
+    )
+    assert _presence_events(applied) == [
+        PresenceChanged(
+            detection=store.presence_detection, simulation=store.presence_simulation
+        )
+    ]
+
+
+def test_params_push_that_hides_the_simulation_row_reads_none_and_reports_presence() -> (
+    None
+):
+    store = _app_with_presence()
+    applied = _apply(
+        store,
+        PARAMS_DEVICES_TOPIC,
+        params_table(
+            {"id": 60, "params": 1, "czas": 0}, {"id": 61, "params": 17, "czas": 0}
+        ),
+    )
+    assert store.presence_simulation is None
+    assert len(_presence_events(applied)) == 1
+
+
+def test_repeated_params_push_emits_no_presence_change() -> None:
+    store = _app_with_presence()
+    applied = _apply(
+        store,
+        PARAMS_DEVICES_TOPIC,
+        params_table(
+            {"id": 60, "params": 1, "czas": 0}, {"id": 61, "params": 1, "czas": 0}
+        ),
+    )
+    assert _presence_events(applied) == []
+
+
 def _push(oid: int, state: str, on: int = 1_700_000_000_000) -> str:
     return json.dumps({"state": state, "on": on})
 
