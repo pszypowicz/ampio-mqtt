@@ -93,6 +93,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Append full flag\\ttopic\\tpayload lines to this file",
     )
+    p.add_argument(
+        "--max-payload",
+        type=int,
+        default=200,
+        help="Print at most this many payload characters per line. 0 prints "
+        "the whole payload (default 200)",
+    )
     args = p.parse_args()
     if not args.host:
         p.error("missing --host (or AMPIO_HOST env)")
@@ -143,7 +150,8 @@ async def run(
                         payload = message.payload.decode("utf-8", "replace")
                         topic = str(message.topic)
                         elapsed = time.monotonic() - started
-                        print(f"  +{elapsed:7.3f}s {flag} {topic}  =  {payload[:200]}")
+                        shown = payload[: a.max_payload] if a.max_payload else payload
+                        print(f"  +{elapsed:7.3f}s {flag} {topic}  =  {shown}")
                         capture(f"{flag}\t{topic}\t{payload}\n")
                         if a.max > 0 and count >= a.max:
                             return

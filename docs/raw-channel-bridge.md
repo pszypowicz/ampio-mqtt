@@ -65,7 +65,7 @@ the `channel_prefix` field on the `TYPE_PROFILES` rows. The store's
 
 ```
 ampio/from/+/state/f/+   # flags  ("flaga")                                      QoS 0
-ampio/from/+/state/i/+   # digital inputs  ("detekcja", "wej")                   QoS 0
+ampio/from/+/state/i/+   # digital inputs  ("wej")                               QoS 0
 ampio/from/+/state/o/+   # binary outputs ("przekaznik")                         QoS 0
 ampio/from/+/state/a/+   # analog outputs ("przekaznik" on an open-collector leaf) QoS 0
 ampio/from/+/b/4F        # per-module diagnostics broadcast                      QoS 1
@@ -188,13 +188,13 @@ minutes.
 
 ## What the library does not bridge
 
-| Prefix                           | Why excluded                                                                                                                                                                                                                            |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `a` (other than class-67 relays) | Subscribed, but indexed for `przekaznik` objects on an open-collector leaf alone. Every other analog channel already arrives on the per-object topic with full precision and the right state-class metadata, so it drops at the lookup. |
-| `t` (temperature)                | Same reasoning - the per-object form is sufficient.                                                                                                                                                                                     |
-| `rgbw` (RGBW output)             | Output side. Latency is not the win it is for inputs, and the per-object form carries the user-friendly desc.                                                                                                                           |
-| `o` (non-przekaznik)             | Subscribed, but indexed for `przekaznik` objects alone (see above). Channels of other output classes drop at the lookup.                                                                                                                |
-| `symulacja` raw prefix           | Not bridged. The wire prefix is unverified, and the object updates through the per-object topic (see [`untapped-surfaces.md`](untapped-surfaces.md)).                                                                                   |
+| Prefix                           | Why excluded                                                                                                                                                                                                                                                                                    |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `a` (other than class-67 relays) | Subscribed, but indexed for `przekaznik` objects on an open-collector leaf alone. Every other analog channel already arrives on the per-object topic with full precision and the right state-class metadata, so it drops at the lookup.                                                         |
+| `t` (temperature)                | Same reasoning - the per-object form is sufficient.                                                                                                                                                                                                                                             |
+| `rgbw` (RGBW output)             | Output side. Latency is not the win it is for inputs, and the per-object form carries the user-friendly desc.                                                                                                                                                                                   |
+| `o` (non-przekaznik)             | Subscribed, but indexed for `przekaznik` objects alone (see above). Channels of other output classes drop at the lookup.                                                                                                                                                                        |
+| the two system objects           | Not bridged. `detekcja` and `symulacja` sit on the M-SERV's own module row with a fixed channel number, and the M-SERV publishes its own digital inputs under that mac, so a route delivers the wrong channel. Both update through the per-object topic (see [`visibility.md`](visibility.md)). |
 
 ## The full retained prefix inventory
 
