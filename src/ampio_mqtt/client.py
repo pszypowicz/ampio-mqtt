@@ -41,6 +41,7 @@ from ._protocol import (
     command_payload,
     command_topic,
     event_payload,
+    joins_roller_records,
     notification_payload,
     ob_state_wildcard,
     panel_field_mask,
@@ -2007,6 +2008,11 @@ class AmpioClient:
         obj = self._store.objects.get(object_id)
         if obj is None:
             raise AmpioValueError(f"object {object_id} is not in the catalogue")
+        if not joins_roller_records(obj.typ_komponentu):
+            raise AmpioValueError(
+                f"object {object_id} ({obj.typ_komponentu}) is not a cover, so "
+                "no roller channel is its own"
+            )
         mac, channel = obj.module_mac, obj.leaf_io_no
         if mac is None or channel is None:
             raise AmpioValueError(
@@ -2058,7 +2064,10 @@ class AmpioClient:
         channel mask. Raises ``AmpioValueError`` when the module
         advertises no such count: that module generation takes the
         ordinary roller moves on the same destination and discards a lock
-        frame in silence, so a raise beats a publish that vanishes.
+        frame in silence, so a raise beats a publish that vanishes. Raises
+        the same for an object that is not a cover: its channel index can
+        belong to a cover on the same module, and the frame would move
+        that cover's lock.
         """
         await self._roller_lock(object_id, ROLLER_BLOCK_OPENING, assert_lock=True)
 

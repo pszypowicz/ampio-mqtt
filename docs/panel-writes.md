@@ -260,8 +260,10 @@ than treat `None` as `False`.
 
 `block_opening()`, `unblock_opening()`, `block_closing()` and
 `unblock_closing()` raise `AmpioValueError` for a module that advertises no
-count, rather than publish a frame that vanishes. The four methods and the field
-all need `resolve_records()` to have run, because that is what fills the
+count, rather than publish a frame that vanishes. They raise the same for an
+object that is not a cover. A relay's channel index can belong to a cover on the
+same module, and a lock frame for it locks that cover. The four methods and the
+field all need `resolve_records()` to have run, because that is what fills the
 capability map.
 
 ### A stored rule beats a runtime write

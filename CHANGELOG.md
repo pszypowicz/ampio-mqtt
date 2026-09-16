@@ -12,7 +12,18 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## Unreleased
+## 0.70.1
+
+The four roller lock methods never checked the object's kind. A relay on a
+module that advertises roller channels passed every gate when its channel index
+was below the count. The frame then locked the roller channel that shares the
+relay's index (#263).
+
+### Fixed
+
+- `block_opening()`, `unblock_opening()`, `block_closing()` and
+  `unblock_closing()` raise `AmpioValueError` for an object that is not a cover,
+  before any frame is built (#263).
 
 ### Documentation
 
