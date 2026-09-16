@@ -7,10 +7,13 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+from collections.abc import Iterator
 
 import aiomqtt
 import pytest
 from conftest import (
+    ADMIN_DETAILS_TOPIC,
+    ADMIN_DEVICES_TOPIC,
     ADMIN_USER,
     DATA_DEVICES_TOPIC,
     DETAILS_TOPIC,
@@ -24,6 +27,7 @@ from conftest import (
     devices,
     feed,
     info,
+    make_client,
     params_table,
     rows,
     snapshot,
@@ -33,10 +37,12 @@ from ampio_mqtt import (
     AccessTier,
     AmpioClient,
     AmpioConnectionError,
+    AmpioValueError,
     AvailabilityChanged,
     ModuleRemoved,
     ObjectRemoved,
     ObjectUpdated,
+    PresenceChanged,
     _protocol,
 )
 from ampio_mqtt._protocol import REDACTED
@@ -60,6 +66,13 @@ def _client() -> AmpioClient:
 def _admin_client() -> AmpioClient:
     """For the module-catalogue machinery, which only the admin tier is served."""
     return AmpioClient("host", username=ADMIN_USER)
+
+
+@pytest.fixture
+def admin_client() -> Iterator[tuple[AmpioClient, FakeBroker]]:
+    broker = FakeBroker()
+    client = make_client(broker, username=ADMIN_USER)
+    yield client, broker
 
 
 def test_mserv_prefers_info_mac_cross_check() -> None:
@@ -833,3 +846,53 @@ def test_diagnostics_snapshot_module_rows_mirror_liveness() -> None:
         "supply_voltage": module.supply_voltage,
         "temperature": module.temperature,
     }
+
+
+def test_presence_rows_read_none_before_the_catalogue(admin_client) -> None:
+    client, _broker = admin_client
+    assert client.presence_detection is None
+    assert client.presence_simulation is None
+
+
+def test_presence_rows_are_client_attributes_not_objects(admin_client) -> None:
+    client, _broker = admin_client
+    presence: list[PresenceChanged] = []
+    objects: list[ObjectUpdated] = []
+    client.subscribe(presence.append, of=PresenceChanged)
+    client.subscribe(objects.append, of=ObjectUpdated)
+    feed(client, ADMIN_DEVICES_TOPIC, devices({"id": 7, "mac": 0xCAFE}))
+    feed(
+        client,
+        ADMIN_DETAILS_TOPIC,
+        details(
+            {
+                "id": 60,
+                "id_urzadzenia": 7,
+                "typ_komponentu": "detekcja",
+                "funkcja": 1,
+                "opis_menu": "Detection",
+            },
+            {
+                "id": 61,
+                "id_urzadzenia": 7,
+                "typ_komponentu": "symulacja",
+                "funkcja": 1,
+                "opis_menu": "Simulation",
+                "czas": 1,
+            },
+        ),
+    )
+    assert client.presence_detection is not None and client.presence_detection.id == 60
+    assert (
+        client.presence_simulation is not None
+        and client.presence_simulation.active is True
+    )
+    assert 60 not in client.objects and 61 not in client.objects
+    assert len(presence) == 1
+    assert [e.object.id for e in objects] == []
+
+
+def test_presence_changed_takes_no_object_id_filter(admin_client) -> None:
+    client, _broker = admin_client
+    with pytest.raises(AmpioValueError):
+        client.subscribe(lambda e: None, of=PresenceChanged, object_id=60)
