@@ -373,7 +373,9 @@ class AmpioStore:
         ``config`` carries the Designer config columns per object id, from
         whichever source this tier serves them on. An id absent from it is
         one whose columns have not arrived yet, which leaves the object
-        reading the unset values until they do.
+        reading the unset values until they do. The two presence rows are
+        routed to their own attributes before the merge and never enter
+        ``objects``.
         """
         presence = [m for m in served if m.typ_komponentu in _protocol.PRESENCE_TYPES]
         served = [m for m in served if m.typ_komponentu not in _protocol.PRESENCE_TYPES]

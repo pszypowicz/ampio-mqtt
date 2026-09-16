@@ -1454,6 +1454,14 @@ _WEJ = {
     "funkcja": 1,
     "opis_menu": "Button",
 }
+_FLAG = {
+    "id": 63,
+    "id_urzadzenia": 7,
+    "typ_komponentu": "flaga",
+    "interpretacja": 1,
+    "funkcja": 1,
+    "opis_menu": "Flag",
+}
 
 
 def _presence_events(applied: Applied) -> list[PresenceChanged]:
@@ -1541,11 +1549,21 @@ def test_presence_rows_evict_when_the_catalogue_stops_listing_them() -> None:
 
 
 def test_presence_rows_never_enter_the_raw_index() -> None:
+    """A `flaga` row shares the M-SERV's module and channel 1 with both
+    presence rows, and a raw `f/1` edge belongs to the flag alone."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _apply(store, DETAILS_TOPIC, details(_DET, _SIM))
+    _apply(store, DETAILS_TOPIC, details(_FLAG, _DET, _SIM))
     applied = _apply(store, "ampio/from/CAFE/state/f/1", "1")
-    assert applied.events == []
+    assert store.objects[63].state == "1"
+    assert _updated(applied) == [store.objects[63]]
+    assert _presence_events(applied) == []
+    assert store.presence_detection == PresenceDetection(
+        id=60, name="Detection", home_status=None
+    )
+    assert store.presence_simulation == PresenceSimulation(
+        id=61, name="Simulation", active=True
+    )
 
 
 # --- the app-sync data surface (standard accounts) --------------------------
