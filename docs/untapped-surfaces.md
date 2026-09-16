@@ -16,14 +16,16 @@ backlog to fetch. The topic sits outside the account namespace, so an
 administrator account alone receives it. The library does not subscribe. Probe
 notes: [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/23).
 
-**Presence simulation control.** The Ampio app switches the M-SERV's presence
-simulation on and off through two read paths on the `/api` surface,
-`/api/json/simulation/active` and `/api/json/simulation/deactive`. The app adds
-and removes the devices that take part, and the sensors that feed presence
-detection, on the `detection` and `simulation` topics of the account's `control`
-namespace. None of the four appears in the OpenAPI spec, so the payload shapes
-are unknown. The feature is unused on the baseline install, so a probe first
-needs the app to link a device. The library consumes none of it. Probe notes:
+**Presence simulation and detection control.** The Ampio app configures both
+system objects over three surfaces that the library does not consume. The
+simulation switch rides `/api/json/simulation/active` and
+`/api/json/simulation/deactive` on the `api` control topic. The device lists
+ride the `simulation` and `detection` topics of the account's `control`
+namespace. The wire facts are in [`visibility.md`](visibility.md). What stays
+unverified is the detection engine. Its state is a home-status code, code 5 is
+"home empty", and no sensor pulse moved it in forty minutes while the linked
+sensors were unlogged. The simulation replay is unverified too, and the linked
+relays are unlogged as well. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/261).
 
 **CAN write tree device classes.** The raw write frames for binary outputs, the

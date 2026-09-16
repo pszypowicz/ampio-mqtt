@@ -12,6 +12,20 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Documentation
+
+- `visibility.md` records the wire form of the two system objects' linked
+  devices, the app's three control surfaces, and the simulation switch column
+  (#261).
+- `untapped-surfaces.md` narrows the presence entry to what stays unverified:
+  the detection state's timing and the simulation replay (#261).
+- `protocol.md` gives the `powiazane` column's format on the `params_devices`
+  table.
+- `visibility.md` records that the detection state is a home-status code, that
+  code 5 is "home empty", and that `is_on` misreads it (#265).
+
 ## 0.70.0
 
 The M-SERV creates two system objects of its own, one for presence detection and
