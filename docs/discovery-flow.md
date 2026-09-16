@@ -47,15 +47,15 @@ the `connect()` / `disconnect()` lifecycle that joins them.
    means a broken broker or ACL. See [`protocol.md`](protocol.md) and
    [`raw-channel-bridge.md`](raw-channel-bridge.md) for the topics.
 3. **Publish the tier's auto-discovery keywords** on the matching control
-   surfaces - four requests either way:
-   - admin: `devicesDetails` and `devices` on `config` (object and module
-     catalogues), plus `states` and `info`.
-   - standard: `devices` and `params_devices` on `data` (grant-filtered app-sync
-     catalogue and the full `params` table), plus `states` and `info`.
+   surfaces:
+   - admin: `devices` and `params_devices` on `data`, `devices` on `config`,
+     plus `states` and `info`, five requests.
+   - standard: `devices` and `params_devices` on `data`, plus `states` and
+     `info`, four requests.
 
 4. **Await** completion or the `discovery_timeout` deadline, whichever comes
    first. This step is `wait_for_initial_discovery()`, which `connect()` calls
-   with `timeout=discovery_timeout`: one wait on the four replies of step 3.
+   with `timeout=discovery_timeout`: one wait on the tier's replies of step 3.
    Each dispatched message bumps `stats.last_message_at`. The signals latch, so
    a later `wait_for_initial_discovery()` call returns immediately once its set
    fired (and stays correct across reconnects).
@@ -79,27 +79,25 @@ and it evicts like any other.
 A Designer save rewrites the account tables on the M-SERV. A few seconds later
 the M-SERV publishes three messages into every account namespace, the admin one
 included. No account requested them: `data/devices`, `md5/devices`, and
-`data/params_devices`. Each tier learns of the save from a different one of
-them. Designer triggers the push with a `refresh` keyword on its `data` surface.
+`data/params_devices`. Designer triggers the push with a `refresh` keyword on
+its `data` surface.
 
-- **Standard user.** The client subscribes to the two pushed tables as its
-  catalogue pair, so it parses each push like a reply. The save shows at once as
-  `ObjectAdded`, `ObjectUpdated`, or `ObjectRemoved`.
-- **Administrator.** The M-SERV never pushes the `config` catalogues. The client
-  subscribes to the retained `md5/devices` and `md5/params_devices` digests
-  instead. The broker replays each retained digest after every subscribe, and
-  that replay seeds the comparison, because the on-connect refresh already
-  fetched the catalogues. A later digest that differs from the seed makes the
-  client re-request `devicesDetails` and `devices`. The reply's diff then fires
-  the same object events, and the module events with them. The re-request opens
-  no snapshot cycle, so a value pushed since the last request keeps outranking
-  the held snapshot seed.
+Both tiers subscribe to the two pushed tables as their catalogue pair. Each push
+is parsed like a reply, and the save shows at once as `ObjectAdded`,
+`ObjectUpdated`, or `ObjectRemoved`.
+
+The M-SERV never pushes the module list. The admin client also subscribes to the
+retained `md5/devices` and `md5/params_devices` digests, and a digest that
+differs from its seed re-requests `config/devices`. The broker replays each
+retained digest after every subscribe, and that replay seeds the comparison,
+because the on-connect refresh already fetched the module list. The reply's diff
+then fires the module events. The re-request opens no snapshot cycle, so a value
+pushed since the last request keeps outranking the held snapshot seed.
 
 The `md5/params_devices` digest covers the `params` table, which carries the
-hidden bit. The admin catalogue carries that bit inline, so a rewrite of either
-digest re-requests the same pair. A digest change that arrives while the
-connection is down costs nothing extra: the reconnect refreshes the catalogues,
-and the replay seeds again.
+hidden bit. A rewrite of either digest re-requests the module list. A digest
+change that arrives while the connection is down costs nothing extra: the
+reconnect refreshes the catalogues, and the replay seeds again.
 
 ### Keeping the catalogue current without a reconnect: `refresh_interval`
 

@@ -23,11 +23,17 @@ explicit beta posture above and is no longer the supported upgrade path.
   Both read None until the row arrives and while the row is hidden.
   `PresenceChanged` reports every change. `INPUT_KIND_KEYS` loses `detekcja` and
   `symulacja`.
+- The administrator client reads the same object catalogue as a standard
+  account, `data/devices` plus `data/params_devices`, and adds `config/devices`
+  for the module rows. `params`, `czas` and `url` come from the params table on
+  both tiers. A Designer save reaches both tiers through the pushed tables, and
+  the retained `md5` digests re-request the module list alone.
 
 ### Removed
 
 - `AmpioObject.is_system`, `is_system_type()`, and the `system` flag on
   `TypeProfile`.
+- The `config/devicesDetails` request, its parser and its column set.
 
 ### Fixed
 

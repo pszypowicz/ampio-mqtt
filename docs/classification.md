@@ -1,6 +1,6 @@
 # Object classification
 
-The `devicesDetails` payload returns one row per logical object. The library
+The `data/devices` payload returns one row per logical object. The library
 classifies each row into exactly one kind. The kinds are `SensorKind`
 (sensor-side platforms), `InputKind` (binary or boolean platforms), `OutputKind`
 (controllable platforms), and `ThermostatKind` (the `reg` temperature

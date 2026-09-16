@@ -16,8 +16,8 @@ visible = not hidden
 visibility signal. It marks the rows the user deleted or hid, and the phantom
 stubs that duplicate a real Designer channel (same `leaf_id`, no value). It is a
 Designer config flag, so unlike `id_urzadzenia` it is replacement-stable. Every
-account tier receives `params` on a baseline install, through `devicesDetails`
-or `data/params_devices`. A row without a received value reads `0`, so it is
+account tier receives `params` on a baseline install, through the unfiltered
+`data/params_devices` table. A row without a received value reads `0`, so it is
 visible. This is the same gate the M-SERV's Matter bridge uses
 (`(params & 2**37) && !(params & 16)`) - see the section on the bit semantics
 below. Bit 37 is a Matter-only opt-in. The library deliberately does not filter
@@ -121,8 +121,7 @@ meaning follows the component type. The Designer editor renders the column as
 `flaga_p`, `przekaznik`, `led`, `flaga_liniowa`, `flaga_liniowa16`, `rgb`,
 `rgbww`, and `ledww`. A camera reads the same column as a refresh time in
 milliseconds. No other type gets the field, so a cover never carries a value.
-The column rides `devicesDetails`, and the unfiltered `data/params_devices`
-table supplies it where the app-sync catalogue omits it.
+The column rides the unfiltered `data/params_devices` table.
 
 That editor list is a catalogue fact. It is wider than the set of types that a
 timed write pulses. The M-SERV never applies the value server-side: a plain
