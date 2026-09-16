@@ -24,7 +24,7 @@ from collections.abc import Callable
 
 import aiomqtt
 
-from ampio_mqtt import AmpioClient, AmpioObject, ObjectUpdated
+from ampio_mqtt import AmpioClient, AmpioObject, AmpioValueError, ObjectUpdated
 
 
 def parse_args() -> argparse.Namespace:
@@ -132,23 +132,31 @@ async def run(
 
     client.subscribe(lambda e: on_object(e.object), of=ObjectUpdated)
     await client.connect()
-    print(f"Connected as {a.username!r} (tier: {client.access_tier.value})")
+    try:
+        print(f"Connected as {a.username!r} (tier: {client.access_tier.value})")
 
-    obj = client.objects.get(a.object_id)
-    print(
-        f"before: ob/{a.object_id} = {obj.state if obj else '<not in this account view>'}"
-    )
+        obj = client.objects.get(a.object_id)
+        print(
+            f"before: ob/{a.object_id} = "
+            f"{obj.state if obj else '<not in this account view>'}"
+        )
 
-    await send(client, a)
-    print(f"command sent; watching {a.watch}s ...")
-    await asyncio.sleep(a.watch)
+        try:
+            await send(client, a)
+        except AmpioValueError as err:
+            print(f"refused: {err}")
+            return 1
+        print(f"command sent; watching {a.watch}s ...")
+        await asyncio.sleep(a.watch)
 
-    obj = client.objects.get(a.object_id)
-    print(
-        f"after:  ob/{a.object_id} = {obj.state if obj else '<not in this account view>'}"
-    )
-    await client.disconnect()
-    return 0
+        obj = client.objects.get(a.object_id)
+        print(
+            f"after:  ob/{a.object_id} = "
+            f"{obj.state if obj else '<not in this account view>'}"
+        )
+        return 0
+    finally:
+        await client.disconnect()
 
 
 if __name__ == "__main__":

@@ -859,8 +859,8 @@ class AmpioStore:
             if retained:
                 self._pending_raw[key] = edge.state
             return
-        # Two Designer views of one output share one leaf, so one channel
-        # feeds every object that carries it.
+        # Two Designer views of one output share the module and the
+        # channel, so one raw channel feeds every object on that channel.
         for oid in ids:
             obj = replace(
                 self.objects[oid],
@@ -993,7 +993,7 @@ class AmpioStore:
         override mac the leaf embeds, which the raw topics carry - never
         `mac_global`, which diverges from the raw-topic MAC on replaced
         modules. `(mac, prefix, channel)` routes a raw channel to every
-        object that shares the leaf: the bridgeable input types, plus
+        object on that channel: the bridgeable input types, plus
         `przekaznik` outputs on the `o` prefix, or on `a` for an
         open-collector leaf - a panel's status LEDs have no other retained
         surface, an OC output never echoes on its object topic, and every

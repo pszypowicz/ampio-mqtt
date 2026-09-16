@@ -221,6 +221,18 @@ async def test_set_object_sends_the_command_and_reports_the_state(
     assert "after:  ob/64 = 0" in printed
 
 
+async def test_set_object_reports_the_refusal_for_an_unknown_id(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broker = FakeBroker()
+    broker.scripted_messages = _discovery()
+    a = _parse(monkeypatch, set_object, "--object-id", "999", "--on", "--watch", "0.01")
+    assert await set_object.run(a, client_factory=broker.factory) == 1
+    assert (API_TOPIC, b"/api/set/999/turnOn") not in broker.published
+    printed = capsys.readouterr().out
+    assert "refused: object 999 is not in the catalogue" in printed
+
+
 async def test_set_object_passes_a_raw_verb_and_its_arguments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

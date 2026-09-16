@@ -1054,6 +1054,7 @@ def test_states_snapshot_seeds_value_without_touching_last_seen() -> None:
             "typ_komponentu": "temp",
             "interpretacja": 1,
             "opis_menu": "T",
+            "leafId": "0_1_74_0_0",
         },
     )
     assert store.objects[41].state is None
