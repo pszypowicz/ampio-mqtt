@@ -39,9 +39,9 @@ the `motion` device class for a whole-home "someone is home" boolean (#258,
 ### Documentation
 
 - `visibility.md` describes the two system objects: the M-SERV creates them, the
-  Ampio app configures them, the devices that take part ride the `powiazane`
-  field, and `params` bits 2048 and 4096 mark a sensor's role. It also gives the
-  per-type labels of bit 27 (#258, #259).
+  Ampio app configures them, the unverified `powiazane` field, and `params` bits
+  2048 and 4096 mark a sensor's role. It also gives the per-type labels of bit
+  27 (#258, #259).
 - `raw-channel-bridge.md` and `classification.md` list both system objects as
   unbridged (#258).
 - `untapped-surfaces.md` records the unprobed presence simulation control
