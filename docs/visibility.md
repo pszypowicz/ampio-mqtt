@@ -46,17 +46,35 @@ both types but cannot create, delete or configure them. The Ampio app is the
 configuration surface. Its presence-detection page picks the sensors that decide
 whether someone is at home, and its presence-simulation page switches the
 feature on and off and picks the devices that take part. The presence-detection
-object is one whole-home boolean, and "on" means someone is home. The
-`powiazane` field of the system object's row in `data/params_devices` is where
-the devices that take part land. That is unverified. On the baseline install
-nothing is linked, the field reads null, and the library does not decode it. A
+object is one whole-home boolean, and "on" means someone is home. The devices
+that take part ride the `powiazane` field of the system object's row in
+`data/params_devices`, as `<linkId>:<objectId>` pairs separated by commas, and
+null when nothing is linked. The M-SERV reassigns the link ids on every write.
+The library does not decode the field. The app writes the whole list at once, on
+the `simulation` and `detection` topics of the account's `control` namespace,
+and the M-SERV answers `{ "Response": "OK" }` on the same-named topic under the
+account's `control` reply tree. Each detection entry carries a `type`, 1 for an
+inside sensor and 2 for an entrance sensor, and the M-SERV sets the matching
+`params` bit on the sensor row. The simulation switch is the `czas` column of
+the simulation row, 1 for on and 0 for off. The app flips it through the
+`/api/json/simulation/active` and `/api/json/simulation/deactive` paths on the
+`api` control topic. After each of these writes the M-SERV pushes
+`data/params_devices` and `md5/params_devices` into every account namespace, the
+same push a Designer save produces. A standard account can do all of this. A
 detection sensor's role is a `params` bit on the sensor itself. Bit 11
 (`params & 2048`) is Designer's "Entrance sensor" and bit 12 (`params & 4096`)
-is its "Inside sensor". On the baseline install nothing is linked, and neither
-object carries a state. Both live outside the room tree, the app-sync catalogue
-lists them unconditionally, and they carry no `leafId`. Neither bridges a raw
-channel (see [`raw-channel-bridge.md`](raw-channel-bridge.md)). The flag does
-not enter `visible`, so a hidden system object stays hidden.
+is its "Inside sensor". The simulation object carries no state. The detection
+object carries none until the M-SERV computes one, and that value is a
+home-status code, not 255 or 0. Code 5 is "home empty" in the Ampio app. The
+other codes are unknown. `AmpioObject.is_on` therefore reads "home empty" as on,
+so do not map the `presence` class onto `is_on` yet. The M-SERV wrote the first
+code fifteen minutes after the sensors were linked and held it through forty
+minutes of sensor pulses. The four linked objects are absent from the M-SERV's
+logging table on the baseline install, and whether the engine needs them logged
+is unverified. Both live outside the room tree, the app-sync catalogue lists
+them unconditionally, and they carry no `leafId`. Neither bridges a raw channel
+(see [`raw-channel-bridge.md`](raw-channel-bridge.md)). The flag does not enter
+`visible`, so a hidden system object stays hidden.
 
 Treat `visible` as the discovery filter.
 
