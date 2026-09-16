@@ -1489,8 +1489,8 @@ def test_presence_rows_leave_the_object_catalogue_on_the_admin_tier() -> None:
 
 def test_presence_rows_leave_the_object_catalogue_on_the_app_sync_tier() -> None:
     store = _app_store()
-    _apply(store, DATA_DEVICES_TOPIC, details(_WEJ, _DET, _SIM))
-    _apply(
+    applied_catalogue = _apply(store, DATA_DEVICES_TOPIC, details(_WEJ, _DET, _SIM))
+    applied_params = _apply(
         store,
         PARAMS_DEVICES_TOPIC,
         params_table(
@@ -1505,6 +1505,17 @@ def test_presence_rows_leave_the_object_catalogue_on_the_app_sync_tier() -> None
     assert store.presence_simulation == PresenceSimulation(
         id=61, name="Simulation", active=False
     )
+    # The catalogue settles the simulation row before the params table has
+    # named its switch, so it reads off as False and reports one event.
+    assert _presence_events(applied_catalogue) == [
+        PresenceChanged(
+            detection=store.presence_detection,
+            simulation=store.presence_simulation,
+        )
+    ]
+    # The params table names the same False value, a repeat rather than a
+    # change, so it reports none.
+    assert _presence_events(applied_params) == []
 
 
 def test_hidden_presence_row_reads_none() -> None:
@@ -1656,6 +1667,15 @@ def test_snapshot_seeds_the_home_status_once() -> None:
     _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "7"))
     _apply(store, STATES_TOPIC, snapshot({"id": 60, "stan_json": _push(60, "5")}))
     assert store.presence_detection.home_status == 7
+
+
+def test_snapshot_before_the_catalogue_seeds_the_detection_code() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, STATES_TOPIC, snapshot({"id": 60, "stan_json": _push(60, "5")}))
+    _apply(store, DETAILS_TOPIC, details(_DET))
+    assert store.presence_detection is not None
+    assert store.presence_detection.home_status == 5
 
 
 def test_detection_push_before_the_catalogue_is_replayed_at_the_merge() -> None:

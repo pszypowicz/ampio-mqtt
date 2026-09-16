@@ -17,7 +17,7 @@ administrator account alone receives it. The library does not subscribe. Probe
 notes: [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/23).
 
 **Presence simulation and detection control.** The Ampio app configures both
-system objects over three surfaces that the library does not consume. The
+presence rows over three surfaces that the library does not consume. The
 simulation switch rides `/api/json/simulation/active` and
 `/api/json/simulation/deactive` on the `api` control topic. The device lists
 ride the `simulation` and `detection` topics of the account's `control`

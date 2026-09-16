@@ -885,6 +885,7 @@ def test_presence_rows_are_client_attributes_not_objects(admin_client) -> None:
     assert client.presence_detection is not None and client.presence_detection.id == 60
     assert (
         client.presence_simulation is not None
+        and client.presence_simulation.id == 61
         and client.presence_simulation.active is True
     )
     assert 60 not in client.objects and 61 not in client.objects

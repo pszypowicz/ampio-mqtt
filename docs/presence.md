@@ -12,7 +12,9 @@ attributes of the client, with their own types and their own event.
 `AmpioClient.presence_detection` is a `PresenceDetection` or None.
 `AmpioClient.presence_simulation` is a `PresenceSimulation` or None. Both
 account tiers receive both rows. Each attribute reads None until the catalogue
-lists its row, and it reads None while the row carries the hidden bit.
+lists its row, and it reads None while the row carries the hidden bit. On a
+standard account both attributes settle when the params table arrives, which is
+part of initial discovery.
 
 | Type                 | Field         | Source                              |
 | -------------------- | ------------- | ----------------------------------- |

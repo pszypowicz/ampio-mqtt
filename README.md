@@ -79,6 +79,8 @@ the API detail.
 - Room mapping, per-module health, reported capabilities, touch panel settings
   and cover travel parameters, eviction events for server-side deletions, and
   connection diagnostics for a consumer's report blob.
+- The two presence rows as client attributes with their own event
+  ([`docs/presence.md`](docs/presence.md)).
 - LAN discovery of the M-SERV by multicast DNS, self-contained in the process
   ([`docs/discovery-flow.md`](docs/discovery-flow.md)).
 

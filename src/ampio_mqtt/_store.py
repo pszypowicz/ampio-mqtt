@@ -462,7 +462,7 @@ class AmpioStore:
                     home_status = _home_status(
                         _protocol.parse_stan_json(stan_json).state
                     )
-        # Nothing above can raise past this point, so the store mutates now.
+        # No code below this line raises.
         previous_detection_id, previous_simulation_id = self._presence_ids()
         new_rows = {meta.id: meta for meta in rows}
         if previous_detection_id is not None and previous_detection_id not in new_rows:
@@ -534,8 +534,8 @@ class AmpioStore:
         as store state whether or not the row is visible right now. A push
         for the simulation row changes nothing.
         """
-        meta = self._presence_rows.get(update.id)
-        if meta is None or meta.typ_komponentu != _protocol.DETECTION_TYPE:
+        meta = self._presence_rows[update.id]
+        if meta.typ_komponentu != _protocol.DETECTION_TYPE:
             return
         self._home_status = _home_status(update.state)
         self._detection_pushed = True
@@ -696,7 +696,9 @@ class AmpioStore:
         whole table is held for catalogue rows that arrive later, and
         objects already known are updated in place. An id with no known
         object creates no placeholder: the table is not grant-filtered, so
-        most of it refers to objects the account cannot otherwise see.
+        most of it refers to objects the account cannot otherwise see. The
+        same push rebuilds the two presence rows from the held catalogue
+        table, so their switch and their hidden state settle from it too.
         """
         self._params_by_id = _protocol.parse_params_devices(data)
         self._params_received = True

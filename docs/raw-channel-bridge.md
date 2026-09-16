@@ -171,9 +171,10 @@ A module that sends no frame keeps `supply_voltage` and `temperature` at None.
 Its `last_seen` moves on object traffic alone: a state push or a raw edge for
 one of its objects. After a connect, an empty `last_seen` is expected on a
 roller module until one of its covers moves. On the M-SERV it stays empty until
-one of its own objects pushes. A diagnostics reader must not take that empty
-value as a dead module. A module that sends the frame shows liveness through it
-even with no objects of its own.
+one of its own objects pushes. A push for a presence row is not object traffic,
+because the two presence rows are not objects. A diagnostics reader must not
+take that empty value as a dead module. A module that sends the frame shows
+liveness through it even with no objects of its own.
 
 ### Timing
 
