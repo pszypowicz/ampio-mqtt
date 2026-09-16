@@ -1,11 +1,10 @@
 """Object classification for the Ampio DB-object protocol.
 
 One `TypeProfile` row per known ``typ_komponentu`` drives everything the
-library derives from a component type: its sensor/input/output kind, the
-raw-channel bridge prefix, and the system-object marker. This module is
-Home Assistant agnostic; device/state class strings match Home Assistant's
-SensorDeviceClass / SensorStateClass enum values so consumers can pass
-them through unchanged.
+library derives from a component type: its sensor/input/output kind and the
+raw-channel bridge prefix. This module is Home Assistant agnostic;
+device/state class strings match Home Assistant's SensorDeviceClass /
+SensorStateClass enum values so consumers can pass them through unchanged.
 """
 
 from __future__ import annotations
@@ -69,7 +68,7 @@ class InputKind:
     # The `turnOn` / `turnOff` / `switch` verb family, over `/api`. True only
     # for `flaga`. A `wej` is a physical input the module scans for itself:
     # the M-SERV drops all three verbs for it on both account tiers, with no
-    # effect and no reply. `detekcja` and `symulacja` have never been driven.
+    # effect and no reply.
     switchable: bool = False
     # The inclusive range `setValue` holds, for a flag with a value axis;
     # None for a flag that carries no value. The M-SERV truncates an
@@ -78,8 +77,8 @@ class InputKind:
     value_range: tuple[int, int] | None = None
     # Whether a `setValue` time argument runs a timed pulse. True only for
     # `flaga`. Both analog flags take the timed form, set the value and
-    # latch: the revert never arrives, at any time argument. `wej`,
-    # `detekcja` and `symulacja` take no value verb at all.
+    # latch: the revert never arrives, at any time argument. `wej` takes no
+    # value verb at all.
     pulsable: bool = False
 
 

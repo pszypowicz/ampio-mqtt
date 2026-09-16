@@ -327,7 +327,7 @@ def test_reg_classifies_as_thermostat_and_surfaces_the_running_flag() -> None:
         ("0_cb8f_76_0_0", 0xCB8F),
         ("0_1_10_0_0", 1),  # the M-SERV's override mac, not its factory id
         ("0_D09A_5_1_2", 0xD09A),  # uppercase hex parses too
-        ("", None),  # an empty leafId: system objects, Matter box unchecked
+        ("", None),  # an empty leafId: Matter box unchecked
         ("0_cb8f_76_0", None),  # four segments
         ("0_cb8f_76_0_0_9", None),  # six segments
         ("1_cb8f_76_0_0", None),  # unexpected leading segment
