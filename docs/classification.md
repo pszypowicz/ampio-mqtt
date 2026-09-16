@@ -29,9 +29,8 @@ value sensor or the `analog_<n>` fallback.
 
 - `reg` state is the running flag. The rich climate readback (measured and
   target temperature, mode, cooling) is `AmpioObject.thermostat`.
-- `detekcja` and `symulacja` are the two system objects (`is_system`, see
-  [`visibility.md`](visibility.md)). `detekcja` is the whole-home presence
-  boolean, so its device class is `presence`. Neither bridges a raw channel.
+- `detekcja` and `symulacja` are the two presence rows. They are not objects and
+  have no kind. See [`presence.md`](presence.md).
 - `wej` is the per-channel physical-input object the Designer creates for a
   wired button. Its per-object payload is 255 pressed / 0 released. Its
   `interpretacja` mirrors `funkcja` (the channel number), so it refines nothing.
@@ -111,9 +110,8 @@ derived properties.
   (`%.3f` reads 3). Every other conversion reads None.
 
 Both properties read None on every kind but a sensor. An output has no
-measurement to label, and the system objects carry a placeholder in the `url`
-column. Both columns reach the standard tier. `format` rides `data/devices`, and
-`url` rides the unfiltered `data/params_devices` table.
+measurement to label. Both columns reach the standard tier. `format` rides
+`data/devices`, and `url` rides the unfiltered `data/params_devices` table.
 
 The unit a kind fixes and the unit Designer stores are separate facts. On a
 `lin_wej` air-quality object the kind says no unit, and Designer can say `IAQ`.

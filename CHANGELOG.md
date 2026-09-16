@@ -12,6 +12,34 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Changed
+
+- The two presence rows, `detekcja` and `symulacja`, are no longer objects.
+  `AmpioClient.presence_detection` is a
+  `PresenceDetection(id, name, home_status)` and
+  `AmpioClient.presence_simulation` is a `PresenceSimulation(id, name, active)`.
+  Both read None until the row arrives and while the row is hidden.
+  `PresenceChanged` reports every change. `INPUT_KIND_KEYS` loses `detekcja` and
+  `symulacja`.
+
+### Removed
+
+- `AmpioObject.is_system`, `is_system_type()`, and the `system` flag on
+  `TypeProfile`.
+
+### Fixed
+
+- The detection row's home-status code no longer reads as a boolean. Code 5 is
+  "home empty" and `PresenceDetection.home_status` carries it as an integer
+  (#265).
+
+### Documentation
+
+- `presence.md` describes the two presence rows, their types, the home-status
+  code and the `PresenceChanged` event.
+
 ## 0.70.1
 
 The four roller lock methods never checked the object's kind. A relay on a

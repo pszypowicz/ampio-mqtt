@@ -40,6 +40,7 @@ tier: `AmpioObject.module_mac` carries the key (see
 | Capability                                                                                   | Administrator | Standard user                                            |
 | -------------------------------------------------------------------------------------------- | ------------- | -------------------------------------------------------- |
 | Object catalogue with full metadata                                                          | all objects   | objects granted in the app                               |
+| Presence rows (`presence_detection`, `presence_simulation`)                                  | yes           | yes                                                      |
 | `params` bitfields (visibility, the hidden bit)                                              | yes           | yes (the M-SERV serves the whole `params_devices` table) |
 | Per-object live state                                                                        | all objects   | granted objects                                          |
 | Rooms (`fetch_rooms`)                                                                        | yes           | yes                                                      |

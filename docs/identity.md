@@ -42,7 +42,7 @@ only. The HA device topology must never branch on them.
 | `id_urzadzenia`           | **No** - it mirrors the module row, which is reassigned in `mac_global` order when a module is replaced.                                                                                                                                 | Cross-referencing an object to its module _within a single discovery snapshot_ only. |
 | `funkcja` (channel index) | **Yes** - part of the reloaded Designer config. Not unique: if the same physical signal is exposed as several Designer objects, they share one `funkcja`.                                                                                |
 | `typ_komponentu`          | **Yes** - the type vocabulary (`temp`, `lin_wej`, `flaga`, ...).                                                                                                                                                                         |
-| `leaf_id`                 | **Yes**, when set. The physical-output key source and the parse source for `module_mac`. Empty for system objects and after a Matter uncheck - see below.                                                                                |
+| `leaf_id`                 | **Yes**, when set. The physical-output key source and the parse source for `module_mac`. Empty after a Matter uncheck - see below.                                                                                                       |
 
 ## Unique id: the object id (`AmpioObject.object_key`)
 
@@ -90,9 +90,9 @@ objects and loses all but one of them.
 - **The join anchor.** The description-record join matches on `module_mac` and
   `leaf_io_no`.
 
-`leafId` is empty for system objects, and Designer clears it on any object whose
-Matter box is unchecked, so `leaf_key` reads None for both. An empty `leafId`
-says nothing about visibility, which [`visibility.md`](visibility.md) covers.
+Designer clears `leafId` on any object whose Matter box is unchecked, so
+`leaf_key` reads None then. An empty `leafId` says nothing about visibility,
+which [`visibility.md`](visibility.md) covers.
 
 One further collision exists and is unrelated to the Designer views above. A
 hidden phantom stub can share its labeled twin's `leaf_id` on M-SENS analog
