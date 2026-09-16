@@ -58,18 +58,18 @@ the client reports the refusal through `diagnostics_snapshot()` and drops the
 message. To read a dropped column as "not configured" would turn a server fault
 into wrong values on an object.
 
-| Surface               | Columns every row carries                                                                                    |
-| --------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `data/devices`        | `id`, `id_urzadzenia`, `typ_komponentu`, `interpretacja`, `funkcja`, `leafId`, `opis_menu`, `type`, `format` |
-| `config/devices`      | `id`, `mac`, `mac_global`, `nazwa_urzadzenia`, `typ_urzadzenia`, `wersja_softu`, `wersja_pcb`                |
-| `data/params_devices` | `id`, `params`, `czas`, `url`                                                                                |
-| `data/states`         | `id`, `stan_json`, and inside the blob `state` and `on`                                                      |
-| `data/info`           | `mac`, `userId`                                                                                              |
-| `config/locations`    | `id`, `opis_menu`                                                                                            |
-| `data/scenes`         | `id`, `parentId`, `sceneName`, `active`, `Infos`, and an `id` per `Infos` entry                              |
-| `data/groups`         | `id`, a non-empty `opis_menu`                                                                                |
-| `data/group_devices`  | `id_grupy`, `id_obiektu`                                                                                     |
-| `ob/<id>/state`       | `state`, `on`                                                                                                |
+| Surface               | Columns every row carries                                                                     |
+| --------------------- | --------------------------------------------------------------------------------------------- |
+| `data/devices`        | `id`, `typ_komponentu`, `interpretacja`, `funkcja`, `leafId`, `opis_menu`, `type`, `format`   |
+| `config/devices`      | `id`, `mac`, `mac_global`, `nazwa_urzadzenia`, `typ_urzadzenia`, `wersja_softu`, `wersja_pcb` |
+| `data/params_devices` | `id`, `params`, `czas`, `url`                                                                 |
+| `data/states`         | `id`, `stan_json`, and inside the blob `state` and `on`                                       |
+| `data/info`           | `mac`, `userId`                                                                               |
+| `config/locations`    | `id`, `opis_menu`                                                                             |
+| `data/scenes`         | `id`, `parentId`, `sceneName`, `active`, `Infos`, and an `id` per `Infos` entry               |
+| `data/groups`         | `id`, a non-empty `opis_menu`                                                                 |
+| `data/group_devices`  | `id_grupy`, `id_obiektu`                                                                      |
+| `ob/<id>/state`       | `state`, `on`                                                                                 |
 
 A column can hold an empty value. `leafId`, `opis_menu` on an object row, `url`,
 and `format` are text columns the M-SERV writes empty, or null, when the object

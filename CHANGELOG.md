@@ -30,18 +30,38 @@ explicit beta posture above and is no longer the supported upgrade path.
   the retained `md5` digests re-request the module list alone. A purged object
   or an object outside every room leaves `objects` on an administrator login. It
   fires `ObjectRemoved`, where the config catalogue kept it as a hidden row.
+- Every object carries `AmpioObject.address`, a
+  `ModuleAddress(mac, channel, sf_id, sub_sf_id)` parsed from its leaf, and
+  `AmpioObject.leaf_key`, on both tiers. The store admits a catalogue through
+  one door: it waits for both `data/devices` and `data/params_devices`, drops
+  hidden rows, and leaves out every row without a leaf.
+  `wait_for_initial_discovery()` raises `AmpioNotConfigured` naming those rows,
+  and after connect the `NotConfigured` event reports them. A leaf that does not
+  parse refuses the reply as `AmpioProtocolError`. `diagnostics_snapshot()`
+  lists the rows under `not_configured`.
+- The raw routing index keys on `address.mac` and routes one channel to every
+  object that shares the leaf. `module_for()` looks the module up on
+  `address.mac`. The record sweep, the cover parameters and the roller lock join
+  on `address`. A write for an id the catalogue does not list raises
+  `AmpioValueError`.
 
 ### Removed
 
 - `AmpioObject.is_system`, `is_system_type()`, and the `system` flag on
   `TypeProfile`.
 - The `config/devicesDetails` request, its parser and its column set.
+- `AmpioObject.leaf_id`, `id_urzadzenia`, `sibling_module_mac`, `hidden`,
+  `visible`, `module_mac`, `sf_id`, `sub_sf_id` and `leaf_io_no`; `leaf_mac()`;
+  the `funkcja - 1` record join and the `/api` fallback for a relay without a
+  leaf.
 
 ### Fixed
 
 - The detection row's home-status code no longer reads as a boolean. Code 5 is
   "home empty" and `PresenceDetection.home_status` carries it as an integer
   (#265).
+- A `data/states` snapshot with one malformed row is refused whole. Every object
+  keeps its value and the held table stays as it was (#269).
 
 ### Documentation
 

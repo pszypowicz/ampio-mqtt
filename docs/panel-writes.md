@@ -27,22 +27,22 @@ for a binary output (leaf class 257, relays and panel LEDs) and `0x32` for an
 open-collector output (class 67, the M-INOC). A module drops `0x30` on a
 class-67 leaf: the write returns, nothing moves, and no frame follows on the
 bus. `0xF9` is the set-u8 command. `channel` is the 0-based output index -
-`AmpioObject.leaf_io_no`, one below the 1-based raw state channel. The topic is
-admin-only like the rest of the `ampio/to` tree. A binary output echoes on
-`state/o/<ch+1>` in ~30-50 ms and on its object topic in ~150 ms. An
+`AmpioObject.address.channel`, one below the 1-based raw state channel. The
+topic is admin-only like the rest of the `ampio/to` tree. A binary output echoes
+on `state/o/<ch+1>` in ~30-50 ms and on its object topic in ~150 ms. An
 open-collector output echoes on `state/a/<ch+1>` as a u8 value and never on its
 object topic, on any write path. The library therefore bridges `a` for those
 objects. `confirm=` resolves on either edge.
 
 On the admin tier, a `przekaznik` on a CAN module rides this frame when its leaf
 class has a proven function byte. The frame is addressed by the object's own
-leaf alone (mac, 0-based channel, and class). A class outside that table, and a
-leafless object, stay on `/api`. There is no module-type table to maintain. Two
-more writes stay on `/api`: the M-SERV's own virtual outputs, and every
-`pulse_ms` write. The virtual outputs live in the server's DB, not on the CAN
-bus. The raw frame has no timed form, so a panel output cannot pulse, and
-`confirm=` is what shows that. The standard tier always publishes the `/api`
-form, which a panel output ignores.
+leaf alone (mac, 0-based channel, and class). A class outside that table stays
+on `/api`. There is no module-type table to maintain. Two more writes stay on
+`/api`: the M-SERV's own virtual outputs, and every `pulse_ms` write. The
+virtual outputs live in the server's DB, not on the CAN bus. The raw frame has
+no timed form, so a panel output cannot pulse, and `confirm=` is what shows
+that. The standard tier always publishes the `/api` form, which a panel output
+ignores.
 
 A module condition bound to the LED overrides such writes eventually, not
 preventively. A write to a condition-bound LED takes effect, and the panel

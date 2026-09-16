@@ -78,15 +78,12 @@ value sensor or the `analog_<n>` fallback.
   catalogue row cannot tell the two halves apart, because both carry the same
   `typ_komponentu`, `funkcja` and `interpretacja`. Only the leaf sub-function
   differs, 3 for armed and 4 for alarmed, so this is the one type that
-  classifies on `AmpioObject.sub_sf_id`. Designer marks both halves read-only
-  and neither takes a device class, because the alarmed half also reads 1
-  through the panel's exit delay and so is not a safety indicator on its own. A
-  sub-function outside those two, and a row with no leaf at all, classify as the
-  base `alarm` kind, which takes no device class either. `leafId` is not
-  durable, because Designer clears it on a Matter uncheck (see
-  [`identity.md`](identity.md)). The family must therefore come from
-  `typ_komponentu` alone, and the leaf must only refine the name. The `arm` and
-  `disarm` verbs still reach the armed half (see [`commands.md`](commands.md)).
+  classifies on `AmpioObject.address.sub_sf_id`. Designer marks both halves
+  read-only and neither takes a device class, because the alarmed half also
+  reads 1 through the panel's exit delay and so is not a safety indicator on its
+  own. A sub-function outside those two classifies as the base `alarm` kind,
+  which takes no device class either. The `arm` and `disarm` verbs still reach
+  the armed half (see [`commands.md`](commands.md)).
 - Ampio's vocabulary also carries `rgb`, `rgbww`, `ac`, `radio`, and `ip_radio`
   - types absent from `TYPE_PROFILES` that classify as the generic value sensor.
 
@@ -173,9 +170,9 @@ Classification uses exactly three wire fields:
 - **`interpretacja`** - a refinement. For `lin_wej` it selects the measurement,
   or names the `analog_<n>` fallback. For `bit8`, `bit16`, `sbit16`, and `bit32`
   it names the `value_<n>` key.
-- **`sub_sf_id`** - a refinement for `satel_alarm` only. It names the armed half
-  or the alarmed half. It reads None on a row with no leaf, and the object then
-  classifies as the base `alarm` kind.
+- **`sub_sf_id`** - a refinement for `satel_alarm` only, read from
+  `address.sub_sf_id`. It names the armed half or the alarmed half. A
+  sub-function outside those two classifies as the base `alarm` kind.
 
 It does **not** use:
 
@@ -196,14 +193,15 @@ mislabels temperature as humidity.
 ## Why classification is split from visibility
 
 Classification answers "what kind of thing is this row". Visibility (see
-[`visibility.md`](visibility.md)) answers "surface it or not". They compose:
+[`visibility.md`](visibility.md)) answers "surface it or not". The door drops
+hidden rows before classification runs, so every object in `objects` is one to
+surface. `classify()` still yields a kind for a hidden row a diagnostics report
+reads from the wire.
 
 ```python
-should_surface = obj.visible          # classify() always yields a kind
 platform = obj.kind    # ObjectKind = SensorKind | InputKind | OutputKind | ThermostatKind
 ```
 
-A hidden row is still classifiable, because the type field is intact, but it
-must not become an entity. The two checks stay separate so that a consumer can
-use one without the other. For example, a diagnostics report wants the hidden
-row classified, so it can show "hidden objects of type X".
+The two checks stay separate so that a consumer can use one without the other. A
+diagnostics report classifies a hidden row straight off the wire, so it can show
+"hidden objects of type X".

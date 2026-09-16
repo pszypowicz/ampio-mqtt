@@ -227,9 +227,8 @@ Designer hides them. The byte range `9N` to `10N - 1` has no label on either
 board, and the library does not read it.
 
 An object joins its channel the same way it joins its description record. The
-key is `leaf_io_no` for a leafed object, and `funkcja` minus one for a leafless
-one. Either cover kind joins the same way, so a cover carries the same values
-whichever type the app has it set to.
+key is `address.channel`. Either cover kind joins the same way, so a cover
+carries the same values whichever type the app has it set to.
 
 Only the two roller kinds carry these values. If the app changes an object to
 another kind, the library drops what it read for that object. The object reads
@@ -253,10 +252,9 @@ the configuration, and the two never describe each other.
 ### The join rule
 
 An object joins its entry through
-`(DESC_TYPE_BY_KIND[typ_komponentu], leaf_io_no)` within the description record
-of its own module (`AmpioObject.module_mac`). `leaf_io_no` is the last `leafId`
-segment, and it is the Designer's own channel key. `DESC_TYPE_BY_KIND` ships
-only these pairs:
+`(DESC_TYPE_BY_KIND[typ_komponentu], address.channel)` within the record of
+`address.mac`. `address.channel` is the last `leafId` segment, and it is the
+Designer's own channel key. `DESC_TYPE_BY_KIND` ships only these pairs:
 
 - `przekaznik` -> 12 (OUTPUTS)
 - `roleta_procenty` and `roleta_lamelki` -> 26 (ROLLER)
@@ -269,14 +267,8 @@ in another class proves nothing on its own. The object name is the proof. Every
 leafed flag on the baseline install has a class-6 frame at its channel. That
 frame carries the object's own name wherever a name is set. A kind outside the
 table (`bit32`, `lin_wej`, `satel_alarm`, `temp` among them) resolves no
-location, because no class was proven for it.
-
-A leafless object has no `leaf_io_no`. The join then uses the module that
-`id_urzadzenia` resolves to and `funkcja` minus one as the channel. On the
-baseline install `funkcja` minus one equals `leaf_io_no` for every leafed object
-of every kind except `lin_wej`. The M-SENS analog channels follow another
-numbering. The read is admin-only, so the module catalogue is present for the
-join.
+location, because no class was proven for it. The read is admin-only, so the
+module catalogue is present for the join.
 
 ### Sweep coverage
 

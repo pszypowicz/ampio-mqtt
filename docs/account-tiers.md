@@ -32,7 +32,7 @@ than reading empty. `modules`, `mserv`, `module_for()`, `resolve_records()`,
 `fetch_locations()` and every raw write behave this way. An empty module
 catalogue is indistinguishable from an install with no modules, and a consumer
 cannot act on that. Grouping entities by module needs no module row on either
-tier: `AmpioObject.module_mac` carries the key (see
+tier: `AmpioObject.address.mac` carries the key (see
 [`identity.md`](identity.md)).
 
 ## What each tier gets
@@ -52,7 +52,6 @@ tier: `AmpioObject.module_mac` carries the key (see
 | Commands                                                                                                          | all objects                                        | granted objects                                          |
 | Push notification (`send_notification`)                                                                           | yes                                                | yes                                                      |
 | Description record entries (the `device_api` tree, `resolve_records()`, `fetch_locations()`)                      | yes                                                | no                                                       |
-| Sibling module mac (`sibling_module_mac`)                                                                         | yes                                                | yes, bounded by the grant                                |
 | **Module catalogue** (`modules`, `mserv`)                                                                         | yes                                                | **no**                                                   |
 | **Raw tree** (`ampio/from/#`)                                                                                     | yes                                                | **no**                                                   |
 | **Module diagnostics** (voltage, temperature)                                                                     | yes                                                | **no**                                                   |
@@ -82,14 +81,9 @@ per account.
 So any surface published outside `ampio/fromDB/<user>/` is unreachable from a
 standard account. Check that before you plan a consumer for one.
 
-Two of the gaps are narrower than the table suggests. The `data/devices` rows
-carry `id_urzadzenia`, so a standard account still learns the module ids that
-own its granted objects, without names, macs, or models.
-`AmpioObject.sibling_module_mac` turns that id into the module's override mac
-whenever a leafed sibling is in the grant (see [`identity.md`](identity.md)).
-And the M-SERV's own identity needs no module catalogue at all. Both tiers
-receive `server_info` fully, so a consumer can anchor its hub device on
-`AmpioServerInfo.mac` instead of `mserv`.
+One of the gaps is narrower than the table suggests. The M-SERV's own identity
+needs no module catalogue at all. Both tiers receive `server_info` fully, so a
+consumer can anchor its hub device on `AmpioServerInfo.mac` instead of `mserv`.
 
 Grants bound reads and object writes alike. The M-SERV drops a command for an
 object outside a standard account's grant, with no effect and no reply. No state

@@ -1,43 +1,22 @@
 # Visibility and the params bits
 
-This page continues [`identity.md`](identity.md) with the visibility predicate,
+This page continues [`identity.md`](identity.md) with hidden rows and the door,
 the `params` bit semantics, the read-only marker, and deletion on the wire.
 
-## Visibility (`AmpioObject.visible`)
+## Hidden rows and the door
 
-Not every row in the catalogue is meant to be surfaced. The predicate is:
-
-```
-visible = not hidden
-```
-
-`hidden` is `params` bit 4 (`params & 16`), the bit the Designer enum names
-`DELETED`. It is the M-SERV's own "do not surface" marker, and the one wire-side
-visibility signal. It marks the rows the user deleted or hid, and the phantom
-stubs that duplicate a real Designer channel (same `leaf_id`, no value). It is a
-Designer config flag, so unlike `id_urzadzenia` it is replacement-stable. Every
-account tier receives `params` on a baseline install, through the unfiltered
-`data/params_devices` table. A row without a received value reads `0`, so it is
-visible. This is the same gate the M-SERV's Matter bridge uses
+`hidden` is `params` bit 4, the bit the Designer enum names `DELETED`. It marks
+the rows the user deleted or hid, and the stubs that duplicate a real Designer
+channel. The door drops a row that carries it on both tiers, so `objects` never
+holds a hidden row, and a `data/params_devices` push that sets or clears the bit
+evicts or admits the row. This is the same gate the M-SERV's Matter bridge uses
 (`(params & 2**37) && !(params & 16)`) - see the section on the bit semantics
 below. Bit 37 is a Matter-only opt-in. The library deliberately does not filter
 on it and does not surface it.
 
 Every config row that the app-sync catalogue omits carries the bit. Rows that
-app-sync still lists can carry it too, such as a hidden object or a phantom
-stub. The unfiltered params table serves the bit for those on both tiers. So
-`not hidden` selects the same set on the admin tier that a standard client with
-a full grant sees.
-
-`leaf_id` is not a visibility marker. Designer clears it when an object's Matter
-box is unchecked, and the row keeps its type, its module, its rooms, and its
-state. A re-check of the box writes `leafId` back from the linked leaf record. A
-leafless object is a real object without leaf-derived facts. `leaf_key`,
-`module_mac`, `sf_id`, `sub_sf_id`, and `leaf_io_no` read None, and
-`is_server_owned` reads False. `sibling_module_mac` names its module when a
-leafed sibling is in the catalogue. `AmpioClient.module_for()` resolves the
-module row on the admin tier, and the record join falls back to `funkcja` (see
-the join rule in [`description-records.md`](description-records.md)).
+app-sync still lists can carry it too, such as a hidden object or a duplicate
+stub. The unfiltered params table serves the bit for those on both tiers.
 
 The two presence rows, `detekcja` and `symulacja`, are not objects. The library
 exposes them as `AmpioClient.presence_detection` and
@@ -60,8 +39,6 @@ column of the simulation row. The app flips it through the
 standard account can do all of this. Both rows live outside the room tree, and
 the app-sync catalogue lists them unconditionally. A hidden presence row reads
 None on its attribute.
-
-Treat `visible` as the discovery filter.
 
 ## Where the `params` bit semantics come from
 
@@ -101,8 +78,8 @@ Designer sets the bit on every new relay. On `ledww` the same bit is "Flux".
 
 A reader of an OPTION bit must gate on the component type first.
 
-The library reads three of these bits. `DELETED` (bit 4) backs `hidden` and
-`visible`. `READ_ONLY` (bit 6) backs `read_only`. `OPTION1` (bit 15) backs
+The library reads three of these bits. `DELETED` (bit 4) backs the door's
+admission check. `READ_ONLY` (bit 6) backs `read_only`. `OPTION1` (bit 15) backs
 `bell`, gated on the two component types the label applies to.
 
 `MAKE_SEMICOLON` (bit 5) is Designer's "Divide by" checkbox. The library reads
@@ -146,15 +123,14 @@ time. Read `AmpioObject.czas` for the raw column on any type.
 The M-SERV ships its own Matter bridge (a matter.js app launched by
 `ampio-server`). That bridge's production gate corroborates the enum: it exposes
 an object only when `(params & 2**37) && !(params & 16)`. Bit 37 is the
-per-object Matter opt-in set in Designer. Bit 4 is the hidden/stub marker that
-`hidden` and `visible` build on. The `leafId` structure
-`0_<macHex>_<sfId>_<subSfId>_<ioNo>` that `AmpioObject.module_mac` parses is
-likewise the structure the bridge's own classifier reads. The bridge also shows
-why a dedicated integration is the right path for sensors. It types objects
-through a registry with known gaps (no `lin_wej` branch, and loudness has no
-Matter device type at all). And it exposes only the channels hand-flagged for
-Matter - a dozen on the baseline install, with humidity, pressure, illuminance,
-and CO2 on zero modules.
+per-object Matter opt-in set in Designer. Bit 4 is the hidden/stub marker the
+door checks. The `leafId` structure `0_<macHex>_<sfId>_<subSfId>_<ioNo>` that
+`AmpioObject.address` parses is likewise the structure the bridge's own
+classifier reads. The bridge also shows why a dedicated integration is the right
+path for sensors. It types objects through a registry with known gaps (no
+`lin_wej` branch, and loudness has no Matter device type at all). And it exposes
+only the channels hand-flagged for Matter - a dozen on the baseline install,
+with humidity, pressure, illuminance, and CO2 on zero modules.
 
 ## The read-only marker (`AmpioObject.read_only`)
 

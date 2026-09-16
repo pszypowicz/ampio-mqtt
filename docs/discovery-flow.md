@@ -120,6 +120,28 @@ resync is the broker's retained raw state tree, not the DB snapshot. Each cycle
 re-fetches the full catalogue, so `refresh_interval` is sized in minutes, not
 seconds.
 
+## The door
+
+The store admits a catalogue through one door, on both tiers. The door waits for
+both replies of the pair, `data/devices` and `data/params_devices`, because the
+hidden bit rides the second. Then it decides in one order. The two presence rows
+go to their own types. A row with the hidden bit drops. Every remaining row must
+carry a leaf that parses into `AmpioObject.address`.
+
+A row with an empty leaf stays out of `objects`. The store records it, and
+`wait_for_initial_discovery()` raises `AmpioNotConfigured` with the `(id, name)`
+pairs. The other rows are served and the connection stays up. After connect, the
+same condition arrives as the `NotConfigured` event, and the row leaves through
+`ObjectRemoved`. The next catalogue push that restores the leaf produces
+`ObjectAdded`. `diagnostics_snapshot()` lists the rows under `not_configured`.
+
+A leaf of another shape is a server fault. The store refuses the reply whole as
+`AmpioProtocolError`, before any field changes. The apply is atomic, so no
+half-merged state is ever observable.
+
+A push of `data/params_devices` alone re-runs the door on the held catalogue. A
+hidden bit that changes evicts or admits its row.
+
 ## Errors
 
 Every error the library raises subclasses `AmpioError`. `connect()` raises
@@ -132,11 +154,14 @@ publish while the broker is disconnected raises `AmpioConnectionError` too.
 every connection problem alike keeps working. A rejection after a successful
 `connect()` arrives as the `AuthFailed` event instead (see
 [`events.md`](events.md)). A bad argument raises `AmpioValueError`, which
-subclasses `ValueError`. What the install refuses raises a plain `ValueError`
-instead: a module id no catalogue carries, or an output whose kind does not
-answer the verb. A consumer that catches `AmpioValueError` first tells its own
-fault from the install's state. An admin-only call on a standard account raises
-`RuntimeError`.
+subclasses `ValueError`. An id the catalogue does not list raises
+`AmpioValueError` before any publish. A consumer that catches `AmpioValueError`
+first tells its own fault from the install's state. An admin-only call on a
+standard account raises `RuntimeError`.
+
+`AmpioNotConfigured` is the installer's error. A drivable row carries no leaf,
+and the installer restores it in Designer. `AmpioProtocolError` is the server's
+error. A reply lacks what its surface always serves.
 
 ## What runs on demand, not automatically
 
