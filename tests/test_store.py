@@ -1158,15 +1158,18 @@ def test_stan_json_with_no_state_field_does_not_overwrite_value() -> None:
     store = _store()
     _feed_catalogue(
         store,
-        {
-            "id": 41,
-            "typ_komponentu": "temp",
-            "interpretacja": 1,
-            "opis_menu": "T",
-            "stan_json": '{"on": 1779560000000}',  # no "state"
-        },
+        {"id": 41, "typ_komponentu": "temp", "interpretacja": 1, "opis_menu": "T"},
     )
-    assert store.objects[41].state is None
+    _apply(store, STATES_TOPIC, _snapshot("22.5", 1779560000000, oid=41))
+    assert store.objects[41].state == "22.5"
+
+    with pytest.raises(AmpioProtocolError, match="state"):
+        _apply(
+            store,
+            STATES_TOPIC,
+            snapshot({"id": 41, "stan_json": '{"on": 1779560100000}'}),
+        )
+    assert store.objects[41].state == "22.5"
 
 
 def test_numeric_value_none_for_bare_nan_state_push() -> None:

@@ -375,8 +375,8 @@ class AmpioObject:
     # space for "without unit". `unit` reads it.
     url: str = ""
     # Designer's "String format" column, verbatim: a printf conversion,
-    # optionally followed by a unit ("%.3f A"). Both catalogues carry it.
-    # `unit` and `decimals` read it.
+    # optionally followed by a unit ("%.3f A"). The catalogue carries it
+    # on both tiers. `unit` and `decimals` read it.
     format: str = ""
     # The object's description-record entry, admin sweep only; None on
     # the restricted tier and before a sweep covers the object.

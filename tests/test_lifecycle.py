@@ -33,7 +33,6 @@ from conftest import (
     ADMIN_STATES_TOPIC,
     ADMIN_USER,
     DATA_DEVICES_TOPIC,
-    DEVICES_TOPIC,
     INFO_TOPIC,
     PARAMS_DEVICES_TOPIC,
     STATES_TOPIC,
@@ -229,8 +228,8 @@ async def test_a_restricted_client_requests_only_its_pair() -> None:
 
 async def test_an_admin_client_requests_the_module_list_and_the_data_pair() -> None:
     """The admin login requests its own module list alongside the object
-    catalogue pair; the M-SERV pushes neither on a retained topic, so
-    every refresh re-requests both."""
+    catalogue pair. Neither reaches the client without a request at
+    connect time. Every refresh must re-request both."""
     broker = FakeBroker()
     client = make_client(broker, username=ADMIN_USER, reconnect_interval=0.001)
     await client.connect(timeout=2.0, discovery_timeout=0.05)
@@ -800,7 +799,6 @@ async def test_wait_for_initial_discovery_returns_false_on_timeout() -> None:
     # latches, so the discovery wait cannot complete.
     broker = FakeBroker()
     broker.scripted_messages = [
-        Message(DEVICES_TOPIC, json.dumps({"List": []}).encode()),
         Message(STATES_TOPIC, snapshot().encode()),
     ]
     client = make_client(broker, reconnect_interval=0.001)
@@ -1345,9 +1343,9 @@ async def test_disconnect_cancels_a_pending_digest_trigger() -> None:
 
 
 async def test_a_designer_save_surfaces_as_object_added_on_the_admin_tier() -> None:
-    """The pushed digest change, the re-request, and the reply's diff join
-    up: an object added in Designer reaches an admin session as
-    ObjectAdded with no reconnect and no refresh() call."""
+    """The pushed `data/devices` and `data/params_devices` pair surfaces a
+    Designer save as ObjectAdded on an admin session, with no reconnect,
+    no refresh() call, and no re-request."""
     broker = FakeBroker()
     client = make_client(broker, username=ADMIN_USER)
     events: list[ClientEvent] = []
@@ -1356,11 +1354,8 @@ async def test_a_designer_save_surfaces_as_object_added_on_the_admin_tier() -> N
     try:
         feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of({"id": 10}))
         feed(client, ADMIN_DATA_DEVICES_TOPIC, details({"id": 10}))
-        feed(client, ADMIN_MD5_DEVICES_TOPIC, "a" * 32)
         broker.published.clear()
         events.clear()
-        feed(client, ADMIN_MD5_DEVICES_TOPIC, "b" * 32)
-        await _published(broker, 1)
         feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of({"id": 10}, {"id": 11}))
         feed(client, ADMIN_DATA_DEVICES_TOPIC, details({"id": 10}, {"id": 11}))
         assert [e.object.id for e in events] == [11]  # type: ignore[attr-defined]

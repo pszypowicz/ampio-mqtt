@@ -17,7 +17,6 @@ from conftest import (
     ADMIN_PARAMS_DEVICES_TOPIC,
     ADMIN_USER,
     DATA_DEVICES_TOPIC,
-    DEVICES_TOPIC,
     INFO_TOPIC,
     PARAMS_DEVICES_TOPIC,
     STATES_TOPIC,
@@ -727,7 +726,6 @@ async def test_discovery_stays_incomplete_without_server_identity(
     assert client.server_info is None
 
     feed(client, INFO_TOPIC, info(mac=555, userId=4, serverVersion="1865"))
-    feed(client, DEVICES_TOPIC, devices())
     assert await client.wait_for_initial_discovery(timeout=1.0) is True
     assert client.server_info.server_key == "555"
 

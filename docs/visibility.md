@@ -184,9 +184,9 @@ Deletion behaves as follows on the wire, on the baseline install. A **module**
 delete hard-removes its row from the `devices` list, and the library evicts it
 and dispatches `ModuleRemoved`. The delete does not cascade to the module's
 objects. An **object** delete in the Ampio app is two-stage: the object first
-moves to "Ungrouped", and a second delete purges it. On the `config` catalogue
-the purge is soft. The row stays, `leaf_id` intact, with the `params` hidden bit
-set, so it drops out through `visible`. The app-sync surfaces (`data/devices`,
-`data/params_devices`) hard-remove it, and that is what lets the standard tier
-evict for real. On the baseline install the app-sync catalogue lists exactly the
-objects with a room, plus the two presence rows.
+moves to "Ungrouped", and a second delete purges it. The `config` catalogue
+soft-deletes the purged object. The app-sync surfaces (`data/devices`,
+`data/params_devices`) hard-remove it instead. The library reads the app-sync
+surfaces on both tiers, so a purge evicts the object on both tiers and fires
+`ObjectRemoved`. On the baseline install the app-sync catalogue lists exactly
+the objects with a room, plus the two presence rows.

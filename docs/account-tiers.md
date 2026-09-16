@@ -37,28 +37,28 @@ tier: `AmpioObject.module_mac` carries the key (see
 
 ## What each tier gets
 
-| Capability                                                                                                        | Administrator | Standard user                                            |
-| ----------------------------------------------------------------------------------------------------------------- | ------------- | -------------------------------------------------------- |
-| Object catalogue with full metadata                                                                               | all objects   | objects granted in the app                               |
-| Presence rows (`presence_detection`, `presence_simulation`)                                                       | yes           | yes                                                      |
-| `params` bitfields (visibility, the hidden bit)                                                                   | yes           | yes (the M-SERV serves the whole `params_devices` table) |
-| Per-object live state                                                                                             | all objects   | granted objects                                          |
-| Rooms (`fetch_rooms`)                                                                                             | yes           | yes                                                      |
-| Server identity (`server_info`)                                                                                   | yes           | yes                                                      |
-| Scenes (`fetch_scenes`, scene commands)                                                                           | yes           | yes, bounded by the grant                                |
-| `resources` / `icons` tables (`data` surface)                                                                     | yes           | yes                                                      |
-| `logging` config table (`data` surface)                                                                           | yes           | yes (the M-SERV serves the whole `logging` table)        |
-| md5 change-detection tree (the admin client watches `devices` and `params_devices` to re-request the module list) | yes           | yes                                                      |
-| Commands                                                                                                          | all objects   | granted objects                                          |
-| Push notification (`send_notification`)                                                                           | yes           | yes                                                      |
-| Description record entries (the `device_api` tree, `resolve_records()`, `fetch_locations()`)                      | yes           | no                                                       |
-| Sibling module mac (`sibling_module_mac`)                                                                         | yes           | yes, bounded by the grant                                |
-| **Module catalogue** (`modules`, `mserv`)                                                                         | yes           | **no**                                                   |
-| **Raw tree** (`ampio/from/#`)                                                                                     | yes           | **no**                                                   |
-| **Module diagnostics** (voltage, temperature)                                                                     | yes           | **no**                                                   |
-| **CAN write tree** (`ampio/to/#`)                                                                                 | yes           | **no**                                                   |
-| **Panel buzzer** (`buzz`, `buzz_pattern`, `buzz_stop`)                                                            | yes           | **no**                                                   |
-| **Module identify** (`identify`, `identify_stop`)                                                                 | yes           | **no**                                                   |
+| Capability                                                                                                        | Administrator                                      | Standard user                                            |
+| ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------- |
+| Object catalogue with full metadata                                                                               | every object in a room, plus the two presence rows | objects granted in the app                               |
+| Presence rows (`presence_detection`, `presence_simulation`)                                                       | yes                                                | yes                                                      |
+| `params` bitfields (visibility, the hidden bit)                                                                   | yes                                                | yes (the M-SERV serves the whole `params_devices` table) |
+| Per-object live state                                                                                             | all objects                                        | granted objects                                          |
+| Rooms (`fetch_rooms`)                                                                                             | yes                                                | yes                                                      |
+| Server identity (`server_info`)                                                                                   | yes                                                | yes                                                      |
+| Scenes (`fetch_scenes`, scene commands)                                                                           | yes                                                | yes, bounded by the grant                                |
+| `resources` / `icons` tables (`data` surface)                                                                     | yes                                                | yes                                                      |
+| `logging` config table (`data` surface)                                                                           | yes                                                | yes (the M-SERV serves the whole `logging` table)        |
+| md5 change-detection tree (the admin client watches `devices` and `params_devices` to re-request the module list) | yes                                                | yes                                                      |
+| Commands                                                                                                          | all objects                                        | granted objects                                          |
+| Push notification (`send_notification`)                                                                           | yes                                                | yes                                                      |
+| Description record entries (the `device_api` tree, `resolve_records()`, `fetch_locations()`)                      | yes                                                | no                                                       |
+| Sibling module mac (`sibling_module_mac`)                                                                         | yes                                                | yes, bounded by the grant                                |
+| **Module catalogue** (`modules`, `mserv`)                                                                         | yes                                                | **no**                                                   |
+| **Raw tree** (`ampio/from/#`)                                                                                     | yes                                                | **no**                                                   |
+| **Module diagnostics** (voltage, temperature)                                                                     | yes                                                | **no**                                                   |
+| **CAN write tree** (`ampio/to/#`)                                                                                 | yes                                                | **no**                                                   |
+| **Panel buzzer** (`buzz`, `buzz_pattern`, `buzz_stop`)                                                            | yes                                                | **no**                                                   |
+| **Module identify** (`identify`, `identify_stop`)                                                                 | yes                                                | **no**                                                   |
 
 The SUBACK enforces the raw-tree denial. A standard account's subscription to
 the `ampio/from/...` filters comes back with reason code 128. This holds even

@@ -102,10 +102,11 @@ class AmpioStore:
         # Whether the config table has answered at least once, so a gap in
         # its coverage is told apart from a table still in flight.
         self._params_received = False
-        # Granted objects the config table carries no row for. The table
-        # covers the full catalogue, so a non-empty set is a server fault:
-        # those objects read every Designer config flag as unset. Warned
-        # once per change and surfaced for diagnostics.
+        # Catalogue objects the params table carries no row for. Every
+        # object the catalogue lists has a row on both tiers, so a
+        # non-empty set is a server fault: those objects read every
+        # Designer config flag as unset. Warned once per change and
+        # surfaced for diagnostics.
         self.missing_params_ids: frozenset[int] = frozenset()
         # `{object_id: DesignerRecord}` accumulated across resolve
         # sweeps (a sweep updates its joined ids and leaves the rest),
@@ -691,13 +692,13 @@ class AmpioStore:
         self._report_params_coverage()
 
     def _report_params_coverage(self) -> None:
-        """Name the granted objects the config table carries no row for.
+        """Name the catalogue objects the params table carries no row for.
 
-        The table covers the whole object catalogue, so every object a
-        grant lists has a row. A gap leaves those objects reading every
-        Designer config flag as unset, which is a server fault to report
-        rather than a state to model. Warned once per change, and held for
-        diagnostics either way.
+        The table covers the whole object catalogue, so every object the
+        catalogue lists has a row on both tiers. A gap leaves those objects
+        reading every Designer config flag as unset, which is a server
+        fault to report rather than a state to model. Warned once per
+        change, and held for diagnostics either way.
         """
         if not self._params_received:
             return

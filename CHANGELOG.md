@@ -27,7 +27,9 @@ explicit beta posture above and is no longer the supported upgrade path.
   account, `data/devices` plus `data/params_devices`, and adds `config/devices`
   for the module rows. `params`, `czas` and `url` come from the params table on
   both tiers. A Designer save reaches both tiers through the pushed tables, and
-  the retained `md5` digests re-request the module list alone.
+  the retained `md5` digests re-request the module list alone. A purged object
+  or an object outside every room leaves `objects` on an administrator login. It
+  fires `ObjectRemoved`, where the config catalogue kept it as a hidden row.
 
 ### Removed
 
