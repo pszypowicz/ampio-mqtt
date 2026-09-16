@@ -1566,6 +1566,66 @@ def test_presence_rows_never_enter_the_raw_index() -> None:
     )
 
 
+def _push(oid: int, state: str, on: int = 1_700_000_000_000) -> str:
+    return json.dumps({"state": state, "on": on})
+
+
+def test_detection_push_sets_the_home_status() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_DET, _SIM))
+    applied = _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "5"))
+    assert store.presence_detection is not None
+    assert store.presence_detection.home_status == 5
+    assert _presence_events(applied) == [
+        PresenceChanged(
+            detection=store.presence_detection,
+            simulation=store.presence_simulation,
+        )
+    ]
+    _apply(store, DETAILS_TOPIC, details(_DET, _SIM))
+    assert store.presence_detection.home_status == 5
+
+
+def test_snapshot_seeds_the_home_status_once() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_DET))
+    _apply(store, STATES_TOPIC, snapshot({"id": 60, "stan_json": _push(60, "5")}))
+    assert store.presence_detection is not None
+    assert store.presence_detection.home_status == 5
+    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "7"))
+    _apply(store, STATES_TOPIC, snapshot({"id": 60, "stan_json": _push(60, "5")}))
+    assert store.presence_detection.home_status == 7
+
+
+def test_detection_push_before_the_catalogue_is_replayed_at_the_merge() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "5"))
+    _apply(store, DETAILS_TOPIC, details(_DET))
+    assert store.presence_detection is not None
+    assert store.presence_detection.home_status == 5
+
+
+def test_detection_code_that_is_not_an_integer_is_a_protocol_fault() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_DET))
+    with pytest.raises(AmpioProtocolError, match="home-status"):
+        _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "home"))
+
+
+def test_simulation_push_changes_nothing() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_SIM))
+    before = store.presence_simulation
+    applied = _apply(store, f"ampio/fromDB/{USER}/ob/61/state", _push(61, "1"))
+    assert store.presence_simulation == before
+    assert applied.events == []
+
+
 # --- the app-sync data surface (standard accounts) --------------------------
 
 

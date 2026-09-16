@@ -450,6 +450,14 @@ class AmpioStore:
                     if current is not None and current.id == meta.id
                     else None
                 )
+                pending = self._pending_state.pop(meta.id, None)
+                if pending is not None:
+                    kept = _home_status(pending.state)
+                elif (
+                    kept is None
+                    and (stan_json := self._stan_by_id.get(meta.id)) is not None
+                ):
+                    kept = _home_status(_protocol.parse_stan_json(stan_json).state)
                 detection = PresenceDetection(
                     id=meta.id, name=meta.opis_menu, home_status=kept
                 )
@@ -478,6 +486,17 @@ class AmpioStore:
         applied.events.append(
             PresenceChanged(detection=detection, simulation=simulation)
         )
+
+    def _apply_presence_state(
+        self, update: _protocol.StateUpdate, applied: Applied
+    ) -> None:
+        """Fold a push for one of the two rows. Only the detection row
+        carries a value, the home-status code."""
+        detection = self.presence_detection
+        if detection is None or detection.id != update.id:
+            return
+        detection = replace(detection, home_status=_home_status(update.state))
+        self._set_presence(detection, self.presence_simulation, applied)
 
     def _merge_metadata(
         self,
@@ -708,10 +727,24 @@ class AmpioStore:
             self.objects[entry.id] = obj
             if changed:
                 self._record(obj, applied)
+        detection = self.presence_detection
+        if detection is not None and detection.home_status is None:
+            stan_json = self._stan_by_id.get(detection.id)
+            if stan_json is not None:
+                seeded = replace(
+                    detection,
+                    home_status=_home_status(
+                        _protocol.parse_stan_json(stan_json).state
+                    ),
+                )
+                self._set_presence(seeded, self.presence_simulation, applied)
 
     # --- live state -------------------------------------------------------
 
     def _apply_state(self, update: _protocol.StateUpdate, applied: Applied) -> None:
+        if update.id in self._presence_rows:
+            self._apply_presence_state(update, applied)
+            return
         obj = self.objects.get(update.id)
         if obj is None:
             self._pending_state[update.id] = update
@@ -972,6 +1005,16 @@ class AmpioStore:
 
     def _record(self, obj: AmpioObject, applied: Applied) -> None:
         applied.events.append(ObjectUpdated(obj))
+
+
+def _home_status(state: str) -> int:
+    """The detection row's home-status code, an integer on the wire."""
+    try:
+        return int(state)
+    except ValueError as err:
+        raise AmpioProtocolError(
+            f"The Ampio presence-detection state {state!r} is not a home-status code"
+        ) from err
 
 
 # The object fields both catalogue surfaces own, derived from the shared
