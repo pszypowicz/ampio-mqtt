@@ -226,6 +226,17 @@ def test_an_unreadable_reply_is_refused() -> None:
         _apply(_store(), DATA_DEVICES_TOPIC, "null")
 
 
+def test_a_leaf_id_that_is_not_a_string_refuses_the_whole_catalogue_reply() -> None:
+    store = _store()
+    _feed_catalogue(store, _catalogue_row())
+    objects_before = dict(store.objects)
+    not_configured_before = store.not_configured
+    with pytest.raises(AmpioProtocolError, match="neither a string nor null"):
+        _feed_catalogue(store, _catalogue_row(id=42, leafId=123))
+    assert store.objects == objects_before
+    assert store.not_configured == not_configured_before
+
+
 @pytest.mark.parametrize(
     ("topic", "payload", "event_type"),
     [
@@ -518,6 +529,17 @@ def test_a_newer_snapshot_corrects_a_value_that_changed_during_an_outage() -> No
     applied = _apply(store, STATES_TOPIC, _snapshot("0", 1786700900000))
     assert [o.id for o in _updated(applied)] == [10]
     assert store.objects[10].state == "0"
+
+
+def test_a_moved_leaf_returns_the_object_to_per_object_updates() -> None:
+    store = _store()
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    _apply(store, "ampio/from/a/state/f/3", "1")
+    assert store.objects[41].raw_owned is True
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xB))
+    assert store.objects[41].raw_owned is False
+    _apply(store, STATES_TOPIC, _snapshot("0", 1779560000000, oid=41))
+    assert store.objects[41].state == "0"
 
 
 def test_begin_refresh_lets_the_snapshot_resync_a_locally_stamped_value() -> None:

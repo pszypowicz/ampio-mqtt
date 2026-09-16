@@ -33,7 +33,7 @@ explicit beta posture above and is no longer the supported upgrade path.
 - Every object carries `AmpioObject.address`, a
   `ModuleAddress(mac, channel, sf_id, sub_sf_id)` parsed from its leaf, and
   `AmpioObject.leaf_key`, on both tiers. The store admits a catalogue through
-  one door: it waits for both `data/devices` and `data/params_devices`, drops
+  one door. It waits for both `data/devices` and `data/params_devices`, drops
   hidden rows, and leaves out every row without a leaf.
   `wait_for_initial_discovery()` raises `AmpioNotConfigured` naming those rows,
   and after connect the `NotConfigured` event reports them. A leaf that does not
@@ -51,9 +51,9 @@ explicit beta posture above and is no longer the supported upgrade path.
   `TypeProfile`.
 - The `config/devicesDetails` request, its parser and its column set.
 - `AmpioObject.leaf_id`, `id_urzadzenia`, `sibling_module_mac`, `hidden`,
-  `visible`, `module_mac`, `sf_id`, `sub_sf_id` and `leaf_io_no`; `leaf_mac()`;
-  the `funkcja - 1` record join and the `/api` fallback for a relay without a
-  leaf.
+  `visible`, `module_mac`, `sf_id`, `sub_sf_id` and `leaf_io_no` leave the
+  object. `leaf_mac()` leaves the package. The `funkcja - 1` record join and the
+  `/api` fallback for a relay without a leaf leave the client.
 
 ### Fixed
 
@@ -61,7 +61,7 @@ explicit beta posture above and is no longer the supported upgrade path.
   "home empty" and `PresenceDetection.home_status` carries it as an integer
   (#265).
 - A `data/states` snapshot with one malformed row is refused whole. Every object
-  keeps its value and the held table stays as it was (#269).
+  keeps its value and the held table stays unchanged (#269).
 
 ### Documentation
 

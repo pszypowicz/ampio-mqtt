@@ -79,11 +79,11 @@ value sensor or the `analog_<n>` fallback.
   `typ_komponentu`, `funkcja` and `interpretacja`. Only the leaf sub-function
   differs, 3 for armed and 4 for alarmed, so this is the one type that
   classifies on `AmpioObject.address.sub_sf_id`. Designer marks both halves
-  read-only and neither takes a device class, because the alarmed half also
-  reads 1 through the panel's exit delay and so is not a safety indicator on its
-  own. A sub-function outside those two classifies as the base `alarm` kind,
-  which takes no device class either. The `arm` and `disarm` verbs still reach
-  the armed half (see [`commands.md`](commands.md)).
+  read-only, and neither takes a device class. The alarmed half also reads 1
+  through the panel's exit delay, so it is not a safety indicator on its own. A
+  sub-function outside those two classifies as the base `alarm` kind, which
+  takes no device class either. The `arm` and `disarm` verbs still reach the
+  armed half (see [`commands.md`](commands.md)).
 - Ampio's vocabulary also carries `rgb`, `rgbww`, `ac`, `radio`, and `ip_radio`
   - types absent from `TYPE_PROFILES` that classify as the generic value sensor.
 

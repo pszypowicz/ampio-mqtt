@@ -8,7 +8,7 @@ the `params` bit semantics, the read-only marker, and deletion on the wire.
 `hidden` is `params` bit 4, the bit the Designer enum names `DELETED`. It marks
 the rows the user deleted or hid, and the stubs that duplicate a real Designer
 channel. The door drops a row that carries it on both tiers, so `objects` never
-holds a hidden row, and a `data/params_devices` push that sets or clears the bit
+holds a hidden row. A `data/params_devices` push that sets or clears the bit
 evicts or admits the row. This is the same gate the M-SERV's Matter bridge uses
 (`(params & 2**37) && !(params & 16)`) - see the section on the bit semantics
 below. Bit 37 is a Matter-only opt-in. The library deliberately does not filter

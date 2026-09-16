@@ -130,44 +130,75 @@ async def test_boundary_values_pass_the_range_checks(
 
 
 @pytest.mark.parametrize(
-    "call",
+    ("call", "match"),
     [
-        lambda c: c.set_value(1, 256),
-        lambda c: c.set_value(1, -1),
-        lambda c: c.set_value(1, 10, pulse_ms=-5),
-        lambda c: c.set_colors(1, 0, 0, 300),
-        lambda c: c.set_roller_pos(1, 101),
-        lambda c: c.set_roller_pos(1, 50, lamella=200),
+        (lambda c: c.set_value(1, 256), "value must be an int in 0..255, got 256"),
+        (lambda c: c.set_value(1, -1), "value must be an int in 0..255, got -1"),
+        (
+            lambda c: c.set_value(1, 10, pulse_ms=-5),
+            "pulse_ms must be an int in 0..655350, got -5",
+        ),
+        (
+            lambda c: c.set_colors(1, 0, 0, 300),
+            "blue must be an int in 0..255, got 300",
+        ),
+        (
+            lambda c: c.set_roller_pos(1, 101),
+            "position must be an int in 0..100, got 101",
+        ),
+        (
+            lambda c: c.set_roller_pos(1, 50, lamella=200),
+            "lamella must be an int in 0..100, got 200",
+        ),
     ],
 )
 async def test_out_of_range_arguments_are_rejected(
-    connected: tuple[AmpioClient, FakeBroker], call
+    connected: tuple[AmpioClient, FakeBroker], call, match: str
 ) -> None:
     client, broker = connected
-    with pytest.raises(AmpioValueError):
+    catalogue(client, {"id": 1, "typ_komponentu": "przekaznik"})
+    broker.published.clear()
+    with pytest.raises(AmpioValueError, match=match):
         await call(client)
     assert broker.published == []
 
 
 @pytest.mark.parametrize(
-    "call",
+    ("call", "match"),
     [
-        lambda c: c.set_value(1, True),
-        lambda c: c.set_value(1, 10, pulse_ms=True),
-        lambda c: c.set_colors(1, True, 0, 0),
-        lambda c: c.set_roller_pos(1, False),
-        lambda c: c.set_roller_lamella(1, True),
-        lambda c: c.set_event(True),
+        (lambda c: c.set_value(1, True), "value must be an int in 0..255, got True"),
+        (
+            lambda c: c.set_value(1, 10, pulse_ms=True),
+            "pulse_ms must be an int in 0..655350, got True",
+        ),
+        (
+            lambda c: c.set_colors(1, True, 0, 0),
+            "red must be an int in 0..255, got True",
+        ),
+        (
+            lambda c: c.set_roller_pos(1, False),
+            "position must be an int in 0..100, got False",
+        ),
+        (
+            lambda c: c.set_roller_lamella(1, True),
+            "lamella must be an int in 0..100, got True",
+        ),
+        (
+            lambda c: c.set_event(True),
+            "event_number must be an int in 1..65535, got True",
+        ),
     ],
 )
 async def test_bool_arguments_are_rejected(
-    connected: tuple[AmpioClient, FakeBroker], call
+    connected: tuple[AmpioClient, FakeBroker], call, match: str
 ) -> None:
     """bool passes isinstance(int) and the type checker, but the wire
     encoding is str(), so it would go out as the literal 'True' - a
     malformed command the M-SERV silently drops."""
     client, broker = connected
-    with pytest.raises(AmpioValueError):
+    catalogue(client, {"id": 1, "typ_komponentu": "przekaznik"})
+    broker.published.clear()
+    with pytest.raises(AmpioValueError, match=match):
         await call(client)
     assert broker.published == []
 
@@ -281,25 +312,39 @@ async def test_set_ww_coldness_drives_the_temperature_axis_alone(
 
 
 @pytest.mark.parametrize(
-    "call",
+    ("call", "match"),
     [
-        lambda c: c.set_ww(197, 256, 0),
-        lambda c: c.set_ww(197, -1, 0),
-        lambda c: c.set_ww(197, 0, 256),
-        lambda c: c.set_ww(197, 0, -1),
-        lambda c: c.set_ww_power(197, 256),
-        lambda c: c.set_ww_power(197, -1),
-        lambda c: c.set_ww_coldness(197, 256),
-        lambda c: c.set_ww_coldness(197, -1),
+        (lambda c: c.set_ww(197, 256, 0), "power must be an int in 0..255, got 256"),
+        (lambda c: c.set_ww(197, -1, 0), "power must be an int in 0..255, got -1"),
+        (
+            lambda c: c.set_ww(197, 0, 256),
+            "coldness must be an int in 0..255, got 256",
+        ),
+        (lambda c: c.set_ww(197, 0, -1), "coldness must be an int in 0..255, got -1"),
+        (
+            lambda c: c.set_ww_power(197, 256),
+            "power must be an int in 0..255, got 256",
+        ),
+        (lambda c: c.set_ww_power(197, -1), "power must be an int in 0..255, got -1"),
+        (
+            lambda c: c.set_ww_coldness(197, 256),
+            "coldness must be an int in 0..255, got 256",
+        ),
+        (
+            lambda c: c.set_ww_coldness(197, -1),
+            "coldness must be an int in 0..255, got -1",
+        ),
     ],
 )
 async def test_ww_axes_are_range_checked(
-    connected: tuple[AmpioClient, FakeBroker], call
+    connected: tuple[AmpioClient, FakeBroker], call, match: str
 ) -> None:
     """Both axes are single bytes; a value outside 0-255 never reaches the
     wire."""
     client, broker = connected
-    with pytest.raises(AmpioValueError):
+    catalogue(client, {"id": 197})
+    broker.published.clear()
+    with pytest.raises(AmpioValueError, match=match):
         await call(client)
     assert broker.published == []
 
@@ -454,7 +499,11 @@ async def test_tilt_range_is_checked(
     connected: tuple[AmpioClient, FakeBroker], lamella: int
 ) -> None:
     client, broker = connected
-    with pytest.raises(ValueError):
+    catalogue(client, {"id": 66})
+    broker.published.clear()
+    with pytest.raises(
+        ValueError, match=f"lamella must be an int in 0..100, got {lamella}"
+    ):
         await client.set_roller_lamella(66, lamella)
     assert broker.published == []
 

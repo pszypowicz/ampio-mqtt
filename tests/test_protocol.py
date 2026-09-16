@@ -169,6 +169,14 @@ def test_parse_app_sync_devices_format(fmt: object, expected: str) -> None:
     assert items[0].format == expected
 
 
+@pytest.mark.parametrize("value", [123, 1.5, True, [], {}])
+def test_a_leaf_column_that_is_neither_string_nor_null_is_refused(
+    value: object,
+) -> None:
+    with pytest.raises(AmpioProtocolError, match="neither a string nor null"):
+        parse_app_sync_devices(json.loads(_rows(_app_row(leafId=value))))
+
+
 def _params_row(**over: object) -> dict[str, object]:
     """A well-formed `data/params_devices` row."""
     row: dict[str, object] = {"id": 5, "params": 17, "czas": 500, "url": "kWh"}

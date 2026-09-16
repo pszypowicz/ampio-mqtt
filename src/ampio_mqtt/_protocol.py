@@ -240,6 +240,24 @@ def _nullable_text_column(row: Mapping[str, Any], column: str, surface: str) -> 
     return value if isinstance(value, str) else ""
 
 
+def _leaf_column(row: Mapping[str, Any]) -> str:
+    """The `leafId` column: the string as is, "" for a null value.
+
+    Anything else is a server fault: a `leafId` of another JSON type is
+    neither a real leaf token nor the empty-leaf sentinel, so the door
+    could not tell an unconfigured object from a malformed one.
+    """
+    value = _column(row, "leafId", _CATALOGUE)
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    raise AmpioProtocolError(
+        f"The Ampio object catalogue carries the leafId {value!r}, which is "
+        "neither a string nor null"
+    )
+
+
 # The surface names the protocol errors speak, one per reply shape.
 _CATALOGUE = "object catalogue"
 _MODULE_LIST = "module list"
@@ -292,7 +310,7 @@ def _shared_columns(row: Mapping[str, Any]) -> ObjectMetadata:
         typ_komponentu=_text_column(row, "typ_komponentu", _CATALOGUE),
         interpretacja=_int_column(row, "interpretacja", _CATALOGUE),
         funkcja=_int_column(row, "funkcja", _CATALOGUE),
-        leaf_id=_nullable_text_column(row, "leafId", _CATALOGUE),
+        leaf_id=_leaf_column(row),
         opis_menu=_nullable_text_column(row, "opis_menu", _CATALOGUE) or None,
         matter_device_type=to_int(_column(row, "type", _CATALOGUE)),
         format=_nullable_text_column(row, "format", _CATALOGUE),

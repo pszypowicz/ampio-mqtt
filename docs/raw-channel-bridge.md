@@ -229,8 +229,10 @@ inventory exists so that classification work starts from the real set.
 ## Routing key
 
 Raw tree topics carry the module's effective MAC, not the user namespace. The
-dispatcher's lookup table is keyed on `(address.mac, prefix, channel)`, the mac
-the leaf embeds and the raw topics carry, with no module-list lookup. It is
+dispatcher's lookup table is keyed on `(address.mac, prefix, funkcja)`, the mac
+the leaf embeds and the raw topics carry, with no module-list lookup. `funkcja`
+is the 1-based state channel the raw topic carries, so a reader does not confuse
+it with `address.channel`, the leaf's own 0-based channel field. The table is
 precomputed from the catalogue rather than resolved per message, and rebuilt on
 every catalogue apply. `address.mac` is the Designer override, which a
 replacement module re-uses (see [`identity.md`](identity.md)). One channel

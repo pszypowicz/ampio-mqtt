@@ -74,7 +74,8 @@ into wrong values on an object.
 A column can hold an empty value. `leafId`, `opis_menu` on an object row, `url`,
 and `format` are text columns the M-SERV writes empty, or null, when the object
 carries no value. The `type` column is null or empty on an untagged object. What
-must be there is the column itself.
+must be there is the column itself. A `leafId` that is neither a string nor null
+refuses the reply.
 
 Some columns must also hold a usable value, because nothing downstream can work
 around an empty one. A `locations` row and a `groups` row each need a name: the
