@@ -550,8 +550,10 @@ def test_begin_refresh_lets_the_snapshot_resync_a_locally_stamped_value() -> Non
     store = _store()
     _raw_owned_flag(store)
     # Retyped to a kind the raw tree does not carry, so the object leaves
-    # the index and goes back to the per-object path.
-    retyped = {"id": 10, "typ_komponentu": "roleta_procenty"}
+    # the index and goes back to the per-object path. The leaf stays put,
+    # as a Designer retype leaves it, so this is a pure retype and not
+    # also a leaf move.
+    retyped = {"id": 10, "typ_komponentu": "roleta_procenty", "leafId": "0_cafe_3_0_2"}
     _feed_catalogue(store, retyped)
     assert store.objects[10].raw_owned is False
     far_future = int((time.time() + 3600) * 1000)

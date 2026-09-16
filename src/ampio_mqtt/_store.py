@@ -627,23 +627,10 @@ class AmpioStore:
         if moved:
             # The raw form of the old channel says nothing about the new
             # one, so the object reads per-object reports until the new
-            # channel reports.
+            # channel reports, and the guard lifts because the held value
+            # belongs to another channel.
             updates["raw_owned"] = False
-            if _raw_channel_prefix(meta.typ_komponentu, address.sf_id) is not None:
-                # The new leaf still bridges a raw channel, so the held
-                # value is stale under a key `_rebuild_indexes` has not
-                # rebuilt yet. It still carries the old channel's
-                # local-clock stamp - not comparable to a server `on`
-                # stamp - so the object stays local-stamped and only the
-                # guard lifts: the very next report, live or snapshot,
-                # replaces it outright rather than losing a stamp
-                # comparison to a wall-clock value that was never a
-                # server timestamp. A leaf that stopped bridging any
-                # channel leaves the guard alone; `_rebuild_indexes`
-                # already resets `raw_owned` for that case and the guard
-                # waits for the next `begin_refresh` cycle, as it does for
-                # any object that leaves the raw index.
-                self._guarded.discard(meta.id)
+            self._guarded.discard(meta.id)
         # The catalogue never carries a sweep result, so the held tables
         # re-apply on every merge, the re-creation after an eviction
         # included, and an entry dropped since the last merge clears.
@@ -1025,7 +1012,13 @@ class AmpioStore:
         """
         index: dict[tuple[int, str, int], tuple[int, ...]] = {}
         for obj in self.objects.values():
-            prefix = _raw_channel_prefix(obj.typ_komponentu, obj.address.sf_id)
+            prefix = input_channel_prefix(obj.typ_komponentu)
+            if prefix is None and obj.typ_komponentu == "przekaznik":
+                # A binary output reports on `o`; an open-collector output
+                # (leaf class 67) reports a u8 on `a`, same 1-based channel.
+                prefix = "a" if obj.address.sf_id == _protocol.OC_OUTPUT_SF else "o"
+            if prefix is None and obj.typ_komponentu == "ledww":
+                prefix = _protocol.CCT_PREFIX
             if prefix is None:
                 continue
             key = (obj.address.mac, prefix, obj.funkcja)
@@ -1102,26 +1095,6 @@ class AmpioStore:
 
     def _record(self, obj: AmpioObject, applied: Applied) -> None:
         applied.events.append(ObjectUpdated(obj))
-
-
-def _raw_channel_prefix(typ_komponentu: str, sf_id: int) -> str | None:
-    """The raw-channel bridge prefix a `typ_komponentu`/leaf class pair
-    reports on, or None when the pair bridges no channel.
-
-    Mirrors the routing-index rule `_rebuild_indexes` builds the index by:
-    the bridgeable input types, plus a `przekaznik` output on `o` or `a`
-    for an open-collector leaf, plus a `ledww` on the color-temperature
-    prefix. A merge that moves a leaf reads this before the index rebuilds,
-    so it can tell whether the object stays raw-bridged under its new key.
-    """
-    prefix = input_channel_prefix(typ_komponentu)
-    if prefix is None and typ_komponentu == "przekaznik":
-        # A binary output reports on `o`; an open-collector output
-        # (leaf class 67) reports a u8 on `a`, same 1-based channel.
-        prefix = "a" if sf_id == _protocol.OC_OUTPUT_SF else "o"
-    if prefix is None and typ_komponentu == "ledww":
-        prefix = _protocol.CCT_PREFIX
-    return prefix
 
 
 def _home_status(state: str) -> int:
