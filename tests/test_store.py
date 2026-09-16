@@ -782,6 +782,25 @@ def test_a_params_push_alone_re_runs_the_door() -> None:
     assert [type(e) for e in shown.events] == [ObjectAdded]
 
 
+def test_a_params_push_keeps_the_buffered_push_for_the_next_catalogue() -> None:
+    """Only a fresh `data/devices` reply proves an id will never gain a row.
+
+    The params reply of a pair re-runs the door on the held, older
+    catalogue, which does not list an object the pair is about to
+    establish. A push that raced ahead of the pair must survive that run.
+    """
+    store = _store()
+    _feed_catalogue(store, {"id": 41})
+    _apply(store, f"ampio/fromDB/{USER}/ob/70/state", _push(70, "255"))
+    _feed_catalogue(store, {"id": 41}, {"id": 70})
+    assert store.objects[70].state == "255"
+
+    # An id the fresh reply does not list is one nothing will establish.
+    _apply(store, f"ampio/fromDB/{USER}/ob/71/state", _push(71, "1"))
+    _feed_catalogue(store, {"id": 41}, {"id": 70})
+    assert 71 not in store._pending_state
+
+
 def test_a_hidden_row_never_enters_objects_nor_the_rejected_set() -> None:
     store = _store()
     applied = _feed_catalogue(store, {"id": 41, "params": 16, "leafId": ""}, {"id": 42})
@@ -803,12 +822,16 @@ def test_an_empty_leaf_is_recorded_and_left_out() -> None:
 
 def test_a_malformed_leaf_refuses_the_reply_whole() -> None:
     store = _store()
-    _feed_catalogue(store, {"id": 42})
+    _feed_catalogue(store, {"id": 42}, _DET)
     before = dict(store.objects)
+    detection = store.presence_detection
+    assert detection is not None
     with pytest.raises(AmpioProtocolError, match="garbage"):
-        _feed_catalogue(store, {"id": 41, "leafId": "garbage"}, {"id": 43})
+        _feed_catalogue(store, {"id": 41, "leafId": "garbage"}, {"id": 43}, _DET)
     assert store.objects == before
     assert store.not_configured == ()
+    assert store.presence_detection == detection
+    assert store.presence_simulation is None
 
 
 def test_a_leaf_that_disappears_after_admission_evicts_the_row() -> None:

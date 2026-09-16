@@ -81,9 +81,9 @@ def test_object_key_is_the_object_id() -> None:
 def test_object_key_separates_views_of_one_output() -> None:
     """Two Designer views of one output share a leaf but not an identity."""
     leaf = "0_be82_257_2_2"
-    relay_view = _object(id=150, leaf_id=leaf)
-    bell_view = _object(id=151, leaf_id=leaf)
-    assert relay_view.leaf_key == bell_view.leaf_key
+    relay_view = _object(id=150, leaf_id=leaf, leaf_key=f"leaf_{leaf}")
+    bell_view = _object(id=151, leaf_id=leaf, leaf_key=f"leaf_{leaf}")
+    assert relay_view.leaf_key == bell_view.leaf_key == f"leaf_{leaf}"
     assert relay_view.object_key != bell_view.object_key
 
 

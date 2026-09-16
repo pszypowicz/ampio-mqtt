@@ -342,6 +342,14 @@ class AmpioStore:
                 served, self._config_for(served, self._params_by_id), applied
             )
         self._catalogue = served
+        # The reply is the whole catalogue this account holds, so a buffered
+        # push for an id it does not list will never gain a row. The params
+        # reply of the pair runs the door on the older held catalogue, which
+        # is why only this reply may prune.
+        listed = {meta.id for meta in served}
+        for oid in list(self._pending_state):
+            if oid not in listed:
+                del self._pending_state[oid]
         self._report_params_coverage()
 
     def _handle_params_devices(self, data: Mapping[str, Any], applied: Applied) -> None:
@@ -421,7 +429,9 @@ class AmpioStore:
         )
         if touched or evicted:
             self._rebuild_indexes(applied)
-        self._set_not_configured(tuple(sorted(rejected)), applied)
+        self._set_not_configured(
+            tuple(sorted(rejected, key=lambda pair: pair[0])), applied
+        )
 
     def _set_not_configured(
         self, rejected: tuple[tuple[int, str | None], ...], applied: Applied
@@ -457,11 +467,6 @@ class AmpioStore:
         empties a restricted view). Each evicted id also drops its held
         sweep entries.
         """
-        # The same completeness proves a buffered push's id will never gain
-        # a catalogue row; without the prune, pushes for such ids accumulate.
-        for oid in list(self._pending_state):
-            if oid not in present:
-                del self._pending_state[oid]
         missing = [oid for oid in self.objects if oid not in present]
         if not missing:
             return False
