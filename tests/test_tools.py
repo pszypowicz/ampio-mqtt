@@ -128,6 +128,21 @@ async def test_dump_max_zero_means_no_limit(
     assert "Total messages received: 3 (0 retained)" in capsys.readouterr().out
 
 
+async def test_dump_max_payload_zero_prints_the_whole_payload(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The printed line cuts a payload at 200 characters unless
+    `--max-payload 0` lifts the cut."""
+    broker = FakeBroker()
+    payload = "x" * 300
+    broker.scripted_messages = [Message("t/1", payload.encode())]
+    a = _parse(monkeypatch, dump, "--topic", "t/#", "--max", "1")
+    assert a.max_payload == 200
+    a = _parse(monkeypatch, dump, "--topic", "t/#", "--max", "1", "--max-payload", "0")
+    assert await dump.run(a, client_factory=broker.factory) == 0
+    assert f"t/1  =  {payload}" in capsys.readouterr().out
+
+
 async def test_dump_stops_at_max_before_the_duration_ends(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

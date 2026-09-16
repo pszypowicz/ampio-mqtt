@@ -116,7 +116,7 @@ def test_unknown_type_falls_back_to_generic() -> None:
     ("typ", "key", "device_class"),
     [
         ("flaga", "flaga", None),  # generic boolean
-        ("detekcja", "detekcja", "motion"),
+        ("detekcja", "detekcja", "presence"),
         ("symulacja", "symulacja", None),  # generic boolean
         ("wej", "wej", None),  # physical input, generic boolean (#117)
     ],
@@ -143,6 +143,17 @@ def test_input_switchability(typ: str, switchable: bool) -> None:
     kind = _input(typ, 1)
     assert kind is not None
     assert kind.switchable is switchable
+
+
+@pytest.mark.parametrize(
+    ("typ", "name"),
+    [("detekcja", "Presence detection"), ("symulacja", "Presence simulation")],
+)
+def test_system_inputs_carry_the_feature_names(typ: str, name: str) -> None:
+    """The two system objects are named after the M-SERV feature they carry."""
+    kind = _input(typ, 1)
+    assert kind is not None
+    assert kind.name == name
 
 
 @pytest.mark.parametrize(

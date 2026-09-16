@@ -39,10 +39,24 @@ leafed sibling is in the catalogue. `AmpioClient.module_for()` resolves the
 module row on the admin tier, and the record join falls back to `funkcja` (see
 the join rule in [`description-records.md`](description-records.md)).
 
-`is_system` (`typ_komponentu in {symulacja, detekcja}`) names the
-presence-simulation and detection objects. They live outside the room tree, and
-the app-sync catalogue lists them unconditionally. They carry no `leafId`. The
-flag does not enter `visible`, so a hidden system object stays hidden.
+`is_system` (`typ_komponentu in {symulacja, detekcja}`) names the two system
+objects, presence simulation and presence detection. The M-SERV creates both
+rows itself, on its own module row, with a fixed `funkcja` of 1. Designer lists
+both types but cannot create, delete or configure them. The Ampio app is the
+configuration surface. Its presence-detection page picks the sensors that decide
+whether someone is at home, and its presence-simulation page switches the
+feature on and off and picks the devices that take part. The presence-detection
+object is one whole-home boolean, and "on" means someone is home. The
+`powiazane` field of the system object's row in `data/params_devices` is where
+the devices that take part land. That is unverified. On the baseline install
+nothing is linked, the field reads null, and the library does not decode it. A
+detection sensor's role is a `params` bit on the sensor itself. Bit 11
+(`params & 2048`) is Designer's "Entrance sensor" and bit 12 (`params & 4096`)
+is its "Inside sensor". On the baseline install nothing is linked, and neither
+object carries a state. Both live outside the room tree, the app-sync catalogue
+lists them unconditionally, and they carry no `leafId`. Neither bridges a raw
+channel (see [`raw-channel-bridge.md`](raw-channel-bridge.md)). The flag does
+not enter `visible`, so a hidden system object stays hidden.
 
 Treat `visible` as the discovery filter.
 
@@ -78,6 +92,9 @@ component type, and the Designer editor renders each with a per-type label. For
 - "1% lamella" on tilt covers.
 - "block heating/cooling change" on `reg`.
 - Other labels on camera, webview, and alarm objects.
+
+For `OPTION4` (bit 27) the label is "use binary value" on `przekaznik`, and
+Designer sets the bit on every new relay. On `ledww` the same bit is "Flux".
 
 A reader of an OPTION bit must gate on the component type first.
 

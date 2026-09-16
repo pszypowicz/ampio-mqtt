@@ -538,9 +538,9 @@ class AmpioObject:
     def is_system(self) -> bool:
         """Whether this is a system object (always present regardless of grouping).
 
-        ``symulacja`` (presence-simulation) and ``detekcja`` (detection) live
-        outside the room/group hierarchy by design; the M-SERV always exposes
-        them.
+        ``symulacja`` (presence simulation) and ``detekcja`` (presence
+        detection) live outside the room/group hierarchy by design; the
+        M-SERV always exposes them.
         """
         return is_system_type(self.typ_komponentu)
 

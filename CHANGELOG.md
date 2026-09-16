@@ -12,6 +12,41 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.70.0
+
+The M-SERV creates two system objects of its own, one for presence detection and
+one for presence simulation. The library bridged the detection object onto a raw
+digital-input channel that belongs to the M-SERV's own inputs, and it reported
+the `motion` device class for a whole-home "someone is home" boolean (#258,
+#259).
+
+### Changed
+
+- `detekcja` bridges no raw channel. The row sits on the M-SERV's own module
+  with a fixed channel number, and the M-SERV publishes its own digital inputs
+  under the same mac, so the `i/1` route delivered the M-SERV's input 1 as a
+  presence change. The object now updates through the per-object topic alone,
+  like `symulacja` (#258).
+- `detekcja` reports the `presence` device class, and the two system kinds are
+  named "Presence detection" and "Presence simulation".
+  `BinarySensorDeviceClass` drops `motion`, which no kind emits (#259).
+
+### Added
+
+- `tools/dump.py --max-payload N` prints up to N payload characters per line,
+  and 0 prints the whole payload. The default stays at 200 (#260).
+
+### Documentation
+
+- `visibility.md` describes the two system objects: the M-SERV creates them, the
+  Ampio app configures them, the unverified `powiazane` field, and `params` bits
+  2048 and 4096 mark a sensor's role. It also gives the per-type labels of bit
+  27 (#258, #259).
+- `raw-channel-bridge.md` and `classification.md` list both system objects as
+  unbridged (#258).
+- `untapped-surfaces.md` records the unprobed presence simulation control
+  surface (#261).
+
 ## 0.69.0
 
 `set_value()` accepted a cover and sent a command the M-SERV drops. A consumer

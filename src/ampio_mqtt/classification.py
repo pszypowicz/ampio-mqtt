@@ -46,10 +46,10 @@ class SensorKind:
     precision: int | None = 1
 
 
-# binary_sensor device-class strings the library can emit. Only "motion" is
-# mapped today; extend this Literal when a new input mapping is added. Values
-# match Home Assistant's BinarySensorDeviceClass enum.
-BinarySensorDeviceClass = Literal["motion"]
+# binary_sensor device-class strings the library can emit. Extend this
+# Literal when a new input mapping is added. Values match Home Assistant's
+# BinarySensorDeviceClass enum.
+BinarySensorDeviceClass = Literal["presence"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,8 +211,8 @@ class TypeProfile:
 
     kind: ObjectKind | _Selector
     # Raw ``ampio/from/<mac>/state/<prefix>/<ch>`` bridge prefix. Only known
-    # prefixes are set; an input without one (symulacja) falls back to the
-    # per-object topic.
+    # prefixes are set; an input without one (the two system objects) falls
+    # back to the per-object topic.
     channel_prefix: str | None = None
     # System objects (presence simulation / detection) live outside the
     # room/group hierarchy, and the M-SERV lists them unconditionally.
@@ -274,12 +274,18 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     # terminal). Same 255/0 payload as flags on the per-object topic; the
     # raw mirror rides the digital-input prefix (#117).
     "wej": TypeProfile(InputKind("wej", "Input", None), channel_prefix="i"),
+    # The two system objects the M-SERV creates itself, on its own module row
+    # with a fixed `funkcja`. Neither names a raw channel: the M-SERV publishes
+    # its own digital inputs under that mac, so an `i` route delivers the
+    # M-SERV's input 1 as a presence change. Both update through the
+    # per-object topic alone. Presence detection is one whole-home boolean,
+    # "on" is home, which is the HA `presence` class.
     "detekcja": TypeProfile(
-        InputKind("detekcja", "Detection", "motion"),
-        channel_prefix="i",
-        system=True,
+        InputKind("detekcja", "Presence detection", "presence"), system=True
     ),
-    "symulacja": TypeProfile(InputKind("symulacja", "Simulation", None), system=True),
+    "symulacja": TypeProfile(
+        InputKind("symulacja", "Presence simulation", None), system=True
+    ),
 }
 
 

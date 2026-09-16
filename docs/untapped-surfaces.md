@@ -16,10 +16,15 @@ backlog to fetch. The topic sits outside the account namespace, so an
 administrator account alone receives it. The library does not subscribe. Probe
 notes: [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/23).
 
-**`symulacja` raw prefix.** The presence-simulation object classifies as an
-input, but its raw-channel prefix is unverified on the wire. The object still
-updates through the per-object topic. Probe notes:
-[tracker](https://github.com/pszypowicz/ampio-mqtt/issues/26).
+**Presence simulation control.** The Ampio app switches the M-SERV's presence
+simulation on and off through two read paths on the `/api` surface,
+`/api/json/simulation/active` and `/api/json/simulation/deactive`. The app adds
+and removes the devices that take part, and the sensors that feed presence
+detection, on the `detection` and `simulation` topics of the account's `control`
+namespace. None of the four appears in the OpenAPI spec, so the payload shapes
+are unknown. The feature is unused on the baseline install, so a probe first
+needs the app to link a device. The library consumes none of it. Probe notes:
+[tracker](https://github.com/pszypowicz/ampio-mqtt/issues/261).
 
 **CAN write tree device classes.** The raw write frames for binary outputs, the
 panel buzzer, module identify and the cover roller lock are documented in

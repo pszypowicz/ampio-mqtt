@@ -1287,7 +1287,9 @@ def test_mapped_input_without_raw_uses_per_object_fallback() -> None:
     assert _updated(applied) == [obj]
 
 
-def test_detekcja_routes_via_digital_input_prefix() -> None:
+def test_detekcja_takes_no_digital_input_channel() -> None:
+    """A raw `i/<funkcja>` edge belongs to the physical input on that channel,
+    not to the detection object that shares its module and channel number."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
     det = {
@@ -1295,18 +1297,28 @@ def test_detekcja_routes_via_digital_input_prefix() -> None:
         "id_urzadzenia": 7,
         "typ_komponentu": "detekcja",
         "interpretacja": 1,
-        "funkcja": 4,
-        "opis_menu": "Motion",
+        "funkcja": 1,
+        "opis_menu": "Detection",
     }
-    _apply(store, DETAILS_TOPIC, details(det))
-    _apply(store, "ampio/from/CAFE/state/i/4", "1")
-    obj = store.objects[60]
-    assert obj.kind is not None and obj.kind.device_class == "motion"
-    assert obj.state == "1"
+    wej = {
+        "id": 62,
+        "id_urzadzenia": 7,
+        "typ_komponentu": "wej",
+        "interpretacja": 1,
+        "funkcja": 1,
+        "opis_menu": "Button",
+    }
+    _apply(store, DETAILS_TOPIC, details(wej, det))
+    assert store.objects[60].kind is not None
+    assert store.objects[60].kind.device_class == "presence"
+    applied = _apply(store, "ampio/from/CAFE/state/i/1", "1")
+    assert store.objects[62].state == "1"
+    assert store.objects[60].state is None
+    assert _updated(applied) == [store.objects[62]]
 
 
 def test_wej_routes_via_digital_input_prefix() -> None:
-    """A physical-input object (#117) bridges on `i/<funkcja>` like detekcja."""
+    """A physical-input object (#117) bridges on `i/<funkcja>`."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
     wej = {
