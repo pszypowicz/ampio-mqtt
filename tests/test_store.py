@@ -273,12 +273,15 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
     """
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, _flaga_row(50, 32))
+    original = _flaga_row(50, 32)
+    _feed_catalogue(store, original)
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
     assert store.objects[50].state == "1"
 
-    # After a module swap the id comes back as a cover, which no raw channel
-    # feeds, so its only updates are the per-object ones.
+    # The row keeps its leaf and turns into a cover, which no raw channel
+    # feeds, so its only updates become the per-object ones. The leaf stays
+    # the same, so the object address does not change either: leaving the
+    # index is what frees it, not a moved address.
     _feed_catalogue(
         store,
         {
@@ -286,6 +289,7 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
             "typ_komponentu": "roleta_procenty",
             "interpretacja": 1,
             "funkcja": 2,
+            "leafId": original["leafId"],
         },
     )
     applied = _apply(

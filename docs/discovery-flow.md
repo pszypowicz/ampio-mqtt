@@ -155,7 +155,8 @@ every connection problem alike keeps working. A rejection after a successful
 `connect()` arrives as the `AuthFailed` event instead (see
 [`events.md`](events.md)). A bad argument raises `AmpioValueError`, which
 subclasses `ValueError`. An id the catalogue does not list raises
-`AmpioValueError` before any publish. A consumer that catches `AmpioValueError`
+`AmpioValueError` before any publish. An output whose kind does not answer the
+verb raises a plain `ValueError`. A consumer that catches `AmpioValueError`
 first tells its own fault from the install's state. An admin-only call on a
 standard account raises `RuntimeError`.
 
@@ -203,7 +204,8 @@ credentials are known, confirm identity with `check_connection()`.
 diagnostics platform emits as-is. It holds the tier, the availability flag, the
 auth-failure reason, and the safe server-info subset. It also holds the
 connection counters, the SUBACK rejections, the mac collisions, and each
-endpoint's last reply summary.
+endpoint's last reply summary. The `params_gap` entry names objects the params
+table skips. The `not_configured` entry names the rows the door left out.
 
 Table replies retain a JSON string with only `row_count` in `last_payloads`.
 Names, URLs, state descriptions, nested data, and unknown fields are omitted.

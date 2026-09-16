@@ -19,7 +19,7 @@ from collections.abc import Callable
 
 import aiomqtt
 
-from ampio_mqtt import AccessTier, AmpioClient, ModuleFunction
+from ampio_mqtt import AccessTier, AmpioClient, AmpioNotConfigured, ModuleFunction
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -138,8 +138,8 @@ async def run(
             "The device_api tree answers no other account."
         )
         return 2
-    await client.connect()
     try:
+        await client.connect()
         sweep = await client.resolve_records(timeout=a.timeout)
         print(
             f"sweep: {len(sweep.answered_macs)} answered, "
@@ -191,6 +191,10 @@ async def run(
         if a.watch:
             await watch_readings(client, a.watch)
         return 0
+    except AmpioNotConfigured as err:
+        for oid, obj_name in err.objects:
+            print(f"not configured: ob/{oid} {obj_name or ''}")
+        return 1
     finally:
         await client.disconnect()
 

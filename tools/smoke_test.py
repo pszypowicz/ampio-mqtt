@@ -25,6 +25,7 @@ from ampio_mqtt import (
     AccessTier,
     AmpioClient,
     AmpioConnectionError,
+    AmpioNotConfigured,
     AmpioObject,
     ObjectUpdated,
     SensorKind,
@@ -83,6 +84,10 @@ async def run(
         await client.connect(timeout=15)
     except AmpioConnectionError as err:
         print(f"FAILED to connect: {err}")
+        return 1
+    except AmpioNotConfigured as err:
+        for oid, name in err.objects:
+            print(f"not configured: ob/{oid} {name or ''}")
         return 1
     print("Connected. Listening for discovery + retained state...\n")
 

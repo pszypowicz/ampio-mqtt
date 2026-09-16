@@ -333,9 +333,10 @@ class AmpioStore:
     def _handle_catalogue(self, data: Mapping[str, Any], applied: Applied) -> None:
         """Apply a `data/devices` reply through the door, then hold it.
 
-        The door runs once the params table is in hand, and the reply is
-        held only after the door admitted it, so a refused reply leaves
-        every held field as it was.
+        The door runs once the params table is in hand, and a reply the
+        door refuses leaves every held field as it was. A reply that
+        arrives before the params table is held unseen, and a later params
+        push runs the door on it.
         """
         served = _protocol.parse_app_sync_devices(data)
         if self._params_received:
@@ -604,6 +605,7 @@ class AmpioStore:
         obj = self.objects.get(meta.id)
         created = obj is None
         moved = False
+        leaf_key = f"leaf_{meta.leaf_id}"
         if obj is None:
             obj = AmpioObject(
                 id=meta.id,
@@ -611,7 +613,7 @@ class AmpioStore:
                 interpretacja=meta.interpretacja,
                 funkcja=meta.funkcja,
                 address=address,
-                leaf_key=f"leaf_{meta.leaf_id}",
+                leaf_key=leaf_key,
             )
         elif obj.address != address:
             # A leaf that moved the object to another channel invalidates
@@ -623,7 +625,7 @@ class AmpioStore:
         }
         updates.update(config)
         updates["address"] = address
-        updates["leaf_key"] = f"leaf_{meta.leaf_id}"
+        updates["leaf_key"] = leaf_key
         if moved:
             # The raw form of the old channel says nothing about the new
             # one, so the object reads per-object reports until the new

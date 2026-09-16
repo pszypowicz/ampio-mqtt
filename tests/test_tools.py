@@ -233,6 +233,16 @@ async def test_set_object_reports_the_refusal_for_an_unknown_id(
     assert "refused: object 999 is not in the catalogue" in printed
 
 
+async def test_set_object_reports_a_leafless_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broker = FakeBroker()
+    broker.scripted_messages = _discovery({"id": 10, "leafId": "", "opis_menu": "Lamp"})
+    a = _parse(monkeypatch, set_object, "--object-id", "10", "--on", "--watch", "0.01")
+    assert await set_object.run(a, client_factory=broker.factory) == 1
+    assert "not configured: ob/10 Lamp" in capsys.readouterr().out
+
+
 async def test_set_object_passes_a_raw_verb_and_its_arguments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -330,6 +340,16 @@ async def test_smoke_test_reports_a_failed_connect(
     assert "FAILED to connect: Connection loop died: boom" in capsys.readouterr().out
 
 
+async def test_smoke_test_reports_a_leafless_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broker = FakeBroker()
+    broker.scripted_messages = _discovery({"id": 10, "leafId": "", "opis_menu": "Lamp"})
+    a = _parse(monkeypatch, smoke_test, "--duration", "0.01")
+    assert await smoke_test.run(a, client_factory=broker.factory) == 1
+    assert "not configured: ob/10 Lamp" in capsys.readouterr().out
+
+
 # --- modules.py -------------------------------------------------------------
 
 PANEL = {
@@ -419,6 +439,25 @@ async def test_modules_refuses_a_restricted_account(
     assert await modules.run(a, client_factory=broker.factory) == 2
     assert "is not the admin account" in capsys.readouterr().out
     assert broker.published == []
+
+
+async def test_modules_reports_a_leafless_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broker = FakeBroker()
+    broker.scripted_messages = [
+        Message(ADMIN_PARAMS_DEVICES_TOPIC, params_table({"id": 10}).encode()),
+        Message(
+            ADMIN_DATA_DEVICES_TOPIC,
+            details({"id": 10, "leafId": "", "opis_menu": "Lamp"}).encode(),
+        ),
+        Message(ADMIN_DEVICES_TOPIC, devices().encode()),
+        Message(ADMIN_STATES_TOPIC, snapshot().encode()),
+        Message(ADMIN_INFO_TOPIC, info(mac=1, userId="-1").encode()),
+    ]
+    a = _parse(monkeypatch, modules, user=ADMIN_USER)
+    assert await modules.run(a, client_factory=broker.factory) == 1
+    assert "not configured: ob/10 Lamp" in capsys.readouterr().out
 
 
 async def test_modules_prints_a_row_per_module(

@@ -323,7 +323,9 @@ def classify(
 
     ``interpretacja`` selects the lin_wej measurement. A ``typ_komponentu``
     with no table entry (unknown, or no metadata yet) is the generic
-    value-only sensor, so such an object still surfaces.
+    value-only sensor, so such an object still surfaces. ``sub_sf_id`` is
+    the leaf sub-function, 0 for a single-role class, which refines
+    ``satel_alarm`` alone.
     """
     profile = TYPE_PROFILES.get(typ_komponentu) if typ_komponentu is not None else None
     if profile is None:

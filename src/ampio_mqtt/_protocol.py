@@ -299,8 +299,8 @@ def parse_module_address(leaf_id: str) -> ModuleAddress:
 def _shared_columns(row: Mapping[str, Any]) -> ObjectMetadata:
     """The object-catalogue columns `data/devices` serves on every row.
 
-    ``leafId`` holds an empty string for a system object and for one whose
-    Matter box is unchecked in Designer. Otherwise it is a short
+    ``leafId`` holds an empty string for a system row and after a Matter
+    check-then-uncheck. The door decides. Otherwise it is a short
     underscored token like ``0_cb8f_76_0_0``, which the Designer reads as
     ``macGroup``, ``mac``, ``sfId``, ``subSfId``, and ``ioNo``. The parse
     keeps the raw string.

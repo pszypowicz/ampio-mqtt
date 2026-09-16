@@ -24,7 +24,13 @@ from collections.abc import Callable
 
 import aiomqtt
 
-from ampio_mqtt import AmpioClient, AmpioObject, AmpioValueError, ObjectUpdated
+from ampio_mqtt import (
+    AmpioClient,
+    AmpioNotConfigured,
+    AmpioObject,
+    AmpioValueError,
+    ObjectUpdated,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -131,8 +137,8 @@ async def run(
             print(f"  state  ob/{obj.id} = {obj.state}")
 
     client.subscribe(lambda e: on_object(e.object), of=ObjectUpdated)
-    await client.connect()
     try:
+        await client.connect()
         print(f"Connected as {a.username!r} (tier: {client.access_tier.value})")
 
         obj = client.objects.get(a.object_id)
@@ -155,6 +161,10 @@ async def run(
             f"{obj.state if obj else '<not in this account view>'}"
         )
         return 0
+    except AmpioNotConfigured as err:
+        for oid, name in err.objects:
+            print(f"not configured: ob/{oid} {name or ''}")
+        return 1
     finally:
         await client.disconnect()
 

@@ -356,7 +356,8 @@ class AmpioObject:
     leaf_key: str
     opis_menu: str | None = None
     # `params` bitfield (Designer config flags; see `read_only`/`bell`).
-    # Defaults to 0 so a payload without the column reads "nothing hidden".
+    # Defaults to 0, so a payload without the column reads 0 and no bit is
+    # set.
     params: int = 0
     # Matter device type ID from the Designer "Description in device" tag
     # (`type` column; "256" = 0x0100 On/Off Light). None when untagged. A
