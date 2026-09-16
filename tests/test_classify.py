@@ -96,8 +96,6 @@ def test_bit32_is_generic_measurement() -> None:
         "led",
         "roleta_procenty",
         "flaga",
-        "detekcja",
-        "symulacja",
         "wej",
     ],
 )
@@ -116,8 +114,6 @@ def test_unknown_type_falls_back_to_generic() -> None:
     ("typ", "key", "device_class"),
     [
         ("flaga", "flaga", None),  # generic boolean
-        ("detekcja", "detekcja", "presence"),
-        ("symulacja", "symulacja", None),  # generic boolean
         ("wej", "wej", None),  # physical input, generic boolean (#117)
     ],
 )
@@ -133,27 +129,14 @@ def test_classify_input_types(typ, key, device_class) -> None:
     [
         ("flaga", True),
         ("wej", False),
-        ("detekcja", False),
-        ("symulacja", False),
     ],
 )
 def test_input_switchability(typ: str, switchable: bool) -> None:
     """Only `flaga` answers the switch verbs. A `wej` ignores them on both
-    account tiers, and the other two have never been driven."""
+    account tiers."""
     kind = _input(typ, 1)
     assert kind is not None
     assert kind.switchable is switchable
-
-
-@pytest.mark.parametrize(
-    ("typ", "name"),
-    [("detekcja", "Presence detection"), ("symulacja", "Presence simulation")],
-)
-def test_system_inputs_carry_the_feature_names(typ: str, name: str) -> None:
-    """The two system objects are named after the M-SERV feature they carry."""
-    kind = _input(typ, 1)
-    assert kind is not None
-    assert kind.name == name
 
 
 @pytest.mark.parametrize(
@@ -256,8 +239,6 @@ def test_output_pulsability(typ: str, pulsable: bool) -> None:
         ("lin_wej", SensorKind),
         ("bit32", SensorKind),
         ("flaga", InputKind),
-        ("detekcja", InputKind),
-        ("symulacja", InputKind),
         ("wej", InputKind),
         ("przekaznik", OutputKind),
         ("led", OutputKind),
@@ -310,8 +291,6 @@ def test_kind_key_vocabulary_contents() -> None:
         "alarm",
         "alarm_armed",
         "alarm_alarmed",
-        "detekcja",
-        "symulacja",
         "wej",
     } == INPUT_KIND_KEYS
     assert {
@@ -335,6 +314,13 @@ def test_kind_key_vocabulary_contents() -> None:
         "pressure_rel",
         "co2",
     } == SENSOR_KIND_KEYS
+
+
+def test_the_presence_rows_are_not_kinds() -> None:
+    """The two rows never reach an AmpioObject, so their type names
+    classify like any type the table does not know."""
+    assert classify("detekcja", 1).key == "value"
+    assert classify("symulacja", 1).key == "value"
 
 
 def test_classify_never_leaves_the_exported_vocabulary() -> None:

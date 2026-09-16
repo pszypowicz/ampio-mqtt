@@ -112,13 +112,9 @@ def test_object_key_survives_an_empty_leaf_id() -> None:
         # A relay whose Matter box was unchecked: Designer clears leafId and
         # the row keeps its type, its module, and its state.
         ("przekaznik", "", 0, True),
-        # System objects carry no leafId either.
-        ("symulacja", "", 0, True),
-        ("detekcja", "", 0, True),
         # The DELETED bit hides a row whatever its leafId says.
         ("temp", "0_cb8f_76_0_0", 16, False),
         ("przekaznik", "", 16, False),
-        ("symulacja", "", 16, False),
         # A missing typ_komponentu reads like any other row.
         (None, "", 0, True),
         (None, "0_x_x_x_x", 16, False),
@@ -132,14 +128,6 @@ def test_visibility_predicate(
 ) -> None:
     obj = _object(id=1, typ_komponentu=typ, leaf_id=leaf_id, params=params)
     assert obj.visible is visible
-
-
-@pytest.mark.parametrize(
-    ("typ", "is_system"),
-    [("symulacja", True), ("detekcja", True), ("flaga", False), (None, False)],
-)
-def test_is_system_names_the_two_system_types(typ: str | None, is_system: bool) -> None:
-    assert _object(id=1, typ_komponentu=typ).is_system is is_system
 
 
 @pytest.mark.parametrize(
@@ -219,7 +207,6 @@ def test_pulse_ms_reads_czas_only_where_a_timed_write_pulses(
         ("lin_wej", "IAQ", "", "IAQ"),  # the live air-quality row
         ("temp", "°C", "", "°C"),
         ("no_such_type", "kWh", "", "kWh"),  # unknown types are the generic sensor
-        ("symulacja", "0", "", None),  # system objects carry "0": not a sensor
         ("przekaznik", "V", "%.1f V", None),  # a unit applies to measurements only
         ("reg", "°C", "", None),
     ],
@@ -296,9 +283,6 @@ def test_hidden_overrides_leaf_id_visibility() -> None:
     )
     assert phantom.visible is False
     assert labelled.visible is True
-    # A system object the M-SERV explicitly hid (bit 4) is dropped too, even
-    # though is_system would otherwise force it visible.
-    assert _object(id=3, typ_komponentu="symulacja", params=16).visible is False
 
 
 # --- derived fields: kind and model own their inputs (#94) ------------------

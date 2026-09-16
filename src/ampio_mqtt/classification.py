@@ -211,13 +211,8 @@ class TypeProfile:
 
     kind: ObjectKind | _Selector
     # Raw ``ampio/from/<mac>/state/<prefix>/<ch>`` bridge prefix. Only known
-    # prefixes are set; an input without one (the two system objects) falls
-    # back to the per-object topic.
+    # prefixes are set; an input without one falls back to the per-object topic.
     channel_prefix: str | None = None
-    # System objects (presence simulation / detection) live outside the
-    # room/group hierarchy, and the M-SERV lists them unconditionally.
-    # Backs `AmpioObject.is_system`.
-    system: bool = False
 
 
 TYPE_PROFILES: dict[str, TypeProfile] = {
@@ -274,18 +269,6 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     # terminal). Same 255/0 payload as flags on the per-object topic; the
     # raw mirror rides the digital-input prefix (#117).
     "wej": TypeProfile(InputKind("wej", "Input", None), channel_prefix="i"),
-    # The two system objects the M-SERV creates itself, on its own module row
-    # with a fixed `funkcja`. Neither names a raw channel: the M-SERV publishes
-    # its own digital inputs under that mac, so an `i` route delivers the
-    # M-SERV's input 1 as a presence change. Both update through the
-    # per-object topic alone. Presence detection is one whole-home boolean,
-    # "on" is home, which is the HA `presence` class.
-    "detekcja": TypeProfile(
-        InputKind("detekcja", "Presence detection", "presence"), system=True
-    ),
-    "symulacja": TypeProfile(
-        InputKind("symulacja", "Presence simulation", None), system=True
-    ),
 }
 
 
@@ -362,12 +345,6 @@ def classify(
             return _ALARM_BY_SUB_SF.get(sub_sf_id, _BASE_ALARM)
         case kind:
             return kind
-
-
-def is_system_type(typ_komponentu: str | None) -> bool:
-    """Whether ``typ_komponentu`` is a system component the M-SERV always exposes."""
-    profile = TYPE_PROFILES.get(typ_komponentu) if typ_komponentu is not None else None
-    return profile.system if profile is not None else False
 
 
 def input_channel_prefix(typ_komponentu: str | None) -> str | None:

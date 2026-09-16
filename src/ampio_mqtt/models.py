@@ -14,7 +14,6 @@ from .classification import (
     OutputKind,
     SensorKind,
     classify,
-    is_system_type,
 )
 from .device_types import Mounting, module_model, module_mounting
 
@@ -343,10 +342,9 @@ class AmpioObject:
     # channel events to this object.
     funkcja: int
     opis_menu: str | None = None
-    # `leafId`, identical on both discovery surfaces. Empty for system
-    # objects, and Designer clears it when an object's Matter box is
-    # unchecked. The physical-output key (`leaf_key`) and the parse source
-    # for `module_mac` - docs/identity.md.
+    # `leafId`, identical on both discovery surfaces. Designer clears it when
+    # an object's Matter box is unchecked. The physical-output key (`leaf_key`)
+    # and the parse source for `module_mac` - docs/identity.md.
     leaf_id: str = ""
     # The override mac that leafed objects on the same `id_urzadzenia`
     # embed, read out of the catalogue this tier holds - a leafless
@@ -564,16 +562,6 @@ class AmpioObject:
         return pos if 0 <= pos <= 100 else None
 
     @property
-    def is_system(self) -> bool:
-        """Whether this is a system object (always present regardless of grouping).
-
-        ``symulacja`` (presence simulation) and ``detekcja`` (presence
-        detection) live outside the room/group hierarchy by design; the
-        M-SERV always exposes them.
-        """
-        return is_system_type(self.typ_komponentu)
-
-    @property
     def hidden(self) -> bool:
         """Whether the M-SERV flags this object as hidden / a stub (``params`` bit 4).
 
@@ -644,8 +632,7 @@ class AmpioObject:
         the unit, so the tail wins when the two disagree. None when
         neither yields text, which includes the single space Designer
         writes for "without unit". None on every kind but a sensor: an
-        input, an output, or a thermostat has no measurement to label,
-        and the system objects carry a placeholder in the column.
+        input, an output, or a thermostat has no measurement to label.
         """
         if not isinstance(self.kind, SensorKind):
             return None
@@ -681,8 +668,7 @@ class AmpioObject:
         object row. Several Designer views of one output share one
         ``leafId``, so two objects can return the same key. The
         per-object identity is :pyattr:`object_key`. None for an empty
-        ``leaf_id`` (system objects, Matter box unchecked). See
-        docs/identity.md.
+        ``leaf_id`` (Matter box unchecked). See docs/identity.md.
         """
         return f"leaf_{self.leaf_id}" if self.leaf_id else None
 
