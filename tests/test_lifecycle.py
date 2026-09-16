@@ -252,6 +252,28 @@ async def test_an_admin_client_requests_the_module_list_and_the_data_pair() -> N
         await client.disconnect()
 
 
+def test_initial_endpoints_follow_the_endpoint_tables_order() -> None:
+    """The admin login's initial-discovery set is the five served endpoints
+    in the endpoint table's order, and a standard account's is the four it
+    is served, in the same order."""
+    broker = FakeBroker()
+    admin = make_client(broker, username=ADMIN_USER)
+    client = make_client(broker)
+    assert admin._initial_endpoints == (
+        "devices",
+        "states",
+        "info",
+        "data_devices",
+        "params_devices",
+    )
+    assert client._initial_endpoints == (
+        "states",
+        "info",
+        "data_devices",
+        "params_devices",
+    )
+
+
 # --- disconnect() and connect() lifecycle -----------------------------------------
 
 
@@ -1187,7 +1209,7 @@ async def _published(broker: FakeBroker, count: int) -> None:
 @pytest.mark.parametrize(
     "topic", [ADMIN_MD5_DEVICES_TOPIC, ADMIN_MD5_PARAMS_DEVICES_TOPIC]
 )
-async def test_a_changed_digest_re_requests_the_config_pair(topic: str) -> None:
+async def test_a_changed_digest_re_requests_the_module_list(topic: str) -> None:
     """The first digest per table seeds and a repeat says nothing. A change
     re-requests the module list and nothing else."""
     broker = FakeBroker()

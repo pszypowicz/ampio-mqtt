@@ -203,10 +203,12 @@ class AmpioClient:
         )
         self._served = tuple(ep for ep in ENDPOINTS if ep.tier in (None, self._tier))
         self._initial_endpoints = tuple(ep.name for ep in self._served if ep.initial)
-        # The admin catalogue pair a pushed digest change re-requests (#166);
-        # empty on the restricted tier, which never subscribes to a digest.
-        self._catalogue_endpoints = tuple(
-            ep for ep in self._served if ep.initial and ep.tier is AccessTier.ADMIN
+        # The module list a pushed digest change re-requests (#166). The
+        # object tables arrive by the M-SERV's own push on every tier, but
+        # `config/devices` is never pushed, and only the admin login is
+        # served it.
+        self._module_list_endpoint = (
+            ENDPOINT_BY_NAME["devices"] if self._tier is AccessTier.ADMIN else None
         )
         self._router = _protocol.Router(username, self._served)
         self._store = AmpioStore(self._tier)
@@ -250,10 +252,10 @@ class AmpioClient:
 
         # Last digest per app-sync table from the retained `md5` topics the
         # admin session subscribes to; the first value per table seeds. The
-        # tasks that answer a change with the catalogue requests are held
+        # tasks that answer a change with the module-list request are held
         # so a pending one is never garbage-collected mid-publish.
         self._digests: dict[str, str] = {}
-        self._catalogue_tasks: set[asyncio.Task[None]] = set()
+        self._module_list_tasks: set[asyncio.Task[None]] = set()
 
     def _subscriptions(self) -> list[tuple[str, int]]:
         """Every filter the client needs on each (re)connect, with its QoS.
@@ -262,10 +264,10 @@ class AmpioClient:
         the two constants in ``_connection`` carry the reasoning.
         """
         admin = self._tier is AccessTier.ADMIN
-        # The M-SERV never pushes the `config` catalogues; the retained
-        # digests of the app-sync tables are what reveal a Designer save
-        # to an admin session (#166). The restricted tier receives the
-        # tables themselves and needs no digest.
+        # The M-SERV never pushes the module list. The retained digests of
+        # the app-sync tables reveal a Designer save to the admin session,
+        # which then re-requests it (#166). A standard account holds no
+        # module list and needs no digest.
         digests = (
             [
                 _protocol.md5_topic(self._username, keyword)
@@ -406,39 +408,38 @@ class AmpioClient:
         await self.refresh()
 
     def _note_digest(self, digest: _protocol.CatalogueDigest) -> None:
-        """Re-request the config catalogues when a pushed table digest changes.
+        """Re-request the module list when a pushed table digest changes.
 
-        The M-SERV rewrites the retained digest of an app-sync table on a
-        Designer save but never pushes the ``config`` catalogues, so the
-        change is what tells an admin session its catalogues went stale.
-        The store's diff then reports what the save changed as the usual
-        object and module events. The live-value guard is left alone: a
-        catalogue re-request is not a snapshot cycle, so a value pushed
-        since the last request keeps outranking the reply's ``stan_json``.
+        The M-SERV pushes the object tables into every account namespace on
+        a Designer save, and it rewrites the retained digests with them. It
+        never pushes the module list, so the digest is what tells the admin
+        session to re-request it. The live-value guard is left alone,
+        because a module list request is not a snapshot cycle.
         """
         previous = self._digests.get(digest.keyword)
         self._digests[digest.keyword] = digest.digest
         if previous is None or previous == digest.digest:
             return
-        task = asyncio.get_running_loop().create_task(self._request_catalogues())
-        self._catalogue_tasks.add(task)
-        task.add_done_callback(self._catalogue_tasks.discard)
+        task = asyncio.get_running_loop().create_task(self._request_module_list())
+        self._module_list_tasks.add(task)
+        task.add_done_callback(self._module_list_tasks.discard)
 
-    async def _request_catalogues(self) -> None:
-        """Publish the admin catalogue requests from a digest-change task.
+    async def _request_module_list(self) -> None:
+        """Publish the module-list request from a digest-change task.
 
         A publish failure ends this request only: the task runs outside
         the connection loop, which handles the drop itself, and the next
-        (re)connect refreshes the catalogues anyway.
+        (re)connect refreshes the module list anyway.
         """
+        if self._module_list_endpoint is None:
+            return
         try:
-            for ep in self._catalogue_endpoints:
-                await self._publish(ep)
+            await self._publish(self._module_list_endpoint)
         except AmpioConnectionError as err:
-            _LOGGER.debug("Ampio catalogue re-request did not go out: %s", err)
+            _LOGGER.debug("Ampio module-list re-request did not go out: %s", err)
 
-    async def _cancel_catalogue_tasks(self) -> None:
-        tasks = list(self._catalogue_tasks)
+    async def _cancel_module_list_tasks(self) -> None:
+        tasks = list(self._module_list_tasks)
         for task in tasks:
             task.cancel()
         for task in tasks:
@@ -628,10 +629,9 @@ class AmpioClient:
         - ``mac_collisions``: override macs shared by two or more module
           rows, on which raw traffic cannot be attributed reliably.
         - ``params_gap``: objects the ``params_devices`` table carries no
-          row for, on the app-sync tier. The table covers the whole
-          catalogue, so a non-empty list is a server fault: those objects
-          read every Designer config flag as unset. Always empty on the
-          admin tier, whose catalogue carries the columns inline.
+          row for. The table covers the whole catalogue on both tiers, so a
+          non-empty list is a server fault: those objects read every
+          Designer config flag as unset.
         - ``modules``: one row per known module, sorted by id, with the
           :class:`AmpioModule` fields ``id``, ``mac``, ``typ_urzadzenia``,
           ``model``, ``last_seen``, ``supply_voltage``, and
@@ -906,8 +906,8 @@ class AmpioClient:
 
         Waits for the tier's initial replies: the states snapshot, the
         server info, the object catalogue pair (data/devices ->
-        ``objects``, data/params_devices -> visibility flags), and, on the
-        admin tier, the module list (config/devices -> ``modules``).
+        ``objects``, data/params_devices -> the config columns), and, on
+        the admin login, the module list (config/devices -> ``modules``).
         Returns True on completion and False if ``timeout`` elapses first.
 
         A True guarantees ``objects`` and ``server_info`` (and, on the
@@ -940,7 +940,7 @@ class AmpioClient:
         an availability event.
         """
         await self._cancel_refresh_task()
-        await self._cancel_catalogue_tasks()
+        await self._cancel_module_list_tasks()
         await self._connection.close()
 
     async def _cancel_refresh_task(self) -> None:

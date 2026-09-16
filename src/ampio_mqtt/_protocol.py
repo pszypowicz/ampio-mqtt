@@ -9,6 +9,8 @@ Topics are namespaced by the connecting account:
   state:     ampio/fromDB/<user>/ob/<id>/state   -> {"state","desc","on"}
   modules:   publish ampio/control/<user>/config = "devices"
              -> ampio/fromDB/<user>/config/devices = {"List":[...]}
+  catalogue: publish ampio/control/<user>/data = "devices" or "params_devices"
+             -> ampio/fromDB/<user>/data/<keyword> = {"List":[...]}
   digests:   ampio/fromDB/<user>/md5/<table> (retained) = MD5 of an app-sync
              table's reply, rewritten by the M-SERV on a Designer save
 
@@ -49,7 +51,7 @@ from .models import (
 
 @dataclass(slots=True)
 class ObjectMetadata:
-    """One object-catalogue row, in the columns both surfaces serve."""
+    """One object-catalogue row, in the columns `data/devices` serves."""
 
     id: int
     id_urzadzenia: int  # physical module
@@ -249,7 +251,7 @@ _MEMBERSHIP = "room membership table"
 
 
 def _shared_columns(row: Mapping[str, Any]) -> ObjectMetadata:
-    """The object-catalogue columns both surfaces serve on every row.
+    """The object-catalogue columns `data/devices` serves on every row.
 
     ``leafId`` holds an empty string for a system object and for one whose
     Matter box is unchecked in Designer. Otherwise it is a short
@@ -1626,9 +1628,10 @@ def ob_state_wildcard(user: str) -> str:
     return f"ampio/fromDB/{user}/ob/+/state"
 
 
-# The app-sync tables whose retained `md5/<keyword>` digest the M-SERV
-# rewrites when a Designer save changes them. The admin tier watches these
-# to learn that its `config` catalogues went stale (docs/discovery-flow.md).
+# The app-sync tables the M-SERV pushes into every account namespace on a
+# Designer save, rewriting their retained `md5/<keyword>` digest with them.
+# The admin client uses a changed digest to re-request the module list,
+# which is never pushed (docs/discovery-flow.md).
 CATALOGUE_DIGEST_KEYWORDS = ("devices", "params_devices")
 
 
