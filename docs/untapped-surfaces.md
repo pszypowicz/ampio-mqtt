@@ -23,9 +23,8 @@ simulation switch rides `/api/json/simulation/active` and
 ride the `simulation` and `detection` topics of the account's `control`
 namespace. The wire facts are in [`visibility.md`](visibility.md). What stays
 unverified is the detection engine. Its state is a home-status code, code 5 is
-"home empty", and no sensor pulse moved it in forty minutes while the linked
-sensors were unlogged. The simulation replay is unverified too, and the linked
-relays are unlogged as well. Probe notes:
+"home empty", and no single sensor pulse moved it in forty minutes. The
+simulation replay is unverified too. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/261).
 
 **CAN write tree device classes.** The raw write frames for binary outputs, the
