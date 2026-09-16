@@ -7,8 +7,6 @@ Router (what the wire says back). No I/O and no state mutation - the
 
 Topics are namespaced by the connecting account:
   state:     ampio/fromDB/<user>/ob/<id>/state   -> {"state","desc","on"}
-  objects:   publish ampio/control/<user>/config = "devicesDetails"
-             -> ampio/fromDB/<user>/config/devicesDetails = {"Status":0,"List":[...]}
   modules:   publish ampio/control/<user>/config = "devices"
              -> ampio/fromDB/<user>/config/devices = {"List":[...]}
   digests:   ampio/fromDB/<user>/md5/<table> (retained) = MD5 of an app-sync
@@ -76,26 +74,6 @@ class ObjectMetadata:
 DETECTION_TYPE = "detekcja"
 SIMULATION_TYPE = "symulacja"
 PRESENCE_TYPES = frozenset((DETECTION_TYPE, SIMULATION_TYPE))
-
-
-@dataclass(slots=True)
-class AdminObjectMetadata:
-    """A `config/devicesDetails` row: the shared columns plus three more.
-
-    The app-sync catalogue serves none of the three, and
-    `data/params_devices` is the app-sync tier's source for them. Which
-    surface answers follows from the account tier, so each of these facts
-    has exactly one source per tier (docs/account-tiers.md).
-    """
-
-    shared: ObjectMetadata
-    # `params` bitfield; bit 4 = hidden/stub, bit 37 = matter-exposed.
-    params: int
-    # `czas` column as served, in 10 ms ticks; `AmpioObject.pulse_ms` reads
-    # it on the kinds a timed write pulses.
-    czas: int
-    # Designer's "Unit" column, verbatim. `AmpioObject.unit` reads it.
-    url: str
 
 
 @dataclass(slots=True)
@@ -292,30 +270,14 @@ def _shared_columns(row: Mapping[str, Any]) -> ObjectMetadata:
     )
 
 
-def parse_details(data: Mapping[str, Any]) -> list[AdminObjectMetadata]:
-    """Every row of a `config/devicesDetails` reply, the admin catalogue.
-
-    An empty list is a valid reply that lists nothing. `params` can exceed
-    32 bits (the matter-exposed flag is bit 37), which Python ints handle
-    natively.
-    """
-    return [
-        AdminObjectMetadata(
-            shared=_shared_columns(row),
-            params=_int_column(row, "params", _CATALOGUE),
-            czas=_int_column(row, "czas", _CATALOGUE),
-            url=_text_column(row, "url", _CATALOGUE),
-        )
-        for row in require_rows(data, _CATALOGUE)
-    ]
-
-
 def parse_app_sync_devices(data: Mapping[str, Any]) -> list[ObjectMetadata]:
-    """Every row of a `data/devices` reply, the app-sync catalogue.
+    """Every row of a `data/devices` reply, the object catalogue.
 
-    The rows are the objects the account was granted in the Ampio app. The
-    surface serves no `params`, `czas`, or `url` column, so nothing here
-    reads one - `data/params_devices` is this tier's source for the three.
+    The rows are the connecting account's app-sync view: every object in a
+    room plus the two presence rows on the reserved admin login, and the
+    account's own grants otherwise. The surface serves no `params`, `czas`,
+    or `url` column, so nothing here reads one - `data/params_devices`
+    carries the three on every tier.
     """
     return [_shared_columns(row) for row in require_rows(data, _CATALOGUE)]
 
@@ -347,8 +309,14 @@ def parse_devices(data: Mapping[str, Any]) -> list[AmpioModule]:
 class ParamsEntry:
     """One object's row in the ``data/params_devices`` table."""
 
+    # `params` bitfield; see `HIDDEN_FLAG` and its neighbors in models.py.
+    # `params` can exceed 32 bits (the matter-exposed flag is bit 37),
+    # which Python ints handle natively.
     params: int
+    # `czas` column as served, in 10 ms ticks; `AmpioObject.pulse_ms` reads
+    # it on the kinds a timed write pulses.
     czas: int
+    # Designer's "Unit" column, verbatim. `AmpioObject.unit` reads it.
     url: str
 
 
@@ -1301,8 +1269,8 @@ class Endpoint:
     # wait_for_initial_discovery(). The rooms/scenes endpoints are on-demand.
     initial: bool = False
     # The one tier this endpoint answers for, or None for both. The M-SERV
-    # serves the `config` catalogues to administrators only, and an admin
-    # session never needs the app-sync pair (it repeats the `config` view).
+    # serves the config surfaces to administrators only. The object
+    # catalogue rides the data surface on every account.
     tier: AccessTier | None = None
     # The reply parser for a pure request/response endpoint. The dispatcher
     # runs it exactly once, and the parsed value is what a fetch returns. A
@@ -1319,15 +1287,6 @@ class Endpoint:
 
 ENDPOINTS: tuple[Endpoint, ...] = (
     Endpoint(
-        "details",
-        "config",
-        "devicesDetails",
-        "config",
-        "devicesDetails",
-        initial=True,
-        tier=AccessTier.ADMIN,
-    ),
-    Endpoint(
         "devices",
         "config",
         "devices",
@@ -1340,10 +1299,9 @@ ENDPOINTS: tuple[Endpoint, ...] = (
     Endpoint(
         "info", "info", "", "data", "info", initial=True, redacts=redact_info_reply
     ),
-    # App-sync object catalogue. Same wire keyword as the module list above but
-    # on the `data` surface, and a different payload: DB objects (the
-    # `devicesDetails` row shape minus `params`/`stan_json`), filtered to the
-    # objects the account was granted in the Ampio app.
+    # The object catalogue, served to every account: the objects in the
+    # account's app-sync view, which on the reserved admin login is every
+    # object in a room plus the two presence rows.
     Endpoint(
         "data_devices",
         "data",
@@ -1351,11 +1309,9 @@ ENDPOINTS: tuple[Endpoint, ...] = (
         "data",
         "devices",
         initial=True,
-        tier=AccessTier.RESTRICTED,
     ),
-    # Per-object `params` bitfields for the app-sync catalogue. NOT
-    # grant-filtered: every account receives the full table, which is what
-    # lets a restricted account apply the hidden-flag visibility rule.
+    # Per-object params bitfields for the catalogue. Not grant-filtered:
+    # every account receives the full table.
     Endpoint(
         "params_devices",
         "data",
@@ -1363,7 +1319,6 @@ ENDPOINTS: tuple[Endpoint, ...] = (
         "data",
         "params_devices",
         initial=True,
-        tier=AccessTier.RESTRICTED,
     ),
     Endpoint("groups", "data", "groups", "data", "groups", parses=parse_groups),
     Endpoint(

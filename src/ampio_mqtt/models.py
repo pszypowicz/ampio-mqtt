@@ -367,14 +367,12 @@ class AmpioObject:
     # ten types its editor offers the field on (docs/visibility.md), a
     # refresh time in milliseconds on a camera. `pulse_ms` reads the
     # subset of those ten that a timed write actually pulses.
-    # 0 when not configured. Served on both tiers: `devicesDetails` carries
-    # the column, and `data/params_devices` supplies it unfiltered where the
-    # app-sync catalogue omits it.
+    # 0 when not configured. `data/params_devices` carries it on both
+    # tiers; the object catalogue itself carries no config column.
     czas: int = 0
-    # Designer's "Unit" column, verbatim. Served on both tiers the way
-    # `czas` is: `devicesDetails` carries it, and `data/params_devices`
-    # supplies it where the app-sync catalogue omits it. Designer writes a
-    # single space for "without unit". `unit` reads it.
+    # Designer's "Unit" column, verbatim. `data/params_devices` carries it
+    # on both tiers, the way it carries `czas`. Designer writes a single
+    # space for "without unit". `unit` reads it.
     url: str = ""
     # Designer's "String format" column, verbatim: a printf conversion,
     # optionally followed by a unit ("%.3f A"). Both catalogues carry it.

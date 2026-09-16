@@ -162,7 +162,6 @@ async def responding(
                 }
             ),
         ),
-        ("config", "devicesDetails"): ("config/devicesDetails", details(row)),
         ("config", "devices"): ("config/devices", devices({"id": 2, "mac": 10})),
         ("data", "devices"): ("data/devices", details(row)),
         ("data", "params_devices"): ("data/params_devices", params_table({"id": 5})),

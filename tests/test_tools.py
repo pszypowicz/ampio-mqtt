@@ -22,9 +22,10 @@ import pytest
 import set_object
 import smoke_test
 from conftest import (
-    ADMIN_DETAILS_TOPIC,
+    ADMIN_DATA_DEVICES_TOPIC,
     ADMIN_DEVICES_TOPIC,
     ADMIN_INFO_TOPIC,
+    ADMIN_PARAMS_DEVICES_TOPIC,
     ADMIN_STATES_TOPIC,
     ADMIN_USER,
     DATA_DEVICES_TOPIC,
@@ -37,6 +38,7 @@ from conftest import (
     details,
     devices,
     info,
+    params_of,
     params_table,
     snapshot,
 )
@@ -329,9 +331,10 @@ RELAY = {"id": 17, "mac": 0xBEEF, "typ_urzadzenia": 15}  # M-IN-8s
 
 
 def _admin_discovery(*rows: dict) -> list[Message]:
-    """The admin tier's four initial replies, so ``connect()`` completes."""
+    """The admin tier's five initial replies, so ``connect()`` completes."""
     return [
-        Message(ADMIN_DETAILS_TOPIC, details().encode()),
+        Message(ADMIN_PARAMS_DEVICES_TOPIC, params_of().encode()),
+        Message(ADMIN_DATA_DEVICES_TOPIC, details().encode()),
         Message(ADMIN_DEVICES_TOPIC, devices(*rows).encode()),
         Message(ADMIN_STATES_TOPIC, snapshot().encode()),
         Message(ADMIN_INFO_TOPIC, info(mac=1, userId="-1").encode()),

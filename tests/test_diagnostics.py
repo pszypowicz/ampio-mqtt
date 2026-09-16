@@ -27,15 +27,6 @@ _URL = "https://example.invalid/private-url-token"
             ),
         ),
         (
-            "details",
-            "config/devicesDetails",
-            "admin",
-            details(
-                {"id": 1, "opis_menu": "private-object-name", "url": _URL},
-                {"id": 2, "opis_menu": "private-second-object", "url": _URL},
-            ),
-        ),
-        (
             "states",
             "data/states",
             "admin",

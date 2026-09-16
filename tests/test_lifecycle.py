@@ -24,15 +24,15 @@ from typing import Self
 import aiomqtt
 import pytest
 from conftest import (
-    ADMIN_DETAILS_TOPIC,
+    ADMIN_DATA_DEVICES_TOPIC,
     ADMIN_DEVICES_TOPIC,
     ADMIN_INFO_TOPIC,
     ADMIN_MD5_DEVICES_TOPIC,
     ADMIN_MD5_PARAMS_DEVICES_TOPIC,
+    ADMIN_PARAMS_DEVICES_TOPIC,
     ADMIN_STATES_TOPIC,
     ADMIN_USER,
     DATA_DEVICES_TOPIC,
-    DETAILS_TOPIC,
     DEVICES_TOPIC,
     INFO_TOPIC,
     PARAMS_DEVICES_TOPIC,
@@ -44,6 +44,7 @@ from conftest import (
     devices,
     feed,
     make_client,
+    params_of,
     params_table,
     snapshot,
 )
@@ -226,9 +227,10 @@ async def test_a_restricted_client_requests_only_its_pair() -> None:
         await client.disconnect()
 
 
-async def test_an_admin_client_requests_only_the_config_pair() -> None:
-    """The admin login owns the config catalogues; the app-sync pair only
-    repeats them, so it is never requested."""
+async def test_an_admin_client_requests_the_module_list_and_the_data_pair() -> None:
+    """The admin login requests its own module list alongside the object
+    catalogue pair; the M-SERV pushes neither on a retained topic, so
+    every refresh re-requests both."""
     broker = FakeBroker()
     client = make_client(broker, username=ADMIN_USER, reconnect_interval=0.001)
     await client.connect(timeout=2.0, discovery_timeout=0.05)
@@ -239,10 +241,12 @@ async def test_an_admin_client_requests_only_the_config_pair() -> None:
             b"",  # info
             b"",  # states
             b"devices",  # module list
-            b"devicesDetails",
+            b"devices",  # object catalogue
+            b"params_devices",
         ]
         assert all(
-            t.endswith(("/config", "/states", "/info")) for t, _p in broker.published
+            t.endswith(("/config", "/data", "/states", "/info"))
+            for t, _p in broker.published
         )
     finally:
         await client.disconnect()
@@ -421,7 +425,8 @@ async def test_connect_drives_full_discovery_through_mocked_broker() -> None:
     broker = FakeBroker()
     broker.scripted_messages = [
         Message(ADMIN_DEVICES_TOPIC, json.dumps({"List": []}).encode()),
-        Message(ADMIN_DETAILS_TOPIC, json.dumps({"List": []}).encode()),
+        Message(ADMIN_DATA_DEVICES_TOPIC, json.dumps({"List": []}).encode()),
+        Message(ADMIN_PARAMS_DEVICES_TOPIC, json.dumps({"List": []}).encode()),
         Message(ADMIN_STATES_TOPIC, json.dumps({"List": []}).encode()),
         Message(
             ADMIN_INFO_TOPIC,
@@ -435,7 +440,8 @@ async def test_connect_drives_full_discovery_through_mocked_broker() -> None:
         assert client.available is True
         assert client.server_info is not None and client.server_info.mac == 99
         assert {
-            ADMIN_DETAILS_TOPIC,
+            ADMIN_DATA_DEVICES_TOPIC,
+            ADMIN_PARAMS_DEVICES_TOPIC,
             ADMIN_DEVICES_TOPIC,
             ADMIN_STATES_TOPIC,
             ADMIN_INFO_TOPIC,
@@ -452,7 +458,8 @@ async def test_connect_drives_full_discovery_through_mocked_broker() -> None:
         # cannot recompute its own expectation.
         assert sorted(broker.published) == [
             (f"ampio/control/{ADMIN_USER}/config", b"devices"),
-            (f"ampio/control/{ADMIN_USER}/config", b"devicesDetails"),
+            (f"ampio/control/{ADMIN_USER}/data", b"devices"),
+            (f"ampio/control/{ADMIN_USER}/data", b"params_devices"),
             (f"ampio/control/{ADMIN_USER}/info", b""),
             (f"ampio/control/{ADMIN_USER}/states", b""),
         ]
@@ -461,7 +468,7 @@ async def test_connect_drives_full_discovery_through_mocked_broker() -> None:
 
 
 async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None:
-    """All four discovery messages populate the client and the wait returns True."""
+    """All five discovery messages populate the client and the wait returns True."""
     broker = FakeBroker()
     broker.scripted_messages = [
         Message(
@@ -469,7 +476,7 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
             devices({"id": 17, "mac": 52111, "typ_urzadzenia": 44}).encode(),
         ),
         Message(
-            ADMIN_DETAILS_TOPIC,
+            ADMIN_DATA_DEVICES_TOPIC,
             details(
                 {
                     "id": 41,
@@ -480,6 +487,7 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
                 }
             ).encode(),
         ),
+        Message(ADMIN_PARAMS_DEVICES_TOPIC, json.dumps({"List": []}).encode()),
         Message(ADMIN_STATES_TOPIC, snapshot().encode()),
         Message(
             ADMIN_INFO_TOPIC,
@@ -508,9 +516,9 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
 async def test_restricted_account_completes_via_data_surface_fallback() -> None:
     """With the config surface silent, the app-sync pair completes discovery.
 
-    This is the non-admin shape: `config/devicesDetails` and
-    `config/devices` never answer, while `data/devices` (grant-filtered, with
-    full metadata) and `data/params_devices` do.
+    This is the non-admin shape: `config/devices` never answers, while
+    `data/devices` (grant-filtered, with full metadata) and
+    `data/params_devices` do.
     """
     broker = FakeBroker()
     broker.scripted_messages = [
@@ -771,7 +779,6 @@ async def test_wait_for_initial_discovery_returns_false_on_timeout() -> None:
     broker = FakeBroker()
     broker.scripted_messages = [
         Message(DEVICES_TOPIC, json.dumps({"List": []}).encode()),
-        Message(DETAILS_TOPIC, json.dumps({"List": []}).encode()),
         Message(STATES_TOPIC, snapshot().encode()),
     ]
     client = make_client(broker, reconnect_interval=0.001)
@@ -852,7 +859,23 @@ async def test_the_raw_state_replay_survives_the_broker_queue_cap() -> None:
             ).encode(),
         ),
         Message(
-            ADMIN_DETAILS_TOPIC,
+            ADMIN_PARAMS_DEVICES_TOPIC,
+            params_of(
+                *(
+                    {
+                        "id": 10 + n,
+                        "id_urzadzenia": 7,
+                        "typ_komponentu": "flaga",
+                        "interpretacja": 1,
+                        "funkcja": n,
+                        "opis_menu": f"Flag {n}",
+                    }
+                    for n in range(1, 7)
+                )
+            ).encode(),
+        ),
+        Message(
+            ADMIN_DATA_DEVICES_TOPIC,
             details(
                 *(
                     {
@@ -899,7 +922,20 @@ async def test_a_retained_replay_never_stamps_last_seen() -> None:
             ).encode(),
         ),
         Message(
-            ADMIN_DETAILS_TOPIC,
+            ADMIN_PARAMS_DEVICES_TOPIC,
+            params_of(
+                {
+                    "id": 10,
+                    "id_urzadzenia": 7,
+                    "typ_komponentu": "flaga",
+                    "interpretacja": 1,
+                    "funkcja": 3,
+                    "opis_menu": "Flag",
+                }
+            ).encode(),
+        ),
+        Message(
+            ADMIN_DATA_DEVICES_TOPIC,
             details(
                 {
                     "id": 10,
@@ -1008,7 +1044,8 @@ async def test_listeners_run_on_the_connect_loop_in_the_main_thread() -> None:
     broker = FakeBroker()
     broker.scripted_messages = [
         Message(ADMIN_DEVICES_TOPIC, json.dumps({"List": []}).encode()),
-        Message(ADMIN_DETAILS_TOPIC, details({"id": 41}).encode()),
+        Message(ADMIN_PARAMS_DEVICES_TOPIC, params_of({"id": 41}).encode()),
+        Message(ADMIN_DATA_DEVICES_TOPIC, details({"id": 41}).encode()),
         Message(ADMIN_STATES_TOPIC, json.dumps({"List": []}).encode()),
         Message(
             ADMIN_INFO_TOPIC,
@@ -1152,7 +1189,7 @@ async def _published(broker: FakeBroker, count: int) -> None:
 )
 async def test_a_changed_digest_re_requests_the_config_pair(topic: str) -> None:
     """The first digest per table seeds and a repeat says nothing. A change
-    re-requests the two config catalogues and nothing else."""
+    re-requests the module list and nothing else."""
     broker = FakeBroker()
     client = make_client(broker, username=ADMIN_USER)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
@@ -1163,10 +1200,9 @@ async def test_a_changed_digest_re_requests_the_config_pair(topic: str) -> None:
         await asyncio.sleep(0.01)
         assert broker.published == []
         feed(client, topic, "b" * 32)
-        await _published(broker, 2)
+        await _published(broker, 1)
         assert sorted(broker.published) == [
             (f"ampio/control/{ADMIN_USER}/config", b"devices"),
-            (f"ampio/control/{ADMIN_USER}/config", b"devicesDetails"),
         ]
     finally:
         await client.disconnect()
@@ -1181,7 +1217,10 @@ async def test_a_digest_trigger_keeps_the_live_value_guard() -> None:
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         stan = json.dumps({"state": "0", "on": 1786700900000})
-        feed(client, ADMIN_DETAILS_TOPIC, details({"id": 10, "stan_json": stan}))
+        feed(
+            client, ADMIN_PARAMS_DEVICES_TOPIC, params_of({"id": 10, "stan_json": stan})
+        )
+        feed(client, ADMIN_DATA_DEVICES_TOPIC, details({"id": 10, "stan_json": stan}))
         feed(
             client,
             f"ampio/fromDB/{ADMIN_USER}/ob/10/state",
@@ -1190,8 +1229,11 @@ async def test_a_digest_trigger_keeps_the_live_value_guard() -> None:
         broker.published.clear()
         feed(client, ADMIN_MD5_DEVICES_TOPIC, "a" * 32)
         feed(client, ADMIN_MD5_DEVICES_TOPIC, "b" * 32)
-        await _published(broker, 2)
-        feed(client, ADMIN_DETAILS_TOPIC, details({"id": 10, "stan_json": stan}))
+        await _published(broker, 1)
+        feed(
+            client, ADMIN_PARAMS_DEVICES_TOPIC, params_of({"id": 10, "stan_json": stan})
+        )
+        feed(client, ADMIN_DATA_DEVICES_TOPIC, details({"id": 10, "stan_json": stan}))
         assert client.objects[10].state == "live"
     finally:
         await client.disconnect()
@@ -1215,8 +1257,9 @@ async def test_the_retained_replay_seeds_again_after_a_reconnect() -> None:
         assert sorted(p for _t, p in broker.published) == [
             b"",  # info
             b"",  # states
-            b"devices",
-            b"devicesDetails",
+            b"devices",  # module list
+            b"devices",  # object catalogue
+            b"params_devices",
         ]
     finally:
         await client.disconnect()
@@ -1272,13 +1315,15 @@ async def test_a_designer_save_surfaces_as_object_added_on_the_admin_tier() -> N
     client.subscribe(events.append, of=ObjectAdded)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
-        feed(client, ADMIN_DETAILS_TOPIC, details({"id": 10}))
+        feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of({"id": 10}))
+        feed(client, ADMIN_DATA_DEVICES_TOPIC, details({"id": 10}))
         feed(client, ADMIN_MD5_DEVICES_TOPIC, "a" * 32)
         broker.published.clear()
         events.clear()
         feed(client, ADMIN_MD5_DEVICES_TOPIC, "b" * 32)
-        await _published(broker, 2)
-        feed(client, ADMIN_DETAILS_TOPIC, details({"id": 10}, {"id": 11}))
+        await _published(broker, 1)
+        feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of({"id": 10}, {"id": 11}))
+        feed(client, ADMIN_DATA_DEVICES_TOPIC, details({"id": 10}, {"id": 11}))
         assert [e.object.id for e in events] == [11]  # type: ignore[attr-defined]
     finally:
         await client.disconnect()

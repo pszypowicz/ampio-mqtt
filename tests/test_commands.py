@@ -8,8 +8,9 @@ import json
 import aiomqtt
 import pytest
 from conftest import (
-    ADMIN_DETAILS_TOPIC,
+    ADMIN_DATA_DEVICES_TOPIC,
     ADMIN_DEVICES_TOPIC,
+    ADMIN_PARAMS_DEVICES_TOPIC,
     ADMIN_USER,
     API_TOPIC,
     DATA_DEVICES_TOPIC,
@@ -19,6 +20,7 @@ from conftest import (
     details,
     devices,
     feed,
+    params_of,
 )
 
 from ampio_mqtt import (
@@ -675,7 +677,21 @@ async def test_confirm_on_the_admin_tier_resolves_on_the_raw_edge() -> None:
         )
         feed(
             client,
-            ADMIN_DETAILS_TOPIC,
+            ADMIN_PARAMS_DEVICES_TOPIC,
+            params_of(
+                {
+                    "id": 10,
+                    "id_urzadzenia": 7,
+                    "typ_komponentu": "flaga",
+                    "interpretacja": 1,
+                    "funkcja": 3,
+                    "opis_menu": "Flag",
+                }
+            ),
+        )
+        feed(
+            client,
+            ADMIN_DATA_DEVICES_TOPIC,
             details(
                 {
                     "id": 10,
@@ -723,7 +739,49 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
     )
     feed(
         client,
-        ADMIN_DETAILS_TOPIC,
+        ADMIN_PARAMS_DEVICES_TOPIC,
+        params_of(
+            {
+                "id": 90,
+                "id_urzadzenia": 7,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 2,
+                "funkcja": 2,
+                "leafId": "0_cafe_257_2_1",
+                "opis_menu": "LED",
+            },
+            {
+                "id": 91,
+                "id_urzadzenia": 8,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 1,
+                "funkcja": 1,
+                "leafId": "0_b0b0_257_2_0",
+                "opis_menu": "Relay",
+            },
+            {
+                "id": 93,
+                "id_urzadzenia": 9,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 8,
+                "funkcja": 8,
+                "leafId": "0_1a2b_67_0_7",
+                "opis_menu": "OC",
+            },
+            {
+                "id": 94,
+                "id_urzadzenia": 8,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 4,
+                "funkcja": 4,
+                "leafId": "0_b0b0_999_0_3",
+                "opis_menu": "Odd",
+            },
+        ),
+    )
+    feed(
+        client,
+        ADMIN_DATA_DEVICES_TOPIC,
         details(
             {
                 "id": 90,
@@ -867,7 +925,22 @@ async def test_server_owned_output_keeps_the_api_path() -> None:
     try:
         feed(
             client,
-            ADMIN_DETAILS_TOPIC,
+            ADMIN_PARAMS_DEVICES_TOPIC,
+            params_of(
+                {
+                    "id": 92,
+                    "id_urzadzenia": 1,
+                    "typ_komponentu": "przekaznik",
+                    "interpretacja": 1,
+                    "funkcja": 1,
+                    "leafId": "0_1_257_2_0",
+                    "opis_menu": "Virtual",
+                }
+            ),
+        )
+        feed(
+            client,
+            ADMIN_DATA_DEVICES_TOPIC,
             details(
                 {
                     "id": 92,
@@ -951,7 +1024,20 @@ async def test_flag_switch_verbs_ride_api_on_the_admin_tier() -> None:
     try:
         feed(
             client,
-            ADMIN_DETAILS_TOPIC,
+            ADMIN_PARAMS_DEVICES_TOPIC,
+            params_of(
+                {
+                    "id": 93,
+                    "id_urzadzenia": 7,
+                    "typ_komponentu": "flaga",
+                    "leafId": "0_cafe_3_0_23",
+                    "opis_menu": "Flag",
+                }
+            ),
+        )
+        feed(
+            client,
+            ADMIN_DATA_DEVICES_TOPIC,
             details(
                 {
                     "id": 93,
@@ -1346,7 +1432,49 @@ async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
     )
     feed(
         client,
-        ADMIN_DETAILS_TOPIC,
+        ADMIN_PARAMS_DEVICES_TOPIC,
+        params_of(
+            {
+                "id": 193,
+                "id_urzadzenia": 3,
+                "typ_komponentu": "roleta_procenty",
+                "interpretacja": 1,
+                "funkcja": 1,
+                "leafId": "0_be82_5_0_0",
+                "opis_menu": "First",
+            },
+            {
+                "id": 194,
+                "id_urzadzenia": 3,
+                "typ_komponentu": "roleta_lamelki",
+                "interpretacja": 2,
+                "funkcja": 2,
+                "leafId": "0_be82_5_0_1",
+                "opis_menu": "Second",
+            },
+            {
+                "id": 48,
+                "id_urzadzenia": 15,
+                "typ_komponentu": "roleta_procenty",
+                "interpretacja": 2,
+                "funkcja": 2,
+                "leafId": "0_cb86_5_0_1",
+                "opis_menu": "Old",
+            },
+            {
+                "id": 195,
+                "id_urzadzenia": 3,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 0,
+                "funkcja": 1,
+                "leafId": "0_be82_257_0_0",
+                "opis_menu": "Relay",
+            },
+        ),
+    )
+    feed(
+        client,
+        ADMIN_DATA_DEVICES_TOPIC,
         details(
             {
                 "id": 193,
@@ -1512,7 +1640,29 @@ async def _admin_with_flags() -> tuple[AmpioClient, FakeBroker]:
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     feed(
         client,
-        ADMIN_DETAILS_TOPIC,
+        ADMIN_PARAMS_DEVICES_TOPIC,
+        params_of(
+            {
+                "id": 199,
+                "typ_komponentu": "flaga_liniowa",
+                "interpretacja": 1,
+                "funkcja": 1,
+                "leafId": "0_1_4_0_0",
+                "opis_menu": "u8",
+            },
+            {
+                "id": 200,
+                "typ_komponentu": "flaga_liniowa16",
+                "interpretacja": 1,
+                "funkcja": 1,
+                "leafId": "0_1_18_0_0",
+                "opis_menu": "i16",
+            },
+        ),
+    )
+    feed(
+        client,
+        ADMIN_DATA_DEVICES_TOPIC,
         details(
             {
                 "id": 199,

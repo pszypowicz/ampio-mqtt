@@ -905,12 +905,10 @@ class AmpioClient:
         """Block until the initial discovery cycle has populated the client.
 
         Waits for the tier's initial replies: the states snapshot, the
-        server info, and the account's object catalogue pair - the admin
-        ``config`` pair (devicesDetails -> ``objects``, devices ->
-        ``modules``) or the app-sync ``data`` pair (data/devices ->
-        grant-filtered ``objects``, data/params_devices -> visibility
-        flags). Returns True on completion and False if ``timeout``
-        elapses first.
+        server info, the object catalogue pair (data/devices ->
+        ``objects``, data/params_devices -> visibility flags), and, on the
+        admin tier, the module list (config/devices -> ``modules``).
+        Returns True on completion and False if ``timeout`` elapses first.
 
         A True guarantees ``objects`` and ``server_info`` (and, on the
         admin tier, ``modules``) are populated, with

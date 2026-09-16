@@ -67,7 +67,6 @@ def test_a_raising_listener_does_not_stop_later_messages() -> None:
 @pytest.mark.parametrize(
     "surface",
     [
-        "config/devicesDetails",
         "config/devices",
         "data/devices",
         "data/params_devices",

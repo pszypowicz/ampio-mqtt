@@ -60,8 +60,7 @@ class AmpioStore:
 
     The account tier decides which surfaces answer (docs/account-tiers.md),
     so the store holds the handlers of that tier alone. Each fact then has
-    one source: the admin catalogue carries the Designer config columns
-    inline, and on the app-sync tier `data/params_devices` carries them.
+    one source: `data/params_devices` carries them on both tiers.
     """
 
     def __init__(self, tier: AccessTier) -> None:
@@ -96,11 +95,9 @@ class AmpioStore:
         # every change, so a cached instance would go stale.
         self._module_id_by_mac: dict[int, int] = {}
         # Full-catalogue per-object config facts (`params`, `czas`, `url`)
-        # from `data/params_devices`, the app-sync tier's one source for
-        # them. Held because the two app-sync replies arrive in no fixed
-        # order, and re-applied on every merge - an eviction included.
-        # Stays empty on the admin tier, which is served neither the table
-        # nor a catalogue that needs it.
+        # from `data/params_devices`, this store's one source for them on
+        # both tiers. Held because the two catalogue replies arrive in no
+        # fixed order, and re-applied on every merge - an eviction included.
         self._params_by_id: dict[int, _protocol.ParamsEntry] = {}
         # Whether the config table has answered at least once, so a gap in
         # its coverage is told apart from a table still in flight.
@@ -167,13 +164,11 @@ class AmpioStore:
         self._handlers: dict[str, Callable[[Mapping[str, Any], Applied], None]] = {
             "states": self._handle_states_snapshot,
             "info": self._handle_info,
+            "data_devices": self._handle_catalogue,
+            "params_devices": self._handle_params_devices,
         }
         if tier is AccessTier.ADMIN:
-            self._handlers["details"] = self._handle_admin_catalogue
             self._handlers["devices"] = self._handle_devices
-        else:
-            self._handlers["data_devices"] = self._handle_app_sync_catalogue
-            self._handlers["params_devices"] = self._handle_params_devices
         # The endpoint table and this handler table are edited separately;
         # a name typo between them would otherwise surface as a silent
         # discovery hang, so misalignment fails construction instead.
@@ -325,35 +320,11 @@ class AmpioStore:
 
     # --- catalogues -------------------------------------------------------
 
-    def _handle_admin_catalogue(
-        self, data: Mapping[str, Any], applied: Applied
-    ) -> None:
-        """Apply a `config/devicesDetails` reply, the admin object catalogue.
+    def _handle_catalogue(self, data: Mapping[str, Any], applied: Applied) -> None:
+        """Apply a `data/devices` reply, the object catalogue.
 
-        Every row carries the Designer config columns inline, so the row is
-        their one source on this tier.
-        """
-        served = _protocol.parse_details(data)
-        self._apply_catalogue(
-            [row.shared for row in served],
-            {
-                row.shared.id: {
-                    "params": row.params,
-                    "czas": row.czas,
-                    "url": row.url,
-                }
-                for row in served
-            },
-            applied,
-        )
-
-    def _handle_app_sync_catalogue(
-        self, data: Mapping[str, Any], applied: Applied
-    ) -> None:
-        """Apply a `data/devices` reply, the grant-filtered app-sync catalogue.
-
-        The surface serves no Designer config columns, so the held
-        `data/params_devices` table is their one source here. The table
+        The surface serves no Designer config columns on any tier, so the
+        held `data/params_devices` table is their one source. The table
         re-applies on every merge, the re-creation after an eviction
         included.
         """
@@ -410,11 +381,12 @@ class AmpioStore:
     def _evict_missing_objects(self, present: set[int], applied: Applied) -> bool:
         """Drop objects the authoritative catalogue no longer lists.
 
-        Each tier's catalogue is complete for its account - the ``config``
-        catalogue by being admin-only, the app-sync one because the grant
-        bounds everything a restricted store could ever hold - so a reply's
-        arrival is the authority to evict what it stopped listing, an empty
-        reply included (a full grant revocation empties the app-sync view).
+        Each tier's catalogue is complete for its account: the reserved
+        admin login's view is every object in a room plus the two presence
+        rows, and a restricted account's view is bounded by its grant.
+        Either way a reply's arrival is the authority to evict what it
+        stopped listing, an empty reply included (a full grant revocation
+        empties a restricted view).
         """
         # The same completeness proves a buffered push's id will never gain
         # a catalogue row; without the prune, pushes for such ids accumulate.
@@ -692,13 +664,14 @@ class AmpioStore:
     def _handle_params_devices(self, data: Mapping[str, Any], applied: Applied) -> None:
         """Apply the ``data/params_devices`` config table.
 
-        The app-sync tier's one source for `params`, `czas` and `url`. The
-        whole table is held for catalogue rows that arrive later, and
-        objects already known are updated in place. An id with no known
-        object creates no placeholder: the table is not grant-filtered, so
-        most of it refers to objects the account cannot otherwise see. The
-        same push rebuilds the two presence rows from the held catalogue
-        table, so their switch and their hidden state settle from it too.
+        This store's one source for `params`, `czas` and `url` on both
+        tiers. The whole table is held for catalogue rows that arrive
+        later, and objects already known are updated in place. An id with
+        no known object creates no placeholder: the table is not
+        grant-filtered, so most of it refers to objects the account cannot
+        otherwise see. The same push rebuilds the two presence rows from
+        the held catalogue table, so their switch and their hidden state
+        settle from it too.
         """
         self._params_by_id = _protocol.parse_params_devices(data)
         self._params_received = True

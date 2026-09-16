@@ -34,14 +34,14 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-ADMIN_DETAILS_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/devicesDetails"
 ADMIN_DEVICES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/devices"
 ADMIN_STATES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/data/states"
 ADMIN_INFO_TOPIC = f"ampio/fromDB/{ADMIN_USER}/data/info"
 ADMIN_MD5_DEVICES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/md5/devices"
 ADMIN_MD5_PARAMS_DEVICES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/md5/params_devices"
+ADMIN_DATA_DEVICES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/data/devices"
+ADMIN_PARAMS_DEVICES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/data/params_devices"
 
-DETAILS_TOPIC = f"ampio/fromDB/{USER}/config/devicesDetails"
 DEVICES_TOPIC = f"ampio/fromDB/{USER}/config/devices"
 STATES_TOPIC = f"ampio/fromDB/{USER}/data/states"
 INFO_TOPIC = f"ampio/fromDB/{USER}/data/info"
@@ -268,12 +268,10 @@ _SNAPSHOT_ROW = {"stan_json": json.dumps({"state": "0"})}
 
 
 def details(*items: dict) -> str:
-    """An object-catalogue payload, serving either tier's topic.
-
-    Carries the admin `devicesDetails` column set. The app-sync parse reads
-    the shared columns alone, so the same builder feeds `data/devices`.
-    """
-    return json.dumps({"Status": 0, "List": [{**_CATALOGUE_ROW, **i} for i in items]})
+    """An object-catalogue payload for `data/devices`. Extra keys are ignored
+    by the parse, so a row may carry `params`, `czas` and `url` for
+    `params_of()`."""
+    return json.dumps({"List": [{**_CATALOGUE_ROW, **i} for i in items]})
 
 
 def devices(*items: dict) -> str:
@@ -284,6 +282,26 @@ def devices(*items: dict) -> str:
 def params_table(*items: dict) -> str:
     """A `data/params_devices` payload."""
     return rows(*({**_PARAMS_ROW, **i} for i in items))
+
+
+def params_of(*items: dict) -> str:
+    """The `data/params_devices` rows the given catalogue rows imply.
+
+    A test names `params`, `czas` or `url` directly on a catalogue row for
+    readability. The wire carries the three on the params table on both
+    tiers, so this builds that table from the rows.
+    """
+    return params_table(
+        *(
+            {
+                "id": item["id"],
+                "params": item.get("params", 0),
+                "czas": item.get("czas", 0),
+                "url": item.get("url", ""),
+            }
+            for item in items
+        )
+    )
 
 
 def snapshot(*items: dict) -> str:

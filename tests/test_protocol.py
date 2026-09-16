@@ -16,6 +16,7 @@ from ampio_mqtt import (
 )
 from ampio_mqtt._protocol import (
     CCT_PREFIX,
+    ENDPOINT_BY_NAME,
     ENDPOINTS,
     RAW_BUZZER_OFF,
     RAW_BUZZER_SILENCE,
@@ -34,7 +35,6 @@ from ampio_mqtt._protocol import (
     decode_envelope,
     md5_topic,
     parse_app_sync_devices,
-    parse_details,
     parse_devices,
     parse_params_devices,
     parse_scenes,
@@ -70,22 +70,8 @@ def test_to_int(value: object, expected: int | None) -> None:
     assert to_int(value) == expected
 
 
-# Every column the live M-SERV serves on every row of one catalogue
-# surface. A test that drops one is making a point about that column.
-_ADMIN_COLUMNS = (
-    "id",
-    "id_urzadzenia",
-    "typ_komponentu",
-    "interpretacja",
-    "funkcja",
-    "leafId",
-    "opis_menu",
-    "type",
-    "format",
-    "params",
-    "czas",
-    "url",
-)
+# Every column the live M-SERV serves on every row of the object catalogue.
+# A test that drops one is making a point about that column.
 _APP_SYNC_COLUMNS = (
     "id",
     "id_urzadzenia",
@@ -99,7 +85,7 @@ _APP_SYNC_COLUMNS = (
 )
 
 
-def _admin_row(**over: object) -> dict[str, object]:
+def _app_row(**over: object) -> dict[str, object]:
     row: dict[str, object] = {
         "id": 41,
         "id_urzadzenia": 3,
@@ -110,15 +96,7 @@ def _admin_row(**over: object) -> dict[str, object]:
         "opis_menu": "Salon",
         "type": None,
         "format": "",
-        "params": 137438953473,  # 2**37 + 1: matter-exposed, not hidden
-        "czas": 0,
-        "url": "",
     }
-    return {**row, **over}
-
-
-def _app_row(**over: object) -> dict[str, object]:
-    row = {k: v for k, v in _admin_row().items() if k in _APP_SYNC_COLUMNS}
     return {**row, **over}
 
 
@@ -126,40 +104,18 @@ def _rows(*items: dict[str, object]) -> str:
     return json.dumps({"Status": 0, "List": list(items)})
 
 
-def test_parse_details_returns_metadata() -> None:
-    items = parse_details(json.loads(_rows(_admin_row())))
-    assert [row.shared.id for row in items] == [41]
-    shared = items[0].shared
-    assert shared.id_urzadzenia == 3
-    assert shared.typ_komponentu == "temp"
-    assert shared.interpretacja == 1
-    assert shared.funkcja == 7
-    assert shared.leaf_id == "0_cb8f_76_0_0"
-    assert shared.opis_menu == "Salon"
-    assert shared.matter_device_type is None
-    assert items[0].params == 137438953473
-    assert items[0].czas == 0
-    assert items[0].url == ""
-
-
 def test_parse_app_sync_devices_returns_the_shared_columns() -> None:
     """The app-sync catalogue serves no `params`, `czas`, or `url` column.
-    `data/params_devices` is that tier's source for the three."""
+    `data/params_devices` carries the three on every tier."""
     items = parse_app_sync_devices(json.loads(_rows(_app_row())))
     assert [row.id for row in items] == [41]
+    assert items[0].id_urzadzenia == 3
     assert items[0].typ_komponentu == "temp"
+    assert items[0].interpretacja == 1
     assert items[0].funkcja == 7
+    assert items[0].leaf_id == "0_cb8f_76_0_0"
     assert items[0].opis_menu == "Salon"
-
-
-@pytest.mark.parametrize("column", _ADMIN_COLUMNS)
-def test_parse_details_refuses_a_row_without_a_served_column(column: str) -> None:
-    """Every listed column rides every live `devicesDetails` row, so a reply
-    without one is a protocol break rather than an unconfigured object."""
-    row = _admin_row()
-    del row[column]
-    with pytest.raises(AmpioProtocolError, match=column):
-        parse_details(json.loads(_rows(row)))
+    assert items[0].matter_device_type is None
 
 
 @pytest.mark.parametrize("column", _APP_SYNC_COLUMNS)
@@ -172,57 +128,46 @@ def test_parse_app_sync_devices_refuses_a_row_without_a_served_column(
         parse_app_sync_devices(json.loads(_rows(row)))
 
 
-@pytest.mark.parametrize(
-    "column", ["id", "id_urzadzenia", "interpretacja", "funkcja", "params", "czas"]
-)
-def test_parse_details_refuses_a_column_that_is_not_an_integer(column: str) -> None:
+@pytest.mark.parametrize("column", ["id", "id_urzadzenia", "interpretacja", "funkcja"])
+def test_parse_app_sync_devices_refuses_a_column_that_is_not_an_integer(
+    column: str,
+) -> None:
     with pytest.raises(AmpioProtocolError, match=column):
-        parse_details(json.loads(_rows(_admin_row(**{column: "junk"}))))
+        parse_app_sync_devices(json.loads(_rows(_app_row(**{column: "junk"}))))
 
 
-@pytest.mark.parametrize("column", ["typ_komponentu", "url"])
-def test_parse_details_refuses_a_column_that_is_not_text(column: str) -> None:
-    with pytest.raises(AmpioProtocolError, match=column):
-        parse_details(json.loads(_rows(_admin_row(**{column: 7}))))
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        (17, 17),  # bit0 + bit4 (the live phantom shape)
-        ("16", 16),  # string coerced
-        (137438953473, 137438953473),  # >32-bit matter-exposed value
-    ],
-)
-def test_parse_details_params(raw: object, expected: int) -> None:
-    assert (
-        parse_details(json.loads(_rows(_admin_row(params=raw))))[0].params == expected
-    )
+def test_parse_app_sync_devices_refuses_a_typ_komponentu_that_is_not_text() -> None:
+    with pytest.raises(AmpioProtocolError, match="typ_komponentu"):
+        parse_app_sync_devices(json.loads(_rows(_app_row(typ_komponentu=7))))
 
 
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
         ("256", 256),  # 0x0100 On/Off Light, the tagged shape
-        ("", None),  # untagged (config catalogue shape)
-        (None, None),  # untagged (app-sync null shape)
+        ("", None),  # untagged, the empty-string shape
+        (None, None),  # untagged, the null shape
     ],
 )
-def test_parse_details_matter_device_type(raw: object, expected: int | None) -> None:
-    items = parse_details(json.loads(_rows(_admin_row(type=raw))))
-    assert items[0].shared.matter_device_type == expected
+def test_parse_app_sync_devices_matter_device_type(
+    raw: object, expected: int | None
+) -> None:
+    items = parse_app_sync_devices(json.loads(_rows(_app_row(type=raw))))
+    assert items[0].matter_device_type == expected
 
 
 @pytest.mark.parametrize(
-    ("raw", "expected"),
+    ("fmt", "expected"),
     [
-        (500, 500),  # the raw 10 ms ticks
-        ("500", 500),  # string coerced
-        (0, 0),  # configured off
+        ("%.1f V", "%.1f V"),
+        ("%.3f A", "%.3f A"),  # the live shape
+        ("", ""),
+        (None, ""),  # a null format reads as empty
     ],
 )
-def test_parse_details_czas(raw: object, expected: int) -> None:
-    assert parse_details(json.loads(_rows(_admin_row(czas=raw))))[0].czas == expected
+def test_parse_app_sync_devices_format(fmt: object, expected: str) -> None:
+    items = parse_app_sync_devices(json.loads(_rows(_app_row(format=fmt))))
+    assert items[0].format == expected
 
 
 def _params_row(**over: object) -> dict[str, object]:
@@ -248,29 +193,61 @@ def test_parse_params_devices_refuses_a_row_without_a_served_column(
         parse_params_devices(json.loads(_rows(row)))
 
 
-def test_parse_params_devices_keeps_the_without_unit_sentinel() -> None:
-    assert parse_params_devices(json.loads(_rows(_params_row(url=" "))))[5].url == " "
+@pytest.mark.parametrize("column", ["id", "params", "czas"])
+def test_parse_params_devices_refuses_a_column_that_is_not_an_integer(
+    column: str,
+) -> None:
+    with pytest.raises(AmpioProtocolError, match=column):
+        parse_params_devices(json.loads(_rows(_params_row(**{column: "junk"}))))
+
+
+def test_parse_params_devices_refuses_a_url_that_is_not_text() -> None:
+    with pytest.raises(AmpioProtocolError, match="url"):
+        parse_params_devices(json.loads(_rows(_params_row(url=7))))
 
 
 @pytest.mark.parametrize(
-    ("row", "url", "fmt"),
+    ("raw", "expected"),
     [
-        ({"url": "V", "format": "%.1f V"}, "V", "%.1f V"),
-        ({"url": "", "format": "%.3f A"}, "", "%.3f A"),  # the live shape
-        ({"url": " ", "format": ""}, " ", ""),  # "without unit" sentinel
-        ({"url": "V", "format": None}, "V", ""),  # a null format reads as empty
+        (17, 17),  # bit0 + bit4 (the live phantom shape)
+        ("16", 16),  # string coerced
+        (137438953473, 137438953473),  # >32-bit matter-exposed value
     ],
 )
-def test_parse_details_url_and_format(row: dict, url: str, fmt: str) -> None:
-    items = parse_details(json.loads(_rows(_admin_row(**row))))
-    assert items[0].url == url
-    assert items[0].shared.format == fmt
+def test_parse_params_devices_params(raw: object, expected: int) -> None:
+    table = parse_params_devices(json.loads(_rows(_params_row(params=raw))))
+    assert table[5].params == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (500, 500),  # the raw 10 ms ticks
+        ("500", 500),  # string coerced
+        (0, 0),  # configured off
+    ],
+)
+def test_parse_params_devices_czas(raw: object, expected: int) -> None:
+    table = parse_params_devices(json.loads(_rows(_params_row(czas=raw))))
+    assert table[5].czas == expected
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("V", "V"),
+        ("", ""),  # the live shape: no unit configured
+        (" ", " "),  # Designer's "without unit" sentinel
+    ],
+)
+def test_parse_params_devices_url(url: str, expected: str) -> None:
+    table = parse_params_devices(json.loads(_rows(_params_row(url=url))))
+    assert table[5].url == expected
 
 
 @pytest.mark.parametrize(
     "parser",
     [
-        parse_details,
         parse_app_sync_devices,
         parse_devices,
         parse_params_devices,
@@ -836,14 +813,22 @@ def test_diagnostics_route_malformed(topic: str, payload: str) -> None:
 
 
 def test_endpoint_reply_route_carries_raw_payload() -> None:
-    reply = _route("ampio/fromDB/u/config/devicesDetails", "{corrupt")
+    reply = _route("ampio/fromDB/u/config/devices", "{corrupt")
     assert isinstance(reply, EndpointReply)
-    assert reply.endpoint.name == "details"
+    assert reply.endpoint.name == "devices"
     assert reply.payload == "{corrupt"  # unparsed: the store's handlers decide
 
 
 def test_route_is_user_scoped_for_endpoint_replies() -> None:
-    assert _route("ampio/fromDB/other/config/devicesDetails", "{}") is None
+    assert _route("ampio/fromDB/other/config/devices", "{}") is None
+
+
+def test_the_object_catalogue_pair_serves_both_tiers() -> None:
+    assert "details" not in ENDPOINT_BY_NAME
+    assert ENDPOINT_BY_NAME["data_devices"].tier is None
+    assert ENDPOINT_BY_NAME["params_devices"].tier is None
+    assert ENDPOINT_BY_NAME["devices"].tier is AccessTier.ADMIN
+    assert ENDPOINT_BY_NAME["locations"].tier is AccessTier.ADMIN
 
 
 @pytest.mark.parametrize("keyword", ["devices", "params_devices"])

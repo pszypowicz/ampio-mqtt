@@ -12,11 +12,11 @@ from collections.abc import Iterator
 import aiomqtt
 import pytest
 from conftest import (
-    ADMIN_DETAILS_TOPIC,
+    ADMIN_DATA_DEVICES_TOPIC,
     ADMIN_DEVICES_TOPIC,
+    ADMIN_PARAMS_DEVICES_TOPIC,
     ADMIN_USER,
     DATA_DEVICES_TOPIC,
-    DETAILS_TOPIC,
     DEVICES_TOPIC,
     INFO_TOPIC,
     PARAMS_DEVICES_TOPIC,
@@ -28,6 +28,7 @@ from conftest import (
     feed,
     info,
     make_client,
+    params_of,
     params_table,
     rows,
     snapshot,
@@ -144,7 +145,6 @@ def test_the_module_catalogue_refuses_a_standard_account() -> None:
 
 
 ADMIN_DEVICES = f"ampio/fromDB/{ADMIN_USER}/config/devices"
-ADMIN_DETAILS = f"ampio/fromDB/{ADMIN_USER}/config/devicesDetails"
 
 
 def _module_row(mid: int, mac: int | None, name: str = "MREL") -> dict:
@@ -171,7 +171,8 @@ def _object_row(oid: int, dev: int | None, mac_hex: str | None) -> dict:
 def test_module_for_returns_the_mac_agreeing_row() -> None:
     client = _admin_client()
     feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
-    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, "cafe")))
+    feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, 7, "cafe")))
+    feed(client, ADMIN_DATA_DEVICES_TOPIC, details(_object_row(10, 7, "cafe")))
     module = client.module_for(client.objects[10])
     assert module is not None
     assert module.id == 7
@@ -183,7 +184,8 @@ def test_module_for_rejects_a_mac_disagreement() -> None:
     the wrong module."""
     client = _admin_client()
     feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
-    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, "beef")))
+    feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, 7, "beef")))
+    feed(client, ADMIN_DATA_DEVICES_TOPIC, details(_object_row(10, 7, "beef")))
     assert client.module_for(client.objects[10]) is None
 
 
@@ -195,7 +197,8 @@ def test_module_for_joins_a_leafless_object_without_the_mac_gate(
     no leaf mac to gate on, so the id_urzadzenia join stands as is."""
     client = _admin_client()
     feed(client, ADMIN_DEVICES, devices(_module_row(7, module_mac)))
-    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, None)))
+    feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, 7, None)))
+    feed(client, ADMIN_DATA_DEVICES_TOPIC, details(_object_row(10, 7, None)))
     module = client.module_for(client.objects[10])
     assert module is not None
     assert module.id == 7
@@ -206,7 +209,12 @@ def test_module_for_without_a_join_key() -> None:
     feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
     feed(
         client,
-        ADMIN_DETAILS,
+        ADMIN_PARAMS_DEVICES_TOPIC,
+        params_of(_object_row(10, None, "cafe"), _object_row(11, 99, "cafe")),
+    )
+    feed(
+        client,
+        ADMIN_DATA_DEVICES_TOPIC,
         details(_object_row(10, None, "cafe"), _object_row(11, 99, "cafe")),
     )
     # No id_urzadzenia, and an id_urzadzenia no row answers.
@@ -223,7 +231,8 @@ def test_module_for_resolves_colliding_macs_by_the_join() -> None:
         ADMIN_DEVICES,
         devices(_module_row(7, 0xCAFE, "FIRST"), _module_row(8, 0xCAFE, "SECOND")),
     )
-    feed(client, ADMIN_DETAILS, details(_object_row(10, 8, "cafe")))
+    feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, 8, "cafe")))
+    feed(client, ADMIN_DATA_DEVICES_TOPIC, details(_object_row(10, 8, "cafe")))
     module = client.module_for(client.objects[10])
     assert module is not None
     assert (module.id, module.nazwa_urzadzenia) == (8, "SECOND")
@@ -256,11 +265,8 @@ def test_read_surface_is_immutable() -> None:
     """Neither the mappings nor the frozen instances in them can be mutated
     from consumer code - the promise core builds its entity layer on."""
     client = _admin_client()
-    feed(
-        client,
-        f"ampio/fromDB/{ADMIN_USER}/config/devicesDetails",
-        details(_flaga(41, 3)),
-    )
+    feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_flaga(41, 3)))
+    feed(client, ADMIN_DATA_DEVICES_TOPIC, details(_flaga(41, 3)))
     feed(
         client,
         f"ampio/fromDB/{ADMIN_USER}/config/devices",
@@ -561,17 +567,22 @@ def test_last_payloads_retained_for_each_handler() -> None:
     """Each served endpoint retains a summary of its last reply."""
     admin = AmpioClient("host", username="admin")
     devices_payload = devices({"id": 1, "mac": 1, "typ_urzadzenia": 10})
-    details_payload = details(
+    admin_details_payload = details(
         {"id": 5, "id_urzadzenia": 1, "typ_komponentu": "temp", "interpretacja": 1}
     )
+    admin_params_payload = params_table({"id": 5, "params": 17})
     feed(admin, "ampio/fromDB/admin/config/devices", devices_payload)
-    feed(admin, "ampio/fromDB/admin/config/devicesDetails", details_payload)
+    feed(admin, "ampio/fromDB/admin/data/devices", admin_details_payload)
+    feed(admin, "ampio/fromDB/admin/data/params_devices", admin_params_payload)
     assert admin.diagnostics_snapshot()["last_payloads"]["devices"] == json.dumps(
         {"row_count": 1}
     )
-    assert admin.diagnostics_snapshot()["last_payloads"]["details"] == json.dumps(
+    assert admin.diagnostics_snapshot()["last_payloads"]["data_devices"] == json.dumps(
         {"row_count": 1}
     )
+    assert admin.diagnostics_snapshot()["last_payloads"][
+        "params_devices"
+    ] == json.dumps({"row_count": 1})
 
     client = _client()
     info_payload = info(mac=12345, userId=4, serverVersion="2025")
@@ -716,7 +727,6 @@ async def test_discovery_stays_incomplete_without_server_identity(
     assert client.server_info is None
 
     feed(client, INFO_TOPIC, info(mac=555, userId=4, serverVersion="1865"))
-    feed(client, DETAILS_TOPIC, details())
     feed(client, DEVICES_TOPIC, devices())
     assert await client.wait_for_initial_discovery(timeout=1.0) is True
     assert client.server_info.server_key == "555"
@@ -823,7 +833,8 @@ def test_diagnostics_snapshot_module_rows_mirror_liveness() -> None:
         ADMIN_DEVICES,
         devices(_module_row(9, 0xBEEF), _module_row(7, 0xCAFE)),
     )
-    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, "cafe")))
+    feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, 7, "cafe")))
+    feed(client, ADMIN_DATA_DEVICES_TOPIC, details(_object_row(10, 7, "cafe")))
     rows = client.diagnostics_snapshot()["modules"]
     assert [row["id"] for row in rows] == [7, 9]
     assert rows[0]["last_seen"] is None
@@ -863,7 +874,28 @@ def test_presence_rows_are_client_attributes_not_objects(admin_client) -> None:
     feed(client, ADMIN_DEVICES_TOPIC, devices({"id": 7, "mac": 0xCAFE}))
     feed(
         client,
-        ADMIN_DETAILS_TOPIC,
+        ADMIN_PARAMS_DEVICES_TOPIC,
+        params_of(
+            {
+                "id": 60,
+                "id_urzadzenia": 7,
+                "typ_komponentu": "detekcja",
+                "funkcja": 1,
+                "opis_menu": "Detection",
+            },
+            {
+                "id": 61,
+                "id_urzadzenia": 7,
+                "typ_komponentu": "symulacja",
+                "funkcja": 1,
+                "opis_menu": "Simulation",
+                "czas": 1,
+            },
+        ),
+    )
+    feed(
+        client,
+        ADMIN_DATA_DEVICES_TOPIC,
         details(
             {
                 "id": 60,

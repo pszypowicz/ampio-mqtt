@@ -8,13 +8,15 @@ import json
 
 import pytest
 from conftest import (
-    ADMIN_DETAILS_TOPIC,
+    ADMIN_DATA_DEVICES_TOPIC,
     ADMIN_DEVICES_TOPIC,
+    ADMIN_PARAMS_DEVICES_TOPIC,
     ADMIN_USER,
     FakeBroker,
     details,
     devices,
     feed,
+    params_of,
 )
 
 from ampio_mqtt import (
@@ -422,7 +424,14 @@ async def _admin_client_with_catalogue() -> tuple[AmpioClient, FakeBroker]:
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     feed(
         client,
-        ADMIN_DETAILS_TOPIC,
+        ADMIN_PARAMS_DEVICES_TOPIC,
+        params_of(
+            {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
+        ),
+    )
+    feed(
+        client,
+        ADMIN_DATA_DEVICES_TOPIC,
         details({"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}),
     )
     feed(client, ADMIN_DEVICES_TOPIC, devices({"id": 16, "mac": 0xCB89}))
@@ -656,7 +665,15 @@ async def test_resolve_records_joins_by_the_override_mac_the_reply_carries() -> 
     try:
         feed(
             client,
-            ADMIN_DETAILS_TOPIC,
+            ADMIN_PARAMS_DEVICES_TOPIC,
+            params_of(
+                {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"},
+                {"id": 113, "typ_komponentu": "przekaznik", "leafId": "0_1_257_2_0"},
+            ),
+        )
+        feed(
+            client,
+            ADMIN_DATA_DEVICES_TOPIC,
             details(
                 {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"},
                 {"id": 113, "typ_komponentu": "przekaznik", "leafId": "0_1_257_2_0"},
@@ -702,7 +719,20 @@ async def test_resolve_records_joins_a_leafless_object_through_the_catalogue() -
     try:
         feed(
             client,
-            ADMIN_DETAILS_TOPIC,
+            ADMIN_PARAMS_DEVICES_TOPIC,
+            params_of(
+                {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"},
+                {
+                    "id": 65,
+                    "typ_komponentu": "przekaznik",
+                    "id_urzadzenia": 16,
+                    "funkcja": 2,
+                },
+            ),
+        )
+        feed(
+            client,
+            ADMIN_DATA_DEVICES_TOPIC,
             details(
                 {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"},
                 {
