@@ -31,7 +31,7 @@ from conftest import (
     snapshot,
 )
 
-from ampio_mqtt import _protocol
+from ampio_mqtt import PresenceChanged, PresenceDetection, PresenceSimulation, _protocol
 from ampio_mqtt._protocol import (
     ENDPOINTS,
     EndpointReply,
@@ -1287,36 +1287,6 @@ def test_mapped_input_without_raw_uses_per_object_fallback() -> None:
     assert _updated(applied) == [obj]
 
 
-def test_detekcja_takes_no_digital_input_channel() -> None:
-    """A raw `i/<funkcja>` edge belongs to the physical input on that channel,
-    not to the detection object that shares its module and channel number."""
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    det = {
-        "id": 60,
-        "id_urzadzenia": 7,
-        "typ_komponentu": "detekcja",
-        "interpretacja": 1,
-        "funkcja": 1,
-        "opis_menu": "Detection",
-    }
-    wej = {
-        "id": 62,
-        "id_urzadzenia": 7,
-        "typ_komponentu": "wej",
-        "interpretacja": 1,
-        "funkcja": 1,
-        "opis_menu": "Button",
-    }
-    _apply(store, DETAILS_TOPIC, details(wej, det))
-    assert store.objects[60].kind is not None
-    assert store.objects[60].kind.device_class == "presence"
-    applied = _apply(store, "ampio/from/CAFE/state/i/1", "1")
-    assert store.objects[62].state == "1"
-    assert store.objects[60].state is None
-    assert _updated(applied) == [store.objects[62]]
-
-
 def test_wej_routes_via_digital_input_prefix() -> None:
     """A physical-input object (#117) bridges on `i/<funkcja>`."""
     store = _store()
@@ -1457,21 +1427,125 @@ def test_panel_settings_survive_refresh_and_eviction() -> None:
     assert applied.events == []
 
 
-def test_symulacja_classifies_but_is_not_bridged() -> None:
+# --- the two presence rows ---------------------------------------------------
+
+_DET = {
+    "id": 60,
+    "id_urzadzenia": 7,
+    "typ_komponentu": "detekcja",
+    "interpretacja": 1,
+    "funkcja": 1,
+    "opis_menu": "Detection",
+}
+_SIM = {
+    "id": 61,
+    "id_urzadzenia": 7,
+    "typ_komponentu": "symulacja",
+    "interpretacja": 1,
+    "funkcja": 1,
+    "opis_menu": "Simulation",
+    "czas": 1,
+}
+_WEJ = {
+    "id": 62,
+    "id_urzadzenia": 7,
+    "typ_komponentu": "wej",
+    "interpretacja": 1,
+    "funkcja": 1,
+    "opis_menu": "Button",
+}
+
+
+def _presence_events(applied: Applied) -> list[PresenceChanged]:
+    return [e for e in applied.events if isinstance(e, PresenceChanged)]
+
+
+def test_presence_rows_leave_the_object_catalogue_on_the_admin_tier() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    sym = {
-        "id": 61,
-        "id_urzadzenia": 7,
-        "typ_komponentu": "symulacja",
-        "interpretacja": 1,
-        "funkcja": 1,
-        "opis_menu": "Sim",
-    }
-    _apply(store, DETAILS_TOPIC, details(sym))
-    assert isinstance(store.objects[61].kind, InputKind)
+    applied = _apply(store, DETAILS_TOPIC, details(_WEJ, _DET, _SIM))
+    assert set(store.objects) == {62}
+    assert store.presence_detection == PresenceDetection(
+        id=60, name="Detection", home_status=None
+    )
+    assert store.presence_simulation == PresenceSimulation(
+        id=61, name="Simulation", active=True
+    )
+    assert _presence_events(applied) == [
+        PresenceChanged(
+            detection=store.presence_detection,
+            simulation=store.presence_simulation,
+        )
+    ]
+
+
+def test_presence_rows_leave_the_object_catalogue_on_the_app_sync_tier() -> None:
+    store = _app_store()
+    _apply(store, DATA_DEVICES_TOPIC, details(_WEJ, _DET, _SIM))
+    _apply(
+        store,
+        PARAMS_DEVICES_TOPIC,
+        params_table(
+            {"id": 60, "params": 1, "czas": 0},
+            {"id": 61, "params": 1, "czas": 0},
+            {"id": 62, "params": 0, "czas": 0},
+        ),
+    )
+    assert set(store.objects) == {62}
+    assert store.presence_detection is not None
+    assert store.presence_detection.id == 60
+    assert store.presence_simulation == PresenceSimulation(
+        id=61, name="Simulation", active=False
+    )
+
+
+def test_hidden_presence_row_reads_none() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_DET, {**_SIM, "params": 16}))
+    assert store.presence_detection is not None
+    assert store.presence_simulation is None
+
+
+def test_raw_input_edge_never_reaches_the_presence_detection_row() -> None:
+    """The detection row shares the M-SERV's module and channel 1 with a
+    physical input, and the raw edge belongs to the input alone."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_WEJ, _DET))
+    applied = _apply(store, "ampio/from/CAFE/state/i/1", "1")
+    assert store.objects[62].state == "1"
+    assert store.presence_detection is not None
+    assert store.presence_detection.home_status is None
+    assert _presence_events(applied) == []
+
+
+def test_repeated_catalogue_emits_no_presence_change() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_DET, _SIM))
+    applied = _apply(store, DETAILS_TOPIC, details(_DET, _SIM))
+    assert _presence_events(applied) == []
+
+
+def test_presence_rows_evict_when_the_catalogue_stops_listing_them() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_DET, _SIM))
+    applied = _apply(store, DETAILS_TOPIC, details(_WEJ))
+    assert store.presence_detection is None
+    assert store.presence_simulation is None
+    assert _presence_events(applied) == [
+        PresenceChanged(detection=None, simulation=None)
+    ]
+
+
+def test_presence_rows_never_enter_the_raw_index() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_DET, _SIM))
     applied = _apply(store, "ampio/from/CAFE/state/f/1", "1")
-    assert store.objects[61].state is None and _updated(applied) == []
+    assert applied.events == []
 
 
 # --- the app-sync data surface (standard accounts) --------------------------

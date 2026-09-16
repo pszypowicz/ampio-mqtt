@@ -23,9 +23,11 @@ from .events import (
     ObjectAdded,
     ObjectRemoved,
     ObjectUpdated,
+    PresenceChanged,
     StoreEvent,
 )
 from .models import (
+    HIDDEN_FLAG,
     AccessTier,
     AmpioModule,
     AmpioObject,
@@ -34,6 +36,8 @@ from .models import (
     DesignerRecord,
     ModuleRecord,
     PanelSettings,
+    PresenceDetection,
+    PresenceSimulation,
     leaf_mac,
 )
 
@@ -65,6 +69,15 @@ class AmpioStore:
         self.objects: dict[int, AmpioObject] = {}
         self.modules: dict[int, AmpioModule] = {}
         self.server_info: AmpioServerInfo | None = None
+        # The two rows the M-SERV creates itself, routed here instead of
+        # `objects`. None until the catalogue lists the row, and None while
+        # the row carries the hidden bit. docs/presence.md.
+        self.presence_detection: PresenceDetection | None = None
+        self.presence_simulation: PresenceSimulation | None = None
+        # The catalogue rows behind the two attributes, by object id, so a
+        # params push can rebuild them and a state push can find the
+        # detection row.
+        self._presence_rows: dict[int, _protocol.ObjectMetadata] = {}
         # Override macs shared by two or more catalogue rows. The raw
         # routing tables are keyed by mac, so edges and diagnostics on a
         # colliding mac cannot be attributed reliably; the collision is
@@ -362,6 +375,8 @@ class AmpioStore:
         one whose columns have not arrived yet, which leaves the object
         reading the unset values until they do.
         """
+        presence = [m for m in served if m.typ_komponentu in _protocol.PRESENCE_TYPES]
+        served = [m for m in served if m.typ_komponentu not in _protocol.PRESENCE_TYPES]
         # One reply is the whole catalogue this tier holds, so its leafed
         # rows are every sibling a leafless row can learn its module from.
         sibling_macs: dict[int, int] = {}
@@ -374,6 +389,7 @@ class AmpioStore:
             touched |= self._merge_metadata(
                 meta, config.get(meta.id, {}), sibling_macs, applied
             )
+        self._merge_presence(presence, config, applied)
         evicted = self._evict_missing_objects({meta.id for meta in served}, applied)
         if touched or evicted:
             self._rebuild_indexes(applied)
@@ -405,6 +421,61 @@ class AmpioStore:
             self._guarded.discard(oid)
             applied.events.append(ObjectRemoved(obj))
         return True
+
+    def _merge_presence(
+        self,
+        rows: list[_protocol.ObjectMetadata],
+        config: Mapping[int, Mapping[str, Any]],
+        applied: Applied,
+    ) -> None:
+        """Rebuild the two presence attributes from their catalogue rows.
+
+        A row the reply stopped listing reads None, and so does a row that
+        carries the hidden bit. The detection code survives a rebuild,
+        because it comes from the state stream and not from the row.
+        """
+        self._presence_rows = {meta.id: meta for meta in rows}
+        detection: PresenceDetection | None = None
+        simulation: PresenceSimulation | None = None
+        for meta in rows:
+            cfg = config.get(meta.id, {})
+            if cfg.get("params", 0) & HIDDEN_FLAG:
+                continue
+            if meta.typ_komponentu == _protocol.DETECTION_TYPE:
+                current = self.presence_detection
+                kept = (
+                    current.home_status
+                    if current is not None and current.id == meta.id
+                    else None
+                )
+                detection = PresenceDetection(
+                    id=meta.id, name=meta.opis_menu, home_status=kept
+                )
+            else:
+                simulation = PresenceSimulation(
+                    id=meta.id,
+                    name=meta.opis_menu,
+                    active=cfg.get("czas", 0) == 1,
+                )
+        self._set_presence(detection, simulation, applied)
+
+    def _set_presence(
+        self,
+        detection: PresenceDetection | None,
+        simulation: PresenceSimulation | None,
+        applied: Applied,
+    ) -> None:
+        """Store both rows and report one event when either differs."""
+        if (
+            detection == self.presence_detection
+            and simulation == self.presence_simulation
+        ):
+            return
+        self.presence_detection = detection
+        self.presence_simulation = simulation
+        applied.events.append(
+            PresenceChanged(detection=detection, simulation=simulation)
+        )
 
     def _merge_metadata(
         self,
