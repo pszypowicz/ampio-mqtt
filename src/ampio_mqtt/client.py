@@ -517,8 +517,8 @@ class AmpioClient:
         reserved ``admin`` login alone, so this raises ``RuntimeError`` on a
         standard account rather than reading as an install with no modules.
         A consumer that must group entities by module on either tier reads
-        :pyattr:`AmpioObject.module_mac`, which the catalogue carries on
-        both tiers (docs/identity.md).
+        ``AmpioObject.address.mac``, which the catalogue carries on both
+        tiers (docs/identity.md).
         """
         self._require_module_catalogue("modules")
         return MappingProxyType(self._store.modules)

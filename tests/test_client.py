@@ -128,7 +128,7 @@ def test_mserv_reads_none_until_both_replies_land() -> None:
 def test_the_module_catalogue_refuses_a_standard_account() -> None:
     """The M-SERV serves the module list to the admin login alone, so a
     standard account reading it is a consumer fault, not an empty install.
-    Tier-independent grouping reads `AmpioObject.module_mac`."""
+    Tier-independent grouping reads `AmpioObject.address.mac`."""
     client = _client()
     catalogue(client, _object_row(10, "cafe"))
     with pytest.raises(RuntimeError, match="admin"):

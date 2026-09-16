@@ -59,7 +59,9 @@ class ObjectMetadata:
     typ_komponentu: str
     interpretacja: int
     funkcja: int  # physical channel index within the module
-    leaf_id: str  # `leafId`; empty for system objects, and after a Matter uncheck
+    # leafId, raw; empty for a system row and after a Matter check-then-uncheck,
+    # the door decides
+    leaf_id: str
     opis_menu: str | None  # empty reads None: the object carries no name
     # `type` column: the Matter device type ID assigned in Designer, carried
     # as a decimal string on the wire ("256" = 0x0100 On/Off Light). Empty or
@@ -849,21 +851,21 @@ def resolve_cover_parameters(
     one module.
     """
     channels_by_mac: dict[int, tuple[CoverParameters, ...]] = {}
-    for module_mac, blob in params_by_mac.items():
-        if module_mac in colliding_macs:
+    for mac, blob in params_by_mac.items():
+        if mac in colliding_macs:
             continue
-        typ, pcb = hardware_by_mac.get(module_mac, (None, None))
+        typ, pcb = hardware_by_mac.get(mac, (None, None))
         if typ is None or pcb is None:
             continue
         layout = COVER_PARAMS_LAYOUTS.get((typ, pcb))
         if layout is None:
             continue
-        advertised = capabilities_by_mac.get(module_mac, {}).get(ModuleFunction.ROLLER)
+        advertised = capabilities_by_mac.get(mac, {}).get(ModuleFunction.ROLLER)
         if advertised is not None and advertised != layout.channels:
             continue
         channels = parse_cover_parameters(blob, layout)
         if channels is not None:
-            channels_by_mac[module_mac] = channels
+            channels_by_mac[mac] = channels
 
     out: dict[int, CoverParameters] = {}
     for obj in objects.values():
@@ -1422,7 +1424,7 @@ def raw_output_payload(function: int, value: int, channel: int) -> str:
 
     ``function`` is the leaf class's first byte
     (:data:`RAW_OUTPUT_FUNCTION_BY_SF`). ``channel`` is the 0-based output
-    index - :pyattr:`AmpioObject.leaf_io_no`, one below the 1-based raw
+    index - ``AmpioObject.address.channel``, one below the 1-based raw
     state channel.
     """
     return f"{function:02x}f9{value:02x}{channel:02x}"

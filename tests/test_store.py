@@ -1902,7 +1902,7 @@ def test_data_devices_populate_and_classify() -> None:
     assert obj.opis_menu == "Air quality"
     assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
     assert obj.funkcja == 5
-    assert obj.leaf_id == "0_cb9b_74_0_1"
+    assert obj.address == ModuleAddress(mac=0xCB9B, channel=1, sf_id=74, sub_sf_id=0)
 
 
 def test_the_config_table_before_the_catalogue_applies_at_the_merge() -> None:

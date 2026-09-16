@@ -80,13 +80,14 @@ class ModuleFunction(IntEnum):
 # Bit flags inside the `params` integer (`obiekty.params`); the names come
 # from the Designer web bundle's own enum, and the semantics of the bits
 # read here are corroborated by the M-SERV's Matter bridge and by live
-# probing (docs/visibility.md). Bit 4 is the hidden/stub marker (see
-# `AmpioObject.hidden`); bit 6 is the Designer read-only checkbox (see
-# `AmpioObject.read_only`); bit 37 is the per-object Matter opt-in, not a
-# visibility signal, and nothing here reads it. Bit 15 is the generic
-# `OPTION1` slot, whose meaning depends on the component type - Designer
-# labels it "Bell object" on `przekaznik` and `flaga` only, so
-# `AmpioObject.bell` gates on the type before reading it.
+# probing (docs/visibility.md). Bit 4 is the hidden marker: the store's door
+# drops a row that carries it, so no admitted object is ever hidden; bit 6
+# is the Designer read-only checkbox (see `AmpioObject.read_only`); bit 37
+# is the per-object Matter opt-in, not a visibility signal, and nothing
+# here reads it. Bit 15 is the generic `OPTION1` slot, whose meaning
+# depends on the component type - Designer labels it "Bell object" on
+# `przekaznik` and `flaga` only, so `AmpioObject.bell` gates on the type
+# before reading it.
 HIDDEN_FLAG = 1 << 4
 _READ_ONLY_FLAG = 1 << 6
 _BELL_FLAG = 1 << 15
@@ -94,11 +95,6 @@ _BELL_FLAG = 1 << 15
 # "Bell object" checkbox. On every other type the bit means something
 # else (slider layout, lamella step, ...), so it must not read as bell.
 _BELL_TYPES = frozenset({"przekaznik", "flaga"})
-
-# The `leafId` shape: `0_<macHex>_<sfId>_<subSfId>_<ioNo>` - a leading
-# literal `0`, then the four fields the regex captures (docs/identity.md).
-# Strict on purpose - a half-parsed mac that is wrong is worse than None.
-_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_([^_]+)_([^_]+)_([^_]+)")
 
 # One printf conversion in Designer's "String format" column, or the `%%`
 # escape (matched first so it never reads as a conversion). Designer's own
@@ -118,14 +114,8 @@ def _last_conversion(fmt: str) -> re.Match[str] | None:
     return last
 
 
-def leaf_mac(leaf_id: str) -> int | None:
-    """The override mac a `leafId` embeds, or None for an empty or odd shape."""
-    match = _LEAF_ID_RE.fullmatch(leaf_id)
-    return int(match.group(1), 16) if match is not None else None
-
-
-# The M-SERV's Designer override mac: its objects' leafId embeds this value
-# (not the factory mac_global), and its own module row reports it as
+# The M-SERV's Designer override mac: its objects' address embeds this
+# value (not the factory mac_global), and its own module row reports it as
 # `AmpioModule.mac`. The one place the rule lives - consumers read
 # `AmpioObject.is_server_owned` instead of comparing macs themselves.
 MSERV_MAC = 1
@@ -365,11 +355,7 @@ class AmpioObject:
     # identity for the row: `object_key` is. docs/identity.md.
     leaf_key: str
     opis_menu: str | None = None
-    # `leafId`, identical on both discovery surfaces. Designer clears it when
-    # an object's Matter box is unchecked. The physical-output key (`leaf_key`)
-    # and the parse source for `module_mac` - docs/identity.md.
-    leaf_id: str = ""
-    # `params` bitfield (Designer config flags; see `hidden`/`visible`).
+    # `params` bitfield (Designer config flags; see `read_only`/`bell`).
     # Defaults to 0 so a payload without the column reads "nothing hidden".
     params: int = 0
     # Matter device type ID from the Designer "Description in device" tag
@@ -451,7 +437,7 @@ class AmpioObject:
         object.__setattr__(
             self,
             "kind",
-            classify(self.typ_komponentu, self.interpretacja, self.sub_sf_id),
+            classify(self.typ_komponentu, self.interpretacja, self.address.sub_sf_id),
         )
 
     @property
@@ -578,16 +564,6 @@ class AmpioObject:
         return pos if 0 <= pos <= 100 else None
 
     @property
-    def hidden(self) -> bool:
-        """Whether the M-SERV flags this object as hidden / a stub (``params`` bit 4).
-
-        The authoritative "do not surface" marker, honored by the
-        M-SERV's own Matter bridge; it catches the phantom rows that
-        duplicate a real Designer channel. See docs/visibility.md.
-        """
-        return bool(self.params & HIDDEN_FLAG)
-
-    @property
     def read_only(self) -> bool:
         """Whether Designer marks this object read-only (``params`` bit 6).
 
@@ -690,78 +666,14 @@ class AmpioObject:
         return f"obj_{self.id}"
 
     @property
-    def module_mac(self) -> int | None:
-        """The owning module's effective bus mac, parsed from ``leaf_id``.
-
-        The replacement-stable ``AmpioModule.mac``, served identically on
-        both account tiers - the module key a consumer can group entities
-        by even on a restricted account, which never receives the module
-        catalogue (docs/identity.md). None when ``leaf_id`` is empty or,
-        on no observed install, has an unexpected shape.
-        """
-        return leaf_mac(self.leaf_id)
-
-    def _leaf_segment(self, group: int) -> int | None:
-        """One numeric `leaf_id` segment, or None when it does not parse."""
-        match = _LEAF_ID_RE.fullmatch(self.leaf_id)
-        if match is None:
-            return None
-        try:
-            return int(match.group(group))
-        except ValueError:
-            return None
-
-    @property
-    def sf_id(self) -> int | None:
-        """The special-function id, the third ``leaf_id`` segment.
-
-        The Designer's own name for the per-leaf function class. None when
-        ``leaf_id`` is empty, malformed, or the segment is not a number.
-        See docs/identity.md.
-        """
-        return self._leaf_segment(2)
-
-    @property
-    def sub_sf_id(self) -> int | None:
-        """The sub-function id, the fourth ``leaf_id`` segment.
-
-        Its meaning is scoped to :pyattr:`sf_id`. None when ``leaf_id`` is
-        empty, malformed, or the segment is not a number. See
-        docs/identity.md.
-        """
-        return self._leaf_segment(3)
-
-    @property
-    def leaf_io_no(self) -> int | None:
-        """The I/O index within the module's description record.
-
-        The last ``leaf_id`` segment, and the join key that pairs this
-        object with its :class:`OutputDescription` entry. It covers inputs
-        as well as outputs. None when ``leaf_id`` is empty, malformed, or
-        the segment is not a number.
-        """
-        return self._leaf_segment(4)
-
-    @property
     def is_server_owned(self) -> bool:
         """Whether this object belongs to the M-SERV itself.
 
-        True when ``leaf_id`` embeds the M-SERV's override mac; works on
-        both account tiers, so a consumer can anchor server-owned objects
-        to its hub device without the module catalogue. False when
-        ``leaf_id`` is empty.
+        The address embeds the M-SERV's override mac on both account
+        tiers, so a consumer can anchor server-owned objects to its hub
+        device without the module catalogue.
         """
-        return self.module_mac == MSERV_MAC
-
-    @property
-    def visible(self) -> bool:
-        """Whether the M-SERV means to surface this object: ``not hidden``.
-
-        The ``params`` DELETED bit is the one wire-side marker. ``leaf_id``
-        says nothing here: Designer clears it when an object's Matter box
-        is unchecked, and the row stays a real object. See docs/visibility.md.
-        """
-        return not self.hidden
+        return self.address.mac == MSERV_MAC
 
 
 @dataclass(slots=True, frozen=True)

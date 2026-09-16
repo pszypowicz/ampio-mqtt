@@ -817,7 +817,7 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
 
 
 async def test_panel_output_switch_verbs_ride_the_raw_frame() -> None:
-    """The frame channel is the 0-based leaf_io_no, one below funkcja."""
+    """The frame channel is the 0-based address.channel, one below funkcja."""
     client, broker = await _admin_with_panel_output()
     try:
         await client.turn_on(90)

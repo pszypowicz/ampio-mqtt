@@ -1100,9 +1100,10 @@ def _home_status(state: str) -> int:
 
 # The object fields both catalogue surfaces own, derived from the shared
 # row's own shape so a new column is added in one place and flows through
-# the merge. `id` keys the merge, so it is not metadata. The Designer
-# config columns are not here: each tier serves them from its own surface,
-# and the merge takes them as `config`.
+# the merge. `id` keys the merge, so it is not metadata. `leaf_id` is the
+# door's input: it reaches the object as `address` and `leaf_key`, not as
+# a field of its own. The Designer config columns are not here: each tier
+# serves them from its own surface, and the merge takes them as `config`.
 _METADATA_FIELDS = tuple(
-    f.name for f in fields(_protocol.ObjectMetadata) if f.name != "id"
+    f.name for f in fields(_protocol.ObjectMetadata) if f.name not in ("id", "leaf_id")
 )

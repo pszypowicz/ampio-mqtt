@@ -126,23 +126,22 @@ class OutputKind:
 
 
 # The two halves of an alarm partition, keyed by the leaf sub-function
-# (`AmpioObject.sub_sf_id`). The catalogue row cannot tell them apart: both
-# carry the same `typ_komponentu`, `funkcja` and `interpretacja`, and only
-# the leaf's fourth segment differs. The Designer names the special function
-# after the alarm panel family, and marks both halves read-only. Neither
-# takes a device class: "alarmed" also reads 1 through the panel's exit
-# delay, so it is not a safety indicator on its own (docs/commands.md).
+# (`AmpioObject.address.sub_sf_id`). The catalogue row cannot tell them
+# apart: both carry the same `typ_komponentu`, `funkcja` and
+# `interpretacja`, and only the leaf's sub-function differs. The Designer
+# names the special function after the alarm panel family, and marks both
+# halves read-only. Neither takes a device class: "alarmed" also reads 1
+# through the panel's exit delay, so it is not a safety indicator on its
+# own (docs/commands.md).
 _ALARM_BY_SUB_SF: dict[int, InputKind] = {
     3: InputKind("alarm_armed", "Alarm armed"),
     4: InputKind("alarm_alarmed", "Alarm triggered"),
 }
 
-# The alarm family when the leaf names no half. `leafId` is not durable,
-# because Designer clears it on any object whose Matter box is unchecked
-# (docs/identity.md), and `sub_sf_id` then reads None. Such an object still
-# publishes the same boolean, so `typ_komponentu` alone holds the family and
-# the leaf only refines the name. No device class, for the reason the two
-# halves take none.
+# The alarm family when the sub-function names neither half.
+# `typ_komponentu` holds the family and the leaf's sub-function refines the
+# name, so an unlisted sub-function keeps the base kind. No device class,
+# for the reason the two halves take none.
 _BASE_ALARM = InputKind("alarm", "Alarm")
 
 # lin_wej (analog input) measurement kind, keyed by `interpretacja`.
@@ -318,7 +317,7 @@ SENSOR_KIND_KEY_PREFIXES: tuple[str, ...] = ("analog_", "value_")
 def classify(
     typ_komponentu: str | None,
     interpretacja: int | None,
-    sub_sf_id: int | None = None,
+    sub_sf_id: int = 0,
 ) -> ObjectKind:
     """Classify a DB object into the one kind it is.
 
@@ -337,10 +336,6 @@ def classify(
         case _Selector.NUMERIC:
             return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
         case _Selector.ALARM:
-            # A leafless row carries no sub-function, and the guard narrows
-            # the type for the int-keyed lookup below.
-            if sub_sf_id is None:
-                return _BASE_ALARM
             return _ALARM_BY_SUB_SF.get(sub_sf_id, _BASE_ALARM)
         case kind:
             return kind
