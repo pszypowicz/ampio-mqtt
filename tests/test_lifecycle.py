@@ -505,7 +505,6 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
             details(
                 {
                     "id": 41,
-                    "id_urzadzenia": 17,
                     "typ_komponentu": "temp",
                     "interpretacja": 1,
                     "opis_menu": "Salon",
@@ -597,7 +596,6 @@ async def test_restricted_account_completes_via_data_surface_fallback() -> None:
             details(
                 {
                     "id": 24,
-                    "id_urzadzenia": 20,
                     "typ_komponentu": "lin_wej",
                     "interpretacja": 7,
                     "funkcja": 5,
@@ -933,7 +931,6 @@ async def test_the_raw_state_replay_survives_the_broker_queue_cap() -> None:
                 *(
                     {
                         "id": 10 + n,
-                        "id_urzadzenia": 7,
                         "typ_komponentu": "flaga",
                         "interpretacja": 1,
                         "funkcja": n,
@@ -949,7 +946,6 @@ async def test_the_raw_state_replay_survives_the_broker_queue_cap() -> None:
                 *(
                     {
                         "id": 10 + n,
-                        "id_urzadzenia": 7,
                         "typ_komponentu": "flaga",
                         "interpretacja": 1,
                         "funkcja": n,
@@ -995,7 +991,6 @@ async def test_a_retained_replay_never_stamps_last_seen() -> None:
             params_of(
                 {
                     "id": 10,
-                    "id_urzadzenia": 7,
                     "typ_komponentu": "flaga",
                     "interpretacja": 1,
                     "funkcja": 3,
@@ -1008,7 +1003,6 @@ async def test_a_retained_replay_never_stamps_last_seen() -> None:
             details(
                 {
                     "id": 10,
-                    "id_urzadzenia": 7,
                     "typ_komponentu": "flaga",
                     "interpretacja": 1,
                     "funkcja": 3,
@@ -1284,8 +1278,10 @@ async def test_a_digest_trigger_keeps_the_live_value_guard() -> None:
 
     A raw-owned value is immune to a states snapshot outright, guard or no
     guard, so the guard itself only comes into play once the object leaves
-    the raw index. The re-requested module list dropping the module the
-    `wej` object bridges through does that without touching the guard.
+    the raw index. Retyping the `wej` object to a kind the raw tree does
+    not carry does that without touching the guard - the digest trigger
+    only re-requests the module list, which the raw-channel index no
+    longer needs to route on the object's own leaf mac.
     """
     broker = FakeBroker()
     client = make_client(broker, username=ADMIN_USER)
@@ -1296,9 +1292,7 @@ async def test_a_digest_trigger_keeps_the_live_value_guard() -> None:
         feed(
             client,
             ADMIN_DATA_DEVICES_TOPIC,
-            details(
-                {"id": 10, "id_urzadzenia": 1, "funkcja": 1, "typ_komponentu": "wej"}
-            ),
+            details({"id": 10, "funkcja": 1, "typ_komponentu": "wej"}),
         )
         feed(client, "ampio/from/CAFE/state/i/1", "1")
         assert client.objects[10].state == "1"
@@ -1310,9 +1304,14 @@ async def test_a_digest_trigger_keeps_the_live_value_guard() -> None:
         assert broker.published == [
             (f"ampio/control/{ADMIN_USER}/config", b"devices"),
         ]
-        # The re-requested list comes back without module 1, freeing the
-        # object from raw suppression while leaving the guard untouched.
-        feed(client, ADMIN_DEVICES_TOPIC, devices())
+        # Retyping the object to a kind the raw tree does not bridge frees
+        # it from raw suppression while leaving the guard untouched.
+        feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of({"id": 10}))
+        feed(
+            client,
+            ADMIN_DATA_DEVICES_TOPIC,
+            details({"id": 10, "typ_komponentu": "temp"}),
+        )
 
         stan = json.dumps({"state": "0", "on": 1786700900000})
         feed(client, ADMIN_STATES_TOPIC, snapshot({"id": 10, "stan_json": stan}))

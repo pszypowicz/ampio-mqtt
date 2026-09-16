@@ -48,10 +48,9 @@ from ampio_mqtt import (
 from ampio_mqtt._protocol import REDACTED
 
 
-def _flaga(oid: int, funkcja: int, dev: int = 7) -> dict:
+def _flaga(oid: int, funkcja: int) -> dict:
     return {
         "id": oid,
-        "id_urzadzenia": dev,
         "typ_komponentu": "flaga",
         "interpretacja": 1,
         "funkcja": funkcja,
@@ -131,7 +130,7 @@ def test_the_module_catalogue_refuses_a_standard_account() -> None:
     standard account reading it is a consumer fault, not an empty install.
     Tier-independent grouping reads `AmpioObject.module_mac`."""
     client = _client()
-    catalogue(client, _object_row(10, 7, "cafe"))
+    catalogue(client, _object_row(10, "cafe"))
     with pytest.raises(RuntimeError, match="admin"):
         _ = client.modules
     with pytest.raises(RuntimeError, match="admin"):
@@ -140,7 +139,7 @@ def test_the_module_catalogue_refuses_a_standard_account() -> None:
         client.module_for(client.objects[10])
 
 
-# --- module_for: the mac-validated object-to-module join (#93) --------------
+# --- module_for: the leaf-mac join -------------------------------------------
 
 
 ADMIN_DEVICES = f"ampio/fromDB/{ADMIN_USER}/config/devices"
@@ -158,68 +157,23 @@ def _module_row(mid: int, mac: int | None, name: str = "MREL") -> dict:
     return row
 
 
-def _object_row(oid: int, dev: int | None, mac_hex: str | None) -> dict:
+def _object_row(oid: int, mac_hex: str | None) -> dict:
     row: dict = {"id": oid, "typ_komponentu": "flaga", "opis_menu": "Flag"}
-    if dev is not None:
-        row["id_urzadzenia"] = dev
     if mac_hex is not None:
         row["leafId"] = f"0_{mac_hex}_1_0_0"
     return row
 
 
-def test_module_for_returns_the_mac_agreeing_row() -> None:
+def test_module_for_joins_on_the_leaf_mac() -> None:
     client = _admin_client()
     feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
-    feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, 7, "cafe")))
-    catalogue(client, _object_row(10, 7, "cafe"))
-    module = client.module_for(client.objects[10])
-    assert module is not None
-    assert module.id == 7
-
-
-def test_module_for_rejects_a_mac_disagreement() -> None:
-    """id_urzadzenia pointing at a row whose mac is not the object's leaf
-    mac is the stale-join shape a module replacement produces; None beats
-    the wrong module."""
-    client = _admin_client()
-    feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
-    feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, 7, "beef")))
-    catalogue(client, _object_row(10, 7, "beef"))
-    assert client.module_for(client.objects[10]) is None
-
-
-def test_module_for_without_a_join_key() -> None:
-    client = _admin_client()
-    feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
-    feed(
+    catalogue(
         client,
-        ADMIN_PARAMS_DEVICES_TOPIC,
-        params_of(_object_row(10, None, "cafe"), _object_row(11, 99, "cafe")),
+        {"id": 10, "leafId": "0_cafe_3_0_0"},
+        {"id": 11, "leafId": "0_beef_3_0_0"},
     )
-    feed(
-        client,
-        ADMIN_DATA_DEVICES_TOPIC,
-        details(_object_row(10, None, "cafe"), _object_row(11, 99, "cafe")),
-    )
-    # No id_urzadzenia, and an id_urzadzenia no row answers.
-    assert client.module_for(client.objects[10]) is None
+    assert client.module_for(client.objects[10]).id == 7
     assert client.module_for(client.objects[11]) is None
-
-
-def test_module_for_resolves_colliding_macs_by_the_join() -> None:
-    """Override macs may collide across rows; the join picks the row, the
-    mac only gates it."""
-    client = _admin_client()
-    feed(
-        client,
-        ADMIN_DEVICES,
-        devices(_module_row(7, 0xCAFE, "FIRST"), _module_row(8, 0xCAFE, "SECOND")),
-    )
-    feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, 8, "cafe")))
-    catalogue(client, _object_row(10, 8, "cafe"))
-    module = client.module_for(client.objects[10])
-    assert module is not None
-    assert (module.id, module.nazwa_urzadzenia) == (8, "SECOND")
 
 
 def test_mserv_matches_the_override_mac_arm() -> None:
@@ -546,7 +500,7 @@ def test_last_payloads_retained_for_each_handler() -> None:
     admin = AmpioClient("host", username="admin")
     devices_payload = devices({"id": 1, "mac": 1, "typ_urzadzenia": 10})
     admin_details_payload = details(
-        {"id": 5, "id_urzadzenia": 1, "typ_komponentu": "temp", "interpretacja": 1}
+        {"id": 5, "typ_komponentu": "temp", "interpretacja": 1}
     )
     admin_params_payload = params_table({"id": 5, "params": 17})
     feed(admin, "ampio/fromDB/admin/config/devices", devices_payload)
@@ -810,8 +764,8 @@ def test_diagnostics_snapshot_module_rows_mirror_liveness() -> None:
         ADMIN_DEVICES,
         devices(_module_row(9, 0xBEEF), _module_row(7, 0xCAFE)),
     )
-    feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, 7, "cafe")))
-    catalogue(client, _object_row(10, 7, "cafe"))
+    feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, "cafe")))
+    catalogue(client, _object_row(10, "cafe"))
     rows = client.diagnostics_snapshot()["modules"]
     assert [row["id"] for row in rows] == [7, 9]
     assert rows[0]["last_seen"] is None
@@ -855,14 +809,12 @@ def test_presence_rows_are_client_attributes_not_objects(admin_client) -> None:
         params_of(
             {
                 "id": 60,
-                "id_urzadzenia": 7,
                 "typ_komponentu": "detekcja",
                 "funkcja": 1,
                 "opis_menu": "Detection",
             },
             {
                 "id": 61,
-                "id_urzadzenia": 7,
                 "typ_komponentu": "symulacja",
                 "funkcja": 1,
                 "opis_menu": "Simulation",
@@ -876,14 +828,12 @@ def test_presence_rows_are_client_attributes_not_objects(admin_client) -> None:
         details(
             {
                 "id": 60,
-                "id_urzadzenia": 7,
                 "typ_komponentu": "detekcja",
                 "funkcja": 1,
                 "opis_menu": "Detection",
             },
             {
                 "id": 61,
-                "id_urzadzenia": 7,
                 "typ_komponentu": "symulacja",
                 "funkcja": 1,
                 "opis_menu": "Simulation",

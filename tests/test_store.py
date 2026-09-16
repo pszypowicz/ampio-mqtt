@@ -159,17 +159,17 @@ def _devices(*macs: int) -> str:
     )
 
 
-def _flaga_rows(*object_module_pairs: tuple[int, int]) -> list[dict]:
+def _flaga_rows(*object_mac_pairs: tuple[int, int]) -> list[dict]:
     return [
         {
             "id": oid,
-            "id_urzadzenia": dev,
             "typ_komponentu": "flaga",
             "interpretacja": 1,
             "funkcja": 3,
+            "leafId": f"0_{mac:x}_3_0_2",
             "opis_menu": f"flag-{oid}",
         }
-        for oid, dev in object_module_pairs
+        for oid, mac in object_mac_pairs
     ]
 
 
@@ -189,11 +189,10 @@ def _catalogue_row(**overrides: object) -> dict:
 _PANEL = {"id": 7, "mac": 0xCAFE, "typ_urzadzenia": 11, "nazwa_urzadzenia": "panel"}
 
 
-def _flaga_row(oid: int, funkcja: int, dev: int = 7, mac: int = 0xCAFE) -> dict:
+def _flaga_row(oid: int, funkcja: int, mac: int = 0xCAFE) -> dict:
     """One flag row whose leaf embeds the mac of the module it names."""
     return {
         "id": oid,
-        "id_urzadzenia": dev,
         "typ_komponentu": "flaga",
         "interpretacja": 1,
         "funkcja": funkcja,
@@ -273,7 +272,6 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
         store,
         {
             "id": 50,
-            "id_urzadzenia": 7,
             "typ_komponentu": "roleta_procenty",
             "interpretacja": 1,
             "funkcja": 2,
@@ -287,11 +285,10 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
     assert store.objects[50].state == "55"
 
 
-def _ledww_row(oid: int, funkcja: int, dev: int = 7, mac: int = 0xCAFE) -> dict:
+def _ledww_row(oid: int, funkcja: int, mac: int = 0xCAFE) -> dict:
     """One CCT row whose leaf embeds the mac of the module it names."""
     return {
         "id": oid,
-        "id_urzadzenia": dev,
         "typ_komponentu": "ledww",
         "interpretacja": 1,
         "funkcja": funkcja,
@@ -454,7 +451,7 @@ def test_handler_table_misalignment_fails_at_construction(
 def _raw_owned_flag(store: AmpioStore, mac: int = 0xCAFE) -> None:
     """Discover one flaga (ob/10 on module 1, channel f/3) and land a raw edge."""
     _apply(store, DEVICES_TOPIC, _devices(mac))
-    _feed_catalogue(store, *_flaga_rows((10, 1)))
+    _feed_catalogue(store, *_flaga_rows((10, mac)))
     _apply(store, f"ampio/from/{mac:X}/state/f/3", "1")
 
 
@@ -532,7 +529,7 @@ def test_begin_refresh_lets_the_snapshot_resync_a_locally_stamped_value() -> Non
     _raw_owned_flag(store)
     # Retyped to a kind the raw tree does not carry, so the object leaves
     # the index and goes back to the per-object path.
-    retyped = {"id": 10, "id_urzadzenia": 1, "typ_komponentu": "roleta_procenty"}
+    retyped = {"id": 10, "typ_komponentu": "roleta_procenty"}
     _feed_catalogue(store, retyped)
     assert store.objects[10].raw_owned is False
     far_future = int((time.time() + 3600) * 1000)
@@ -563,15 +560,15 @@ def test_echo_of_an_earlier_edge_does_not_disturb_a_fast_toggle() -> None:
 def test_the_config_catalogue_evicts_what_it_stopped_listing() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, _devices(0xCAFE, 0xBEEF))
-    _feed_catalogue(store, *_flaga_rows((10, 1), (11, 2)))
+    _feed_catalogue(store, *_flaga_rows((10, 0xCAFE), (11, 0xBEEF)))
     assert set(store.objects) == {10, 11}
 
-    applied = _feed_catalogue(store, *_flaga_rows((10, 1)))
+    applied = _feed_catalogue(store, *_flaga_rows((10, 0xCAFE)))
     assert [o.id for o in _removed(applied)] == [11]
     assert set(store.objects) == {10}
 
     # The unchanged catalogue on the next refresh removes nothing further.
-    again = _feed_catalogue(store, *_flaga_rows((10, 1)))
+    again = _feed_catalogue(store, *_flaga_rows((10, 0xCAFE)))
     assert _removed(again) == []
 
 
@@ -586,11 +583,11 @@ def test_the_devices_reply_evicts_missing_modules() -> None:
 def test_an_evicted_objects_raw_channel_no_longer_routes() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, _devices(0xCAFE, 0xBEEF))
-    _feed_catalogue(store, *_flaga_rows((10, 1), (11, 2)))
+    _feed_catalogue(store, *_flaga_rows((10, 0xCAFE), (11, 0xBEEF)))
     _apply(store, f"ampio/from/{0xBEEF:X}/state/f/3", "1")
     assert store.objects[11].state == "1"
 
-    _feed_catalogue(store, *_flaga_rows((10, 1)))
+    _feed_catalogue(store, *_flaga_rows((10, 0xCAFE)))
     applied = _apply(store, f"ampio/from/{0xBEEF:X}/state/f/3", "0")
     assert _updated(applied) == []
     assert 11 not in store.objects
@@ -620,8 +617,8 @@ def test_the_app_sync_catalogue_evicts_what_the_grant_revoked() -> None:
     # The grant bounds a restricted store, so the reply is complete for
     # the account and a vanished row is a revocation.
     store = _app_store()
-    _feed_catalogue(store, *_flaga_rows((10, 1), (11, 1)))
-    applied = _feed_catalogue(store, *_flaga_rows((10, 1)))
+    _feed_catalogue(store, *_flaga_rows((10, 0xCAFE), (11, 0xCAFE)))
+    applied = _feed_catalogue(store, *_flaga_rows((10, 0xCAFE)))
     assert [o.id for o in _removed(applied)] == [11]
     assert set(store.objects) == {10}
 
@@ -632,7 +629,7 @@ def test_an_empty_catalogue_reply_evicts_everything() -> None:
     and evicts like any other, one removal event per object and module."""
     store = _store()
     _apply(store, DEVICES_TOPIC, _devices(0xCAFE))
-    _feed_catalogue(store, *_flaga_rows((10, 1)))
+    _feed_catalogue(store, *_flaga_rows((10, 0xCAFE)))
     details_applied = _feed_catalogue(store)
     devices_applied = _apply(store, DEVICES_TOPIC, devices())
     assert [o.id for o in _removed(details_applied)] == [10]
@@ -643,7 +640,7 @@ def test_an_empty_catalogue_reply_evicts_everything() -> None:
 def test_live_messages_touch_last_seen_snapshots_do_not() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, _devices(0xCAFE))
-    _feed_catalogue(store, *_flaga_rows((10, 1)))
+    _feed_catalogue(store, *_flaga_rows((10, 0xCAFE)))
     assert store.modules[1].last_seen is None
 
     _apply(store, STATES_TOPIC, _snapshot("1", 1779560000000))
@@ -661,7 +658,7 @@ def test_a_retained_raw_replay_sets_the_value_but_not_last_seen() -> None:
     is stored state of unknown age, not evidence that the module is alive."""
     store = _store()
     _apply(store, DEVICES_TOPIC, _devices(0xCAFE))
-    _feed_catalogue(store, *_flaga_rows((10, 1)))
+    _feed_catalogue(store, *_flaga_rows((10, 0xCAFE)))
 
     _apply(store, f"ampio/from/{0xCAFE:X}/state/f/3", "1", retained=True)
     assert store.objects[10].state == "1"
@@ -670,6 +667,63 @@ def test_a_retained_raw_replay_sets_the_value_but_not_last_seen() -> None:
 
     _apply(store, f"ampio/from/{0xCAFE:X}/state/f/3", "0")
     assert store.modules[1].last_seen is not None
+
+
+def test_a_raw_edge_routes_to_every_object_sharing_the_leaf() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA))
+    shared = {
+        "typ_komponentu": "flaga",
+        "interpretacja": 1,
+        "funkcja": 3,
+        "leafId": "0_a_3_0_2",
+    }
+    _feed_catalogue(store, {"id": 41, **shared}, {"id": 42, **shared})
+    applied = _apply(store, "ampio/from/a/state/f/3", "1")
+    assert sorted(o.id for o in _updated(applied)) == [41, 42]
+    assert store.objects[41].raw_owned and store.objects[42].raw_owned
+
+
+def test_the_routing_index_keys_on_the_leaf_mac_without_the_module_list() -> None:
+    store = _store()
+    _feed_catalogue(
+        store,
+        {
+            "id": 41,
+            "typ_komponentu": "flaga",
+            "interpretacja": 1,
+            "funkcja": 3,
+            "leafId": "0_a_3_0_2",
+        },
+    )
+    applied = _apply(store, "ampio/from/a/state/f/3", "1")
+    assert [o.id for o in _updated(applied)] == [41]
+
+
+def test_a_live_edge_touches_the_module_on_the_leaf_mac() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB))
+    _feed_catalogue(
+        store,
+        {
+            "id": 41,
+            "typ_komponentu": "flaga",
+            "interpretacja": 1,
+            "funkcja": 3,
+            "leafId": "0_b_3_0_2",
+        },
+    )
+    _apply(store, "ampio/from/b/state/f/3", "1")
+    assert store.modules[1].last_seen is None
+    assert store.modules[2].last_seen is not None
+
+
+def test_module_by_mac_reads_none_for_an_unlisted_or_colliding_mac() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
+    assert store.module_by_mac(0xA) is not None
+    assert store.module_by_mac(0xC) is None
+    assert store.module_by_mac(0xB) is None
 
 
 # --- catalogues, state pushes, and snapshots --------------------------------
@@ -681,21 +735,18 @@ def test_details_populate_and_classify() -> None:
         store,
         {
             "id": 41,
-            "id_urzadzenia": 3,
             "typ_komponentu": "temp",
             "interpretacja": 1,
             "opis_menu": "Salon",
         },
         {
             "id": 107,
-            "id_urzadzenia": 3,
             "typ_komponentu": "lin_wej",
             "interpretacja": 7,
             "opis_menu": "CO2",
         },
         {
             "id": 1,
-            "id_urzadzenia": 1,
             "typ_komponentu": "przekaznik",
             "interpretacja": 1,
             "opis_menu": "Pump",
@@ -706,7 +757,7 @@ def test_details_populate_and_classify() -> None:
     assert set(store.objects) == {41, 107, 1}
     temp = store.objects[41]
     assert temp.kind is not None and temp.kind.device_class == "temperature"
-    assert temp.opis_menu == "Salon" and temp.id_urzadzenia == 3
+    assert temp.opis_menu == "Salon"
     # The raw `interpretacja` selector is retained on the object for consumers,
     # alongside the resolved `kind` the library derives from it.
     assert store.objects[107].interpretacja == 7
@@ -959,10 +1010,10 @@ def test_state_updates_module_last_seen_with_local_receive_time() -> None:
         store,
         {
             "id": 41,
-            "id_urzadzenia": 17,
             "typ_komponentu": "temp",
             "interpretacja": 1,
             "opis_menu": "T",
+            "leafId": "0_1_74_0_0",
         },
     )
     assert store.modules[17].last_seen is None
@@ -1000,7 +1051,6 @@ def test_states_snapshot_seeds_value_without_touching_last_seen() -> None:
         store,
         {
             "id": 41,
-            "id_urzadzenia": 17,
             "typ_komponentu": "temp",
             "interpretacja": 1,
             "opis_menu": "T",
@@ -1347,19 +1397,6 @@ def test_raw_channel_malformed_topic_is_ignored() -> None:
     assert store.objects[50].state is None
 
 
-def test_index_rebuilds_when_devices_arrive_after_details() -> None:
-    store = _store()
-    # Details first: module mac unknown, so the flag is not yet routable.
-    _feed_catalogue(store, _flaga_row(50, 32))
-    _apply(store, "ampio/from/CAFE/state/f/32", "1")
-    assert store.objects[50].state is None  # not routed - no module mac yet
-
-    # Devices arrive -> index rebuilds -> now routable.
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _apply(store, "ampio/from/CAFE/state/f/32", "1")
-    assert store.objects[50].state == "1"
-
-
 def test_mapped_input_without_raw_uses_per_object_fallback() -> None:
     """A mapped input that never produced a raw edge still updates per-object."""
     store = _panel_store()
@@ -1378,7 +1415,6 @@ def test_wej_routes_via_digital_input_prefix() -> None:
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
     wej = {
         "id": 62,
-        "id_urzadzenia": 7,
         "typ_komponentu": "wej",
         "interpretacja": 1,
         "funkcja": 1,
@@ -1398,7 +1434,6 @@ def test_wej_per_object_edge_reads_255_as_on() -> None:
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
     wej = {
         "id": 63,
-        "id_urzadzenia": 7,
         "typ_komponentu": "wej",
         "interpretacja": 1,
         "funkcja": 2,
@@ -1516,7 +1551,6 @@ def test_panel_settings_survive_refresh_and_eviction() -> None:
 
 _DET = {
     "id": 60,
-    "id_urzadzenia": 7,
     "typ_komponentu": "detekcja",
     "interpretacja": 1,
     "funkcja": 1,
@@ -1524,7 +1558,6 @@ _DET = {
 }
 _SIM = {
     "id": 61,
-    "id_urzadzenia": 7,
     "typ_komponentu": "symulacja",
     "interpretacja": 1,
     "funkcja": 1,
@@ -1533,7 +1566,6 @@ _SIM = {
 }
 _WEJ = {
     "id": 62,
-    "id_urzadzenia": 7,
     "typ_komponentu": "wej",
     "interpretacja": 1,
     "funkcja": 1,
@@ -1541,7 +1573,6 @@ _WEJ = {
 }
 _FLAG = {
     "id": 63,
-    "id_urzadzenia": 7,
     "typ_komponentu": "flaga",
     "interpretacja": 1,
     "funkcja": 1,
@@ -1855,7 +1886,6 @@ def _app_row(oid: int, leaf: str, name: str = "Air quality", interp: int = 5) ->
     """One `data/devices` row: the catalogue shape minus the config columns."""
     return {
         "id": oid,
-        "id_urzadzenia": 20,
         "typ_komponentu": "lin_wej",
         "interpretacja": interp,
         "funkcja": 5,
@@ -1870,7 +1900,7 @@ def test_data_devices_populate_and_classify() -> None:
     obj = store.objects[24]
     assert obj.opis_menu == "Air quality"
     assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
-    assert obj.id_urzadzenia == 20 and obj.funkcja == 5
+    assert obj.funkcja == 5
     assert obj.leaf_id == "0_cb9b_74_0_1"
 
 
@@ -2767,10 +2797,9 @@ def test_bare_row_creation_still_dispatches_added() -> None:
 _RELAY_MODULE = {"id": 8, "mac": 0xB0B0, "typ_urzadzenia": 4, "nazwa_urzadzenia": "r"}
 
 
-def _przekaznik_row(oid: int, funkcja: int, dev: int, leaf: str) -> dict:
+def _przekaznik_row(oid: int, funkcja: int, leaf: str) -> dict:
     return {
         "id": oid,
-        "id_urzadzenia": dev,
         "typ_komponentu": "przekaznik",
         "interpretacja": funkcja,
         "funkcja": funkcja,
@@ -2782,7 +2811,7 @@ def _przekaznik_row(oid: int, funkcja: int, dev: int, leaf: str) -> dict:
 def test_panel_output_o_channel_routes_to_its_object() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, _przekaznik_row(90, 2, 7, "0_cafe_257_2_1"))
+    _feed_catalogue(store, _przekaznik_row(90, 2, "0_cafe_257_2_1"))
 
     applied = _apply(store, "ampio/from/CAFE/state/o/2", "1")
 
@@ -2796,7 +2825,7 @@ def test_o_channel_of_a_relay_module_is_bridged_too() -> None:
     share the channel shape, so they gain the same raw-first path."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_RELAY_MODULE))
-    _feed_catalogue(store, _przekaznik_row(91, 1, 8, "0_b0b0_257_2_0"))
+    _feed_catalogue(store, _przekaznik_row(91, 1, "0_b0b0_257_2_0"))
 
     applied = _apply(store, "ampio/from/B0B0/state/o/1", "1")
 
@@ -2812,7 +2841,7 @@ def test_a_channel_routes_to_an_open_collector_relay() -> None:
     """A przekaznik on leaf class 67 reports on the `a` prefix, not `o`."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_INOC_MODULE))
-    _feed_catalogue(store, _przekaznik_row(93, 8, 9, "0_1a2b_67_0_7"))
+    _feed_catalogue(store, _przekaznik_row(93, 8, "0_1a2b_67_0_7"))
 
     ignored = _apply(store, "ampio/from/1A2B/state/o/8", "1")
     assert _updated(ignored) == []
@@ -2826,7 +2855,7 @@ def test_a_channel_routes_to_an_open_collector_relay() -> None:
 def test_a_channel_does_not_route_a_binary_output_relay() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_RELAY_MODULE))
-    _feed_catalogue(store, _przekaznik_row(91, 1, 8, "0_b0b0_257_2_0"))
+    _feed_catalogue(store, _przekaznik_row(91, 1, "0_b0b0_257_2_0"))
 
     applied = _apply(store, "ampio/from/B0B0/state/a/1", "255")
     assert _updated(applied) == []
@@ -2836,7 +2865,7 @@ def test_a_channel_does_not_route_a_binary_output_relay() -> None:
 def test_panel_output_per_object_echo_is_dropped_once_raw_owned() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, _przekaznik_row(90, 2, 7, "0_cafe_257_2_1"))
+    _feed_catalogue(store, _przekaznik_row(90, 2, "0_cafe_257_2_1"))
     _apply(store, "ampio/from/CAFE/state/o/2", "1")
 
     applied = _apply(

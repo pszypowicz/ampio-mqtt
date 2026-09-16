@@ -96,8 +96,9 @@ class AmpioStore:
         # colliding mac cannot be attributed reliably; the collision is
         # warned once per change and surfaced for diagnostics.
         self.colliding_macs: frozenset[int] = frozenset()
-        # Raw-channel bridge: (module mac, prefix, channel) -> object id.
-        self._input_index: dict[tuple[int, str, int], int] = {}
+        # Raw-channel bridge: (module mac, prefix, channel) -> the ids of
+        # every object on that channel.
+        self._input_index: dict[tuple[int, str, int], tuple[int, ...]] = {}
         # Effective bus mac -> module id, for routing a module's own
         # broadcasts. Ids, not instances: modules are frozen and replaced on
         # every change, so a cached instance would go stale.
@@ -414,15 +415,10 @@ class AmpioStore:
         # anything, and nothing after it raises: the snapshot table holds
         # parsed seeds and a buffered push is already typed.
         self._merge_presence(presence, config, applied)
-        # One reply is the whole catalogue this tier holds, so its leafed
-        # rows are every sibling a leafless row can learn its module from.
-        sibling_macs: dict[int, int] = {}
-        for meta, address in admitted:
-            sibling_macs[meta.id_urzadzenia] = address.mac
         touched = False
         for meta, address in admitted:
             touched |= self._merge_metadata(
-                meta, address, config.get(meta.id, {}), sibling_macs, applied
+                meta, address, config.get(meta.id, {}), applied
             )
         evicted = self._evict_missing_objects(
             {meta.id for meta, _ in admitted}, applied
@@ -597,7 +593,6 @@ class AmpioStore:
         meta: _protocol.ObjectMetadata,
         address: ModuleAddress,
         config: Mapping[str, Any],
-        sibling_macs: Mapping[int, int],
         applied: Applied,
     ) -> bool:
         """Fold one catalogue row into its object; True when anything changed.
@@ -611,7 +606,6 @@ class AmpioStore:
         if obj is None:
             obj = AmpioObject(
                 id=meta.id,
-                id_urzadzenia=meta.id_urzadzenia,
                 typ_komponentu=meta.typ_komponentu,
                 interpretacja=meta.interpretacja,
                 funkcja=meta.funkcja,
@@ -625,7 +619,6 @@ class AmpioStore:
         updates: dict[str, Any] = {
             name: getattr(meta, name) for name in _METADATA_FIELDS
         }
-        updates["sibling_module_mac"] = sibling_macs.get(meta.id_urzadzenia)
         updates.update(config)
         updates["address"] = address
         updates["leaf_key"] = f"leaf_{meta.leaf_id}"
@@ -835,7 +828,7 @@ class AmpioStore:
             # what the raw edge delivered ~150 ms earlier, so it is
             # dropped whole. It still counts as live evidence of the
             # module.
-            self._touch_module(obj.id_urzadzenia)
+            self._touch_module(obj.address.mac)
             return
         obj = replace(
             obj,
@@ -852,32 +845,35 @@ class AmpioStore:
         # bookkeeping a raw edge left behind no longer applies.
         self._local_stamped.discard(update.id)
         self._guarded.discard(update.id)
-        self._touch_module(obj.id_urzadzenia)
+        self._touch_module(obj.address.mac)
         self._record(obj, applied)
 
     def _apply_raw_channel(
         self, edge: _protocol.RawChannelEdge, applied: Applied, *, retained: bool
     ) -> None:
         key = (edge.mac, edge.prefix, edge.channel)
-        oid = self._input_index.get(key)
-        if oid is None:
+        ids = self._input_index.get(key)
+        if ids is None:
             # A replay waits for the routing table; a live frame for a
             # channel no object exposes is one nothing will ever route.
             if retained:
                 self._pending_raw[key] = edge.state
             return
-        obj = replace(
-            self.objects[oid],
-            raw_owned=True,
-            state=edge.state,
-            updated_at=time.time(),
-        )
-        self.objects[oid] = obj
-        self._local_stamped.add(oid)
-        self._guarded.add(oid)
+        # Two Designer views of one output share one leaf, so one channel
+        # feeds every object that carries it.
+        for oid in ids:
+            obj = replace(
+                self.objects[oid],
+                raw_owned=True,
+                state=edge.state,
+                updated_at=time.time(),
+            )
+            self.objects[oid] = obj
+            self._local_stamped.add(oid)
+            self._guarded.add(oid)
+            self._record(obj, applied)
         if not retained:
-            self._touch_module(obj.id_urzadzenia)
-        self._record(obj, applied)
+            self._touch_module(edge.mac)
 
     def _apply_diagnostics(
         self,
@@ -970,27 +966,34 @@ class AmpioStore:
             return True
         return reported_at >= obj.updated_at
 
-    def _touch_module(self, module_id: int) -> None:
-        """Mark the module as having produced live evidence just now.
+    def module_by_mac(self, mac: int) -> AmpioModule | None:
+        """The module row on ``mac``, or None when the list has none or two."""
+        if mac in self.colliding_macs:
+            return None
+        mid = self._module_id_by_mac.get(mac)
+        return None if mid is None else self.modules[mid]
+
+    def _touch_module(self, mac: int) -> None:
+        """Mark the module on ``mac`` as having produced live evidence just now.
 
         One clock only: the local receive time, because a live message is by
         definition received "now". Snapshot and catalogue seeds do not touch
         this - they replay DB state that may be arbitrarily old, which says
-        nothing about whether the module is alive. An id the module list
-        does not carry touches nothing, which on the reference install is
-        the soft-deleted rows alone.
+        nothing about whether the module is alive. A mac the module list
+        does not carry touches nothing.
         """
-        module = self.modules.get(module_id)
-        if module is not None:
-            self.modules[module_id] = replace(module, last_seen=time.time())
+        mid = self._module_id_by_mac.get(mac)
+        if mid is not None:
+            self.modules[mid] = replace(self.modules[mid], last_seen=time.time())
 
     def _rebuild_indexes(self, applied: Applied) -> None:
         """Rebuild the routing tables for the raw tree.
 
-        Both are keyed on the module's effective bus address (`mac`, the
-        Designer override) - never `mac_global`, which diverges from the
-        raw-topic MAC on replaced modules. `(mac, prefix, channel)` routes a
-        raw channel to its object: the bridgeable input types, plus
+        The raw-channel index keys on the object's own `address.mac`, the
+        override mac the leaf embeds, which the raw topics carry - never
+        `mac_global`, which diverges from the raw-topic MAC on replaced
+        modules. `(mac, prefix, channel)` routes a raw channel to every
+        object that shares the leaf: the bridgeable input types, plus
         `przekaznik` outputs on the `o` prefix, or on `a` for an
         open-collector leaf - a panel's status LEDs have no other retained
         surface, an OC output never echoes on its object topic, and every
@@ -998,21 +1001,19 @@ class AmpioStore:
         color-temperature prefix, whose channels its broadcast fans out to.
         `mac` alone routes a module's own diagnostics broadcast.
         """
-        index: dict[tuple[int, str, int], int] = {}
+        index: dict[tuple[int, str, int], tuple[int, ...]] = {}
         for obj in self.objects.values():
             prefix = input_channel_prefix(obj.typ_komponentu)
             if prefix is None and obj.typ_komponentu == "przekaznik":
                 # A binary output reports on `o`; an open-collector output
                 # (leaf class 67) reports a u8 on `a`, same 1-based channel.
-                prefix = "a" if obj.sf_id == _protocol.OC_OUTPUT_SF else "o"
+                prefix = "a" if obj.address.sf_id == _protocol.OC_OUTPUT_SF else "o"
             if prefix is None and obj.typ_komponentu == "ledww":
                 prefix = _protocol.CCT_PREFIX
             if prefix is None:
                 continue
-            module = self.modules.get(obj.id_urzadzenia)
-            if module is None:
-                continue
-            index[(module.mac, prefix, obj.funkcja)] = obj.id
+            key = (obj.address.mac, prefix, obj.funkcja)
+            index[key] = (*index.get(key, ()), obj.id)
         self._input_index = index
         by_mac: dict[int, int] = {}
         colliding: set[int] = set()
@@ -1033,7 +1034,7 @@ class AmpioStore:
         # An object the index no longer covers must go back to its per-object
         # updates, or a mac change in Designer would freeze it for good. The
         # flip is public state, so it dispatches like any other change.
-        covered = set(index.values())
+        covered = {oid for ids in index.values() for oid in ids}
         for oid, obj in self.objects.items():
             if obj.raw_owned and oid not in covered:
                 obj = replace(obj, raw_owned=False)
@@ -1043,7 +1044,7 @@ class AmpioStore:
         self._fold_pending_raw(index, applied)
 
     def _fold_pending_raw(
-        self, index: Mapping[tuple[int, str, int], int], applied: Applied
+        self, index: Mapping[tuple[int, str, int], tuple[int, ...]], applied: Applied
     ) -> None:
         """Apply the held channel values the fresh index can now route.
 

@@ -110,72 +110,81 @@ def _object(**over: object) -> AmpioObject:
     """An object carrying the catalogue columns every row serves."""
     row: dict[str, object] = {
         "id": 1,
-        "id_urzadzenia": 1,
         "typ_komponentu": "roleta_procenty",
         "interpretacja": 0,
         "funkcja": 1,
-        "address": ModuleAddress(mac=0xCAFE, channel=0, sf_id=257, sub_sf_id=0),
-        "leaf_key": "leaf_0_cafe_257_0_0",
+        "address": ModuleAddress(mac=0xCB89, channel=0, sf_id=5, sub_sf_id=0),
+        "leaf_key": "leaf_0_cb89_5_0_0",
     }
     return AmpioObject(**{**row, **over})  # type: ignore[arg-type]
 
 
-def test_a_leafed_cover_joins_through_its_leaf_channel() -> None:
+def test_a_cover_joins_through_its_channel() -> None:
     objects = {
-        10: _object(id=10, leaf_id="0_cb89_5_0_0"),
-        11: _object(id=11, typ_komponentu="roleta_lamelki", leaf_id="0_cb89_5_0_3"),
+        10: _object(id=10),
+        11: _object(
+            id=11,
+            typ_komponentu="roleta_lamelki",
+            address=ModuleAddress(mac=0xCB89, channel=3, sf_id=5, sub_sf_id=0),
+        ),
     }
     resolved = resolve_cover_parameters(
-        objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset(), {}
+        objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset()
     )
     assert resolved[10].open_time_s == 52
     assert resolved[11].open_time_s == 300
 
 
-def test_a_leafless_cover_joins_through_funkcja_minus_one() -> None:
-    objects = {12: _object(id=12, id_urzadzenia=7, funkcja=2, leaf_id="")}
-    resolved = resolve_cover_parameters(
-        objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset(), {7: 0xCB89}
-    )
-    assert resolved[12].open_time_s == 30
-
-
 def _resolve(objects: dict[int, AmpioObject]) -> dict[int, CoverParameters]:
     return resolve_cover_parameters(
-        objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset(), {}
+        objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset()
     )
 
 
 def test_a_kind_outside_the_roller_class_resolves_nothing() -> None:
-    objects = {1: _object(id=1, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0")}
+    objects = {
+        1: _object(
+            id=1,
+            typ_komponentu="przekaznik",
+            address=ModuleAddress(mac=0xCB89, channel=0, sf_id=257, sub_sf_id=2),
+        )
+    }
     assert _resolve(objects) == {}
 
 
 def test_a_channel_past_the_count_resolves_nothing() -> None:
-    objects = {2: _object(id=2, leaf_id="0_cb89_5_0_9")}
+    objects = {
+        2: _object(
+            id=2, address=ModuleAddress(mac=0xCB89, channel=9, sf_id=5, sub_sf_id=0)
+        )
+    }
     assert _resolve(objects) == {}
 
 
 def test_a_module_with_no_blob_resolves_nothing() -> None:
-    objects = {3: _object(id=3, leaf_id="0_dead_5_0_0")}
+    objects = {
+        3: _object(
+            id=3, address=ModuleAddress(mac=0xDEAD, channel=0, sf_id=5, sub_sf_id=0)
+        )
+    }
     assert _resolve(objects) == {}
 
 
 def test_an_unlisted_board_resolves_nothing() -> None:
-    objects = {10: _object(id=10, leaf_id="0_cb89_5_0_0")}
+    objects = {10: _object(id=10)}
     assert (
         resolve_cover_parameters(
-            objects, {0xCB89: FOUR_CHANNEL}, {}, {0xCB89: (3, 9)}, frozenset(), {}
+            objects, {0xCB89: FOUR_CHANNEL}, {}, {0xCB89: (3, 9)}, frozenset()
         )
         == {}
     )
 
 
 def test_a_colliding_mac_resolves_nothing() -> None:
-    objects = {10: _object(id=10, leaf_id="0_cb89_5_0_0")}
+    objects = {10: _object(id=10)}
     assert (
         resolve_cover_parameters(
-            objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset({0xCB89}), {}
+            objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset({0xCB89})
         )
         == {}
     )
@@ -183,11 +192,11 @@ def test_a_colliding_mac_resolves_nothing() -> None:
 
 def test_a_contradicted_channel_count_resolves_nothing() -> None:
     """A board that disagrees with its own table entry stays silent."""
-    objects = {10: _object(id=10, leaf_id="0_cb89_5_0_0")}
+    objects = {10: _object(id=10)}
     caps = {0xCB89: {ModuleFunction.ROLLER: 2}}
     assert (
         resolve_cover_parameters(
-            objects, {0xCB89: FOUR_CHANNEL}, caps, HARDWARE, frozenset(), {}
+            objects, {0xCB89: FOUR_CHANNEL}, caps, HARDWARE, frozenset()
         )
         == {}
     )
@@ -195,9 +204,9 @@ def test_a_contradicted_channel_count_resolves_nothing() -> None:
 
 def test_a_board_that_advertises_no_roller_still_resolves() -> None:
     """The four-channel board advertises none, so the count comes from the table."""
-    objects = {10: _object(id=10, leaf_id="0_cb89_5_0_0")}
+    objects = {10: _object(id=10)}
     caps = {0xCB89: {ModuleFunction.OUT_BIN: 4}}
     resolved = resolve_cover_parameters(
-        objects, {0xCB89: FOUR_CHANNEL}, caps, HARDWARE, frozenset(), {}
+        objects, {0xCB89: FOUR_CHANNEL}, caps, HARDWARE, frozenset()
     )
     assert resolved[10].open_time_s == 52

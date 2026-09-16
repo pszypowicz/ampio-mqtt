@@ -240,7 +240,6 @@ def rows(*items: dict) -> str:
 # overrides only what it is about, and a test that deletes a column is
 # making a point about the missing column.
 _CATALOGUE_ROW = {
-    "id_urzadzenia": 1,
     # Empty: a test that cares about the kind names its own component type,
     # and one that does not gets the generic value sensor an unknown type
     # classifies as.

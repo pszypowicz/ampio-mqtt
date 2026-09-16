@@ -18,12 +18,11 @@ def _object(**over: object) -> AmpioObject:
     """An object carrying the catalogue columns every row serves."""
     row: dict[str, object] = {
         "id": 1,
-        "id_urzadzenia": 1,
         "typ_komponentu": "roleta_procenty",
         "interpretacja": 0,
         "funkcja": 1,
-        "address": ModuleAddress(mac=0xCAFE, channel=0, sf_id=257, sub_sf_id=0),
-        "leaf_key": "leaf_0_cafe_257_0_0",
+        "address": ModuleAddress(mac=0xCB89, channel=0, sf_id=5, sub_sf_id=0),
+        "leaf_key": "leaf_0_cb89_5_0_0",
     }
     return AmpioObject(**{**row, **over})  # type: ignore[arg-type]
 
@@ -45,41 +44,44 @@ def test_a_zero_count_sizes_no_mask() -> None:
 
 
 def test_a_cover_on_an_advertising_module_takes_the_lock() -> None:
-    objects = {10: _object(id=10, leaf_id="0_cb89_5_0_0")}
-    assert resolve_roller_lock_support(objects, {0xCB89: ANSWERS}, {}) == {10: True}
+    objects = {10: _object(id=10)}
+    assert resolve_roller_lock_support(objects, {0xCB89: ANSWERS}) == {10: True}
 
 
 def test_a_cover_on_a_module_that_advertises_no_count_does_not() -> None:
-    objects = {10: _object(id=10, leaf_id="0_cb89_5_0_0")}
-    assert resolve_roller_lock_support(objects, {0xCB89: DROPS}, {}) == {10: False}
+    objects = {10: _object(id=10)}
+    assert resolve_roller_lock_support(objects, {0xCB89: DROPS}) == {10: False}
 
 
 def test_a_channel_past_the_advertised_count_does_not() -> None:
-    objects = {10: _object(id=10, leaf_id="0_cb89_5_0_9")}
-    assert resolve_roller_lock_support(objects, {0xCB89: ANSWERS}, {}) == {10: False}
+    objects = {
+        10: _object(
+            id=10, address=ModuleAddress(mac=0xCB89, channel=9, sf_id=5, sub_sf_id=0)
+        )
+    }
+    assert resolve_roller_lock_support(objects, {0xCB89: ANSWERS}) == {10: False}
 
 
 def test_a_module_the_sweep_left_out_resolves_nothing() -> None:
-    objects = {10: _object(id=10, leaf_id="0_dead_5_0_0")}
-    assert resolve_roller_lock_support(objects, {0xCB89: ANSWERS}, {}) == {}
+    objects = {
+        10: _object(
+            id=10, address=ModuleAddress(mac=0xDEAD, channel=0, sf_id=5, sub_sf_id=0)
+        )
+    }
+    assert resolve_roller_lock_support(objects, {0xCB89: ANSWERS}) == {}
 
 
 def test_a_module_that_answered_with_nothing_still_resolves() -> None:
-    objects = {10: _object(id=10, leaf_id="0_cb89_5_0_0")}
-    assert resolve_roller_lock_support(objects, {0xCB89: {}}, {}) == {10: False}
+    objects = {10: _object(id=10)}
+    assert resolve_roller_lock_support(objects, {0xCB89: {}}) == {10: False}
 
 
 def test_a_kind_outside_the_roller_class_resolves_nothing() -> None:
-    objects = {1: _object(id=1, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0")}
-    assert resolve_roller_lock_support(objects, {0xCB89: ANSWERS}, {}) == {}
-
-
-def test_a_leafless_cover_joins_through_funkcja_minus_one() -> None:
-    objects = {12: _object(id=12, id_urzadzenia=7, funkcja=2, leaf_id="")}
-    resolved = resolve_roller_lock_support(objects, {0xCB89: ANSWERS}, {7: 0xCB89})
-    assert resolved == {12: True}
-
-
-def test_a_cover_with_no_join_resolves_nothing() -> None:
-    objects = {13: _object(id=13, id_urzadzenia=7, funkcja=1, leaf_id="")}
-    assert resolve_roller_lock_support(objects, {0xCB89: ANSWERS}, {}) == {}
+    objects = {
+        1: _object(
+            id=1,
+            typ_komponentu="przekaznik",
+            address=ModuleAddress(mac=0xCB89, channel=0, sf_id=257, sub_sf_id=2),
+        )
+    }
+    assert resolve_roller_lock_support(objects, {0xCB89: ANSWERS}) == {}

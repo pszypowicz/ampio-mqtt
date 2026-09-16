@@ -139,7 +139,6 @@ async def responding(
 ) -> AsyncIterator[aiomqtt.Client]:
     row = {
         "id": 5,
-        "id_urzadzenia": 2,
         "typ_komponentu": "flaga",
         "leafId": "0_a_76_0_0",
         "funkcja": 1,

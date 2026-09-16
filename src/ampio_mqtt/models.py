@@ -344,14 +344,12 @@ class AmpioObject:
     """
 
     # The columns every catalogue row carries on both tiers, so every
-    # object holds them (docs/protocol.md). The per-object identity source
-    # is `id`, exposed as `object_key`. An object delete is soft on the
-    # `config` catalogue, so the autoincrement never renumbers.
-    # `id_urzadzenia` is the volatile one: it mirrors the module row, which
-    # is reassigned when a module is replaced. docs/identity.md is the home
-    # for the identity model.
+    # object holds them (docs/protocol.md). The per-object identity is
+    # `id`, exposed as `object_key`; the module identity is `address.mac`.
+    # An object delete is soft on the `config` catalogue, so the
+    # autoincrement never renumbers. docs/identity.md is the home for the
+    # identity model.
     id: int
-    id_urzadzenia: int  # physical module
     typ_komponentu: str
     interpretacja: int
     # Physical channel index within the module (obiekty.funkcja);
@@ -371,11 +369,6 @@ class AmpioObject:
     # an object's Matter box is unchecked. The physical-output key (`leaf_key`)
     # and the parse source for `module_mac` - docs/identity.md.
     leaf_id: str = ""
-    # The override mac that leafed objects on the same `id_urzadzenia`
-    # embed, read out of the catalogue this tier holds - a leafless
-    # object's module on both tiers, None without such a sibling in the
-    # grant. `module_mac` stays the leaf-parsed fact - docs/identity.md.
-    sibling_module_mac: int | None = None
     # `params` bitfield (Designer config flags; see `hidden`/`visible`).
     # Defaults to 0 so a payload without the column reads "nothing hidden".
     params: int = 0

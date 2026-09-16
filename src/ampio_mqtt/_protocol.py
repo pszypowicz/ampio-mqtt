@@ -56,7 +56,6 @@ class ObjectMetadata:
     """One object-catalogue row, in the columns `data/devices` serves."""
 
     id: int
-    id_urzadzenia: int  # physical module
     typ_komponentu: str
     interpretacja: int
     funkcja: int  # physical channel index within the module
@@ -288,7 +287,6 @@ def _shared_columns(row: Mapping[str, Any]) -> ObjectMetadata:
     """
     return ObjectMetadata(
         id=_int_column(row, "id", _CATALOGUE),
-        id_urzadzenia=_int_column(row, "id_urzadzenia", _CATALOGUE),
         typ_komponentu=_text_column(row, "typ_komponentu", _CATALOGUE),
         interpretacja=_int_column(row, "interpretacja", _CATALOGUE),
         funkcja=_int_column(row, "funkcja", _CATALOGUE),
@@ -636,42 +634,16 @@ def _entry_desc(entry: OutputDescription) -> str | None:
     return None if entry.desc in ("", _EMPTY_DESC) else entry.desc
 
 
-def _object_channel(
-    obj: AmpioObject, mac_by_device_id: Mapping[int, int]
-) -> tuple[int, int] | None:
-    """The `(mac, channel)` pair an object joins through.
-
-    This is the one join rule `resolve_designer` and
-    `resolve_cover_parameters` both share. A leafed object joins through
-    its own `module_mac` and `leaf_io_no`. A leafless object joins through
-    `mac_by_device_id[id_urzadzenia]` and `funkcja` minus one. Returns
-    None when either part is missing.
-    """
-    if obj.leaf_id:
-        mac = obj.module_mac
-        channel = obj.leaf_io_no
-    else:
-        mac = mac_by_device_id.get(obj.id_urzadzenia)
-        channel = obj.funkcja - 1
-    if mac is None or channel is None:
-        return None
-    return mac, channel
-
-
 def resolve_designer(
     objects: Mapping[int, AmpioObject],
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
     location_names: Mapping[int, str],
     colliding_macs: frozenset[int],
-    mac_by_device_id: Mapping[int, int],
 ) -> dict[int, DesignerRecord]:
     """Join each object to its module's description entry.
 
-    The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], leaf_io_no)`` within
-    the module record of ``module_mac``. A leafless object joins through
-    ``mac_by_device_id[id_urzadzenia]`` and ``funkcja - 1`` instead: its
-    module row's mac, and the channel every leafed object of these kinds
-    embeds as ``leaf_io_no`` (docs/identity.md). Objects on a colliding
+    The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], address.channel)``
+    within the module record of ``address.mac``. Objects on a colliding
     mac are skipped - the reply cannot be attributed to one module.
     ``out_loc`` 0 or 16383 reads unassigned and ``out_type`` 0 untagged,
     so none produces a value. A ``desc`` that is empty or the ``.``
@@ -686,10 +658,7 @@ def resolve_designer(
         desc_type = DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "")
         if desc_type is None:
             continue
-        joined = _object_channel(obj, mac_by_device_id)
-        if joined is None:
-            continue
-        mac, out_no = joined
+        mac, out_no = obj.address.mac, obj.address.channel
         if mac in colliding_macs:
             continue
         entry = entries_by_key.get(mac, {}).get((desc_type, out_no))
@@ -865,7 +834,6 @@ def resolve_cover_parameters(
     capabilities_by_mac: Mapping[int, Mapping[int, int]],
     hardware_by_mac: Mapping[int, tuple[int | None, int | None]],
     colliding_macs: frozenset[int],
-    mac_by_device_id: Mapping[int, int],
 ) -> dict[int, CoverParameters]:
     """Join each cover object to its channel's stored travel parameters.
 
@@ -876,9 +844,9 @@ def resolve_cover_parameters(
     disagrees with the layout, the module resolves nothing rather than
     guessing.
 
-    The channel key matches ``resolve_designer``: ``leaf_io_no`` for a
-    leafed object, ``funkcja`` minus one for a leafless one. A colliding
-    mac is skipped, because the reply cannot be attributed to one module.
+    The channel key matches ``resolve_designer``: ``address.channel``. A
+    colliding mac is skipped, because the reply cannot be attributed to
+    one module.
     """
     channels_by_mac: dict[int, tuple[CoverParameters, ...]] = {}
     for module_mac, blob in params_by_mac.items():
@@ -901,10 +869,7 @@ def resolve_cover_parameters(
     for obj in objects.values():
         if not joins_roller_records(obj.typ_komponentu):
             continue
-        joined = _object_channel(obj, mac_by_device_id)
-        if joined is None:
-            continue
-        mac, channel = joined
+        mac, channel = obj.address.mac, obj.address.channel
         channels = channels_by_mac.get(mac)
         if channels is None or not 0 <= channel < len(channels):
             continue
@@ -932,7 +897,6 @@ def resolve_module_capabilities(
 def resolve_roller_lock_support(
     objects: Mapping[int, AmpioObject],
     capabilities_by_mac: Mapping[int, Mapping[int, int]],
-    mac_by_device_id: Mapping[int, int],
 ) -> dict[int, bool]:
     """Whether each cover's module takes a roller lock write, by object id.
 
@@ -942,17 +906,13 @@ def resolve_roller_lock_support(
     answered and cannot hold a lock on that channel. A row outside the
     roller class is absent as well.
 
-    The channel key matches ``resolve_designer``: ``leaf_io_no`` for a
-    leafed object, ``funkcja`` minus one for a leafless one.
+    The channel key matches ``resolve_designer``: ``address.channel``.
     """
     out: dict[int, bool] = {}
     for obj in objects.values():
         if not joins_roller_records(obj.typ_komponentu):
             continue
-        joined = _object_channel(obj, mac_by_device_id)
-        if joined is None:
-            continue
-        mac, channel = joined
+        mac, channel = obj.address.mac, obj.address.channel
         capabilities = capabilities_by_mac.get(mac)
         if capabilities is None:
             continue

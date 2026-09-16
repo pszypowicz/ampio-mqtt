@@ -76,7 +76,6 @@ def test_to_int(value: object, expected: int | None) -> None:
 # A test that drops one is making a point about that column.
 _APP_SYNC_COLUMNS = (
     "id",
-    "id_urzadzenia",
     "typ_komponentu",
     "interpretacja",
     "funkcja",
@@ -90,7 +89,6 @@ _APP_SYNC_COLUMNS = (
 def _app_row(**over: object) -> dict[str, object]:
     row: dict[str, object] = {
         "id": 41,
-        "id_urzadzenia": 3,
         "typ_komponentu": "temp",
         "interpretacja": 1,
         "funkcja": 7,
@@ -111,7 +109,6 @@ def test_parse_app_sync_devices_returns_the_shared_columns() -> None:
     `data/params_devices` carries the three on every tier."""
     items = parse_app_sync_devices(json.loads(_rows(_app_row())))
     assert [row.id for row in items] == [41]
-    assert items[0].id_urzadzenia == 3
     assert items[0].typ_komponentu == "temp"
     assert items[0].interpretacja == 1
     assert items[0].funkcja == 7
@@ -130,7 +127,7 @@ def test_parse_app_sync_devices_refuses_a_row_without_a_served_column(
         parse_app_sync_devices(json.loads(_rows(row)))
 
 
-@pytest.mark.parametrize("column", ["id", "id_urzadzenia", "interpretacja", "funkcja"])
+@pytest.mark.parametrize("column", ["id", "interpretacja", "funkcja"])
 def test_parse_app_sync_devices_refuses_a_column_that_is_not_an_integer(
     column: str,
 ) -> None:

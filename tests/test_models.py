@@ -17,7 +17,6 @@ from ampio_mqtt.models import DesignerRecord, ModuleRecord
 def _object(**over: object) -> AmpioObject:
     row: dict[str, object] = {
         "id": 1,
-        "id_urzadzenia": 1,
         "typ_komponentu": "",
         "interpretacja": 0,
         "funkcja": 1,

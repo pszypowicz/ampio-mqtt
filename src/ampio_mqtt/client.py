@@ -569,26 +569,15 @@ class AmpioClient:
     def module_for(self, obj: AmpioObject) -> AmpioModule | None:
         """The catalogue row of the module that owns ``obj``.
 
-        Joins ``obj.id_urzadzenia`` to the module list. When the object
-        carries a leaf-derived :pyattr:`AmpioObject.module_mac`, the row's
-        mac must agree with it - DB ids are volatile across a module
-        replacement while the leaf mac is the stable identity
-        (docs/identity.md). A leafless object has no mac to gate on, so its
-        join stands as is.
-
-        None when the join does not resolve, which on the reference install
-        happens for the soft-deleted rows alone: their ``id_urzadzenia``
-        points at a module the list no longer carries. Admin tier only,
-        like :pyattr:`modules`; tier-independent grouping reads
-        ``module_mac`` directly.
+        One lookup on ``obj.address.mac``, the override mac the leaf embeds
+        and the module list's replacement-stable key (docs/identity.md).
+        None when the list carries no row on that mac, or when two rows
+        share it and no lookup can pick one. Admin tier only, like
+        :pyattr:`modules`; tier-independent grouping reads ``address.mac``
+        directly.
         """
         self._require_module_catalogue("module_for()")
-        module = self._store.modules.get(obj.id_urzadzenia)
-        if module is None:
-            return None
-        if obj.module_mac is not None and module.mac != obj.module_mac:
-            return None
-        return module
+        return self._store.module_by_mac(obj.address.mac)
 
     @property
     def available(self) -> bool:
@@ -1123,17 +1112,11 @@ class AmpioClient:
                 "objects keep whatever record an earlier pass resolved",
                 sorted(silent),
             )
-        mac_by_device_id = {
-            mod.id: mod.mac
-            for mod in self._store.modules.values()
-            if mod.mac is not None
-        }
         resolved = _protocol.resolve_designer(
             self._store.objects,
             by_mac,
             names,
             self._store.colliding_macs,
-            mac_by_device_id,
         )
         params_by_mac = {device.mac: device.params for device in devices}
         hardware_by_mac = {
@@ -1153,11 +1136,8 @@ class AmpioClient:
                 capabilities,
                 hardware_by_mac,
                 self._store.colliding_macs,
-                mac_by_device_id,
             ),
-            _protocol.resolve_roller_lock_support(
-                self._store.objects, capabilities, mac_by_device_id
-            ),
+            _protocol.resolve_roller_lock_support(self._store.objects, capabilities),
         )
         module_applied = self._store.apply_module_sweep(
             _protocol.resolve_module_records(by_mac, names, self._store.colliding_macs),
@@ -1261,6 +1241,7 @@ class AmpioClient:
         before the publish. Scene commands and :meth:`set_event` fan out
         beyond a single object and offer no per-object echo.
 
+        Raises ``AmpioValueError`` for an id the catalogue does not list.
         Raises ``AmpioConnectionError`` when the broker is unreachable and
         ``AmpioTimeoutError`` when it fails to acknowledge in time; never an
         aiomqtt exception type.
@@ -1287,6 +1268,8 @@ class AmpioClient:
         both the `/api` surface and the raw CAN write topic share them,
         since neither has a reply topic of its own.
         """
+        if object_id not in self._store.objects:
+            raise AmpioValueError(f"object {object_id} is not in the catalogue")
         if confirm is None:
             await self._connection.publish(topic, payload)
             return None
@@ -1317,11 +1300,10 @@ class AmpioClient:
         admin session drives over the raw CAN write topic, or None.
 
         Admin-tier `przekaznik` objects on CAN modules, addressed by their
-        own leaf: mac from ``leaf_id`` (the replacement-stable override),
-        the 0-based :pyattr:`AmpioObject.leaf_io_no` channel, and the
-        function byte the leaf class takes
-        (:data:`RAW_OUTPUT_FUNCTION_BY_SF`). A class outside that table,
-        and a leafless object, stay on `/api`. The M-SERV's own virtual
+        own leaf: mac from ``address.mac`` (the replacement-stable
+        override), the 0-based ``address.channel``, and the function byte
+        the leaf class takes (:data:`RAW_OUTPUT_FUNCTION_BY_SF`). A class
+        outside that table stays on `/api`. The M-SERV's own virtual
         outputs stay on `/api` too - they live in its DB, not on the CAN
         bus. The restricted tier always returns None: the raw write tree
         is admin-only, so `/api` is all that tier has - which a panel
@@ -1332,14 +1314,10 @@ class AmpioClient:
         obj = self._store.objects.get(object_id)
         if obj is None or obj.typ_komponentu != "przekaznik" or obj.is_server_owned:
             return None
-        mac = obj.module_mac
-        channel = obj.leaf_io_no
-        function = (
-            RAW_OUTPUT_FUNCTION_BY_SF.get(obj.sf_id) if obj.sf_id is not None else None
-        )
-        if mac is None or channel is None or function is None:
+        function = RAW_OUTPUT_FUNCTION_BY_SF.get(obj.address.sf_id)
+        if function is None:
             return None
-        return mac, channel, function
+        return obj.address.mac, obj.address.channel, function
 
     async def _raw_output(
         self,
@@ -1407,9 +1385,8 @@ class AmpioClient:
         is turned off with ``setWWPower 0`` for the same reason, which also
         holds its color temperature for the next turn-on. An admin
         session's binary outputs ride the raw CAN write topic, exactly as
-        :meth:`turn_on` documents. An id no catalogue has established gets
-        the plain verb. ``confirm`` awaits the state echo exactly as
-        :meth:`command` documents.
+        :meth:`turn_on` documents. ``confirm`` awaits the state echo
+        exactly as :meth:`command` documents.
         """
         kind = self._output_kind(object_id)
         if kind is not None and not kind.switchable and kind.color:
@@ -1721,8 +1698,7 @@ class AmpioClient:
         """Reject a switch-family verb for an output known not to answer it -
         the M-SERV would drop it with no effect and no reply. `switch` is
         gated separately from `turnOn`/`turnOff`, because a `ledww` answers
-        it and ignores the other two. An id no catalogue has established
-        passes through."""
+        it and ignores the other two."""
         kind = self._output_kind(object_id)
         if kind is None:
             return
@@ -1738,8 +1714,7 @@ class AmpioClient:
         flag is the case that bites: it takes the timed form, sets the
         value and never reverts, so the caller would get a permanent write
         where it asked for a press. `AmpioObject.pulse_ms` reads 0 for
-        every kind this refuses. An id no catalogue has established passes
-        through."""
+        every kind this refuses."""
         obj = self._store.objects.get(object_id)
         kind = obj.kind if obj is not None else None
         if not isinstance(kind, InputKind | OutputKind) or kind.pulsable:
@@ -2046,11 +2021,7 @@ class AmpioClient:
                 f"object {object_id} ({obj.typ_komponentu}) is not a cover, so "
                 "no roller channel is its own"
             )
-        mac, channel = obj.module_mac, obj.leaf_io_no
-        if mac is None or channel is None:
-            raise AmpioValueError(
-                f"object {object_id} carries no leaf, so no module channel addresses it"
-            )
+        mac, channel = obj.address.mac, obj.address.channel
         module = self.module_for(obj)
         capabilities = module.capabilities if module is not None else {}
         channels = roller_lock_channels(capabilities, channel)

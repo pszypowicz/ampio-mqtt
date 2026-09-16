@@ -225,7 +225,7 @@ async def test_set_object_passes_a_raw_verb_and_its_arguments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     broker = FakeBroker()
-    broker.scripted_messages = _discovery()
+    broker.scripted_messages = _discovery({"id": 135})
     a = _parse(
         monkeypatch,
         set_object,
@@ -264,7 +264,7 @@ async def test_set_object_drives_a_cct_light(
     """The two axes travel packed, so the flag takes them apart and the
     client packs them - the caller never writes `power | coldness<<8`."""
     broker = FakeBroker()
-    broker.scripted_messages = _discovery()
+    broker.scripted_messages = _discovery({"id": 72, "typ_komponentu": "ledww"})
     a = _parse(
         monkeypatch, set_object, "--object-id", "72", flag, value, "--watch", "0.01"
     )

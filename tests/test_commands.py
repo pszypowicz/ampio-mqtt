@@ -13,7 +13,6 @@ from conftest import (
     ADMIN_PARAMS_DEVICES_TOPIC,
     ADMIN_USER,
     API_TOPIC,
-    DATA_DEVICES_TOPIC,
     USER,
     FakeBroker,
     catalogue,
@@ -39,6 +38,8 @@ async def test_command_builds_payload_on_the_account_topic(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 64})
+    broker.published.clear()
     await client.command(64, "setValue", 255)
     assert broker.published == [(API_TOPIC, b"/api/set/64/setValue/255")]
     # Commands publish at QoS 1 so returning means the broker accepted the
@@ -50,6 +51,8 @@ async def test_command_without_args_omits_trailing_slash(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 64})
+    broker.published.clear()
     await client.command(64, "turnOn")
     assert broker.published == [(API_TOPIC, b"/api/set/64/turnOn")]
 
@@ -84,6 +87,8 @@ async def test_helpers_map_to_verified_verbs(
     connected: tuple[AmpioClient, FakeBroker], call, expected: bytes
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 64}, {"id": 111}, {"id": 50}, {"id": 48})
+    broker.published.clear()
     await call(client)
     assert broker.published == [(API_TOPIC, expected)]
 
@@ -118,6 +123,8 @@ async def test_boundary_values_pass_the_range_checks(
     """The range limits themselves are legal commands - an off-by-one in
     the range checks must not silently reject them."""
     client, broker = connected
+    catalogue(client, {"id": 111}, {"id": 50}, {"id": 48})
+    broker.published.clear()
     await call(client)
     assert broker.published == [(API_TOPIC, expected)]
 
@@ -167,8 +174,18 @@ async def test_bool_arguments_are_rejected(
 
 async def test_command_requires_a_connection() -> None:
     client = AmpioClient("host", username=USER)
+    catalogue(client, {"id": 64})
     with pytest.raises(AmpioConnectionError):
         await client.turn_on(64)
+
+
+async def test_a_write_for_an_id_outside_the_catalogue_raises(connected) -> None:
+    client, broker = connected
+    with pytest.raises(AmpioValueError, match="999"):
+        await client.command(999, "turnOn")
+    with pytest.raises(AmpioValueError, match="999"):
+        await client.turn_on(999)
+    assert not broker.published
 
 
 # --- the rgbw switch-verb exception ----------------------------------------
@@ -235,6 +252,8 @@ async def test_set_ww_packs_both_axes(
 ) -> None:
     """One packed argument carries both axes: `power | coldness<<8`."""
     client, broker = connected
+    catalogue(client, {"id": 197})
+    broker.published.clear()
     await client.set_ww(197, 84, 85)
     assert broker.published == [(API_TOPIC, b"/api/set/197/setWW/21844")]
 
@@ -244,6 +263,8 @@ async def test_set_ww_power_drives_the_power_axis_alone(
 ) -> None:
     """`setWWPower` leaves the color temperature where it stands."""
     client, broker = connected
+    catalogue(client, {"id": 197})
+    broker.published.clear()
     await client.set_ww_power(197, 35)
     assert broker.published == [(API_TOPIC, b"/api/set/197/setWWPower/35")]
 
@@ -253,6 +274,8 @@ async def test_set_ww_coldness_drives_the_temperature_axis_alone(
 ) -> None:
     """`setWWColdness` leaves the power where it stands."""
     client, broker = connected
+    catalogue(client, {"id": 197})
+    broker.published.clear()
     await client.set_ww_coldness(197, 150)
     assert broker.published == [(API_TOPIC, b"/api/set/197/setWWColdness/150")]
 
@@ -378,22 +401,6 @@ async def test_pulse_on_a_relay_still_writes_the_timed_form(
     assert broker.published == [(API_TOPIC, b"/api/set/199/setValue/255/50")]
 
 
-async def test_switch_verbs_pass_through_when_kind_is_unknown(
-    connected: tuple[AmpioClient, FakeBroker],
-) -> None:
-    """Before metadata arrives the library cannot know better than the
-    caller, so the plain verbs go out unfiltered."""
-    client, broker = connected
-    await client.turn_on(99)
-    await client.switch(99)
-    await client.turn_off(99)
-    assert broker.published == [
-        (API_TOPIC, b"/api/set/99/turnOn"),
-        (API_TOPIC, b"/api/set/99/switch"),
-        (API_TOPIC, b"/api/set/99/turnOff"),
-    ]
-
-
 # --- cover tilt ------------------------------------------------------------
 
 
@@ -402,6 +409,8 @@ async def test_position_only_move_leaves_the_slats_alone(
 ) -> None:
     """Both cover types take the sentinel on the axis that must not move."""
     client, broker = connected
+    catalogue(client, {"id": 48}, {"id": 66})
+    broker.published.clear()
     await client.set_roller_pos(48, 55)
     await client.set_roller_pos(66, 95)
     assert broker.published == [
@@ -414,6 +423,8 @@ async def test_tilt_only_move_leaves_the_position_alone(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 66})
+    broker.published.clear()
     await client.set_roller_lamella(66, 50)
     assert broker.published == [(API_TOPIC, b"/api/set/66/setRollerPos/101/50")]
 
@@ -422,6 +433,8 @@ async def test_stop_publishes_the_stop_verb(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 66})
+    broker.published.clear()
     await client.stop(66)
     assert broker.published == [(API_TOPIC, b"/api/set/66/stop")]
 
@@ -430,6 +443,8 @@ async def test_both_axes_move_in_one_command(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 66})
+    broker.published.clear()
     await client.set_roller_pos(66, 95, lamella=20)
     assert broker.published == [(API_TOPIC, b"/api/set/66/setRollerPos/95/20")]
 
@@ -448,6 +463,8 @@ async def test_set_temperature_publishes_the_setpoint(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 138})
+    broker.published.clear()
     await client.set_temperature(138, 21.5)
     await client.set_temperature(138, 19)
     assert broker.published == [
@@ -472,6 +489,8 @@ async def test_set_heating_mode_publishes_the_letter(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 138})
+    broker.published.clear()
     for mode in sorted(HEATING_MODES):
         await client.set_heating_mode(138, mode)
     assert broker.published == [
@@ -560,6 +579,7 @@ async def test_confirm_defaults_off(
     """Without confirm the call is fire-and-forget: returns None as soon as
     the broker acknowledges, arming nothing."""
     client, _ = connected
+    catalogue(client, {"id": 64})
     assert await client.command(64, "turnOn") is None
     assert client._listeners == []
 
@@ -601,24 +621,6 @@ async def test_wrappers_thread_confirm_through(
     assert broker.published == [(API_TOPIC, expected)]
     assert obj is not None
     assert obj.id == oid
-
-
-async def test_confirm_survives_the_catalogue_race(
-    connected: tuple[AmpioClient, FakeBroker],
-) -> None:
-    """A command sent before any catalogue establishes the object still
-    confirms: its echo waits in the pending buffer and surfaces with the
-    catalogue row, so a consumer commanding right after connect is not
-    condemned to a spurious timeout."""
-    client, _ = connected
-    task = asyncio.create_task(client.set_value(70, 255, confirm=1.0))
-    await asyncio.sleep(0)  # the waiter arms before the publish
-    feed(client, _ob_state(70), _push("255"))
-    assert not task.done()
-    catalogue(client, {"id": 70, "typ_komponentu": "flaga"})
-    obj = await task
-    assert obj is not None
-    assert (obj.id, obj.state) == (70, "255")
 
 
 async def test_concurrent_confirms_resolve_on_one_echo(
@@ -679,7 +681,6 @@ async def test_confirm_on_the_admin_tier_resolves_on_the_raw_edge() -> None:
             params_of(
                 {
                     "id": 10,
-                    "id_urzadzenia": 7,
                     "typ_komponentu": "flaga",
                     "interpretacja": 1,
                     "funkcja": 3,
@@ -693,7 +694,6 @@ async def test_confirm_on_the_admin_tier_resolves_on_the_raw_edge() -> None:
             details(
                 {
                     "id": 10,
-                    "id_urzadzenia": 7,
                     "typ_komponentu": "flaga",
                     "interpretacja": 1,
                     "funkcja": 3,
@@ -741,7 +741,6 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
         params_of(
             {
                 "id": 90,
-                "id_urzadzenia": 7,
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 2,
                 "funkcja": 2,
@@ -750,7 +749,6 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 91,
-                "id_urzadzenia": 8,
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 1,
                 "funkcja": 1,
@@ -759,7 +757,6 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 93,
-                "id_urzadzenia": 9,
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 8,
                 "funkcja": 8,
@@ -768,7 +765,6 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 94,
-                "id_urzadzenia": 8,
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 4,
                 "funkcja": 4,
@@ -783,7 +779,6 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
         details(
             {
                 "id": 90,
-                "id_urzadzenia": 7,
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 2,
                 "funkcja": 2,
@@ -792,7 +787,6 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 91,
-                "id_urzadzenia": 8,
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 1,
                 "funkcja": 1,
@@ -801,7 +795,6 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 93,
-                "id_urzadzenia": 9,
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 8,
                 "funkcja": 8,
@@ -810,7 +803,6 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 94,
-                "id_urzadzenia": 8,
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 4,
                 "funkcja": 4,
@@ -927,7 +919,6 @@ async def test_server_owned_output_keeps_the_api_path() -> None:
             params_of(
                 {
                     "id": 92,
-                    "id_urzadzenia": 1,
                     "typ_komponentu": "przekaznik",
                     "interpretacja": 1,
                     "funkcja": 1,
@@ -942,7 +933,6 @@ async def test_server_owned_output_keeps_the_api_path() -> None:
             details(
                 {
                     "id": 92,
-                    "id_urzadzenia": 1,
                     "typ_komponentu": "przekaznik",
                     "interpretacja": 1,
                     "funkcja": 1,
@@ -965,21 +955,18 @@ async def test_restricted_tier_keeps_the_api_path_for_panel_objects(
     the /api form - which the M-SERV drops for a panel output, surfaced
     by confirm=. Documented as an Ampio limitation in panel-writes.md."""
     client, broker = connected
-    feed(
+    catalogue(
         client,
-        DATA_DEVICES_TOPIC,
-        details(
-            {
-                "id": 90,
-                "id_urzadzenia": 7,
-                "typ_komponentu": "przekaznik",
-                "interpretacja": 2,
-                "funkcja": 2,
-                "leafId": "0_cafe_257_2_1",
-                "opis_menu": "LED",
-            }
-        ),
+        {
+            "id": 90,
+            "typ_komponentu": "przekaznik",
+            "interpretacja": 2,
+            "funkcja": 2,
+            "leafId": "0_cafe_257_2_1",
+            "opis_menu": "LED",
+        },
     )
+    broker.published.clear()
     await client.turn_on(90)
     assert broker.published == [(API_TOPIC, b"/api/set/90/turnOn")]
 
@@ -1026,7 +1013,6 @@ async def test_flag_switch_verbs_ride_api_on_the_admin_tier() -> None:
             params_of(
                 {
                     "id": 93,
-                    "id_urzadzenia": 7,
                     "typ_komponentu": "flaga",
                     "leafId": "0_cafe_3_0_23",
                     "opis_menu": "Flag",
@@ -1039,7 +1025,6 @@ async def test_flag_switch_verbs_ride_api_on_the_admin_tier() -> None:
             details(
                 {
                     "id": 93,
-                    "id_urzadzenia": 7,
                     "typ_komponentu": "flaga",
                     "leafId": "0_cafe_3_0_23",
                     "opis_menu": "Flag",
@@ -1434,7 +1419,6 @@ async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
         params_of(
             {
                 "id": 193,
-                "id_urzadzenia": 3,
                 "typ_komponentu": "roleta_procenty",
                 "interpretacja": 1,
                 "funkcja": 1,
@@ -1443,7 +1427,6 @@ async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 194,
-                "id_urzadzenia": 3,
                 "typ_komponentu": "roleta_lamelki",
                 "interpretacja": 2,
                 "funkcja": 2,
@@ -1452,7 +1435,6 @@ async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 48,
-                "id_urzadzenia": 15,
                 "typ_komponentu": "roleta_procenty",
                 "interpretacja": 2,
                 "funkcja": 2,
@@ -1461,7 +1443,6 @@ async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 195,
-                "id_urzadzenia": 3,
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 0,
                 "funkcja": 1,
@@ -1476,7 +1457,6 @@ async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
         details(
             {
                 "id": 193,
-                "id_urzadzenia": 3,
                 "typ_komponentu": "roleta_procenty",
                 "interpretacja": 1,
                 "funkcja": 1,
@@ -1485,7 +1465,6 @@ async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 194,
-                "id_urzadzenia": 3,
                 "typ_komponentu": "roleta_lamelki",
                 "interpretacja": 2,
                 "funkcja": 2,
@@ -1494,7 +1473,6 @@ async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 48,
-                "id_urzadzenia": 15,
                 "typ_komponentu": "roleta_procenty",
                 "interpretacja": 2,
                 "funkcja": 2,
@@ -1503,7 +1481,6 @@ async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 195,
-                "id_urzadzenia": 3,
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 0,
                 "funkcja": 1,
