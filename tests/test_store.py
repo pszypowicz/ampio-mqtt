@@ -1685,6 +1685,63 @@ def test_simulation_push_changes_nothing() -> None:
     assert applied.events == []
 
 
+def test_malformed_buffered_detection_code_leaves_the_catalogue_unapplied() -> None:
+    store = _store()
+    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "home"))
+    with pytest.raises(AmpioProtocolError):
+        _apply(store, DETAILS_TOPIC, details(_WEJ, _DET))
+    assert store.objects == {}
+    assert store.presence_detection is None
+
+
+def test_snapshot_after_a_refresh_corrects_the_detection_code() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_DET))
+    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "5"))
+    store.begin_refresh()
+    _apply(store, STATES_TOPIC, snapshot({"id": 60, "stan_json": _push(60, "7")}))
+    assert store.presence_detection is not None
+    assert store.presence_detection.home_status == 7
+
+
+def test_snapshot_after_a_refresh_loses_to_a_push_in_the_same_cycle() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_DET))
+    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "5"))
+    store.begin_refresh()
+    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "8"))
+    _apply(store, STATES_TOPIC, snapshot({"id": 60, "stan_json": _push(60, "7")}))
+    assert store.presence_detection is not None
+    assert store.presence_detection.home_status == 8
+
+
+def test_hidden_detection_row_keeps_its_live_code() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details({**_DET, "params": 16}))
+    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "7"))
+    applied = _apply(store, DETAILS_TOPIC, details(_DET))
+    assert store.presence_detection is not None
+    assert store.presence_detection.home_status == 7
+    assert len(_presence_events(applied)) == 1
+
+
+def test_removed_detection_row_returns_without_its_old_code() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, DETAILS_TOPIC, details(_DET))
+    _apply(store, STATES_TOPIC, snapshot({"id": 60, "stan_json": _push(60, "5")}))
+    assert store.presence_detection is not None
+    assert store.presence_detection.home_status == 5
+    _apply(store, DETAILS_TOPIC, details(_WEJ))
+    assert store.presence_detection is None
+    _apply(store, DETAILS_TOPIC, details(_DET))
+    assert store.presence_detection is not None
+    assert store.presence_detection.home_status is None
+
+
 # --- the app-sync data surface (standard accounts) --------------------------
 
 

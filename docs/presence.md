@@ -35,8 +35,10 @@ server fault, and the library refuses the push.
 The `on` stamp on that push is not the change time. The library does not expose
 it.
 
-The states snapshot seeds `home_status` when the client holds none. A live push
-replaces it.
+The states snapshot seeds `home_status`. After a reconnect the snapshot corrects
+a code that no push replaced since the reconnect. A live push always replaces
+the code. A hidden row keeps its code and shows it when the row returns. A row
+the catalogue stops listing loses its code.
 
 ## The simulation switch
 

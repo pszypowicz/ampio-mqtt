@@ -74,6 +74,12 @@ class AmpioStore:
         # the row carries the hidden bit. docs/presence.md.
         self.presence_detection: PresenceDetection | None = None
         self.presence_simulation: PresenceSimulation | None = None
+        # The detection row's home-status code, held whether or not the row
+        # is visible. A live push sets it and marks the refresh cycle, so a
+        # snapshot after a reconnect corrects a code no push has replaced
+        # since the cycle began.
+        self._home_status: int | None = None
+        self._detection_pushed = False
         # The catalogue rows behind the two attributes, by object id, so a
         # params push can rebuild them and a state push can find the
         # detection row.
@@ -189,10 +195,13 @@ class AmpioStore:
         """Mark the start of a snapshot request cycle.
 
         Every value held now predates the snapshot the new cycle will
-        deliver, so a dated seed may correct locally-stamped values again.
-        The client calls this before it publishes the discovery requests.
+        deliver, so a dated seed may correct locally-stamped values again,
+        and a detection code the coming snapshot carries may correct one no
+        push has replaced since. The client calls this before it publishes
+        the discovery requests.
         """
         self._guarded.clear()
+        self._detection_pushed = False
 
     def apply_designer_records(
         self,
@@ -375,10 +384,13 @@ class AmpioStore:
         one whose columns have not arrived yet, which leaves the object
         reading the unset values until they do. The two presence rows are
         routed to their own attributes before the merge and never enter
-        ``objects``.
+        ``objects``. The presence merge runs first: a malformed buffered
+        detection code raises out of it before any object mutation, so the
+        catalogue and this call's events are left untouched.
         """
         presence = [m for m in served if m.typ_komponentu in _protocol.PRESENCE_TYPES]
         served = [m for m in served if m.typ_komponentu not in _protocol.PRESENCE_TYPES]
+        self._merge_presence(presence, config, applied)
         # One reply is the whole catalogue this tier holds, so its leafed
         # rows are every sibling a leafless row can learn its module from.
         sibling_macs: dict[int, int] = {}
@@ -391,7 +403,6 @@ class AmpioStore:
             touched |= self._merge_metadata(
                 meta, config.get(meta.id, {}), sibling_macs, applied
             )
-        self._merge_presence(presence, config, applied)
         evicted = self._evict_missing_objects({meta.id for meta in served}, applied)
         if touched or evicted:
             self._rebuild_indexes(applied)
@@ -433,10 +444,40 @@ class AmpioStore:
         """Rebuild the two presence attributes from their catalogue rows.
 
         A row the reply stopped listing reads None, and so does a row that
-        carries the hidden bit. The detection code survives a rebuild,
-        because it comes from the state stream and not from the row.
+        carries the hidden bit. The detection code is parsed into a local
+        before any store field changes, so a malformed buffered push raises
+        with the store still holding what it held before this call.
         """
-        self._presence_rows = {meta.id: meta for meta in rows}
+        detection_meta = next(
+            (m for m in rows if m.typ_komponentu == _protocol.DETECTION_TYPE), None
+        )
+        home_status = self._home_status
+        if detection_meta is not None:
+            pending = self._pending_state.get(detection_meta.id)
+            if pending is not None:
+                home_status = _home_status(pending.state)
+            elif self._home_status is None:
+                stan_json = self._stan_by_id.get(detection_meta.id)
+                if stan_json is not None:
+                    home_status = _home_status(
+                        _protocol.parse_stan_json(stan_json).state
+                    )
+        # Nothing above can raise past this point, so the store mutates now.
+        previous_detection_id, previous_simulation_id = self._presence_ids()
+        new_rows = {meta.id: meta for meta in rows}
+        if previous_detection_id is not None and previous_detection_id not in new_rows:
+            home_status = None
+            self._detection_pushed = False
+            self._stan_by_id.pop(previous_detection_id, None)
+        if (
+            previous_simulation_id is not None
+            and previous_simulation_id not in new_rows
+        ):
+            self._stan_by_id.pop(previous_simulation_id, None)
+        self._presence_rows = new_rows
+        if detection_meta is not None:
+            self._pending_state.pop(detection_meta.id, None)
+        self._home_status = home_status
         detection: PresenceDetection | None = None
         simulation: PresenceSimulation | None = None
         for meta in rows:
@@ -444,22 +485,8 @@ class AmpioStore:
             if cfg.get("params", 0) & HIDDEN_FLAG:
                 continue
             if meta.typ_komponentu == _protocol.DETECTION_TYPE:
-                current = self.presence_detection
-                kept = (
-                    current.home_status
-                    if current is not None and current.id == meta.id
-                    else None
-                )
-                pending = self._pending_state.pop(meta.id, None)
-                if pending is not None:
-                    kept = _home_status(pending.state)
-                elif (
-                    kept is None
-                    and (stan_json := self._stan_by_id.get(meta.id)) is not None
-                ):
-                    kept = _home_status(_protocol.parse_stan_json(stan_json).state)
                 detection = PresenceDetection(
-                    id=meta.id, name=meta.opis_menu, home_status=kept
+                    id=meta.id, name=meta.opis_menu, home_status=self._home_status
                 )
             else:
                 simulation = PresenceSimulation(
@@ -468,6 +495,17 @@ class AmpioStore:
                     active=cfg.get("czas", 0) == 1,
                 )
         self._set_presence(detection, simulation, applied)
+
+    def _presence_ids(self) -> tuple[int | None, int | None]:
+        """The current detection and simulation row ids, hidden ones included."""
+        detection_id: int | None = None
+        simulation_id: int | None = None
+        for oid, meta in self._presence_rows.items():
+            if meta.typ_komponentu == _protocol.DETECTION_TYPE:
+                detection_id = oid
+            else:
+                simulation_id = oid
+        return detection_id, simulation_id
 
     def _set_presence(
         self,
@@ -490,13 +528,24 @@ class AmpioStore:
     def _apply_presence_state(
         self, update: _protocol.StateUpdate, applied: Applied
     ) -> None:
-        """Fold a push for one of the two rows. Only the detection row
-        carries a value, the home-status code."""
-        detection = self.presence_detection
-        if detection is None or detection.id != update.id:
+        """Fold a push for one of the two rows.
+
+        Only the detection row carries a value, the home-status code, held
+        as store state whether or not the row is visible right now. A push
+        for the simulation row changes nothing.
+        """
+        meta = self._presence_rows.get(update.id)
+        if meta is None or meta.typ_komponentu != _protocol.DETECTION_TYPE:
             return
-        detection = replace(detection, home_status=_home_status(update.state))
-        self._set_presence(detection, self.presence_simulation, applied)
+        self._home_status = _home_status(update.state)
+        self._detection_pushed = True
+        detection = self.presence_detection
+        if detection is not None:
+            self._set_presence(
+                replace(detection, home_status=self._home_status),
+                self.presence_simulation,
+                applied,
+            )
 
     def _merge_metadata(
         self,
@@ -722,6 +771,14 @@ class AmpioStore:
         """
         entries = _protocol.parse_states_snapshot(data)
         self._stan_by_id = {entry.id: entry.stan_json for entry in entries}
+        detection_id, _ = self._presence_ids()
+        home_status = self._home_status
+        if detection_id is not None and (
+            self._home_status is None or not self._detection_pushed
+        ):
+            stan_json = self._stan_by_id.get(detection_id)
+            if stan_json is not None:
+                home_status = _home_status(_protocol.parse_stan_json(stan_json).state)
         for entry in entries:
             obj = self.objects.get(entry.id)
             if obj is None:
@@ -730,17 +787,14 @@ class AmpioStore:
             self.objects[entry.id] = obj
             if changed:
                 self._record(obj, applied)
+        self._home_status = home_status
         detection = self.presence_detection
-        if detection is not None and detection.home_status is None:
-            stan_json = self._stan_by_id.get(detection.id)
-            if stan_json is not None:
-                seeded = replace(
-                    detection,
-                    home_status=_home_status(
-                        _protocol.parse_stan_json(stan_json).state
-                    ),
-                )
-                self._set_presence(seeded, self.presence_simulation, applied)
+        if detection is not None and detection.home_status != home_status:
+            self._set_presence(
+                replace(detection, home_status=home_status),
+                self.presence_simulation,
+                applied,
+            )
 
     # --- live state -------------------------------------------------------
 
