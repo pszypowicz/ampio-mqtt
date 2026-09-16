@@ -529,3 +529,40 @@ def test_record_bundle_fields_default_to_none() -> None:
         location=None, matter_device_type=None, desc=None
     )
     assert ModuleRecord() == ModuleRecord(location=None, desc=None)
+
+
+# --- the two presence rows ---------------------------------------------------
+
+
+def test_presence_types_carry_exactly_their_fields() -> None:
+    from dataclasses import fields
+
+    from ampio_mqtt import PresenceDetection, PresenceSimulation
+
+    assert [f.name for f in fields(PresenceDetection)] == ["id", "name", "home_status"]
+    assert [f.name for f in fields(PresenceSimulation)] == ["id", "name", "active"]
+
+
+def test_presence_types_have_no_boolean_reading() -> None:
+    from ampio_mqtt import PresenceDetection, PresenceSimulation
+
+    detection = PresenceDetection(id=15, name="Detection", home_status=5)
+    simulation = PresenceSimulation(id=14, name="Simulation", active=False)
+    for row in (detection, simulation):
+        assert not hasattr(row, "is_on")
+        assert not hasattr(row, "state")
+
+
+def test_presence_changed_is_a_store_event() -> None:
+    from ampio_mqtt import PresenceChanged, PresenceDetection
+    from ampio_mqtt.events import StoreEvent
+
+    event = PresenceChanged(
+        detection=PresenceDetection(id=15, name=None, home_status=None),
+        simulation=None,
+    )
+    assert isinstance(event, StoreEvent)
+    assert event == PresenceChanged(
+        detection=PresenceDetection(id=15, name=None, home_status=None),
+        simulation=None,
+    )

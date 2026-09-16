@@ -71,6 +71,13 @@ class ObjectMetadata:
     format: str
 
 
+# The two rows the M-SERV creates itself. Neither is a module output, so
+# the store routes them to their own types instead of the object catalogue.
+DETECTION_TYPE = "detekcja"
+SIMULATION_TYPE = "symulacja"
+PRESENCE_TYPES = frozenset((DETECTION_TYPE, SIMULATION_TYPE))
+
+
 @dataclass(slots=True)
 class AdminObjectMetadata:
     """A `config/devicesDetails` row: the shared columns plus three more.

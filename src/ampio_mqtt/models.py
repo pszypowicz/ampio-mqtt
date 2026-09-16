@@ -88,7 +88,7 @@ class ModuleFunction(IntEnum):
 # `OPTION1` slot, whose meaning depends on the component type - Designer
 # labels it "Bell object" on `przekaznik` and `flaga` only, so
 # `AmpioObject.bell` gates on the type before reading it.
-_HIDDEN_FLAG = 1 << 4
+HIDDEN_FLAG = 1 << 4
 _READ_ONLY_FLAG = 1 << 6
 _BELL_FLAG = 1 << 15
 # The component types whose Designer editor renders `OPTION1` as the
@@ -130,6 +130,35 @@ def leaf_mac(leaf_id: str) -> int | None:
 # `AmpioModule.mac`. The one place the rule lives - consumers read
 # `AmpioObject.is_server_owned` instead of comparing macs themselves.
 MSERV_MAC = 1
+
+
+@dataclass(slots=True, frozen=True)
+class PresenceDetection:
+    """The M-SERV's presence-detection row.
+
+    ``home_status`` is the M-SERV's own code, pushed on the row's
+    per-object topic. 5 is "home empty" in the Ampio app. None until the
+    M-SERV computes one. The row is not an :class:`AmpioObject`: it has no
+    module, no leaf and no verb. docs/presence.md.
+    """
+
+    id: int
+    name: str | None
+    home_status: int | None
+
+
+@dataclass(slots=True, frozen=True)
+class PresenceSimulation:
+    """The M-SERV's presence-simulation row and its switch.
+
+    ``active`` is the row's ``czas`` column, 1 for on. The app flips it,
+    and the M-SERV pushes the change on the params table. The row carries
+    no state and is not an :class:`AmpioObject`. docs/presence.md.
+    """
+
+    id: int
+    name: str | None
+    active: bool
 
 
 @dataclass(slots=True, frozen=True)
@@ -552,7 +581,7 @@ class AmpioObject:
         M-SERV's own Matter bridge; it catches the phantom rows that
         duplicate a real Designer channel. See docs/visibility.md.
         """
-        return bool(self.params & _HIDDEN_FLAG)
+        return bool(self.params & HIDDEN_FLAG)
 
     @property
     def read_only(self) -> bool:
