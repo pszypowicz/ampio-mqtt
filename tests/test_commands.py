@@ -1327,8 +1327,10 @@ ROLLER_RAW_TOPIC = "ampio/to/be82/raw"
 
 
 async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
-    """Admin client holding two covers on a module that advertises four
-    roller channels, and one on a module that advertises none."""
+    """Admin client holding two covers and one relay on a module that
+    advertises four roller channels, and a cover on a module that
+    advertises none. The relay shares channel index 0 with the first
+    cover."""
     broker = FakeBroker()
     client = AmpioClient(
         "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
@@ -1372,6 +1374,15 @@ async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
                 "funkcja": 2,
                 "leafId": "0_cb86_5_0_1",
                 "opis_menu": "Old",
+            },
+            {
+                "id": 195,
+                "id_urzadzenia": 3,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 0,
+                "funkcja": 1,
+                "leafId": "0_be82_257_0_0",
+                "opis_menu": "Relay",
             },
         ),
     )
@@ -1437,6 +1448,18 @@ async def test_roller_lock_refuses_a_module_without_a_roller_count() -> None:
     try:
         with pytest.raises(AmpioValueError, match="roller channel count"):
             await client.block_opening(48)
+        assert broker.published == []
+    finally:
+        await client.disconnect()
+
+
+async def test_roller_lock_refuses_an_object_that_is_not_a_cover() -> None:
+    """The relay shares channel index 0 with a cover on the same module, so
+    the frame it would take is that cover's lock."""
+    client, broker = await _admin_with_covers()
+    try:
+        with pytest.raises(AmpioValueError, match="not a cover"):
+            await client.block_opening(195)
         assert broker.published == []
     finally:
         await client.disconnect()
