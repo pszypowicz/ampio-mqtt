@@ -15,8 +15,8 @@ optional slots on the object.
 
 The tables themselves live in
 [`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py) and
-are not repeated here. `TYPE_PROFILES` is one row per known `typ_komponentu`:
-its kind, its raw-bridge channel prefix, and its system flag.
+are not repeated here. Each row of `TYPE_PROFILES` covers one known
+`typ_komponentu`. It gives the kind and the raw-bridge channel prefix.
 `_LIN_WEJ_BY_INTERP` maps a `lin_wej` object's `interpretacja` to its
 measurement. The `OutputKind` flags say which command verbs an output answers,
 and `InputKind.switchable` says the same for an input. `pulsable` sits on both
