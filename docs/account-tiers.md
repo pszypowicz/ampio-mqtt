@@ -123,9 +123,9 @@ catalogue lists has a row there. The two replies arrive in no fixed order, which
 is why the library holds the table and applies it at the merge. Before the table
 answers, those three fields read their unset values.
 `wait_for_initial_discovery()` returning True is the boundary: it waits for both
-replies of the tier's pair. If the table answers and an object of the grant has
-no row in it, the library warns and lists that object in the `params_gap` entry
-of `diagnostics_snapshot()`.
+replies of the tier's pair. If the table answers and an object the catalogue
+lists has no row in it, the library warns. It lists that object in the
+`params_gap` entry of `diagnostics_snapshot()`.
 
 ## How the model marks the tiers
 
