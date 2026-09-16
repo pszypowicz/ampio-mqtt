@@ -161,6 +161,23 @@ class PresenceSimulation:
 
 
 @dataclass(slots=True, frozen=True)
+class ModuleAddress:
+    """Where an object sits on the CAN bus, parsed from its Designer leaf.
+
+    Every admitted object carries one, on both account tiers. ``mac`` is
+    the owning module's override mac: the key of the raw tree and the
+    value of ``AmpioModule.mac``. ``channel`` is the 0-based leaf channel,
+    the Designer's description-record key. ``sf_id`` is the leaf class and
+    ``sub_sf_id`` the sub-function inside it (docs/identity.md).
+    """
+
+    mac: int
+    channel: int
+    sf_id: int
+    sub_sf_id: int
+
+
+@dataclass(slots=True, frozen=True)
 class ThermostatState:
     """A regulator's climate readback, from the rich `reg` state push.
 

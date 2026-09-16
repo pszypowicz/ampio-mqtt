@@ -65,6 +65,22 @@ class ObjectRemoved:
 
 
 @dataclass(frozen=True, slots=True)
+class NotConfigured:
+    """The catalogue lists rows the library cannot admit.
+
+    The same payload as :class:`~ampio_mqtt.AmpioNotConfigured`: the
+    ``(id, name)`` pairs of every object row without a leaf, reported when
+    a catalogue apply changes that set to a non-empty one. Not terminal.
+    The rows stay out of ``objects`` until a later catalogue lists them
+    with a leaf, which produces :class:`ObjectAdded`. At connect time the
+    same condition raises from
+    :meth:`AmpioClient.wait_for_initial_discovery`.
+    """
+
+    objects: tuple[tuple[int, str | None], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class PresenceChanged:
     """The presence-detection or the presence-simulation row changed.
 
@@ -171,6 +187,7 @@ StoreEvent = (
     ObjectAdded
     | ObjectUpdated
     | ObjectRemoved
+    | NotConfigured
     | PresenceChanged
     | ModuleUpdated
     | ModuleRemoved

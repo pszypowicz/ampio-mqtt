@@ -3,6 +3,8 @@ the `ObjectAdded` catalogue-creation event."""
 
 from __future__ import annotations
 
+from typing import get_args
+
 import pytest
 from conftest import API_TOPIC, USER, FakeBroker, details, feed
 
@@ -10,9 +12,11 @@ from ampio_mqtt import (
     AmpioClient,
     AmpioConnectionError,
     BusEventRaised,
+    NotConfigured,
     ObjectAdded,
     ObjectUpdated,
 )
+from ampio_mqtt.events import ClientEvent, StoreEvent
 
 
 def test_received_event_reaches_listeners() -> None:
@@ -141,3 +145,10 @@ async def test_reconnect_replay_does_not_redispatch_object_added() -> None:
         assert [e.object.id for e in added] == [6]
     finally:
         await client.disconnect()
+
+
+def test_not_configured_is_a_store_event_and_a_client_event() -> None:
+    event = NotConfigured(objects=((5, "Lamp"),))
+    assert event.objects == ((5, "Lamp"),)
+    assert NotConfigured in get_args(StoreEvent)
+    assert NotConfigured in get_args(ClientEvent)

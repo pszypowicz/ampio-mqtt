@@ -24,6 +24,29 @@ class AmpioAuthError(AmpioError):
     """Raised when the broker rejects the credentials."""
 
 
+class AmpioNotConfigured(AmpioError):
+    """Raised when the Designer configuration leaves a row unaddressable.
+
+    A drivable object row carries no leaf. Designer clears the leaf when an
+    object's Matter box is checked and then unchecked, and the library
+    addresses an object on the bus through its leaf alone. The installer
+    restores the leaf in Designer, so ``objects`` names every such row as
+    an ``(id, name)`` pair. The connection stays up, and every other row
+    is served.
+    """
+
+    def __init__(self, objects: tuple[tuple[int, str | None], ...]) -> None:
+        self.objects = objects
+        listed = ", ".join(
+            f"{oid} ({name})" if name else str(oid) for oid, name in objects
+        )
+        super().__init__(
+            f"Ampio object(s) {listed} carry no leaf. Designer clears the "
+            "leaf when the Matter box is checked and unchecked. Restore each "
+            "in Designer and save"
+        )
+
+
 class AmpioValueError(AmpioError, ValueError):
     """Raised when an argument is outside what the API accepts.
 

@@ -12,6 +12,7 @@ from ampio_mqtt import (
     AmpioProtocolError,
     AmpioServerInfo,
     BusEventRaised,
+    ModuleAddress,
     ThermostatState,
 )
 from ampio_mqtt._protocol import (
@@ -36,6 +37,7 @@ from ampio_mqtt._protocol import (
     md5_topic,
     parse_app_sync_devices,
     parse_devices,
+    parse_module_address,
     parse_params_devices,
     parse_scenes,
     parse_server_info,
@@ -907,3 +909,25 @@ def test_raw_identify_frames_are_the_designer_pair() -> None:
     """`[0x7E, flag]` as ASCII hex: 1 starts identify, 0 stops it."""
     assert RAW_IDENTIFY_ON == "7e01"
     assert RAW_IDENTIFY_OFF == "7e00"
+
+
+def test_a_leaf_token_parses_into_its_four_address_fields() -> None:
+    assert parse_module_address("0_cb8f_76_0_3") == ModuleAddress(
+        mac=0xCB8F, channel=3, sf_id=76, sub_sf_id=0
+    )
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "",
+        "1_cb8f_76_0_3",
+        "0_zz_76_0_3",
+        "0_cb8f_x_0_3",
+        "0_cb8f_76_0",
+        "0_cb8f_76_0_3_9",
+    ],
+)
+def test_a_leaf_token_of_another_shape_is_a_server_fault(token: str) -> None:
+    with pytest.raises(AmpioProtocolError, match=repr(token)):
+        parse_module_address(token)

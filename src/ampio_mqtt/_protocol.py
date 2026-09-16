@@ -28,6 +28,7 @@ import binascii
 import json
 import logging
 import math
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -42,6 +43,7 @@ from .models import (
     AmpioServerInfo,
     CoverParameters,
     DesignerRecord,
+    ModuleAddress,
     ModuleFunction,
     ModuleRecord,
     PanelSettings,
@@ -248,6 +250,31 @@ _INFO = "server info"
 _PUSH = "state push"
 _GROUPS = "room table"
 _MEMBERSHIP = "room membership table"
+
+# The `leafId` shape: `0_<macHex>_<sfId>_<subSfId>_<ioNo>`, a leading
+# literal `0`, then the four fields the parse reads (docs/identity.md).
+# Strict: a half-parsed address that is wrong is worse than a refused reply.
+_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_(\d+)_(\d+)_(\d+)")
+
+
+def parse_module_address(leaf_id: str) -> ModuleAddress:
+    """The bus address a non-empty ``leafId`` token embeds.
+
+    An empty token is the door's decision, not a parse failure, so the
+    caller tests for it first. Any other shape is a server fault.
+    """
+    match = _LEAF_ID_RE.fullmatch(leaf_id)
+    if match is None:
+        raise AmpioProtocolError(
+            f"The Ampio object catalogue carries the leafId {leaf_id!r}, "
+            "which is not a 0_<macHex>_<sfId>_<subSfId>_<ioNo> token"
+        )
+    return ModuleAddress(
+        mac=int(match.group(1), 16),
+        channel=int(match.group(4)),
+        sf_id=int(match.group(2)),
+        sub_sf_id=int(match.group(3)),
+    )
 
 
 def _shared_columns(row: Mapping[str, Any]) -> ObjectMetadata:
