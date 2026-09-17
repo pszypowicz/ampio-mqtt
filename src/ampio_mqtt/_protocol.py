@@ -1222,12 +1222,6 @@ def parse_stan_json(stan_json: str) -> StanJsonSeed:
 # the reply lands on ``ampio/fromDB/<user>/<resp_surface>/<resp_leaf>``.
 
 
-# The reserved administrator login. The app refuses to create a user of
-# this name and the broker authenticates it at CONNACK, so the account
-# tier is a constructor fact, not a discovered one.
-ADMIN_USERNAME = "admin"
-
-
 @dataclass(frozen=True, slots=True)
 class Endpoint:
     """One M-SERV request/response endpoint."""

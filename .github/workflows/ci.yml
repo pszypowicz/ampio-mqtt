@@ -48,8 +48,10 @@ jobs:
       - run: python -m pip install --group dev
       - run: ruff check src tests tools
       - run: ruff format --check src tests tools
-      # Markdown prose wrapping (.prettierrc sets proseWrap: always).
-      - run: npx --yes prettier@3.6.2 --check "**/*.md"
+      # Markdown prose wrapping (.prettierrc sets proseWrap: always). The
+      # tracked set is the subject: a glob would also read scratch files a
+      # contributor keeps in the clone.
+      - run: git ls-files '*.md' | xargs npx --yes prettier@3.6.2 --check
 
   typecheck:
     name: Type check
