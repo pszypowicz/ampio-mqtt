@@ -1,11 +1,11 @@
 """The store applies messages without a client, a broker, or an event loop.
 
-These drive `AmpioStore` directly, which is the point of it being separate:
+These drive the stores directly, which is the point of them being separate:
 protocol behaviour is reachable from a plain function call, and what a message
 changed is a return value rather than something to reconstruct from callbacks.
 Tests speak in wire topics for readability; :func:`_apply` routes them the
-way the client dispatcher does, with the tier-scoping the client applies
-left off - the store is tier-agnostic and each test feeds one tier's wire.
+way the client dispatcher does, with the endpoint scoping the client applies
+left off, so a test may feed a store any wire shape its class handles.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import fields, replace
 
 import pytest
@@ -22,6 +23,7 @@ from conftest import (
     ADMIN_USER,
     DATA_DEVICES_TOPIC,
     DEVICES_TOPIC,
+    INFO_TOPIC,
     PARAMS_DEVICES_TOPIC,
     STATES_TOPIC,
     USER,
@@ -46,7 +48,7 @@ from ampio_mqtt._protocol import (
     Router,
     decode_envelope,
 )
-from ampio_mqtt._store import AmpioStore, Applied
+from ampio_mqtt._store import AdminStore, AmpioStore, Applied
 from ampio_mqtt.classification import (
     InputKind,
     OutputKind,
@@ -124,14 +126,14 @@ def _apply(
     return store.apply(msg, retained=retained)
 
 
-def _store() -> AmpioStore:
-    """A store on the admin tier."""
-    return AmpioStore(AccessTier.ADMIN)
+def _store() -> AdminStore:
+    """A store for the reserved admin login."""
+    return AdminStore()
 
 
 def _app_store() -> AmpioStore:
-    """A store on the restricted tier."""
-    return AmpioStore(AccessTier.RESTRICTED)
+    """A store for a standard account."""
+    return AmpioStore()
 
 
 def _feed_catalogue(store: AmpioStore, *items: dict, user: str = USER) -> Applied:
@@ -404,35 +406,51 @@ def test_a_refused_info_reply_never_wipes_held_identity(
     assert not any("baseline" in r.getMessage() for r in caplog.records)
 
 
-@pytest.mark.parametrize(
-    ("tier", "user_id"),
-    [(AccessTier.ADMIN, 4), (AccessTier.RESTRICTED, -1)],
-)
-def test_an_info_reply_that_contradicts_the_tier_is_refused(
-    tier: AccessTier, user_id: int
-) -> None:
-    """The username decides the tier, and every subscription and request
-    follows from it. The account id in the info reply is the wire's own
-    verdict on the same question, so a disagreement means the whole session
-    is aimed at the wrong surfaces."""
-    store = AmpioStore(tier)
-    topic = f"ampio/fromDB/{USER}/data/info"
-    with pytest.raises(AmpioProtocolError, match="tier"):
-        _apply(store, topic, info(mac=1, userId=user_id))
-    assert store.server_info is None
+def test_the_info_reply_account_id_is_not_checked_against_the_store() -> None:
+    """The account id is a wire fact each store records as it reads it."""
+    base = _app_store()
+    _apply(base, INFO_TOPIC, info(mac=555, userId=-1, serverVersion="1865"))
+    assert base.server_info is not None and base.server_info.user_id == -1
+    admin = _store()
+    _apply(admin, INFO_TOPIC, info(mac=555, userId=4, serverVersion="1865"))
+    assert admin.server_info is not None and admin.server_info.user_id == 4
 
 
-@pytest.mark.parametrize(
-    ("tier", "user_id"),
-    [(AccessTier.ADMIN, -1), (AccessTier.RESTRICTED, 4)],
-)
-def test_an_info_reply_that_confirms_the_tier_is_applied(
-    tier: AccessTier, user_id: int
-) -> None:
-    store = AmpioStore(tier)
-    _apply(store, f"ampio/fromDB/{USER}/data/info", info(mac=1, userId=user_id))
-    assert store.server_info is not None
-    assert store.server_info.access_tier is tier
+def test_the_base_store_applies_no_raw_message() -> None:
+    """The base router routes no raw topic, so one reaching the base store
+    is a broken invariant rather than a message to drop."""
+    store = _app_store()
+    edge = _protocol.RawChannelEdge(mac=0xA, prefix="f", channel=3, state="1")
+    with pytest.raises(RuntimeError, match="RawChannelEdge"):
+        store.apply(edge)
+
+
+def test_a_raw_edge_marks_the_object_raw_owned_in_the_admin_store() -> None:
+    """The raw path owns the object from its first edge, so the slower
+    per-object echo of the same change is dropped."""
+    store = _store()
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    _apply(store, "ampio/from/a/state/f/3", "1")
+    assert 41 in store._raw_owned
+    echoed = _apply(
+        store,
+        f"ampio/fromDB/{USER}/ob/41/state",
+        json.dumps({"state": "0", "on": 1779560000000}),
+    )
+    assert echoed.events == []
+    assert store.objects[41].state == "1"
+
+
+def test_an_object_leaving_the_index_is_released_without_an_event() -> None:
+    """Raw ownership is store bookkeeping, so the release itself changes
+    nothing a consumer can read and the row change is the only news."""
+    store = _store()
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    _apply(store, "ampio/from/a/state/f/3", "1")
+    retyped = {**_flaga_row(41, 3, mac=0xA), "typ_komponentu": "roleta_procenty"}
+    applied = _feed_catalogue(store, retyped)
+    assert 41 not in store._raw_owned
+    assert [obj.id for obj in _updated(applied)] == [41]
 
 
 def test_below_baseline_warning_survives_an_identityless_reply_arriving_first(
@@ -451,19 +469,24 @@ def test_below_baseline_warning_survives_an_identityless_reply_arriving_first(
     assert "100" in warnings[0].getMessage()
 
 
+@pytest.mark.parametrize(
+    ("endpoints", "store_class"),
+    [("BASE_ENDPOINTS", AmpioStore), ("ADMIN_ENDPOINTS", AdminStore)],
+)
 def test_handler_table_misalignment_fails_at_construction(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, endpoints: str, store_class: type[AmpioStore]
 ) -> None:
     """A handler-gated endpoint row without a matching store handler (a
     name typo, a row added without its handler) would surface as a silent
-    discovery hang; construction refuses it instead."""
+    discovery hang; construction refuses it instead. Each store class
+    checks its own endpoint set."""
     rogue = _protocol.Endpoint("rogue", "data", "rogue", "data", "rogue")
-    monkeypatch.setattr(_protocol, "ENDPOINTS", (*ENDPOINTS, rogue))
+    monkeypatch.setattr(_protocol, endpoints, (*getattr(_protocol, endpoints), rogue))
     with pytest.raises(RuntimeError, match="rogue"):
-        AmpioStore(AccessTier.ADMIN)
+        store_class()
 
 
-def _raw_owned_flag(store: AmpioStore, mac: int = 0xCAFE) -> None:
+def _raw_owned_flag(store: AdminStore, mac: int = 0xCAFE) -> None:
     """Discover one flaga (ob/10 on module 1, channel f/3) and land a raw edge."""
     _apply(store, DEVICES_TOPIC, _devices(mac))
     _feed_catalogue(store, *_flaga_rows((10, mac)))
@@ -539,9 +562,9 @@ def test_a_moved_leaf_returns_the_object_to_per_object_updates() -> None:
     store = _store()
     _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
     _apply(store, "ampio/from/a/state/f/3", "1")
-    assert store.objects[41].raw_owned is True
+    assert 41 in store._raw_owned
     _feed_catalogue(store, _flaga_row(41, 3, mac=0xB))
-    assert store.objects[41].raw_owned is False
+    assert 41 not in store._raw_owned
     _apply(store, STATES_TOPIC, _snapshot("0", 1779560000000, oid=41))
     assert store.objects[41].state == "0"
 
@@ -559,7 +582,7 @@ def test_begin_refresh_lets_the_snapshot_resync_a_locally_stamped_value() -> Non
     # also a leaf move.
     retyped = {"id": 10, "typ_komponentu": "roleta_procenty", "leafId": "0_cafe_3_0_2"}
     _feed_catalogue(store, retyped)
-    assert store.objects[10].raw_owned is False
+    assert 10 not in store._raw_owned
     far_future = int((time.time() + 3600) * 1000)
     assert _updated(_apply(store, STATES_TOPIC, _snapshot("stale", far_future))) == []
     store.begin_refresh()
@@ -692,7 +715,7 @@ def test_a_retained_raw_replay_sets_the_value_but_not_last_seen() -> None:
 
     _apply(store, f"ampio/from/{0xCAFE:X}/state/f/3", "1", retained=True)
     assert store.objects[10].state == "1"
-    assert store.objects[10].raw_owned is True
+    assert 10 in store._raw_owned
     assert store.modules[1].last_seen is None
 
     _apply(store, f"ampio/from/{0xCAFE:X}/state/f/3", "0")
@@ -711,7 +734,7 @@ def test_a_raw_edge_routes_to_every_object_sharing_the_leaf() -> None:
     _feed_catalogue(store, {"id": 41, **shared}, {"id": 42, **shared})
     applied = _apply(store, "ampio/from/a/state/f/3", "1")
     assert sorted(o.id for o in _updated(applied)) == [41, 42]
-    assert store.objects[41].raw_owned and store.objects[42].raw_owned
+    assert {41, 42} <= store._raw_owned
 
 
 def test_the_routing_index_keys_on_the_leaf_mac_without_the_module_list() -> None:
@@ -1314,32 +1337,32 @@ def test_a_buffered_push_for_an_unlisted_id_is_pruned() -> None:
 
 
 @pytest.mark.parametrize(
-    ("tier", "topic_suffix"),
+    ("make_store", "topic_suffix"),
     [
-        (AccessTier.ADMIN, "data/devices"),
-        (AccessTier.ADMIN, "data/params_devices"),
-        (AccessTier.ADMIN, "config/devices"),
-        (AccessTier.ADMIN, "data/states"),
-        (AccessTier.RESTRICTED, "data/devices"),
-        (AccessTier.RESTRICTED, "data/params_devices"),
-        (AccessTier.RESTRICTED, "data/states"),
+        (_store, "data/devices"),
+        (_store, "data/params_devices"),
+        (_store, "config/devices"),
+        (_store, "data/states"),
+        (_app_store, "data/devices"),
+        (_app_store, "data/params_devices"),
+        (_app_store, "data/states"),
     ],
 )
 def test_every_handler_refuses_an_unparseable_payload(
-    tier: AccessTier, topic_suffix: str
+    make_store: Callable[[], AmpioStore], topic_suffix: str
 ) -> None:
     """No handler reads a reply it cannot trust. The caller reports the
     refusal and drops the message."""
     with pytest.raises(AmpioProtocolError):
-        _apply(AmpioStore(tier), f"ampio/fromDB/{USER}/{topic_suffix}", "not json")
+        _apply(make_store(), f"ampio/fromDB/{USER}/{topic_suffix}", "not json")
 
 
-def test_a_restricted_store_refuses_the_admin_only_module_list() -> None:
-    """The module list answers the admin tier alone, so a restricted
-    store's handler table carries no entry for it, and an attempt to
-    apply one is a routing fault to report."""
-    store = AmpioStore(AccessTier.RESTRICTED)
-    with pytest.raises(AmpioProtocolError, match="tier"):
+def test_the_base_store_refuses_the_admin_only_module_list() -> None:
+    """The module list answers the reserved admin login alone, so the base
+    store's handler table carries no entry for it, and an attempt to apply
+    one is a routing fault to report."""
+    store = _app_store()
+    with pytest.raises(RuntimeError, match="has no handler"):
         _apply(store, DEVICES_TOPIC, devices({"id": 24}))
 
 
@@ -1384,7 +1407,7 @@ def test_numeric_value_none_for_bare_nan_state_push() -> None:
 # --- raw-channel input bridge ---------------------------------------------
 
 
-def _panel_store() -> AmpioStore:
+def _panel_store() -> AdminStore:
     """Store that knows panel module 7 (mac CAFE) and a flaga at funkcja 32."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
@@ -2400,23 +2423,12 @@ def test_raw_owned_tracks_the_bridge_coverage() -> None:
     cleared when the rebuilt index stops covering the object, so it goes
     back to per-object updates."""
     store = _panel_store()
-    assert store.objects[50].raw_owned is False
+    assert 50 not in store._raw_owned
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
-    assert store.objects[50].raw_owned is True
+    assert 50 in store._raw_owned
     retyped = dict(_flaga_row(50, 32), typ_komponentu="roleta_procenty")
     _feed_catalogue(store, retyped)
-    assert store.objects[50].raw_owned is False
-
-
-def test_clearing_raw_owned_dispatches_the_final_state() -> None:
-    """The flip back to per-object updates is public state; the reply's
-    events must end with a snapshot carrying raw_owned False."""
-    store = _panel_store()
-    _apply(store, "ampio/from/CAFE/state/f/32", "1")
-    retyped = dict(_flaga_row(50, 32), typ_komponentu="roleta_procenty")
-    applied = _feed_catalogue(store, retyped)
-    assert store.objects[50].raw_owned is False
-    assert any(o.id == 50 and o.raw_owned is False for o in _updated(applied))
+    assert 50 not in store._raw_owned
 
 
 # --- the retained replay lands before the catalogue -------------------------
@@ -2437,7 +2449,7 @@ def test_a_retained_edge_before_the_catalogue_applies_at_the_fold() -> None:
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
     applied = _feed_catalogue(store, _flaga_row(50, 32))
     obj = store.objects[50]
-    assert obj.state == "1" and obj.raw_owned is True
+    assert obj.state == "1" and 50 in store._raw_owned
     # The reply creates the object and the fold then fills it, so the last
     # event for it carries the replayed value.
     assert [o for o in _updated(applied) if o.id == 50][-1].state == "1"
@@ -2509,7 +2521,7 @@ def test_a_held_channel_no_object_exposes_is_discarded() -> None:
 
     # The object for that channel appears later and stays on its own path.
     _feed_catalogue(store, _flaga_row(50, 32), _flaga_row(52, 99))
-    assert store.objects[52].state is None and store.objects[52].raw_owned is False
+    assert store.objects[52].state is None and 52 not in store._raw_owned
 
 
 def test_a_channel_the_replay_skipped_keeps_the_per_object_path() -> None:
@@ -2520,22 +2532,22 @@ def test_a_channel_the_replay_skipped_keeps_the_per_object_path() -> None:
     _apply(store, "ampio/from/CAFE/state/f/32", "1", retained=True)
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
     _feed_catalogue(store, _flaga_row(50, 32), _flaga_row(51, 33))
-    assert store.objects[50].raw_owned is True and store.objects[50].state == "1"
-    assert store.objects[51].raw_owned is False
+    assert 50 in store._raw_owned and store.objects[50].state == "1"
+    assert 51 not in store._raw_owned
 
     _apply(store, f"ampio/fromDB/{USER}/ob/51/state", '{"state":"255","on":1700}')
     assert store.objects[51].state == "255"
 
 
 def test_a_formerly_raw_owned_value_survives_a_skewed_snapshot() -> None:
-    """Clearing raw_owned hands the object back to the per-object path,
-    not to a skewed DB seed: the raw value stamped local time, so a dated
-    snapshot waits for the next request cycle."""
+    """Releasing the object hands it back to the per-object path, not to a
+    skewed DB seed: the raw value stamped local time, so a dated snapshot
+    waits for the next request cycle."""
     store = _panel_store()
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
     retyped = dict(_flaga_row(50, 32), typ_komponentu="roleta_procenty")
     _feed_catalogue(store, retyped)
-    assert store.objects[50].raw_owned is False
+    assert 50 not in store._raw_owned
     far_future = int((time.time() + 3600) * 1000)
     stan = json.dumps({"state": "0", "on": far_future})
     _apply(store, STATES_TOPIC, json.dumps({"List": [{"id": 50, "stan_json": stan}]}))
@@ -2576,7 +2588,7 @@ def _seed_catalogue(store: AmpioStore, *rows: dict) -> Applied:
 
 
 def test_apply_designer_records_sets_the_bundle() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     _seed_catalogue(
         store, {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     )
@@ -2589,7 +2601,7 @@ def test_apply_designer_records_sets_the_bundle() -> None:
 
 
 def test_sweep_never_touches_the_catalogue_type_column() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     _seed_catalogue(
         store,
         {
@@ -2609,7 +2621,7 @@ def test_sweep_never_touches_the_catalogue_type_column() -> None:
 
 
 def test_record_replaces_wholesale() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     row = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     _seed_catalogue(store, row)
     store.apply_designer_records(
@@ -2625,7 +2637,7 @@ def test_record_replaces_wholesale() -> None:
 
 
 def test_held_records_accumulate_across_partial_sweeps() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     row_a = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
     row_b = {"id": 48, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_1"}
     _seed_catalogue(store, row_a, row_b)
@@ -2640,7 +2652,7 @@ def test_record_for_an_unknown_id_waits_for_the_catalogue() -> None:
     """A resolution racing ahead of the catalogue (or arriving for an
     object just evicted) creates no placeholder - the held table applies
     it once the id's own catalogue row lands."""
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     applied = store.apply_designer_records({999: DesignerRecord(location="X")}, {}, {})
     assert applied.events == []
     assert store.objects == {}
@@ -2651,7 +2663,7 @@ def test_record_for_an_unknown_id_waits_for_the_catalogue() -> None:
 
 
 def test_apply_designer_records_folds_both_maps_into_one_event() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     _seed_catalogue(
         store,
         {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"},
@@ -2678,7 +2690,7 @@ def test_apply_designer_records_folds_both_maps_into_one_event() -> None:
 def test_an_eviction_drops_the_held_cover_parameters() -> None:
     """A sweep result belongs to an admitted object, so an eviction takes
     it with the object and the row that returns waits for a fresh sweep."""
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
     _seed_catalogue(store, row)
     params = CoverParameters(
@@ -2702,7 +2714,7 @@ def test_a_kind_change_drops_the_held_cover_parameters() -> None:
     a row that leaves the class clears the field and the held entry both. A
     later return to the class waits for a sweep rather than folding the old
     value back (#219)."""
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
     _seed_catalogue(store, row)
     params = CoverParameters(
@@ -2723,7 +2735,7 @@ def test_a_kind_change_drops_the_held_cover_parameters() -> None:
 
 
 def test_apply_designer_records_folds_the_lock_support() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     _seed_catalogue(
         store,
         {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"},
@@ -2738,7 +2750,7 @@ def test_apply_designer_records_folds_the_lock_support() -> None:
 def test_an_eviction_drops_the_held_lock_support() -> None:
     """False is an answer for the object the sweep covered, so the row that
     returns reads the unresolved None until a sweep answers for it again."""
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
     _seed_catalogue(store, row)
     store.apply_designer_records({}, {}, {70: False})
@@ -2748,7 +2760,7 @@ def test_an_eviction_drops_the_held_lock_support() -> None:
 
 
 def test_a_kind_change_drops_the_held_lock_support() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
     _seed_catalogue(store, row)
     store.apply_designer_records({}, {}, {70: True})
@@ -2760,7 +2772,7 @@ def test_a_kind_change_drops_the_held_lock_support() -> None:
 
 def test_a_locked_cover_keeps_both_facts() -> None:
     """The lock is a live push and the parameters are a sweep read."""
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     _seed_catalogue(
         store,
         {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"},
@@ -2790,7 +2802,7 @@ def test_a_locked_cover_keeps_both_facts() -> None:
 
 
 def test_new_catalogue_row_dispatches_object_added() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     applied = _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
     assert [type(e) for e in applied.events] == [ObjectAdded]
     assert applied.events[0].object.id == 7
@@ -2799,7 +2811,7 @@ def test_new_catalogue_row_dispatches_object_added() -> None:
 
 
 def test_known_row_change_dispatches_updated_not_added() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
     applied = _seed_catalogue(
         store, {"id": 7, "typ_komponentu": "flaga", "opis_menu": "x"}
@@ -2808,7 +2820,7 @@ def test_known_row_change_dispatches_updated_not_added() -> None:
 
 
 def test_recreation_after_eviction_dispatches_added_again() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
     removed = _seed_catalogue(store)  # empty catalogue evicts
     assert [type(e) for e in removed.events] == [ObjectRemoved]
@@ -2817,7 +2829,7 @@ def test_recreation_after_eviction_dispatches_added_again() -> None:
 
 
 def test_bare_row_creation_still_dispatches_added() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
+    store = AdminStore()
     applied = _seed_catalogue(store, {"id": 9})
     assert [type(e) for e in applied.events] == [ObjectAdded]
 
@@ -2847,7 +2859,7 @@ def test_panel_output_o_channel_routes_to_its_object() -> None:
     applied = _apply(store, "ampio/from/CAFE/state/o/2", "1")
 
     obj = store.objects[90]
-    assert obj.state == "1" and obj.is_on is True and obj.raw_owned is True
+    assert obj.state == "1" and obj.is_on is True and 90 in store._raw_owned
     assert _updated(applied) == [obj]
 
 
@@ -2861,7 +2873,7 @@ def test_o_channel_of_a_relay_module_is_bridged_too() -> None:
     applied = _apply(store, "ampio/from/B0B0/state/o/1", "1")
 
     obj = store.objects[91]
-    assert obj.state == "1" and obj.raw_owned is True
+    assert obj.state == "1" and 91 in store._raw_owned
     assert _updated(applied) == [obj]
 
 
@@ -2879,7 +2891,7 @@ def test_a_channel_routes_to_an_open_collector_relay() -> None:
 
     applied = _apply(store, "ampio/from/1A2B/state/a/8", "255")
     obj = store.objects[93]
-    assert obj.state == "255" and obj.is_on is True and obj.raw_owned is True
+    assert obj.state == "255" and obj.is_on is True and 93 in store._raw_owned
     assert _updated(applied) == [obj]
 
 
@@ -2890,7 +2902,7 @@ def test_a_channel_does_not_route_a_binary_output_relay() -> None:
 
     applied = _apply(store, "ampio/from/B0B0/state/a/1", "255")
     assert _updated(applied) == []
-    assert store.objects[91].raw_owned is False
+    assert 91 not in store._raw_owned
 
 
 def test_panel_output_per_object_echo_is_dropped_once_raw_owned() -> None:

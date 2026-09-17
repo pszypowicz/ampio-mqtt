@@ -29,7 +29,6 @@ from .events import (
 )
 from .models import (
     HIDDEN_FLAG,
-    AccessTier,
     AmpioModule,
     AmpioObject,
     AmpioServerInfo,
@@ -57,17 +56,17 @@ class Applied:
 
 
 class AmpioStore:
-    """Applies typed M-SERV messages to the object, module and server state.
+    """Applies typed M-SERV messages to the object and server state.
 
-    The account tier decides which surfaces answer (docs/account-tiers.md),
-    so the store holds the handlers of that tier alone. Each fact then has
-    one source: `data/params_devices` carries them on both tiers.
+    Holds what every account is served: the object catalogue, its config
+    columns, the states snapshot and the server's self-report.
+    :class:`AdminStore` adds what the reserved admin login alone receives
+    (docs/account-tiers.md). Each fact has one source: `data/params_devices`
+    carries the Designer config columns for every account.
     """
 
-    def __init__(self, tier: AccessTier) -> None:
-        self._tier = tier
+    def __init__(self) -> None:
         self.objects: dict[int, AmpioObject] = {}
-        self.modules: dict[int, AmpioModule] = {}
         self.server_info: AmpioServerInfo | None = None
         # The two rows the M-SERV creates itself, routed here instead of
         # `objects`. None until the catalogue lists the row, and None while
@@ -91,18 +90,6 @@ class AmpioStore:
         # carry no leaf, from the last apply. Empty when every listed row
         # was admitted or hidden. The client raises and reports from it.
         self.not_configured: tuple[tuple[int, str | None], ...] = ()
-        # Override macs shared by two or more catalogue rows. The raw
-        # routing tables are keyed by mac, so edges and diagnostics on a
-        # colliding mac cannot be attributed reliably; the collision is
-        # warned once per change and surfaced for diagnostics.
-        self.colliding_macs: frozenset[int] = frozenset()
-        # Raw-channel bridge: (module mac, prefix, channel) -> the ids of
-        # every object on that channel.
-        self._input_index: dict[tuple[int, str, int], tuple[int, ...]] = {}
-        # Effective bus mac -> module id, for routing a module's own
-        # broadcasts. Ids, not instances: modules are frozen and replaced on
-        # every change, so a cached instance would go stale.
-        self._module_id_by_mac: dict[int, int] = {}
         # Full-catalogue per-object config facts (`params`, `czas`, `url`)
         # from `data/params_devices`, this store's one source for them on
         # both tiers. Held because the two catalogue replies arrive in no
@@ -129,19 +116,6 @@ class AmpioStore:
         # `{object_id: bool}` accumulated across sweeps, on the same terms.
         # False is an answer, so absence is the only unresolved state.
         self._lock_support_by_id: dict[int, bool] = {}
-        # `{mac: ModuleRecord}` accumulated across sweeps, kept for the
-        # same reason on the module side; an empty bundle is an
-        # authoritative "answered, unassigned".
-        self._module_record_by_mac: dict[int, ModuleRecord] = {}
-        # `{mac: {function id: channel count}}` accumulated across sweeps,
-        # kept for the same reason; an empty map is an authoritative
-        # "answered, advertising nothing".
-        self._module_capabilities_by_mac: dict[int, Mapping[int, int]] = {}
-        # `{mac: PanelSettings}` accumulated across sweeps, kept for the
-        # same reason. A module absent here is one whose panel layout the
-        # sweep could not resolve, which includes everything that is not a
-        # touch panel.
-        self._panel_settings_by_mac: dict[int, PanelSettings] = {}
         # `{object_id: seed}` from the last `data/states` snapshot,
         # kept for the same reason; a snapshot row for an id no catalogue
         # established creates nothing.
@@ -160,39 +134,34 @@ class AmpioStore:
         # clears the guard; a server-stamped report clears both.
         self._local_stamped: set[int] = set()
         self._guarded: set[int] = set()
-        # The broker replays its retained raw tree within a second of the
-        # subscribe, before any catalogue reply, so the routing tables above
-        # are still empty when those frames land. They wait here, keyed the
-        # way the tables key them, and `_rebuild_indexes` folds them in once
-        # the catalogue builds the routing. Both stay empty on the app-sync
-        # tier, which is served no raw tree.
-        self._pending_raw: dict[tuple[int, str, int], str] = {}
-        self._pending_diagnostics: dict[int, _protocol.ModuleDiagnostics] = {}
-        # This tier's endpoints whose reply mutates state. The rest are pure
-        # request/response, parsed by the dispatcher with the endpoint's own
-        # `parses` gate and never sent here.
-        self._handlers: dict[str, Callable[[Mapping[str, Any], Applied], None]] = {
+        self._handlers = self._handler_table()
+        # The endpoint table and the handler table are edited separately;
+        # a name typo between them would otherwise surface as a silent
+        # discovery hang, so misalignment fails construction instead.
+        handler_gated = {ep.name for ep in self._endpoint_set() if ep.parses is None}
+        if set(self._handlers) != handler_gated:
+            raise RuntimeError(
+                f"store handlers {sorted(self._handlers)} do not match the "
+                f"handler-gated endpoints {sorted(handler_gated)}"
+            )
+
+    def _endpoint_set(self) -> tuple[_protocol.Endpoint, ...]:
+        """The endpoints this store's handlers must cover."""
+        return _protocol.BASE_ENDPOINTS
+
+    def _handler_table(self) -> dict[str, Callable[[Mapping[str, Any], Applied], None]]:
+        """The reply handlers this store applies, by endpoint name.
+
+        Every endpoint here answers with a reply that mutates state. The
+        rest are pure request/response, parsed by the dispatcher with the
+        endpoint's own `parses` gate and never sent to a store.
+        """
+        return {
             "states": self._handle_states_snapshot,
             "info": self._handle_info,
             "data_devices": self._handle_catalogue,
             "params_devices": self._handle_params_devices,
         }
-        if tier is AccessTier.ADMIN:
-            self._handlers["devices"] = self._handle_devices
-        # The endpoint table and this handler table are edited separately;
-        # a name typo between them would otherwise surface as a silent
-        # discovery hang, so misalignment fails construction instead.
-        handler_gated = {
-            ep.name
-            for ep in _protocol.ENDPOINTS
-            if ep.parses is None and ep.tier in (None, tier)
-        }
-        if set(self._handlers) != handler_gated:
-            raise RuntimeError(
-                f"store handlers {sorted(self._handlers)} do not match the "
-                f"{tier.value} tier's handler-gated endpoints "
-                f"{sorted(handler_gated)}"
-            )
 
     # --- routing ----------------------------------------------------------
 
@@ -251,62 +220,21 @@ class AmpioStore:
                 self._record(updated, applied)
         return applied
 
-    def apply_module_sweep(
-        self,
-        records: Mapping[int, ModuleRecord],
-        capabilities: Mapping[int, Mapping[int, int]],
-        panel_settings: Mapping[int, PanelSettings],
-    ) -> Applied:
-        """Hold one sweep's module facts and fold them into modules.
-
-        Both maps come from the same ``device_api`` reply, so they fold
-        together and a module changed by either reports one event.
-        Wholesale per answering mac, exactly as the object side; a mac
-        the sweep did not cover leaves both the held tables and the
-        module untouched.
-        """
-        applied = Applied()
-        self._module_record_by_mac.update(records)
-        self._module_capabilities_by_mac.update(capabilities)
-        self._panel_settings_by_mac.update(panel_settings)
-        for mac in {*records, *capabilities, *panel_settings}:
-            mid = self._module_id_by_mac.get(mac)
-            if mid is None:
-                continue
-            module = self.modules[mid]
-            updated = module
-            if mac in records and updated.record != records[mac]:
-                updated = replace(updated, record=records[mac])
-            if mac in capabilities and updated.capabilities != capabilities[mac]:
-                updated = replace(updated, capabilities=capabilities[mac])
-            if mac in panel_settings and updated.panel_settings != panel_settings[mac]:
-                updated = replace(updated, panel_settings=panel_settings[mac])
-            if updated is not module:
-                self.modules[mid] = updated
-                applied.events.append(ModuleUpdated(updated))
-        return applied
-
     def apply(self, msg: _protocol.Inbound, *, retained: bool = False) -> Applied:
         """Apply one typed message and report what it changed.
 
-        ``retained`` marks a broker replay from its retained store. A
-        replay carries the value but says nothing about whether the
-        module is alive now, so it never touches ``last_seen``.
+        The base store applies the account namespace alone: a per-object
+        push. Every other inbound shape rides the raw tree, which the base
+        router never routes, so one reaching here is an invariant broken.
+        ``retained`` marks a broker replay, which the admin store reads.
         """
         applied = Applied()
-        match msg:
-            case _protocol.StateUpdate() as update:
-                self._apply_state(update, applied)
-            case _protocol.RawChannelEdge() as edge:
-                self._apply_raw_channel(edge, applied, retained=retained)
-            case _protocol.ColorTempFrame(edges=edges):
-                for edge in edges:
-                    self._apply_raw_channel(edge, applied, retained=retained)
-            case _protocol.DiagnosticsReport(mac=mac, diagnostics=diagnostics):
-                self._apply_diagnostics(mac, diagnostics, applied, retained=retained)
-            case BusEventRaised() as event:
-                applied.events.append(event)
-        return applied
+        if isinstance(msg, _protocol.StateUpdate):
+            self._apply_state(msg, applied)
+            return applied
+        raise RuntimeError(
+            f"{type(msg).__name__} is not a message the base store applies"
+        )
 
     def apply_endpoint(
         self, endpoint: _protocol.Endpoint, data: Mapping[str, Any]
@@ -321,12 +249,31 @@ class AmpioStore:
         applied = Applied()
         handler = self._handlers.get(endpoint.name)
         if handler is None:
-            raise AmpioProtocolError(
-                f"The Ampio {endpoint.name!r} reply is not served on "
-                f"the {self._tier.value} tier"
+            # The router yields the served endpoints alone, so a reply for
+            # one this store has no handler for never reaches here.
+            raise RuntimeError(
+                f"endpoint {endpoint.name!r} has no handler on this store"
             )
         handler(data, applied)
         return applied
+
+    # --- admin hooks ------------------------------------------------------
+
+    def _touch_module(self, mac: int) -> None:
+        """Mark the module on ``mac`` as alive now. The base holds no module list."""
+
+    def _rebuild_indexes(self, applied: Applied) -> None:
+        """Rebuild the raw routing after a catalogue change.
+
+        The base routes no raw tree.
+        """
+
+    def _raw_owns(self, oid: int) -> bool:
+        """Whether the raw path owns the object. The base has no raw path."""
+        return False
+
+    def _release_raw(self, oid: int) -> None:
+        """Return the object to per-object updates. The base has nothing to release."""
 
     # --- catalogues -------------------------------------------------------
 
@@ -475,6 +422,7 @@ class AmpioStore:
             self._stan_by_id.pop(oid, None)
             self._local_stamped.discard(oid)
             self._guarded.discard(oid)
+            self._release_raw(oid)
             self._drop_sweep_entries(oid)
             applied.events.append(ObjectRemoved(obj))
         return True
@@ -631,8 +579,7 @@ class AmpioStore:
             # one, so the object reads per-object reports until the new
             # channel reports, and the guard lifts because the held value
             # belongs to another channel.
-            updates["raw_owned"] = False
-            self._guarded.discard(meta.id)
+            self._release_raw(meta.id)
         # The catalogue never carries a sweep result, so the held tables
         # re-apply on every merge, the re-creation after an eviction
         # included, and an entry dropped since the last merge clears.
@@ -692,51 +639,6 @@ class AmpioStore:
             self._record(updated, applied)
         return changed or created
 
-    def _handle_devices(self, data: Mapping[str, Any], applied: Applied) -> None:
-        modules = _protocol.parse_devices(data)
-        changed = False
-        for module in modules:
-            previous = self.modules.get(module.id)
-            if previous is not None:
-                module = replace(
-                    module,
-                    last_seen=previous.last_seen,
-                    supply_voltage=previous.supply_voltage,
-                    temperature=previous.temperature,
-                )
-            # The catalogue never carries the record entry; the held
-            # table re-applies it on every merge - including the
-            # re-creation after an eviction.
-            mac = module.mac
-            if mac is not None:
-                if mac in self._module_record_by_mac:
-                    module = replace(module, record=self._module_record_by_mac[mac])
-                if mac in self._module_capabilities_by_mac:
-                    module = replace(
-                        module, capabilities=self._module_capabilities_by_mac[mac]
-                    )
-                if mac in self._panel_settings_by_mac:
-                    module = replace(
-                        module, panel_settings=self._panel_settings_by_mac[mac]
-                    )
-            self.modules[module.id] = module
-            # A new module or a changed catalogue row is news, exactly as an
-            # object catalogue row is; the live fields were carried over
-            # above, so any difference left is the catalogue's.
-            if previous != module:
-                changed = True
-                applied.events.append(ModuleUpdated(module))
-        # The module list is admin-only and complete, so its arrival is the
-        # authority to evict what it stopped listing.
-        present = {module.id for module in modules}
-        missing = [mid for mid in self.modules if mid not in present]
-        evicted = False
-        for mid in missing:
-            evicted = True
-            applied.events.append(ModuleRemoved(self.modules.pop(mid)))
-        if changed or evicted:
-            self._rebuild_indexes(applied)
-
     def _report_params_coverage(self) -> None:
         """Name the catalogue objects the params table carries no row for.
 
@@ -762,19 +664,11 @@ class AmpioStore:
     def _handle_info(self, data: Mapping[str, Any], applied: Applied) -> None:
         """Apply a `data/info` reply, the M-SERV's self-report.
 
-        The reply names the asking account, which is the wire's own verdict
-        on the tier. The username decided the same question at
-        construction, and every subscription and request follows from that
-        decision, so a disagreement means the session is aimed at the wrong
-        surfaces. Nothing in the reply can fix that, so it is refused.
+        The reply names the asking account, a wire fact the store records
+        as it reads it. Which client class a session runs is the consumer's
+        own choice, so no store compares the two.
         """
         info = _protocol.parse_server_info(data)
-        if info.access_tier is not self._tier:
-            raise AmpioProtocolError(
-                f"The Ampio server reports account id {info.user_id}, the "
-                f"{info.access_tier.value} tier, for a session connected on "
-                f"the {self._tier.value} tier"
-            )
         previous = self.server_info
         # Warn when the version first becomes known or changes, not on the
         # re-request every reconnect issues.
@@ -834,7 +728,7 @@ class AmpioStore:
         if obj is None:
             self._pending_state[update.id] = update
             return
-        if obj.raw_owned:
+        if self._raw_owns(update.id):
             # The raw path owns this object: the per-object echo repeats
             # what the raw edge delivered ~150 ms earlier, so it is
             # dropped whole. It still counts as live evidence of the
@@ -859,58 +753,6 @@ class AmpioStore:
         self._touch_module(obj.address.mac)
         self._record(obj, applied)
 
-    def _apply_raw_channel(
-        self, edge: _protocol.RawChannelEdge, applied: Applied, *, retained: bool
-    ) -> None:
-        key = (edge.mac, edge.prefix, edge.channel)
-        ids = self._input_index.get(key)
-        if ids is None:
-            # A replay waits for the routing table; a live frame for a
-            # channel no object exposes is one nothing will ever route.
-            if retained:
-                self._pending_raw[key] = edge.state
-            return
-        # Two Designer views of one output share the module and the
-        # channel, so one raw channel feeds every object on that channel.
-        for oid in ids:
-            obj = replace(
-                self.objects[oid],
-                raw_owned=True,
-                state=edge.state,
-                updated_at=time.time(),
-            )
-            self.objects[oid] = obj
-            self._local_stamped.add(oid)
-            self._guarded.add(oid)
-            self._record(obj, applied)
-        if not retained:
-            self._touch_module(edge.mac)
-
-    def _apply_diagnostics(
-        self,
-        mac: int,
-        diagnostics: _protocol.ModuleDiagnostics,
-        applied: Applied,
-        *,
-        retained: bool,
-    ) -> None:
-        mid = self._module_id_by_mac.get(mac)
-        if mid is None:
-            # The same rule as a raw channel edge: a replay waits for the
-            # module list, a live frame for an unlisted module drops.
-            if retained:
-                self._pending_diagnostics[mac] = diagnostics
-            return
-        previous = self.modules[mid]
-        module = replace(
-            previous,
-            supply_voltage=diagnostics.supply_voltage,
-            temperature=diagnostics.temperature,
-            last_seen=previous.last_seen if retained else time.time(),
-        )
-        self.modules[mid] = module
-        applied.events.append(ModuleUpdated(module))
-
     # --- helpers ----------------------------------------------------------
 
     def _apply_stan_json(
@@ -928,7 +770,7 @@ class AmpioStore:
         resync is the broker's retained raw table, and a DB snapshot may be
         staler than that raw truth with no comparable clock to prove it.
         """
-        if obj.raw_owned:
+        if self._raw_owns(obj.id):
             return obj, False
         reported_at = float(seed.on_ms) / 1000.0
         if not self._supersedes(obj, reported_at):
@@ -976,6 +818,232 @@ class AmpioStore:
         if obj.id in self._local_stamped:
             return True
         return reported_at >= obj.updated_at
+
+    def _record(self, obj: AmpioObject, applied: Applied) -> None:
+        applied.events.append(ObjectUpdated(obj))
+
+
+class AdminStore(AmpioStore):
+    """The store for the reserved admin login.
+
+    Adds what the M-SERV serves that account alone: the module list, the
+    raw tree with its routing index and raw ownership, the module
+    diagnostics broadcasts, and the module-keyed sweep tables.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.modules: dict[int, AmpioModule] = {}
+        # Override macs shared by two or more catalogue rows. The raw
+        # routing tables are keyed by mac, so edges and diagnostics on a
+        # colliding mac cannot be attributed reliably; the collision is
+        # warned once per change and surfaced for diagnostics.
+        self.colliding_macs: frozenset[int] = frozenset()
+        # Raw-channel bridge: (module mac, prefix, channel) -> the ids of
+        # every object on that channel.
+        self._input_index: dict[tuple[int, str, int], tuple[int, ...]] = {}
+        # Effective bus mac -> module id, for routing a module's own
+        # broadcasts. Ids, not instances: modules are frozen and replaced on
+        # every change, so a cached instance would go stale.
+        self._module_id_by_mac: dict[int, int] = {}
+        # The ids the raw path owns: a per-object echo and a snapshot row
+        # for one of them is skipped, because the retained raw tree is its
+        # resync. docs/raw-channel-bridge.md.
+        self._raw_owned: set[int] = set()
+        # The broker replays its retained raw tree within a second of the
+        # subscribe, before any catalogue reply, so the routing tables above
+        # are still empty when those frames land. They wait here, keyed the
+        # way the tables key them, and `_rebuild_indexes` folds them in once
+        # the catalogue builds the routing.
+        self._pending_raw: dict[tuple[int, str, int], str] = {}
+        self._pending_diagnostics: dict[int, _protocol.ModuleDiagnostics] = {}
+        # `{mac: ModuleRecord}` accumulated across sweeps on the module
+        # side, kept so a module-list refresh re-applies what the sweep
+        # proved (the list itself never carries it); an empty bundle is an
+        # authoritative "answered, unassigned".
+        self._module_record_by_mac: dict[int, ModuleRecord] = {}
+        # `{mac: {function id: channel count}}` accumulated on the same
+        # terms; an empty map is an authoritative "answered, advertising
+        # nothing".
+        self._module_capabilities_by_mac: dict[int, Mapping[int, int]] = {}
+        # `{mac: PanelSettings}` accumulated on the same terms. A module
+        # absent here is one whose panel layout the sweep could not
+        # resolve, which includes everything that is not a touch panel.
+        self._panel_settings_by_mac: dict[int, PanelSettings] = {}
+
+    def _endpoint_set(self) -> tuple[_protocol.Endpoint, ...]:
+        return _protocol.ADMIN_ENDPOINTS
+
+    def _handler_table(self) -> dict[str, Callable[[Mapping[str, Any], Applied], None]]:
+        return {**super()._handler_table(), "devices": self._handle_devices}
+
+    # --- routing ----------------------------------------------------------
+
+    def apply(self, msg: _protocol.Inbound, *, retained: bool = False) -> Applied:
+        """Apply one typed message and report what it changed.
+
+        Adds the shapes the admin session receives: the raw tree and the
+        module broadcasts. ``retained`` marks a broker replay from its
+        retained store. A replay carries the value but says nothing about
+        whether the module is alive now, so it never touches ``last_seen``.
+        """
+        applied = Applied()
+        match msg:
+            case _protocol.RawChannelEdge() as edge:
+                self._apply_raw_channel(edge, applied, retained=retained)
+            case _protocol.ColorTempFrame(edges=edges):
+                for edge in edges:
+                    self._apply_raw_channel(edge, applied, retained=retained)
+            case _protocol.DiagnosticsReport(mac=mac, diagnostics=diagnostics):
+                self._apply_diagnostics(mac, diagnostics, applied, retained=retained)
+            case BusEventRaised() as event:
+                applied.events.append(event)
+            case _:
+                return super().apply(msg, retained=retained)
+        return applied
+
+    def apply_module_sweep(
+        self,
+        records: Mapping[int, ModuleRecord],
+        capabilities: Mapping[int, Mapping[int, int]],
+        panel_settings: Mapping[int, PanelSettings],
+    ) -> Applied:
+        """Hold one sweep's module facts and fold them into modules.
+
+        Both maps come from the same ``device_api`` reply, so they fold
+        together and a module changed by either reports one event.
+        Wholesale per answering mac, exactly as the object side; a mac
+        the sweep did not cover leaves both the held tables and the
+        module untouched.
+        """
+        applied = Applied()
+        self._module_record_by_mac.update(records)
+        self._module_capabilities_by_mac.update(capabilities)
+        self._panel_settings_by_mac.update(panel_settings)
+        for mac in {*records, *capabilities, *panel_settings}:
+            mid = self._module_id_by_mac.get(mac)
+            if mid is None:
+                continue
+            module = self.modules[mid]
+            updated = module
+            if mac in records and updated.record != records[mac]:
+                updated = replace(updated, record=records[mac])
+            if mac in capabilities and updated.capabilities != capabilities[mac]:
+                updated = replace(updated, capabilities=capabilities[mac])
+            if mac in panel_settings and updated.panel_settings != panel_settings[mac]:
+                updated = replace(updated, panel_settings=panel_settings[mac])
+            if updated is not module:
+                self.modules[mid] = updated
+                applied.events.append(ModuleUpdated(updated))
+        return applied
+
+    # --- admin hooks ------------------------------------------------------
+
+    def _raw_owns(self, oid: int) -> bool:
+        return oid in self._raw_owned
+
+    def _release_raw(self, oid: int) -> None:
+        self._raw_owned.discard(oid)
+        self._guarded.discard(oid)
+
+    # --- catalogues -------------------------------------------------------
+
+    def _handle_devices(self, data: Mapping[str, Any], applied: Applied) -> None:
+        modules = _protocol.parse_devices(data)
+        changed = False
+        for module in modules:
+            previous = self.modules.get(module.id)
+            if previous is not None:
+                module = replace(
+                    module,
+                    last_seen=previous.last_seen,
+                    supply_voltage=previous.supply_voltage,
+                    temperature=previous.temperature,
+                )
+            # The catalogue never carries the record entry; the held
+            # table re-applies it on every merge - including the
+            # re-creation after an eviction.
+            mac = module.mac
+            if mac is not None:
+                if mac in self._module_record_by_mac:
+                    module = replace(module, record=self._module_record_by_mac[mac])
+                if mac in self._module_capabilities_by_mac:
+                    module = replace(
+                        module, capabilities=self._module_capabilities_by_mac[mac]
+                    )
+                if mac in self._panel_settings_by_mac:
+                    module = replace(
+                        module, panel_settings=self._panel_settings_by_mac[mac]
+                    )
+            self.modules[module.id] = module
+            # A new module or a changed catalogue row is news, exactly as an
+            # object catalogue row is; the live fields were carried over
+            # above, so any difference left is the catalogue's.
+            if previous != module:
+                changed = True
+                applied.events.append(ModuleUpdated(module))
+        # The module list is admin-only and complete, so its arrival is the
+        # authority to evict what it stopped listing.
+        present = {module.id for module in modules}
+        missing = [mid for mid in self.modules if mid not in present]
+        evicted = False
+        for mid in missing:
+            evicted = True
+            applied.events.append(ModuleRemoved(self.modules.pop(mid)))
+        if changed or evicted:
+            self._rebuild_indexes(applied)
+
+    # --- live state -------------------------------------------------------
+
+    def _apply_raw_channel(
+        self, edge: _protocol.RawChannelEdge, applied: Applied, *, retained: bool
+    ) -> None:
+        key = (edge.mac, edge.prefix, edge.channel)
+        ids = self._input_index.get(key)
+        if ids is None:
+            # A replay waits for the routing table; a live frame for a
+            # channel no object exposes is one nothing will ever route.
+            if retained:
+                self._pending_raw[key] = edge.state
+            return
+        # Two Designer views of one output share the module and the
+        # channel, so one raw channel feeds every object on that channel.
+        for oid in ids:
+            self._raw_owned.add(oid)
+            obj = replace(self.objects[oid], state=edge.state, updated_at=time.time())
+            self.objects[oid] = obj
+            self._local_stamped.add(oid)
+            self._guarded.add(oid)
+            self._record(obj, applied)
+        if not retained:
+            self._touch_module(edge.mac)
+
+    def _apply_diagnostics(
+        self,
+        mac: int,
+        diagnostics: _protocol.ModuleDiagnostics,
+        applied: Applied,
+        *,
+        retained: bool,
+    ) -> None:
+        mid = self._module_id_by_mac.get(mac)
+        if mid is None:
+            # The same rule as a raw channel edge: a replay waits for the
+            # module list, a live frame for an unlisted module drops.
+            if retained:
+                self._pending_diagnostics[mac] = diagnostics
+            return
+        previous = self.modules[mid]
+        module = replace(
+            previous,
+            supply_voltage=diagnostics.supply_voltage,
+            temperature=diagnostics.temperature,
+            last_seen=previous.last_seen if retained else time.time(),
+        )
+        self.modules[mid] = module
+        applied.events.append(ModuleUpdated(module))
+
+    # --- helpers ----------------------------------------------------------
 
     def module_by_mac(self, mac: int) -> AmpioModule | None:
         """The module row on ``mac``, or None when the list has none or two."""
@@ -1042,15 +1110,12 @@ class AmpioStore:
                     "reliably - give each module a unique mac in Designer",
                     sorted(colliding),
                 )
-        # An object the index no longer covers must go back to its per-object
-        # updates, or a mac change in Designer would freeze it for good. The
-        # flip is public state, so it dispatches like any other change.
+        # An object the index no longer covers must go back to its
+        # per-object updates, or a mac change in Designer would freeze it
+        # for good. Ownership is store bookkeeping, so the release changes
+        # nothing a consumer can read and reports nothing.
         covered = {oid for ids in index.values() for oid in ids}
-        for oid, obj in self.objects.items():
-            if obj.raw_owned and oid not in covered:
-                obj = replace(obj, raw_owned=False)
-                self.objects[oid] = obj
-                self._record(obj, applied)
+        self._raw_owned.intersection_update(covered)
         self._fold_pending_diagnostics(applied)
         self._fold_pending_raw(index, applied)
 
@@ -1094,9 +1159,6 @@ class AmpioStore:
                 continue
             del self._pending_diagnostics[mac]
             self._apply_diagnostics(mac, diagnostics, applied, retained=True)
-
-    def _record(self, obj: AmpioObject, applied: Applied) -> None:
-        applied.events.append(ObjectUpdated(obj))
 
 
 def _home_status(state: str) -> int:

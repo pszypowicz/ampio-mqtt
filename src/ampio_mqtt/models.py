@@ -405,11 +405,6 @@ class AmpioObject:
     # its own. Lets a later bulk snapshot be compared against what is held
     # instead of applied or dropped blind. None until any report arrives.
     updated_at: float | None = None
-    # Whether the raw path owns this object (its raw-channel form has been
-    # observed): per-object echoes and snapshot rows are then skipped -
-    # resync is the broker's retained raw table. Admin tier only; cleared
-    # when the raw index stops covering the object. docs/raw-channel-bridge.md.
-    raw_owned: bool = False
     # Slat angle percent. Only tilt-capable covers report it.
     lammel: int | None = None
     # The roller lock, verbatim from the wire: two bits the module keeps per
@@ -792,11 +787,10 @@ class AmpioServerInfo:
 
         The wire's own verdict on the question the authenticated username
         answers at construction. A config flow reads it from a
-        :meth:`AmpioClient.check_connection` result, and a running client
-        refuses a reply that contradicts its own tier. The reserved
-        ``admin`` login reports the pseudo-user id ``-1``; app-created
-        users carry a positive row id and are always the standard tier
-        (docs/account-tiers.md).
+        :meth:`AmpioClient.check_connection` result to pick the client
+        class. The reserved ``admin`` login reports the pseudo-user id
+        ``-1``; app-created users carry a positive row id and are always
+        the standard tier (docs/account-tiers.md).
         """
         return AccessTier.ADMIN if self.user_id == -1 else AccessTier.RESTRICTED
 

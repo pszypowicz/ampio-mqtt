@@ -58,7 +58,7 @@ from ._protocol import (
     roller_lock_channels,
     scene_payload,
 )
-from ._store import AmpioStore
+from ._store import AdminStore
 from .classification import InputKind, OutputKind
 from .errors import (
     AmpioConnectionError,
@@ -214,7 +214,7 @@ class AmpioClient:
         self._router = _protocol.Router(
             username, self._served, admin=self._tier is AccessTier.ADMIN
         )
-        self._store = AmpioStore(self._tier)
+        self._store = AdminStore()
         self._stats = ConnectionStats()
         self._connection = _connection.Connection(
             host,

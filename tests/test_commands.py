@@ -952,7 +952,7 @@ async def test_oc_output_confirm_resolves_on_the_a_edge() -> None:
         feed(client, "ampio/from/1A2B/state/a/8", "255")
         obj = await task
         assert obj is not None
-        assert obj.state == "255" and obj.raw_owned is True
+        assert obj.state == "255" and 93 in client._store._raw_owned
     finally:
         await client.disconnect()
 
