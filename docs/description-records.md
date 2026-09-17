@@ -273,12 +273,19 @@ module catalogue is present for the join.
 
 One rule reads every dataset. Present means the module answered a sweep and
 carries the entry. Absent with the mac in `last_sweep.answered_macs` means the
-module answered and carries no such entry, which holds until the next sweep.
-Absent with the mac not answered means not known. A sweep replaces every entry
-of every mac it answered, and `RecordSweepCompleted` fires once per sweep with
-the `RecordSweep` the call returned. `answered_macs` names every module the list
-reply listed, and `silent_macs` names the catalogued modules the reply left out.
-The M-SERV's own row is a device like any other in both sets.
+module answered and carries no such entry. That answer covers the objects the
+catalogue lists when the sweep runs, and it stays true until the next sweep. If
+the catalogue admits an object after the sweep, that object needs another sweep
+before absence answers for it. Absent with the mac not answered means not known.
+A sweep replaces every entry of every mac it answered, and
+`RecordSweepCompleted` fires once per sweep with the `RecordSweep` the call
+returned. `answered_macs` names every module the list reply listed, and
+`silent_macs` names the catalogued modules the reply left out. The M-SERV's own
+row is a device like any other in both sets.
+
+An entry leaves with the row it belongs to. An object that leaves the catalogue
+drops its `records` and `cover_parameters` entry. A module that leaves the list
+drops its `module_records`, `capabilities` and `panel_settings` entry.
 
 A sweep changes no model field. It dispatches no `ObjectUpdated` and no
 `ModuleUpdated`, so a consumer that reads a dataset refreshes on

@@ -247,22 +247,26 @@ reaches the module. The lock sub-functions are absent from that firmware.
 #### What a consumer reads
 
 `AmpioAdminClient.lock_target(object_id)` resolves one cover's lock write. It
-returns a `LockTarget`, or one of the four `LockRefusal` members:
+returns a `LockTarget` or one of the four `LockRefusal` members. It raises
+`AmpioValueError` for an id the catalogue does not list, and
+`AmpioNotConfigured` for a mac no admitted module row carries:
 
-| Result              | Meaning                                                                                                              |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `LockTarget`        | A lock write reaches this cover. Carries the module mac, the cover's channel, and the module's roller channel count. |
-| `NOT_A_COVER`       | The object is not a cover, and its channel index can belong to a cover on the same module.                           |
-| `NOT_SWEPT`         | No sweep has answered the module, so the answer is not known.                                                        |
-| `NO_ROLLER_COUNT`   | The module advertises no roller channel count and drops the lock frame.                                              |
-| `PAST_LAST_CHANNEL` | The cover's channel lies past the roller count the module advertises.                                                |
+| Result               | Meaning                                                                                                              |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `LockTarget`         | A lock write reaches this cover. Carries the module mac, the cover's channel, and the module's roller channel count. |
+| `NOT_A_COVER`        | The object is not a cover, and its channel index can belong to a cover on the same module.                           |
+| `NOT_SWEPT`          | No sweep has answered the module, so the answer is not known.                                                        |
+| `NO_ROLLER_COUNT`    | The module advertises no roller channel count and drops the lock frame.                                              |
+| `PAST_LAST_CHANNEL`  | The cover's channel lies past the roller count the module advertises.                                                |
+| `AmpioNotConfigured` | No admitted module row carries the cover's mac, so the frame has no module to reach. The installer fixes the list.   |
 
 `block_opening()`, `unblock_opening()`, `block_closing()` and
 `unblock_closing()` call `lock_target()` and raise on a refusal. `NOT_SWEPT`
 raises `AmpioValueError`, because `resolve_records()` fixes it. The other three
-raise `AmpioUnsupported`, because the install cannot do the write. A consumer
-that builds a lock control calls `lock_target()` after the sweep, and leaves the
-control out on a refusal.
+raise `AmpioUnsupported`, because the install cannot do the write. A raise from
+`lock_target()` reaches the caller through all four. A consumer that builds a
+lock control calls `lock_target()` after the sweep, and leaves the control out
+on a refusal.
 
 ### A stored rule beats a runtime write
 

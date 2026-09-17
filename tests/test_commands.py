@@ -31,6 +31,7 @@ from ampio_mqtt import (
     AmpioAdminClient,
     AmpioClient,
     AmpioConnectionError,
+    AmpioNotConfigured,
     AmpioTimeoutError,
     AmpioUnsupported,
     AmpioValueError,
@@ -1571,6 +1572,44 @@ async def test_lock_target_reads_not_swept_before_any_sweep() -> None:
         assert client.lock_target(193) is LockRefusal.NOT_SWEPT
         with pytest.raises(AmpioValueError, match="resolve_records"):
             await client.block_opening(193)
+    finally:
+        await client.disconnect()
+
+
+async def test_lock_target_refuses_a_mac_no_admitted_module_carries() -> None:
+    """A second module row on the cover's mac makes the door admit
+    neither, so no frame can name the module it would reach."""
+    client, broker = await _admin_with_covers()
+    try:
+        feed(
+            client,
+            ADMIN_DEVICES_TOPIC,
+            devices(
+                {
+                    "id": 3,
+                    "mac": 0xBE82,
+                    "typ_urzadzenia": 4,
+                    "nazwa_urzadzenia": "new",
+                },
+                {
+                    "id": 4,
+                    "mac": 0xBE82,
+                    "typ_urzadzenia": 4,
+                    "nazwa_urzadzenia": "twin",
+                },
+                {
+                    "id": 15,
+                    "mac": 0xCB86,
+                    "typ_urzadzenia": 3,
+                    "nazwa_urzadzenia": "old",
+                },
+            ),
+        )
+        with pytest.raises(AmpioNotConfigured, match="be82"):
+            client.lock_target(193)
+        with pytest.raises(AmpioNotConfigured):
+            await client.block_opening(193)
+        assert broker.published == []
     finally:
         await client.disconnect()
 

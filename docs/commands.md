@@ -248,7 +248,7 @@ generation implements those actions, and the wire form and the gate are in the
 "Cover roller lock" section of [`panel-writes.md`](panel-writes.md).
 
 `AmpioAdminClient.lock_target()` gives the result for one cover, with the four
-refusals and the two errors in the "What a consumer reads" part of
+refusals and the three errors in the "What a consumer reads" part of
 [`panel-writes.md`](panel-writes.md).
 
 The same Designer menu offers eight more roller actions, and none of them

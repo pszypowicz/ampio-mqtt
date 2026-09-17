@@ -134,13 +134,16 @@ same condition arrives as the `NotConfigured` event, and the row leaves through
 `ObjectRemoved`. The next catalogue push that restores the leaf produces
 `ObjectAdded`. `diagnostics_snapshot()` lists the rows under `not_configured`.
 
-On `AmpioAdminClient`, two module rows on one override mac fail discovery the
-same way, with the shared mac and the module ids in `collisions`. The door
-admits neither row, because the raw tree keys on that mac and cannot attribute a
-frame to either row. The default mac `1` is not unique (see
-[`identity.md`](identity.md)), so two rows left on it fail the door. The
-installer gives each module its own mac in Designer. `diagnostics_snapshot()`
-lists the pairs under `mac_collisions`.
+On `AmpioAdminClient`, the module list has its own door. The door admits neither
+of two module rows on one override mac. The raw tree keys on that mac and cannot
+attribute a frame to either row. The store records the shared mac and the module
+ids, and `wait_for_initial_discovery()` raises `AmpioNotConfigured` with the
+pairs in `collisions`. After connect, the same condition arrives as the
+`NotConfigured` event, and each row leaves through `ModuleRemoved`. The next
+module list that gives each module its own mac reports `ModuleUpdated`. The
+default mac `1` is not unique (see [`identity.md`](identity.md)), so two rows
+left on it fail the door. The installer gives each module its own mac in
+Designer. `diagnostics_snapshot()` lists the pairs under `mac_collisions`.
 
 A leaf of another shape is a server fault. The store refuses the reply whole as
 `AmpioProtocolError`, before any field changes. The apply is atomic, so no
@@ -166,8 +169,8 @@ Four classes separate whose fault a refusal is:
 
 | Error                | Whose fault   | Raised for                                                                                                                                                                              |
 | -------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AmpioValueError`    | the developer | A bad argument, a value beyond the frame's range, an id the catalogue does not list, or a call that needs a sweep that did not run. It subclasses `ValueError`.                         |
-| `AmpioNotConfigured` | the installer | A drivable row carries no leaf, or two module rows share one override mac. The installer fixes both in Designer.                                                                        |
+| `AmpioValueError`    | the developer | A bad argument, a value beyond the frame's range, or an id the catalogue does not list. It also covers a call that needs a sweep that did not run. It subclasses `ValueError`.          |
+| `AmpioNotConfigured` | the installer | A drivable row carries no leaf, or two module rows share one override mac. A lock write can also name a mac no admitted module row carries. The installer fixes each in Designer.       |
 | `AmpioUnsupported`   | nobody        | The install cannot do it. Examples are an output whose kind does not answer the verb, a kind no timed write pulses, and a module without the roller lock. A consumer omits the control. |
 | `AmpioProtocolError` | the server    | A reply lacks what its surface always serves.                                                                                                                                           |
 

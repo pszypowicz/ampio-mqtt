@@ -27,15 +27,19 @@ class AmpioAuthError(AmpioError):
 class AmpioNotConfigured(AmpioError):
     """Raised when the Designer configuration leaves a row unaddressable.
 
-    Two installer faults. A drivable object row carries no leaf: Designer
-    clears the leaf when an object's Matter box is checked and then
-    unchecked, and the library addresses an object on the bus through its
-    leaf alone, so ``objects`` names every such row as an ``(id, name)``
-    pair. Two module rows carry one override mac: the raw tree keys on
-    that mac and cannot attribute a frame to either row, so ``collisions``
-    names each shared mac with the module ids on it. The installer fixes
-    both in Designer. The connection stays up, and every other row is
-    served.
+    A drivable object row carries no leaf: Designer clears the leaf when
+    an object's Matter box is checked and then unchecked, and the library
+    addresses an object on the bus through its leaf alone, so ``objects``
+    names every such row as an ``(id, name)`` pair.
+
+    ``collisions`` names each mac no single module row carries, with the
+    ids of the rows on it. Two or more ids are the rows that share the
+    mac, which the raw tree keys on and cannot attribute a frame to. An
+    empty tuple is a mac the module list carries no row for, so a write
+    addressed by that mac reaches no module.
+
+    The installer fixes each in Designer. The connection stays up, and
+    every other row is served.
     """
 
     def __init__(
@@ -56,10 +60,16 @@ class AmpioNotConfigured(AmpioError):
                 "Designer and save"
             )
         for mac, ids in collisions:
-            parts.append(
-                f"Ampio modules {', '.join(map(str, ids))} share the override mac "
-                f"{mac:x}. Give each module its own mac in Designer and save"
-            )
+            if ids:
+                parts.append(
+                    f"Ampio modules {', '.join(map(str, ids))} share the override "
+                    f"mac {mac:x}. Give each module its own mac in Designer and save"
+                )
+            else:
+                parts.append(
+                    f"No Ampio module row carries the override mac {mac:x}. Add the "
+                    "module in Designer, or remove the objects that name it, and save"
+                )
         super().__init__(". ".join(parts))
 
 

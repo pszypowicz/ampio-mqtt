@@ -2517,6 +2517,19 @@ def test_a_resolved_collision_re_admits_the_rows() -> None:
     assert store.admission_failure() is None
 
 
+def test_admission_failure_carries_both_installer_faults() -> None:
+    """One store can hold a leafless object row and a shared module mac,
+    and the failure names each fault in its own sentence."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
+    _feed_catalogue(store, {**_flaga_row(41, 3, mac=0xA), "leafId": ""})
+    failure = store.admission_failure()
+    assert failure.objects == ((41, "Flag"),)
+    assert failure.collisions == ((0xB, (2, 3)),)
+    assert "41 (Flag) carry no leaf" in str(failure)
+    assert "modules 2, 3 share the override mac b" in str(failure)
+
+
 # --- the sweep datasets ------------------------------------------------------
 
 
@@ -2611,6 +2624,39 @@ def test_a_moved_leaf_drops_the_object_datasets() -> None:
     )
     _feed_catalogue(store, _flaga_row(41, 3, mac=0xB))
     assert 41 not in store.records
+    assert 41 not in store.cover_parameters
+
+
+def test_a_module_eviction_drops_its_mac_datasets() -> None:
+    """The mac-keyed entries belong to the module row that left, so they
+    leave with it."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA))
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    _sweep(
+        store,
+        {0xA},
+        module_records={0xA: ModuleRecord(desc="Box")},
+        capabilities={0xA: {5: 4}},
+        panel_settings={0xA: _PANEL_SETTINGS},
+    )
+    _apply(store, DEVICES_TOPIC, devices())
+    assert 0xA not in store.module_records
+    assert 0xA not in store.capabilities
+    assert 0xA not in store.panel_settings
+
+
+def test_a_kind_change_away_from_a_cover_drops_the_parameters() -> None:
+    """Travel parameters belong to a roller channel, so an object that
+    leaves the roller class keeps none, and a change back reads nothing
+    until a sweep answers again."""
+    store = _store()
+    cover = {**_flaga_row(41, 3, mac=0xA), "typ_komponentu": "roleta_procenty"}
+    _feed_catalogue(store, cover)
+    _sweep(store, {0xA}, cover_parameters={41: _COVER_PARAMS})
+    _feed_catalogue(store, {**cover, "typ_komponentu": "przekaznik"})
+    assert 41 not in store.cover_parameters
+    _feed_catalogue(store, cover)
     assert 41 not in store.cover_parameters
 
 

@@ -73,10 +73,11 @@ class ObjectRemoved:
 class NotConfigured:
     """The catalogue lists rows the library cannot admit.
 
-    The same payload as :class:`~ampio_mqtt.AmpioNotConfigured`:
-    ``objects`` holds the ``(id, name)`` pairs of every object row without
-    a leaf, and ``collisions`` the ``(mac, module ids)`` pairs of every
-    override mac two or more module rows share. Each side is reported when
+    The payload :class:`~ampio_mqtt.AmpioNotConfigured` carries, as the
+    door fills it: ``objects`` holds the ``(id, name)`` pairs of every
+    object row without a leaf, and ``collisions`` the ``(mac, module
+    ids)`` pairs of every override mac two or more module rows share, so
+    every ids tuple here names two rows or more. Each side is reported when
     a reply changes its set to a non-empty one. Not terminal. The rows
     stay out of ``objects``/``modules`` until a later reply lists them
     addressably, which produces :class:`ObjectAdded` or

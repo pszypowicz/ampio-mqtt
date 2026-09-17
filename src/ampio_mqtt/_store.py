@@ -11,6 +11,7 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields, replace
+from types import MappingProxyType
 from typing import Any
 
 from . import _protocol
@@ -346,6 +347,9 @@ class AmpioStore:
     def _drop_sweep_entries(self, oid: int) -> None:
         """Forget what a sweep proved for one object. The base holds no sweep."""
 
+    def _drop_cover_parameters(self, oid: int) -> None:
+        """Forget one object's travel parameters. The base holds no sweep."""
+
     def _evict_missing_objects(self, present: set[int], applied: Applied) -> bool:
         """Drop the objects the door did not admit this time.
 
@@ -513,6 +517,12 @@ class AmpioStore:
             # what a sweep proved for the old one.
             moved = True
             self._drop_sweep_entries(meta.id)
+        kind = meta.typ_komponentu
+        if obj.typ_komponentu != kind and not _protocol.joins_roller_records(kind):
+            # Travel parameters belong to a roller channel, and a kind
+            # outside the roller class joins none. A fresh object carries
+            # the row's own kind, so only a retype reaches here.
+            self._drop_cover_parameters(meta.id)
         updates: dict[str, Any] = {
             name: getattr(meta, name) for name in _METADATA_FIELDS
         }
@@ -844,8 +854,9 @@ class AdminStore(AmpioStore):
 
         An entry an answered module no longer carries leaves, so absence
         with the mac answered is authoritative until the next sweep. A
-        module the sweep did not answer keeps its entries. No model field
-        changes, so nothing is reported.
+        module the sweep did not answer keeps its entries. Each capability
+        map is held read-only, because the client hands it out as it is.
+        No model field changes, so nothing is reported.
         """
         for oid, obj in self.objects.items():
             if obj.address.mac in answered_macs:
@@ -858,12 +869,28 @@ class AdminStore(AmpioStore):
         self.records.update(records)
         self.cover_parameters.update(cover_parameters)
         self.module_records.update(module_records)
-        self.capabilities.update(capabilities)
+        self.capabilities.update(
+            (mac, MappingProxyType(dict(functions)))
+            for mac, functions in capabilities.items()
+        )
         self.panel_settings.update(panel_settings)
 
     def _drop_sweep_entries(self, oid: int) -> None:
         self.records.pop(oid, None)
         self.cover_parameters.pop(oid, None)
+
+    def _drop_cover_parameters(self, oid: int) -> None:
+        self.cover_parameters.pop(oid, None)
+
+    def _drop_module_datasets(self, mac: int) -> None:
+        """Forget what a sweep proved for the module on ``mac``.
+
+        The mac-keyed entries belong to the module row that carries the
+        mac, so a row that leaves the list takes them with it.
+        """
+        self.module_records.pop(mac, None)
+        self.capabilities.pop(mac, None)
+        self.panel_settings.pop(mac, None)
 
     # --- admin hooks ------------------------------------------------------
 
@@ -918,7 +945,9 @@ class AdminStore(AmpioStore):
         evicted = False
         for mid in missing:
             evicted = True
-            applied.events.append(ModuleRemoved(self.modules.pop(mid)))
+            module = self.modules.pop(mid)
+            self._drop_module_datasets(module.mac)
+            applied.events.append(ModuleRemoved(module))
         if changed or evicted:
             self._rebuild_indexes(applied)
         self._set_collisions(collisions, applied)
@@ -926,7 +955,7 @@ class AdminStore(AmpioStore):
     def _set_collisions(
         self, collisions: tuple[tuple[int, tuple[int, ...]], ...], applied: Applied
     ) -> None:
-        """Record the shared macs the door refused and report a change to a non-empty set.
+        """Record the macs the door refused and report a change to a non-empty set.
 
         Both the macs and the ids on each are sorted, so the order the
         reply listed the rows in never reads as a change.

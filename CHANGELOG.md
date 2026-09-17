@@ -59,17 +59,20 @@ explicit beta posture above and is no longer the supported upgrade path.
   `cover_parameters` by object id, `module_records`, `capabilities` and
   `panel_settings` by mac. One rule reads every dataset. Present means the
   module answered and carries the entry. Absent with the mac in
-  `last_sweep.answered_macs` means the module carries no such entry. Absent with
-  the mac not answered means not known. `RecordSweepCompleted` fires once per
-  sweep.
+  `last_sweep.answered_macs` means the module carries no such entry. That answer
+  covers the objects the catalogue lists when the sweep runs, so a catalogue
+  change needs another sweep. Absent with the mac not answered means not known.
+  An entry leaves with the row it belongs to. `RecordSweepCompleted` fires once
+  per sweep.
 - `lock_target()` is the one roller lock resolver. It returns a `LockTarget` or
   a `LockRefusal`, and the four lock methods raise from it: `AmpioValueError`
-  when no sweep answered the module, `AmpioUnsupported` otherwise.
+  when no sweep answered the module, `AmpioUnsupported` otherwise. A cover whose
+  mac no admitted module row carries raises `AmpioNotConfigured`.
 - Two module rows on one override mac fail the admin door as
   `AmpioNotConfigured`, and `NotConfigured` reports a collision after connect.
   The door admits no row on a shared mac. The M-SERV's default override mac is
-  `1`, so an install that leaves a second module on it must give that module its
-  own mac in Designer.
+  `1`. An install that leaves a second module on it must give that module its
+  own mac.
 - What the install cannot do raises `AmpioUnsupported`: a kind that does not
   answer the verb, a kind no timed write pulses, a module without the roller
   lock. A module id the list does not hold raises `AmpioValueError`.
@@ -87,9 +90,10 @@ explicit beta posture above and is no longer the supported upgrade path.
 - `AmpioClient.access_tier`, the `RuntimeError` on an admin-only call from a
   standard account, the `info` reply tier check, `AmpioObject.raw_owned`, and
   the `access_tier` entry of `diagnostics_snapshot()`.
-- `AmpioObject.record`, `cover_parameters`, `block_writable`, `opis_menu`;
-  `AmpioModule.record`, `capabilities`, `panel_settings`; the plain `ValueError`
-  on an install refusal; the module mac collision warning.
+- `AmpioObject.record`, `cover_parameters`, `block_writable` and `opis_menu`
+  leave the object. `AmpioModule.record`, `capabilities` and `panel_settings`
+  leave the module. The plain `ValueError` on an install refusal leaves the
+  error set. The module mac collision warning leaves the log.
 
 ### Fixed
 

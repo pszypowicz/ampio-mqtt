@@ -39,6 +39,7 @@ from ampio_mqtt import (
     AmpioConnectionError,
     AmpioValueError,
     AvailabilityChanged,
+    ModuleFunction,
     ModuleRemoved,
     ObjectRemoved,
     ObjectUpdated,
@@ -186,8 +187,9 @@ def test_mserv_matches_the_override_mac_arm() -> None:
 
 
 def test_read_surface_is_immutable() -> None:
-    """Neither the mappings nor the frozen instances in them can be mutated
-    from consumer code - the promise core builds its entity layer on."""
+    """Neither the mappings, the maps they hold, nor the frozen instances
+    in them can be mutated from consumer code - the promise core builds
+    its entity layer on."""
     client = _admin_client()
     feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_flaga(41, 3)))
     catalogue(client, _flaga(41, 3))
@@ -195,6 +197,9 @@ def test_read_surface_is_immutable() -> None:
         client,
         f"ampio/fromDB/{ADMIN_USER}/config/devices",
         devices({"id": 7, "mac": 1}),
+    )
+    client._store.apply_sweep(
+        frozenset({1}), {}, {}, {}, {1: {ModuleFunction.ROLLER: 4}}, {}
     )
     with pytest.raises(TypeError):
         client.objects[99] = client.objects[41]  # type: ignore[index]
@@ -206,6 +211,17 @@ def test_read_surface_is_immutable() -> None:
         client.modules[99] = client.modules[7]  # type: ignore[index]
     with pytest.raises(dataclasses.FrozenInstanceError):
         client.modules[7].nazwa_urzadzenia = "TAMPERED"  # type: ignore[misc]
+    for view in (
+        client.records,
+        client.cover_parameters,
+        client.module_records,
+        client.capabilities,
+        client.panel_settings,
+    ):
+        with pytest.raises(TypeError):
+            view[99] = None  # type: ignore[index]
+    with pytest.raises(TypeError):
+        client.capabilities[1][ModuleFunction.ROLLER] = 0  # type: ignore[index]
 
 
 def test_mserv_reads_none_when_no_row_carries_the_server_mac() -> None:
@@ -591,6 +607,7 @@ ADMIN_ONLY = {
     "last_sweep",
     "fetch_locations",
     "resolve_records",
+    "lock_target",
     "block_opening",
     "unblock_opening",
     "block_closing",

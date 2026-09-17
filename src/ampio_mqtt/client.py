@@ -62,6 +62,7 @@ from ._store import AdminStore, AmpioStore, Applied
 from .classification import InputKind, OutputKind
 from .errors import (
     AmpioConnectionError,
+    AmpioNotConfigured,
     AmpioProtocolError,
     AmpioTimeoutError,
     AmpioUnsupported,
@@ -1612,8 +1613,10 @@ class AmpioAdminClient(AmpioClient):
 
         Present: the module answered a sweep and carries the entry. Absent
         with the object's ``address.mac`` in ``last_sweep.answered_macs``:
-        the module answered and carries no entry, which holds until the
-        next sweep. Absent with the mac not answered: not known.
+        the module answered and carries no entry. That answer covers the
+        objects the catalogue lists when the sweep runs, so an object the
+        catalogue admits later needs another sweep before absence answers
+        for it. Absent with the mac not answered: not known.
         docs/description-records.md.
         """
         return MappingProxyType(self._store.records)
@@ -1621,7 +1624,8 @@ class AmpioAdminClient(AmpioClient):
     @property
     def cover_parameters(self) -> Mapping[int, CoverParameters]:
         """Each cover's stored travel parameters, by object id, under the
-        rule :pyattr:`records` states."""
+        rule :pyattr:`records` states. An object the catalogue moves out of
+        the roller class drops its entry."""
         return MappingProxyType(self._store.cover_parameters)
 
     @property
@@ -2156,7 +2160,8 @@ class AmpioAdminClient(AmpioClient):
         methods call this and raise on a refusal, so a consumer that
         builds a lock control calls it after the sweep and leaves the
         control out on a refusal. Raises ``AmpioValueError`` for an id the
-        catalogue does not list.
+        catalogue does not list, and ``AmpioNotConfigured`` for a mac no
+        admitted module row carries.
         """
         obj = self._store.objects.get(object_id)
         if obj is None:
@@ -2164,6 +2169,12 @@ class AmpioAdminClient(AmpioClient):
         if not joins_roller_records(obj.typ_komponentu):
             return LockRefusal.NOT_A_COVER
         mac, channel = obj.address.mac, obj.address.channel
+        if self._store.module_by_mac(mac) is None:
+            # The frame's whole destination is the mac. With no row on it
+            # the install cannot say which module the frame would reach,
+            # and the sweep can still hold what the mac answered earlier.
+            shared = dict(self._store.collisions)
+            raise AmpioNotConfigured(collisions=((mac, shared.get(mac, ())),))
         capabilities = self._store.capabilities.get(mac)
         if capabilities is None:
             return LockRefusal.NOT_SWEPT
