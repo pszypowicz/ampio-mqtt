@@ -12,7 +12,19 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## Unreleased
+## 0.71.0
+
+This release makes the account tier the client's type. `AmpioClient` serves any
+account, and `AmpioAdminClient` extends it for the reserved administrator login,
+so a session can hold only what its class declares. The catalogue door requires
+a leaf on every drivable object and refuses two module rows that share one
+override mac. The record sweep fills five datasets on the administrator client
+instead of writing fields onto objects and modules. One resolver decides every
+roller lock write. Each error class says who fixes the problem. The two system
+rows the M-SERV creates for itself leave the object catalogue.
+
+This is a breaking release for any consumer that reads an object or module
+attribute the record sweep used to fill.
 
 ### Changed
 

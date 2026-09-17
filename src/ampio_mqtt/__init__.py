@@ -121,7 +121,7 @@ __all__ = [
     "discover",
 ]
 
-__version__ = "0.70.1"
+__version__ = "0.71.0"
 
 
 def __getattr__(name: str) -> object:
