@@ -247,11 +247,9 @@ and `unblock_closing()` write it on `AmpioAdminClient`. Only one module
 generation implements those actions, and the wire form and the gate are in the
 "Cover roller lock" section of [`panel-writes.md`](panel-writes.md).
 
-`AmpioObject.block_writable` says whether a lock write reaches one cover's
-module. `True` means the four methods work on that cover, and `False` means they
-raise. `None` means that no sweep covered the module yet, so the answer is not
-known. A consumer that builds a lock control must read the field first and must
-not treat `None` as `False`. The field needs `resolve_records()` to have run.
+`AmpioAdminClient.lock_target()` gives the result for one cover, with the four
+refusals and the two errors in the "What a consumer reads" part of
+[`panel-writes.md`](panel-writes.md).
 
 The same Designer menu offers eight more roller actions, and none of them
 touches the lock. Two carry names that suggest an override. "Close permanently"

@@ -55,6 +55,25 @@ explicit beta posture above and is no longer the supported upgrade path.
   a CAN module. The base class always publishes `/api`.
 - `diagnostics_snapshot()` carries `mac_collisions` and `modules` on
   `AmpioAdminClient` only.
+- The record sweep fills five datasets on `AmpioAdminClient`: `records` and
+  `cover_parameters` by object id, `module_records`, `capabilities` and
+  `panel_settings` by mac. One rule reads every dataset. Present means the
+  module answered and carries the entry. Absent with the mac in
+  `last_sweep.answered_macs` means the module carries no such entry. Absent with
+  the mac not answered means not known. `RecordSweepCompleted` fires once per
+  sweep.
+- `lock_target()` is the one roller lock resolver. It returns a `LockTarget` or
+  a `LockRefusal`, and the four lock methods raise from it: `AmpioValueError`
+  when no sweep answered the module, `AmpioUnsupported` otherwise.
+- Two module rows on one override mac fail the admin door as
+  `AmpioNotConfigured`, and `NotConfigured` reports a collision after connect.
+  The door admits no row on a shared mac. The M-SERV's default override mac is
+  `1`, so an install that leaves a second module on it must give that module its
+  own mac in Designer.
+- What the install cannot do raises `AmpioUnsupported`: a kind that does not
+  answer the verb, a kind no timed write pulses, a module without the roller
+  lock. A module id the list does not hold raises `AmpioValueError`.
+- `AmpioObject.name` is the object's name from the `opis_menu` column.
 
 ### Removed
 
@@ -68,6 +87,9 @@ explicit beta posture above and is no longer the supported upgrade path.
 - `AmpioClient.access_tier`, the `RuntimeError` on an admin-only call from a
   standard account, the `info` reply tier check, `AmpioObject.raw_owned`, and
   the `access_tier` entry of `diagnostics_snapshot()`.
+- `AmpioObject.record`, `cover_parameters`, `block_writable`, `opis_menu`;
+  `AmpioModule.record`, `capabilities`, `panel_settings`; the plain `ValueError`
+  on an install refusal; the module mac collision warning.
 
 ### Fixed
 
@@ -76,6 +98,8 @@ explicit beta posture above and is no longer the supported upgrade path.
   (#265).
 - A `data/states` snapshot with one malformed row is refused whole. Every object
   keeps its value and the held table stays unchanged (#269).
+- The roller lock has one resolver, so the write and its capability answer
+  cannot disagree (#256).
 
 ### Documentation
 

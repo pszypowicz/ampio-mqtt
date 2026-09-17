@@ -49,9 +49,9 @@ module row on either class: `AmpioObject.address.mac` carries the key (see
 | ------------------------------------------------------------------------------------- | ---------------------------------------- | --------------------------------------- |
 | `modules`, `mserv`, `module_for()`                                                    | `config/devices`                         | `wait_for_initial_discovery()` returns  |
 | `resolve_records()`                                                                   | `device_api/to/list`, `config/locations` | when the call returns                   |
-| `records`, `cover_parameters`                                                         | the sweep, by object id                  | when `resolve_records()` returned       |
-| `module_records`, `capabilities`, `panel_settings`                                    | the sweep, by mac                        | when `resolve_records()` returned       |
-| `last_sweep`                                                                          | the sweep                                | when `resolve_records()` returned       |
+| `records`, `cover_parameters`                                                         | the sweep, by object id                  | when `resolve_records()` returns        |
+| `module_records`, `capabilities`, `panel_settings`                                    | the sweep, by mac                        | when `resolve_records()` returns        |
+| `last_sweep`                                                                          | the sweep                                | when `resolve_records()` returns        |
 | `lock_target()`                                                                       | the sweep and `address`                  | when `resolve_records()` returns        |
 | `fetch_locations()`                                                                   | `config/locations`                       | when the call returns                   |
 | `block_opening()`, `unblock_opening()`, `block_closing()`, `unblock_closing()`        | `ampio/to/<mac>/raw`                     | after a sweep filled the capability map |
@@ -121,13 +121,13 @@ own event logic. The gating detail is in [`bus-events.md`](bus-events.md).
 The tier is fixed before the first connect, so every fact the library holds has
 exactly one source. There is no precedence chain and no second opinion.
 
-| Fact                                                                             | Source                             |
-| -------------------------------------------------------------------------------- | ---------------------------------- |
-| object rows, names, leaf ids                                                     | `data/devices`                     |
-| `params`, `czas`, `url`                                                          | `data/params_devices`              |
-| the initial value of every object                                                | `data/states`                      |
-| module rows                                                                      | `config/devices`, admin only       |
-| `record`, `capabilities`, `panel_settings`, `cover_parameters`, `block_writable` | the `device_api` sweep, admin only |
+| Fact                                                                              | Source                                        |
+| --------------------------------------------------------------------------------- | --------------------------------------------- |
+| object rows, names, leaf ids                                                      | `data/devices`                                |
+| `params`, `czas`, `url`                                                           | `data/params_devices`                         |
+| the initial value of every object                                                 | `data/states`                                 |
+| module rows                                                                       | `config/devices`, admin only                  |
+| `records`, `cover_parameters`, `module_records`, `capabilities`, `panel_settings` | the `device_api` sweep, on `AmpioAdminClient` |
 
 Both tiers hold the whole `params_devices` table, so every object either
 catalogue lists has a row there. The two replies arrive in no fixed order, which
@@ -137,24 +137,6 @@ answers, those three fields read their unset values.
 replies of the tier's pair. If the table answers and an object the catalogue
 lists has no row in it, the library warns. It lists that object in the
 `params_gap` entry of `diagnostics_snapshot()`.
-
-## How the model marks the tiers
-
-The model separates facts by source. A catalogue fact is a plain field, served
-to both tiers and left alone by the record sweep. Facts from the description
-record live in the nested `record` bundle: `AmpioObject.record` and
-`AmpioModule.record`. The nesting is the marker. Everything under `.record`
-needs the admin tier, and the bundle stays `None` on a standard account. The
-library adds no precedence helper. When the two sources disagree, the consumer
-picks.
-
-The fields `AmpioAdminClient` feeds, the nested bundles included:
-
-| Field                                        | Why it is admin-only                      |
-| -------------------------------------------- | ----------------------------------------- |
-| `AmpioObject.record`, `AmpioModule.record`   | filled by the `device_api` sweep only     |
-| `AmpioModule.supply_voltage`, `.temperature` | module diagnostics broadcasts             |
-| every `AmpioModule` row                      | the module catalogue itself is admin-only |
 
 The model state is deterministic per tier. The tier is fixed at client
 construction, the store starts empty, and nothing persists to disk. The class
@@ -215,5 +197,7 @@ Prefer `AmpioAdminClient` when the install needs:
   Also the device classes `/api` cannot express (DALI, display text). See
   [`panel-writes.md`](panel-writes.md) and
   [`untapped-surfaces.md`](untapped-surfaces.md).
-- **Per-object description records** for area assignment - `resolve_records()`
-  and `fetch_locations()` answer no other account.
+- **The record sweep** for area assignment and module facts -
+  `resolve_records()` fills `records`, `cover_parameters`, `module_records`,
+  `capabilities` and `panel_settings`. It and `fetch_locations()` answer no
+  other account.
