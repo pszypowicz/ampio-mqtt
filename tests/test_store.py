@@ -93,8 +93,8 @@ def _mod_removed(applied: Applied) -> list[AmpioModule]:
 
 
 _ROUTERS = {
-    USER: Router(USER, ENDPOINTS),
-    ADMIN_USER: Router(ADMIN_USER, ENDPOINTS),
+    USER: Router(USER, ENDPOINTS, admin=True),
+    ADMIN_USER: Router(ADMIN_USER, ENDPOINTS, admin=True),
 }
 
 
@@ -629,10 +629,12 @@ def test_a_tier_scoped_router_leaves_the_other_tiers_surfaces_unroutable() -> No
     admin = Router(
         ADMIN_USER,
         tuple(ep for ep in ENDPOINTS if ep.tier in (None, AccessTier.ADMIN)),
+        admin=True,
     )
     restricted = Router(
         USER,
         tuple(ep for ep in ENDPOINTS if ep.tier in (None, AccessTier.RESTRICTED)),
+        admin=False,
     )
     assert admin.route(ADMIN_DATA_DEVICES_TOPIC, "{}") is not None
     assert admin.route(ADMIN_PARAMS_DEVICES_TOPIC, "{}") is not None

@@ -253,7 +253,7 @@ def test_device_list_rejects_garbage() -> None:
 
 
 def test_router_routes_the_list_reply() -> None:
-    router = Router("admin", ENDPOINTS)
+    router = Router("admin", ENDPOINTS, admin=True)
     msg = router.route(
         DEVICE_API_LIST_TOPIC, _list(_device(0xCB89, 0xCB89, frame(12, 2, 3, 0, "x")))
     )

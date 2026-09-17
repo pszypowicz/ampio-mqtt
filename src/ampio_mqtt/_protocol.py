@@ -1355,6 +1355,12 @@ ENDPOINTS: tuple[Endpoint, ...] = (
 
 ENDPOINT_BY_NAME: dict[str, Endpoint] = {ep.name: ep for ep in ENDPOINTS}
 
+# The endpoints each client class is served. The base client and the base
+# store read the first; the admin client and the admin store read the
+# second. `Endpoint.tier` is the wire fact both derive from.
+BASE_ENDPOINTS: tuple[Endpoint, ...] = tuple(ep for ep in ENDPOINTS if ep.tier is None)
+ADMIN_ENDPOINTS: tuple[Endpoint, ...] = ENDPOINTS
+
 
 # The M-SERV software baseline this library is developed and live-tested
 # against, as the server self-reports it on the info surface. This is the
@@ -1830,12 +1836,19 @@ class Router:
     outside it is unroutable like any other unknown shape. Endpoint reply
     and per-object state topics are namespaced by the connecting account
     (hence ``user``); the raw ``ampio/from`` tree is global.
+
+    The admin-only shapes (the raw tree, the digests, the device list) are
+    routed for the admin client alone, so a router built without them returns
+    None for a digest, the device list and every raw topic.
     """
 
-    __slots__ = ("_by_response", "_user")
+    __slots__ = ("_admin", "_by_response", "_user")
 
-    def __init__(self, user: str, endpoints: tuple[Endpoint, ...]) -> None:
+    def __init__(
+        self, user: str, endpoints: tuple[Endpoint, ...], *, admin: bool = False
+    ) -> None:
         self._user = user
+        self._admin = admin
         self._by_response: dict[str, Endpoint] = {
             response_topic(ep, user): ep for ep in endpoints
         }
@@ -1857,6 +1870,8 @@ class Router:
         ):
             oid = to_int(parts[4])
             return None if oid is None else _parse_state_payload(oid, payload)
+        if not self._admin:
+            return None
         if (
             len(parts) == 5
             and parts[0] == "ampio"

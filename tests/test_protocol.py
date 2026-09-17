@@ -16,6 +16,8 @@ from ampio_mqtt import (
     ThermostatState,
 )
 from ampio_mqtt._protocol import (
+    ADMIN_ENDPOINTS,
+    BASE_ENDPOINTS,
     CCT_PREFIX,
     ENDPOINT_BY_NAME,
     ENDPOINTS,
@@ -54,7 +56,7 @@ from ampio_mqtt._protocol import (
 
 # One router per suite: topic classification is stateless per account.
 # The full endpoint table: these tests cover topic shapes, not tier scoping.
-_route = Router("u", ENDPOINTS).route
+_route = Router("u", ENDPOINTS, admin=True).route
 
 
 @pytest.mark.parametrize(
@@ -817,6 +819,37 @@ def test_diagnostics_route_ok() -> None:
 )
 def test_diagnostics_route_malformed(topic: str, payload: str) -> None:
     assert _route(topic, payload) is None
+
+
+def test_the_base_endpoint_set_is_every_endpoint_served_to_both_tiers() -> None:
+    assert tuple(ep for ep in ENDPOINTS if ep.tier is None) == BASE_ENDPOINTS
+    assert ADMIN_ENDPOINTS is ENDPOINTS
+    assert {ep.name for ep in ADMIN_ENDPOINTS} - {ep.name for ep in BASE_ENDPOINTS} == {
+        "devices",
+        "locations",
+    }
+
+
+@pytest.mark.parametrize(
+    "topic, payload",
+    [
+        ("ampio/from/a/state/f/3", "1"),
+        ("ampio/from/a/b/4F", '{"d": [254, 79, 63, 142]}'),
+        ("ampio/from/a/event", "7"),
+        ("ampio/fromDB/u/md5/devices", "a" * 32),
+        ("device_api/from/list", '{"devices": []}'),
+    ],
+)
+def test_a_base_router_routes_no_admin_shape(topic: str, payload: str) -> None:
+    assert Router("u", BASE_ENDPOINTS, admin=False).route(topic, payload) is None
+    assert Router("u", ADMIN_ENDPOINTS, admin=True).route(topic, payload) is not None
+
+
+def test_an_admin_router_routes_a_raw_edge() -> None:
+    routed = Router("admin", ADMIN_ENDPOINTS, admin=True).route(
+        "ampio/from/a/state/f/3", "1"
+    )
+    assert isinstance(routed, RawChannelEdge)
 
 
 def test_endpoint_reply_route_carries_raw_payload() -> None:

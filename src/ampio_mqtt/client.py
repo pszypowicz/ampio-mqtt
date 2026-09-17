@@ -211,7 +211,9 @@ class AmpioClient:
         self._module_list_endpoint = (
             ENDPOINT_BY_NAME["devices"] if self._tier is AccessTier.ADMIN else None
         )
-        self._router = _protocol.Router(username, self._served)
+        self._router = _protocol.Router(
+            username, self._served, admin=self._tier is AccessTier.ADMIN
+        )
         self._store = AmpioStore(self._tier)
         self._stats = ConnectionStats()
         self._connection = _connection.Connection(
