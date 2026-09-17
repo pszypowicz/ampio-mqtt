@@ -16,7 +16,7 @@ the text says in place exactly what is unverified.
 | [`designer-surfaces.md`](designer-surfaces.md)     | The legacy CAN bridge endpoints and every surface the Designer itself uses, the flag write frames included.                 |
 | [`bus-events.md`](bus-events.md)                   | Bus events: how to raise one, how to receive one, and which tier gets which.                                                |
 | [`events.md`](events.md)                           | The typed event stream: subscription patterns, what each event announces per tier, ordering, and the terminal signals.      |
-| [`account-tiers.md`](account-tiers.md)             | What an administrator account gets that a standard one does not, with the measured latency difference.                      |
+| [`account-tiers.md`](account-tiers.md)             | The two client classes, what each serves, and the M-SERV facts behind the split.                                            |
 | [`identity.md`](identity.md)                       | Which id is which - `mac` vs `mac_global`, `id` vs `funkcja` vs `address`, replacement-stable vs hardware-ordered.          |
 | [`visibility.md`](visibility.md)                   | Hidden rows and the door, the `params` bit enum, the read-only and bell markers, and deletion on the wire.                  |
 | [`presence.md`](presence.md)                       | The two presence rows, their types and their event.                                                                         |

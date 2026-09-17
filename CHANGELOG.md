@@ -44,6 +44,17 @@ explicit beta posture above and is no longer the supported upgrade path.
   `address.mac`. The record sweep, the cover parameters and the roller lock join
   on `address`. A write for an id the catalogue does not list raises
   `AmpioValueError`.
+- The account tier is a type. `AmpioClient(host, username, password)` is the
+  client every account gets. `AmpioAdminClient(host, password)` carries the
+  reserved login and adds the module catalogue, the raw tree, the record sweep
+  and the CAN writes. The base class never inspects the username, and neither
+  class checks the account id the `info` reply reports. `docs/account-tiers.md`
+  lists the members of each class, and a test pins the admin table to the code.
+- On `AmpioAdminClient`, `turn_on()`, `turn_off()`, `switch()` and the untimed
+  `set_value()` ride the raw CAN frame for a binary output on a CAN module. The
+  base class always publishes `/api`.
+- `diagnostics_snapshot()` carries `mac_collisions` and `modules` on
+  `AmpioAdminClient` only.
 
 ### Removed
 
@@ -54,6 +65,9 @@ explicit beta posture above and is no longer the supported upgrade path.
   `visible`, `module_mac`, `sf_id`, `sub_sf_id` and `leaf_io_no` leave the
   object. `leaf_mac()` leaves the package. The `funkcja - 1` record join and the
   `/api` fallback for a relay without a leaf leave the client.
+- `AmpioClient.access_tier`, the `RuntimeError` on an admin-only call from a
+  standard account, the `info` reply tier check, `AmpioObject.raw_owned`, and
+  the `access_tier` entry of `diagnostics_snapshot()`.
 
 ### Fixed
 

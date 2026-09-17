@@ -7,57 +7,70 @@ users, and it refuses to create a user named `admin`. Per-user app permissions
 do not move an account between tiers. A standard account granted every
 permission in the app is still a standard account.
 
-The tier is the authenticated login name. The broker verifies the username at
-CONNACK, and the app cannot create another `admin`, so a held session under that
-name IS the administrator. The library decides everything on it at construction.
-`AmpioClient.access_tier` is a constant `AccessTier` value, `ADMIN` or
-`RESTRICTED` (the code name for a standard account). The subscription set and
-discovery requests are tier-shaped from the first connect. The `info` reply's
-account id is the wire's own confirmation (`-1` for the admin pseudo-user, the
-users-table row id for an app user). `AmpioServerInfo.access_tier` carries it,
-and `check_connection()` reports it at validation time. A config flow can then
-reject an account whose tier will not support what the consumer needs. One
-example is `modules`/`mserv`, which the standard tier never receives.
+The tier is a type. `AmpioClient` is the client every account gets, and
+`AmpioAdminClient` extends it with what the M-SERV serves the reserved login
+alone. The admin class carries its username, so no caller passes one. The base
+class never inspects the username. The reserved login through the base class
+gets the standard view, which is a valid least-privilege choice.
 
-A running client checks the two answers against each other. Every `info` reply
-carries the account id, and the client refuses one whose tier disagrees with the
-tier its username decided. Every subscription and request follows from that
-decision, so a disagreement means the session is aimed at the wrong surfaces,
-and nothing in the reply can correct that. The refusal is reported the way any
-other is (see [`discovery-flow.md`](discovery-flow.md)), and discovery never
-completes.
+```python
+client = AmpioClient(host, username, password)  # any account
+admin = AmpioAdminClient(host, password)  # the reserved login
+```
 
-Reading an admin-only surface on a standard account raises `RuntimeError` rather
-than reading empty. `modules`, `mserv`, `module_for()`, `resolve_records()`,
-`fetch_locations()` and every raw write behave this way. An empty module
-catalogue is indistinguishable from an install with no modules, and a consumer
-cannot act on that. Grouping entities by module needs no module row on either
-tier: `AmpioObject.address.mac` carries the key (see
+Neither class checks the account id the `info` reply reports.
+`AmpioServerInfo.access_tier` carries that id as a wire fact, and
+`check_connection()` reports it at validation time. A config flow reads it to
+pick the class before any client exists. Grouping entities by module needs no
+module row on either class: `AmpioObject.address.mac` carries the key (see
 [`identity.md`](identity.md)).
 
-## What each tier gets
+## What AmpioClient serves
 
-| Capability                                                                                                        | Administrator                                      | Standard user                                            |
-| ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------- |
-| Object catalogue with full metadata                                                                               | every object in a room, plus the two presence rows | objects granted in the app                               |
-| Presence rows (`presence_detection`, `presence_simulation`)                                                       | yes                                                | yes                                                      |
-| `params` bitfields (visibility, the hidden bit)                                                                   | yes                                                | yes (the M-SERV serves the whole `params_devices` table) |
-| Per-object live state                                                                                             | all objects                                        | granted objects                                          |
-| Rooms (`fetch_rooms`)                                                                                             | yes                                                | yes                                                      |
-| Server identity (`server_info`)                                                                                   | yes                                                | yes                                                      |
-| Scenes (`fetch_scenes`, scene commands)                                                                           | yes                                                | yes, bounded by the grant                                |
-| `resources` / `icons` tables (`data` surface)                                                                     | yes                                                | yes                                                      |
-| `logging` config table (`data` surface)                                                                           | yes                                                | yes (the M-SERV serves the whole `logging` table)        |
-| md5 change-detection tree (the admin client watches `devices` and `params_devices` to re-request the module list) | yes                                                | yes                                                      |
-| Commands                                                                                                          | all objects                                        | granted objects                                          |
-| Push notification (`send_notification`)                                                                           | yes                                                | yes                                                      |
-| Description record entries (the `device_api` tree, `resolve_records()`, `fetch_locations()`)                      | yes                                                | no                                                       |
-| **Module catalogue** (`modules`, `mserv`)                                                                         | yes                                                | **no**                                                   |
-| **Raw tree** (`ampio/from/#`)                                                                                     | yes                                                | **no**                                                   |
-| **Module diagnostics** (voltage, temperature)                                                                     | yes                                                | **no**                                                   |
-| **CAN write tree** (`ampio/to/#`)                                                                                 | yes                                                | **no**                                                   |
-| **Panel buzzer** (`buzz`, `buzz_pattern`, `buzz_stop`)                                                            | yes                                                | **no**                                                   |
-| **Module identify** (`identify`, `identify_stop`)                                                                 | yes                                                | **no**                                                   |
+| Member                                                                    | Wire source                                          |
+| ------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `connect()`, `disconnect()`, `wait_for_initial_discovery()`, `refresh()`  | the account's `control` and `fromDB` namespace       |
+| `check_connection()`, `available`, `diagnostics_snapshot()`               | the session                                          |
+| `objects`                                                                 | `data/devices`, `data/params_devices`, `data/states` |
+| `presence_detection`, `presence_simulation`                               | the two system rows in the same replies              |
+| `server_info`                                                             | `data/info`                                          |
+| `subscribe()`                                                             | the event stream                                     |
+| `fetch_rooms()`, `fetch_scenes()`                                         | `data/groups`, `data/group_devices`, `data/scenes`   |
+| `command()`, `turn_on()`, `turn_off()`, `switch()`, `set_value()`         | `/api` on the `control` topic                        |
+| `set_temperature()`, `set_heating_mode()`                                 | `/api`                                               |
+| `set_colors()`, `set_ww()`, `set_ww_power()`, `set_ww_coldness()`         | `/api`                                               |
+| `open()`, `close()`, `stop()`, `set_roller_pos()`, `set_roller_lamella()` | `/api`                                               |
+| `run_scene()`, `off_scene()`, `undo_scene()`, `set_event()`               | `/api`                                               |
+| `send_notification()`                                                     | `/api`                                               |
+
+## What AmpioAdminClient adds
+
+| Member                                                                                | Wire source                              | Complete when                           |
+| ------------------------------------------------------------------------------------- | ---------------------------------------- | --------------------------------------- |
+| `modules`, `mserv`, `module_for()`                                                    | `config/devices`                         | `wait_for_initial_discovery()` returns  |
+| `resolve_records()`                                                                   | `device_api/to/list`, `config/locations` | when the call returns                   |
+| `fetch_locations()`                                                                   | `config/locations`                       | when the call returns                   |
+| `block_opening()`, `unblock_opening()`, `block_closing()`, `unblock_closing()`        | `ampio/to/<mac>/raw`                     | after a sweep filled the capability map |
+| `buzz()`, `buzz_pattern()`, `buzz_stop()`                                             | `ampio/to/<mac>/raw`                     | on connect                              |
+| `identify()`, `identify_stop()`                                                       | `ampio/to/<mac>/raw`                     | on connect                              |
+| `set_panel_backlight()`, `set_panel_status_light()`, `lock_panel()`, `unlock_panel()` | `ampio/to/<mac>/raw`                     | on connect                              |
+
+The admin client overrides `turn_on()`, `turn_off()`, `switch()` and the untimed
+form of `set_value()` for one case. A binary or open-collector output on a CAN
+module rides the raw write topic, because a panel's status LEDs ignore `/api` on
+every account. Every other object, and every timed `set_value()`, takes the base
+path. A test pins the table above to the code: a member without a row fails CI,
+and a row without a member fails CI.
+
+## What the admin session receives
+
+| Surface                                                                          | Wire source                           | Complete when               |
+| -------------------------------------------------------------------------------- | ------------------------------------- | --------------------------- |
+| raw-bridged state for panel LEDs, OC outputs and CCT channels                    | `ampio/from/<mac>/state/*`            | after the retained replay   |
+| `AmpioModule.last_seen`, `AmpioModule.supply_voltage`, `AmpioModule.temperature` | `ampio/from/<mac>/b/*`                | after the first broadcast   |
+| `ModuleUpdated`, `ModuleRemoved`                                                 | the module catalogue and the raw tree | on connect                  |
+| `BusEventRaised`                                                                 | `ampio/from/<mac>/event`              | when Ampio logic raises one |
+| the `modules` and `mac_collisions` entries of `diagnostics_snapshot()`           | the session                           | always                      |
 
 The SUBACK enforces the raw-tree denial. A standard account's subscription to
 the `ampio/from/...` filters comes back with reason code 128. This holds even
@@ -131,12 +144,11 @@ needs the admin tier, and the bundle stays `None` on a standard account. The
 library adds no precedence helper. When the two sources disagree, the consumer
 picks.
 
-The admin-fed fields, the nested bundles included:
+The fields `AmpioAdminClient` feeds, the nested bundles included:
 
 | Field                                        | Why it is admin-only                      |
 | -------------------------------------------- | ----------------------------------------- |
 | `AmpioObject.record`, `AmpioModule.record`   | filled by the `device_api` sweep only     |
-| `AmpioObject.raw_owned`                      | proven by the raw tree                    |
 | `AmpioModule.supply_voltage`, `.temperature` | module diagnostics broadcasts             |
 | every `AmpioModule` row                      | the module catalogue itself is admin-only |
 
@@ -161,9 +173,9 @@ and to the same change on the per-object topic:
 | Per-object topic (both tiers) | 147-189 ms |
 
 So a standard account sees input edges roughly **100-140 ms later**. The
-library's raw-channel bridge closes that gap automatically on the admin tier. On
-the standard tier the bridge never fires, and inputs arrive on the per-object
-path.
+library's raw-channel bridge closes that gap automatically on
+`AmpioAdminClient`. On the standard tier the bridge never fires, and inputs
+arrive on the per-object path.
 
 **Write latency is not affected by the tier.** A flag write over `/api` echoes
 in a median 40 ms. The one CAN route that carries a flag frame, `hw/out`, needs
@@ -178,7 +190,7 @@ A standard account is the better default. It is least-privilege for reads and
 writes. It covers sensors, lights, switches, covers, and ordinary input events
 with no functional gaps.
 
-Prefer an administrator account when the install needs:
+Prefer `AmpioAdminClient` when the install needs:
 
 - **Sub-50 ms input reaction** - HA-side double-click, long-press, or
   hold-to-dim timing, where an extra ~130 ms is felt. Presses the M-SERV itself

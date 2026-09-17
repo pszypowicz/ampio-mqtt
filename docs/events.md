@@ -54,7 +54,7 @@ the stream must put its `case ObjectAdded():` arm before
 `case ObjectUpdated():`. In the reverse order, every `ObjectAdded` matches the
 `ObjectUpdated` arm first, and the `ObjectAdded` arm never runs.
 
-"Admin only" reflects what the M-SERV serves each account tier - see
+"Admin only" marks the events `AmpioAdminClient` alone receives - see
 [`account-tiers.md`](account-tiers.md). A standard account can still _raise_ bus
 events (`set_event`), but it never receives them.
 

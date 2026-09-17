@@ -18,17 +18,16 @@ publishes the raw value before it re-encodes the per-object record). For an
 input platform that wants minimum latency on a button-press or flag toggle, the
 raw form is the right source.
 
-Once an object produced a raw message, it is **raw-owned**
-(`AmpioObject.raw_owned`). The store then ignores the slower per-object echo
-whole, and the bulk `states` snapshot skips the object. Its resync is the
-retained raw state tree itself. Every reconnect's subscribe re-delivers that
-tree whole, and the index that persists across sessions routes it. The library
-subscribes to the four state wildcards at QoS 0 for that reason. The broker
-replays retained values into a QoS 1 subscription through a queue of 1000
-messages per client. The `f` prefix alone holds more values than that on the
-baseline install. A QoS 0 subscription takes no queue slot, so its replay is
-complete. A raw edge lost on a socket drop returns with the next replay, because
-every channel is retained.
+Once an object produced a raw message, the admin store marks it **raw-owned**.
+It then ignores the slower per-object echo whole, and the bulk `states` snapshot
+skips the object. Its resync is the retained raw state tree itself. Every
+reconnect's subscribe re-delivers that tree whole, and the index that persists
+across sessions routes it. The library subscribes to the four state wildcards at
+QoS 0 for that reason. The broker replays retained values into a QoS 1
+subscription through a queue of 1000 messages per client. The `f` prefix alone
+holds more values than that on the baseline install. A QoS 0 subscription takes
+no queue slot, so its replay is complete. A raw edge lost on a socket drop
+returns with the next replay, because every channel is retained.
 
 The replay arrives before the catalogues can build that index. The broker sends
 it within a second of the subscribe, and a catalogue reply is later. So the

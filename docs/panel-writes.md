@@ -34,14 +34,14 @@ open-collector output echoes on `state/a/<ch+1>` as a u8 value and never on its
 object topic, on any write path. The library therefore bridges `a` for those
 objects. `confirm=` resolves on either edge.
 
-On the admin tier, a `przekaznik` on a CAN module rides this frame when its leaf
-class has a proven function byte. The frame is addressed by the object's own
-leaf alone (mac, 0-based channel, and class). A class outside that table stays
-on `/api`. There is no module-type table to maintain. Two more writes stay on
-`/api`: the M-SERV's own virtual outputs, and every `pulse_ms` write. The
+On `AmpioAdminClient`, a `przekaznik` on a CAN module rides this frame when its
+leaf class has a proven function byte. The frame is addressed by the object's
+own leaf alone (mac, 0-based channel, and class). A class outside that table
+stays on `/api`. There is no module-type table to maintain. Two more writes stay
+on `/api`: the M-SERV's own virtual outputs, and every `pulse_ms` write. The
 virtual outputs live in the server's DB, not on the CAN bus. The raw frame has
 no timed form, so a panel output cannot pulse, and `confirm=` is what shows
-that. The standard tier always publishes the `/api` form, which a panel output
+that. `AmpioClient` always publishes the `/api` form, which a panel output
 ignores.
 
 A module condition bound to the LED overrides such writes eventually, not
@@ -92,9 +92,9 @@ within 100 ms. `buzz_stop()` sends that silent sequence and then the simple OFF.
 When OFF cut a long single-tone sequence short, the panel emitted a 150 ms blip
 at the sequence's scheduled end.
 
-`buzz()`, `buzz_pattern()`, and `buzz_stop()` publish these frames on the admin
-tier, addressed by `AmpioModule.id`. Any catalogued module is a valid address,
-and the M-DOT panels are the proven targets. The touch-press beep length and its
+`buzz()`, `buzz_pattern()`, and `buzz_stop()` are `AmpioAdminClient` methods,
+addressed by `AmpioModule.id`. Any catalogued module is a valid address, and the
+M-DOT panels are the proven targets. The touch-press beep length and its
 per-field mask are stored settings, readable as `AmpioModule.panel_settings` and
 written only by the Designer.
 
@@ -183,7 +183,7 @@ backlight does not cycle, and the Designer's own button behaves the same, so a
 wall-mounted panel gives no visible sign of identify.
 
 No readback exists. The module confirms nothing on any topic, so `identify()`
-and `identify_stop()` take no `confirm=`. Both publish on the admin tier,
+and `identify_stop()` take no `confirm=`. Both are `AmpioAdminClient` methods,
 addressed by `AmpioModule.id`, and any catalogued module is a valid address.
 
 ## Cover roller lock

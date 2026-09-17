@@ -288,6 +288,5 @@ reply that never arrives raises `AmpioTimeoutError`.
 ### Tier gate
 
 The whole `device_api` tree is admin-only, exactly like the raw tree. A standard
-account gets silence on both the subscribe and the request.
-`AmpioClient.resolve_records()` raises `RuntimeError` at once, instead of a hang
-on a reply that never comes.
+account gets silence on both the subscribe and the request. `resolve_records()`
+is a member of `AmpioAdminClient` alone, so a standard client cannot call it.

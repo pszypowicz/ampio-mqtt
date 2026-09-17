@@ -3,7 +3,7 @@
 `AmpioClient.connect()` runs the bring-up sequence: connect, subscribe, publish
 the auto-discovery keywords, wait for the responses, return. When `connect()`
 returns, `client.objects` and `client.server_info` are populated and ready to
-consult, unless the `discovery_timeout` elapsed first. On the admin tier
+consult, unless the `discovery_timeout` elapsed first. On `AmpioAdminClient`,
 `client.modules` is populated too (see below). Live state arrives via push from
 that point on.
 
@@ -40,11 +40,10 @@ the `connect()` / `disconnect()` lifecycle that joins them.
    below), the global raw-channel wildcards, and the `device_api/from/list`
    reply topic. Every filter asks for QoS 1 except the four raw state wildcards,
    which ask for QoS 0. The retained replay then arrives whole (see
-   [`raw-channel-bridge.md`](raw-channel-bridge.md)). The set is decided at
-   construction from the authenticated username (see
-   [`account-tiers.md`](account-tiers.md)), so every filter must be granted. A
-   SUBACK rejection lands in `stats.subscribe_failures` and warns, because it
-   means a broken broker or ACL. See [`protocol.md`](protocol.md) and
+   [`raw-channel-bridge.md`](raw-channel-bridge.md)). The client class decides
+   the set (see [`account-tiers.md`](account-tiers.md)), so every filter must be
+   granted. A SUBACK rejection lands in `stats.subscribe_failures` and warns,
+   because it means a broken broker or ACL. See [`protocol.md`](protocol.md) and
    [`raw-channel-bridge.md`](raw-channel-bridge.md) for the topics.
 3. **Publish the tier's auto-discovery keywords** on the matching control
    surfaces:
@@ -157,8 +156,7 @@ every connection problem alike keeps working. A rejection after a successful
 subclasses `ValueError`. An id the catalogue does not list raises
 `AmpioValueError` before any publish. An output whose kind does not answer the
 verb raises a plain `ValueError`. A consumer that catches `AmpioValueError`
-first tells its own fault from the install's state. An admin-only call on a
-standard account raises `RuntimeError`.
+first tells its own fault from the install's state.
 
 `AmpioNotConfigured` is the installer's error. A drivable row carries no leaf,
 and the installer restores it in Designer. `AmpioProtocolError` is the server's
@@ -175,11 +173,11 @@ when - and whether - to call them:
 - **`fetch_scenes()`** - the scene catalogue (`AmpioScene` rows), driven with
   `run_scene()` / `off_scene()` / `undo_scene()`. Same rationale: a consumer
   that exposes no scenes never pays for the fetch.
-- **`fetch_locations()`** - the Designer location name table, admin tier only.
-  `resolve_records()` fetches it itself, so a consumer that runs the sweep never
-  calls it directly.
+- **`fetch_locations()`** - the Designer location name table, `AmpioAdminClient`
+  only. `resolve_records()` fetches it itself, so a consumer that runs the sweep
+  never calls it directly.
 - **`resolve_records()`** - reads every module's description record in one
-  `device_api` list reply, admin tier only. What it folds into
+  `device_api` list reply, `AmpioAdminClient` only. What it folds into
   `AmpioObject.record` and `AmpioModule.record`, and what the returned
   `RecordSweep` reports, are in
   [`description-records.md`](description-records.md). A consumer that does not
@@ -201,11 +199,12 @@ credentials are known, confirm identity with `check_connection()`.
 ## Liveness counters
 
 `client.diagnostics_snapshot()` returns the one credential-free dict a
-diagnostics platform emits as-is. It holds the tier, the availability flag, the
+diagnostics platform emits as-is. It holds the availability flag, the
 auth-failure reason, and the safe server-info subset. It also holds the
-connection counters, the SUBACK rejections, the mac collisions, and each
-endpoint's last reply summary. The `params_gap` entry names objects the params
-table skips. The `not_configured` entry names the rows the door left out.
+connection counters, the SUBACK rejections, and each endpoint's last reply
+summary. On `AmpioAdminClient` it also holds the mac collisions and the module
+list. The `params_gap` entry names objects the params table skips. The
+`not_configured` entry names the rows the door left out.
 
 Table replies retain a JSON string with only `row_count` in `last_payloads`.
 Names, URLs, state descriptions, nested data, and unknown fields are omitted.
