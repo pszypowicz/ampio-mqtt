@@ -19,7 +19,6 @@ from typing import Any, Final, TypeVar, cast, overload
 from . import _connection, _protocol
 from ._protocol import (
     ADMIN_ENDPOINTS,
-    ADMIN_USERNAME,
     BASE_ENDPOINTS,
     ENDPOINT_BY_NAME,
     KEEP_POSITION,
@@ -79,6 +78,7 @@ from .events import (
     RecordSweepCompleted,
 )
 from .models import (
+    AccessTier,
     AmpioModule,
     AmpioObject,
     AmpioScene,
@@ -1438,7 +1438,7 @@ class AmpioAdminClient(AmpioClient):
         self._module_list_endpoint = ENDPOINT_BY_NAME["devices"]
         super().__init__(
             host,
-            ADMIN_USERNAME,
+            AccessTier.ADMIN.value,
             password,
             port=port,
             reconnect_interval=reconnect_interval,

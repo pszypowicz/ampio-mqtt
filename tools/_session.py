@@ -6,9 +6,10 @@ from collections.abc import Callable
 
 import aiomqtt
 
-from ampio_mqtt import AmpioAdminClient, AmpioClient
+from ampio_mqtt import AccessTier, AmpioAdminClient, AmpioClient
 
-ADMIN_USERNAME = "admin"
+# The reserved login name, read from the one place the library writes it.
+ADMIN_USERNAME = AccessTier.ADMIN.value
 
 
 def make_client(

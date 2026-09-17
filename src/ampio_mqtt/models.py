@@ -25,6 +25,11 @@ class AccessTier(Enum):
     channel tree) on the account being the reserved ``admin`` login; the
     per-user app permissions do not affect it. A non-admin account, however
     permissioned, is served only the app-sync ``data`` surface.
+
+    ``ADMIN`` carries the login name itself, and it is the one place that
+    name is written. The app refuses to create a user of this name and the
+    broker authenticates it at CONNACK, so the tier is a constructor fact
+    rather than a discovered one.
     """
 
     ADMIN = "admin"  # the reserved `admin` login: full catalogue + modules
