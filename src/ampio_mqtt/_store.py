@@ -224,9 +224,10 @@ class AmpioStore:
         """Apply one typed message and report what it changed.
 
         The base store applies the account namespace alone: a per-object
-        push. Every other inbound shape rides the raw tree, which the base
-        router never routes, so one reaching here is an invariant broken.
-        ``retained`` marks a broker replay, which the admin store reads.
+        push. The base router routes no shape but the endpoint replies and
+        the per-object push, so any other message here is an invariant
+        broken. ``retained`` marks a broker replay, which the admin store
+        reads.
         """
         applied = Applied()
         if isinstance(msg, _protocol.StateUpdate):
@@ -409,7 +410,8 @@ class AmpioStore:
         a row that now carries the hidden bit, and a row the door rejected
         all leave here, an empty reply included (a full grant revocation
         empties a restricted view). Each evicted id also drops its held
-        sweep entries.
+        sweep entries. The explicit `_guarded.discard` is what clears the
+        guard on the base store, where `_release_raw` does nothing.
         """
         missing = [oid for oid in self.objects if oid not in present]
         if not missing:
@@ -1116,6 +1118,10 @@ class AdminStore(AmpioStore):
         # nothing a consumer can read and reports nothing.
         covered = {oid for ids in index.values() for oid in ids}
         self._raw_owned.intersection_update(covered)
+        # The guard stays set on an object the index stopped covering,
+        # because its held value still belongs to its own channel and the
+        # next request cycle lifts it, while a moved leaf lifts the guard
+        # through `_release_raw`.
         self._fold_pending_diagnostics(applied)
         self._fold_pending_raw(index, applied)
 
@@ -1125,7 +1131,7 @@ class AdminStore(AmpioStore):
         """Apply the held channel values the fresh index can now route.
 
         Each lands exactly as the live replay of it would have: the value,
-        the bridge claim on the object, and no touch of the module's
+        the raw ownership in the store's set, and no touch of the module's
         `last_seen`, because a replay says what the channel last reported
         rather than that the module is alive now.
         """

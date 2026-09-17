@@ -1413,15 +1413,6 @@ class AmpioAdminClient(AmpioClient):
         refresh_interval: float | None = None,
         mqtt_client_factory: _connection.MqttClientFactory | None = None,
     ) -> None:
-        super().__init__(
-            host,
-            ADMIN_USERNAME,
-            password,
-            port=port,
-            reconnect_interval=reconnect_interval,
-            refresh_interval=refresh_interval,
-            mqtt_client_factory=mqtt_client_factory,
-        )
         # Futures awaiting the next device_api list reply; every waiter
         # receives the same reply, exactly as endpoint fetches share one.
         self._device_list_waiters: list[
@@ -1434,6 +1425,15 @@ class AmpioAdminClient(AmpioClient):
         self._digests: dict[str, str] = {}
         self._module_list_tasks: set[asyncio.Task[None]] = set()
         self._module_list_endpoint = ENDPOINT_BY_NAME["devices"]
+        super().__init__(
+            host,
+            ADMIN_USERNAME,
+            password,
+            port=port,
+            reconnect_interval=reconnect_interval,
+            refresh_interval=refresh_interval,
+            mqtt_client_factory=mqtt_client_factory,
+        )
 
     def _subscriptions(self) -> list[tuple[str, int]]:
         """The base filter set plus the shapes the admin login alone is served.
@@ -1469,6 +1469,8 @@ class AmpioAdminClient(AmpioClient):
         ]
 
     def _apply_inbound(self, msg: _protocol.Inbound, retained: bool) -> Applied:
+        """Peel the device list and the catalogue digests off, then hand
+        every other message to the base client."""
         if isinstance(msg, _protocol.DeviceList):
             waiters, self._device_list_waiters = self._device_list_waiters, []
             for future in waiters:
@@ -1528,6 +1530,8 @@ class AmpioAdminClient(AmpioClient):
                 await task
 
     async def disconnect(self) -> None:
+        """Cancel the refresh task, then the module-list tasks, then close
+        through the base client."""
         # The refresh task goes first: a module-list cancellation awaited
         # while a refresh is ready lets that refresh publish once more.
         await self._cancel_refresh_task()
@@ -1783,8 +1787,8 @@ class AmpioAdminClient(AmpioClient):
     ) -> AmpioObject | None:
         """Turn an object fully on.
 
-        A binary output on a CAN module rides the raw CAN write topic,
-        the one write that reaches a panel's status LEDs, which ignore
+        A binary or open-collector output on a CAN module rides the raw CAN
+        write topic, the one write that reaches a panel's status LEDs, which ignore
         `/api` for every account (docs/panel-writes.md, "Panel outputs").
         A flag never takes that path: the raw frame addresses a module's
         output channels, which a flag index does not index. Every other
@@ -1793,7 +1797,8 @@ class AmpioAdminClient(AmpioClient):
         address = self._raw_output_address(object_id)
         if address is None:
             return await super().turn_on(object_id, confirm=confirm)
-        self._check_switchable(object_id, "turnOn")
+        # A `przekaznik` always classifies switchable and toggleable, so no
+        # switch-verb check can ever raise on this arm.
         return await self._raw_output(object_id, address, 255, confirm)
 
     async def turn_off(
@@ -1816,7 +1821,6 @@ class AmpioAdminClient(AmpioClient):
         address = self._raw_output_address(object_id)
         if address is None:
             return await super().switch(object_id, confirm=confirm)
-        self._check_switchable(object_id, "switch")
         obj = self._store.objects[object_id]
         return await self._raw_output(
             object_id, address, 0 if obj.is_on else 255, confirm

@@ -51,8 +51,8 @@ explicit beta posture above and is no longer the supported upgrade path.
   class checks the account id the `info` reply reports. `docs/account-tiers.md`
   lists the members of each class, and a test pins the admin table to the code.
 - On `AmpioAdminClient`, `turn_on()`, `turn_off()`, `switch()` and the untimed
-  `set_value()` ride the raw CAN frame for a binary output on a CAN module. The
-  base class always publishes `/api`.
+  `set_value()` ride the raw CAN frame for a binary or open-collector output on
+  a CAN module. The base class always publishes `/api`.
 - `diagnostics_snapshot()` carries `mac_collisions` and `modules` on
   `AmpioAdminClient` only.
 

@@ -37,12 +37,12 @@ bundle embeds it:
 
 The description record in the module is authoritative for the tag. The `type`
 column mirror lags it. An output tagged 256 (0x0100) in the description record
-can still show an empty `type` column. `AmpioClient.resolve_records()` reads the
-description record into `AmpioObject.record`, a `DesignerRecord`. The tag lands
-in `record.matter_device_type`, the location pointer in `record.location`, and
-the entry's own description string in `record.desc`. The column mirror stays in
-`matter_device_type`, identical on both tiers. The two fields are separate
-facts. The consumer picks which one to trust.
+can still show an empty `type` column. `AmpioAdminClient.resolve_records()`
+reads the description record into `AmpioObject.record`, a `DesignerRecord`. The
+tag lands in `record.matter_device_type`, the location pointer in
+`record.location`, and the entry's own description string in `record.desc`. The
+column mirror stays in `matter_device_type`, identical on both tiers. The two
+fields are separate facts. The consumer picks which one to trust.
 
 ## The Designer location (per-output `outLoc`)
 

@@ -606,7 +606,7 @@ def test_the_base_client_has_no_admin_member() -> None:
     more, so an admin-only call on it fails at import or attribute
     lookup rather than at runtime on the wire."""
     client = AmpioClient("host", username="admin")
-    assert not any(hasattr(client, name) for name in ADMIN_ONLY | {"access_tier"})
+    assert [n for n in sorted(ADMIN_ONLY | {"access_tier"}) if hasattr(client, n)] == []
 
 
 def test_the_admin_client_has_every_admin_member() -> None:

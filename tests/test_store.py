@@ -43,6 +43,8 @@ from ampio_mqtt import (
     _protocol,
 )
 from ampio_mqtt._protocol import (
+    ADMIN_ENDPOINTS,
+    BASE_ENDPOINTS,
     ENDPOINTS,
     EndpointReply,
     Router,
@@ -66,7 +68,6 @@ from ampio_mqtt.events import (
     ObjectUpdated,
 )
 from ampio_mqtt.models import (
-    AccessTier,
     AmpioModule,
     AmpioObject,
     CoverParameters,
@@ -649,16 +650,8 @@ def test_a_tier_scoped_router_leaves_the_other_tiers_surfaces_unroutable() -> No
     because the client routes only the tier's served endpoints. The object
     catalogue pair answers both routers, and the restricted router never
     yields the admin-only module list."""
-    admin = Router(
-        ADMIN_USER,
-        tuple(ep for ep in ENDPOINTS if ep.tier in (None, AccessTier.ADMIN)),
-        admin=True,
-    )
-    restricted = Router(
-        USER,
-        tuple(ep for ep in ENDPOINTS if ep.tier in (None, AccessTier.RESTRICTED)),
-        admin=False,
-    )
+    admin = Router(ADMIN_USER, ADMIN_ENDPOINTS, admin=True)
+    restricted = Router(USER, BASE_ENDPOINTS, admin=False)
     assert admin.route(ADMIN_DATA_DEVICES_TOPIC, "{}") is not None
     assert admin.route(ADMIN_PARAMS_DEVICES_TOPIC, "{}") is not None
     assert restricted.route(DATA_DEVICES_TOPIC, "{}") is not None

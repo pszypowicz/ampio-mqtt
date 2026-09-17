@@ -32,7 +32,7 @@ def test_received_event_reaches_listeners() -> None:
 
 
 def test_a_raw_channel_message_is_not_a_bus_event() -> None:
-    client = AmpioClient("host", username=USER)
+    client = AmpioAdminClient("host")
     seen: list[BusEventRaised] = []
     client.subscribe(seen.append, of=BusEventRaised)
     feed(client, "ampio/from/1/state/f/2", b"189")

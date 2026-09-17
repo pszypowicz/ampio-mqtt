@@ -105,11 +105,10 @@ Three helpers close the loop for a consumer that builds devices on
 `address.mac`. `AmpioObject.is_server_owned` reads `address.mac` and marks the
 objects that belong to the M-SERV itself. They anchor to the hub device
 identically on both tiers. `AmpioAdminClient.mserv` returns the M-SERV's own
-module row - name, model, versions - on `AmpioAdminClient`, which holds the
-catalogue. It is the row whose `mac_global` or `mac` is the server's
-self-reported mac, and nothing else in the list stands in for it. The override
-arm covers a replaced unit, whose factory id changes while the re-stamped
-override does not.
+module row - name, model, versions. It is the row whose `mac_global` or `mac` is
+the server's self-reported mac, and nothing else in the list stands in for it.
+The override arm covers a replaced unit, whose factory id changes while the
+re-stamped override does not.
 
 `AmpioAdminClient.module_for(obj)` is one lookup on `address.mac`. It reads None
 when the list carries no row on that mac, or when two rows share it.

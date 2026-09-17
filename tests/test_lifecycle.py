@@ -870,7 +870,7 @@ async def test_session_object_turns_off_the_pending_calls_warning() -> None:
 async def test_a_rejected_raw_filter_warns_on_the_admin_client(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The subscribe set is tier-shaped, so a rejection of any filter the
+    """The subscribe set is class-shaped, so a rejection of any filter the
     client asked for - the admin's raw tree included - is a fault: it lands
     in the stats and warns while the connection stays up."""
     denied = "ampio/from/+/state/f/+"

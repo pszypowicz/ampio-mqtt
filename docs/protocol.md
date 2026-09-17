@@ -113,8 +113,8 @@ behind both the Matter device type tag and the Designer "Lokalizacja" location
 pointer. The frame layout, the descType enum, and the join rule that resolves an
 object to its entry are in [`description-records.md`](description-records.md).
 The tree is admin-only, exactly like the raw tree.
-`AmpioClient.resolve_records()` drives this pair. A consumer calls that method
-and never publishes on the pair itself.
+`AmpioAdminClient.resolve_records()` drives this pair. A consumer calls that
+method and never publishes on the pair itself.
 
 The per-module pair serves the same record for one module.
 `device_api/to/<machex>/get_data` (empty payload) answers on

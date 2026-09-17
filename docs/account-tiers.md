@@ -153,10 +153,10 @@ The fields `AmpioAdminClient` feeds, the nested bundles included:
 | every `AmpioModule` row                      | the module catalogue itself is admin-only |
 
 The model state is deterministic per tier. The tier is fixed at client
-construction, the store starts empty, and nothing persists to disk. A standard
-client refuses `resolve_records()` before any wire traffic, so no admin fact can
-appear on that tier. If a consumer persists admin facts and later runs as a
-standard account, that carry is the consumer's own choice.
+construction, the store starts empty, and nothing persists to disk. The class
+fixes what a session can hold. `AmpioClient` has no `resolve_records()`, so no
+admin fact can reach a standard session. If a consumer persists admin facts and
+later runs as a standard account, that carry is the consumer's own choice.
 
 ## The latency difference is on reads only
 
