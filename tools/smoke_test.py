@@ -88,6 +88,8 @@ async def run(
     except AmpioNotConfigured as err:
         for oid, name in err.objects:
             print(f"not configured: ob/{oid} {name or ''}")
+        for mac, ids in err.collisions:
+            print(f"mac collision: {mac:x} on modules {', '.join(map(str, ids))}")
         return 1
     print("Connected. Listening for discovery + retained state...\n")
 

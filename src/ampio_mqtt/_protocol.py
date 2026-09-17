@@ -658,13 +658,11 @@ def resolve_designer(
     objects: Mapping[int, AmpioObject],
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
     location_names: Mapping[int, str],
-    colliding_macs: frozenset[int],
 ) -> dict[int, DesignerRecord]:
     """Join each object to its module's description entry.
 
     The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], address.channel)``
-    within the module record of ``address.mac``. Objects on a colliding
-    mac are skipped - the reply cannot be attributed to one module.
+    within the module record of ``address.mac``.
     ``out_loc`` 0 or 16383 reads unassigned and ``out_type`` 0 untagged,
     so none produces a value. A ``desc`` that is empty or the ``.``
     placeholder reads as None, like the other two fields.
@@ -679,8 +677,6 @@ def resolve_designer(
         if desc_type is None:
             continue
         mac, out_no = obj.address.mac, obj.address.channel
-        if mac in colliding_macs:
-            continue
         entry = entries_by_key.get(mac, {}).get((desc_type, out_no))
         if entry is None:
             continue
@@ -756,20 +752,17 @@ def resolve_panel_settings(
     params_by_mac: Mapping[int, bytes],
     capabilities_by_mac: Mapping[int, Mapping[int, int]],
     hardware_by_mac: Mapping[int, tuple[int | None, int | None]],
-    colliding_macs: frozenset[int],
 ) -> dict[int, PanelSettings]:
     """The panel settings of every module whose layout is proven, by mac.
 
     A module resolves only when its ``(typ_urzadzenia, wersja_pcb)`` pair
     is a proven layout and it advertises a backlight channel count - that
     count is the number of touch fields. Everything else resolves
-    nothing, so a module that is not a panel, a board this library has
-    not read, and a colliding mac are all simply absent.
+    nothing, so a module that is not a panel and a board this library
+    has not read are both simply absent.
     """
     out: dict[int, PanelSettings] = {}
     for mac, blob in params_by_mac.items():
-        if mac in colliding_macs:
-            continue
         typ, pcb = hardware_by_mac.get(mac, (None, None))
         if typ is None or pcb is None or (typ, pcb) not in PANEL_PARAMS_LAYOUTS:
             continue
@@ -853,7 +846,6 @@ def resolve_cover_parameters(
     params_by_mac: Mapping[int, bytes],
     capabilities_by_mac: Mapping[int, Mapping[int, int]],
     hardware_by_mac: Mapping[int, tuple[int | None, int | None]],
-    colliding_macs: frozenset[int],
 ) -> dict[int, CoverParameters]:
     """Join each cover object to its channel's stored travel parameters.
 
@@ -864,14 +856,10 @@ def resolve_cover_parameters(
     disagrees with the layout, the module resolves nothing rather than
     guessing.
 
-    The channel key matches ``resolve_designer``: ``address.channel``. A
-    colliding mac is skipped, because the reply cannot be attributed to
-    one module.
+    The channel key matches ``resolve_designer``: ``address.channel``.
     """
     channels_by_mac: dict[int, tuple[CoverParameters, ...]] = {}
     for mac, blob in params_by_mac.items():
-        if mac in colliding_macs:
-            continue
         typ, pcb = hardware_by_mac.get(mac, (None, None))
         if typ is None or pcb is None:
             continue
@@ -899,38 +887,28 @@ def resolve_cover_parameters(
 
 def resolve_module_capabilities(
     capabilities_by_mac: Mapping[int, Mapping[int, int]],
-    colliding_macs: frozenset[int],
 ) -> dict[int, Mapping[int, int]]:
     """The capability map of every answering module, by mac.
 
     An empty map is authoritative: the module answered and advertised
-    nothing. Colliding macs are skipped, exactly as the record side skips
-    them - the reply cannot be attributed.
+    nothing.
     """
-    return {
-        mac: caps
-        for mac, caps in capabilities_by_mac.items()
-        if mac not in colliding_macs
-    }
+    return dict(capabilities_by_mac)
 
 
 def resolve_module_records(
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
     location_names: Mapping[int, str],
-    colliding_macs: frozenset[int],
 ) -> dict[int, ModuleRecord]:
     """The DEVICE_NAME record entry of every answering module, by mac.
 
     A record without the entry reads an empty bundle - the module
     answered, so the emptiness is authoritative. The unassigned and
     placeholder sentinels read None, exactly as ``resolve_designer``
-    reads them. Colliding macs are skipped: the reply cannot be
-    attributed.
+    reads them.
     """
     out: dict[int, ModuleRecord] = {}
     for mac, entries in descriptions_by_mac.items():
-        if mac in colliding_macs:
-            continue
         entry = next((e for e in entries if e.desc_type == DEVICE_NAME_DESC_TYPE), None)
         if entry is None:
             out[mac] = ModuleRecord()

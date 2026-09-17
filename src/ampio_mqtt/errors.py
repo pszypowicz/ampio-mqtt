@@ -27,24 +27,40 @@ class AmpioAuthError(AmpioError):
 class AmpioNotConfigured(AmpioError):
     """Raised when the Designer configuration leaves a row unaddressable.
 
-    A drivable object row carries no leaf. Designer clears the leaf when an
-    object's Matter box is checked and then unchecked, and the library
-    addresses an object on the bus through its leaf alone. The installer
-    restores the leaf in Designer, so ``objects`` names every such row as
-    an ``(id, name)`` pair. The connection stays up, and every other row
-    is served.
+    Two installer faults. A drivable object row carries no leaf: Designer
+    clears the leaf when an object's Matter box is checked and then
+    unchecked, and the library addresses an object on the bus through its
+    leaf alone, so ``objects`` names every such row as an ``(id, name)``
+    pair. Two module rows carry one override mac: the raw tree keys on
+    that mac and cannot attribute a frame to either row, so ``collisions``
+    names each shared mac with the module ids on it. The installer fixes
+    both in Designer. The connection stays up, and every other row is
+    served.
     """
 
-    def __init__(self, objects: tuple[tuple[int, str | None], ...]) -> None:
+    def __init__(
+        self,
+        objects: tuple[tuple[int, str | None], ...] = (),
+        collisions: tuple[tuple[int, tuple[int, ...]], ...] = (),
+    ) -> None:
         self.objects = objects
-        listed = ", ".join(
-            f"{oid} ({name})" if name else str(oid) for oid, name in objects
-        )
-        super().__init__(
-            f"Ampio object(s) {listed} carry no leaf. Designer clears the "
-            "leaf when the Matter box is checked and unchecked. Restore each "
-            "in Designer and save"
-        )
+        self.collisions = collisions
+        parts: list[str] = []
+        if objects:
+            listed = ", ".join(
+                f"{oid} ({name})" if name else str(oid) for oid, name in objects
+            )
+            parts.append(
+                f"Ampio object(s) {listed} carry no leaf. Designer clears the leaf "
+                "when the Matter box is checked and unchecked. Restore each in "
+                "Designer and save"
+            )
+        for mac, ids in collisions:
+            parts.append(
+                f"Ampio modules {', '.join(map(str, ids))} share the override mac "
+                f"{mac:x}. Give each module its own mac in Designer and save"
+            )
+        super().__init__(". ".join(parts))
 
 
 class AmpioValueError(AmpioError, ValueError):

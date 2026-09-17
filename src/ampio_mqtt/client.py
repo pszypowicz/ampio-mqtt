@@ -62,7 +62,6 @@ from ._store import AdminStore, AmpioStore, Applied
 from .classification import InputKind, OutputKind
 from .errors import (
     AmpioConnectionError,
-    AmpioNotConfigured,
     AmpioProtocolError,
     AmpioTimeoutError,
     AmpioUnsupported,
@@ -736,13 +735,14 @@ class AmpioClient:
         A True guarantees ``objects`` and ``server_info`` (and, on the
         admin client, ``modules``) are populated, with
         :pyattr:`AmpioServerInfo.server_key` a string by construction.
-        Raises :class:`AmpioNotConfigured` when the catalogue lists a row
-        with no leaf: the other rows are served, the connection stays up,
-        and the pushed catalogue after the installer restores the leaf in
-        Designer admits the row, after which this returns True. It never
+        Raises :class:`AmpioNotConfigured` on either installer fault: a
+        catalogue row with no leaf, or two module rows on one override
+        mac. The rows the door admitted are served, the connection stays
+        up, and the pushed reply after the installer fixes Designer
+        admits the refused rows, after which this returns True. It never
         raises on timeout - discovery continues and this returns False.
         Safe to call repeatedly and after reconnects: the signals latch on
-        first completion, and the leaf check runs on every call, so a
+        first completion, and the door check runs on every call, so a
         later failure is never hidden by an earlier success.
         """
         try:
@@ -755,9 +755,9 @@ class AmpioClient:
                 )
         except TimeoutError:
             return False
-        rejected = self._store.not_configured
-        if rejected:
-            raise AmpioNotConfigured(rejected)
+        failure = self._store.admission_failure()
+        if failure is not None:
+            raise failure
         return True
 
     async def disconnect(self) -> None:
@@ -1657,15 +1657,17 @@ class AmpioAdminClient(AmpioClient):
 
         Two keys on top of :meth:`AmpioClient.diagnostics_snapshot`:
 
-        - ``mac_collisions``: override macs shared by two or more module
-          rows, on which raw traffic cannot be attributed reliably.
+        - ``mac_collisions``: the door's record of every override mac two
+          or more module rows share, as ``[mac, [module ids]]``.
         - ``modules``: one row per known module, sorted by id, with the
           :class:`AmpioModule` fields ``id``, ``mac``, ``typ_urzadzenia``,
           ``model``, ``last_seen``, ``supply_voltage``, and
           ``temperature``. The user-given module name stays out.
         """
         snapshot = super().diagnostics_snapshot()
-        snapshot["mac_collisions"] = sorted(self._store.colliding_macs)
+        snapshot["mac_collisions"] = [
+            [mac, list(ids)] for mac, ids in self._store.collisions
+        ]
         snapshot["modules"] = [
             {
                 "id": module.id,
@@ -1749,9 +1751,7 @@ class AmpioAdminClient(AmpioClient):
         # Keyed by the override mac the reply carries: the id every leaf
         # embeds, so the join needs no catalogue lookup.
         by_mac = {device.mac: device.entries for device in devices}
-        catalogued = {
-            mod.mac for mod in self._store.modules.values() if mod.mac is not None
-        }
+        catalogued = {mod.mac for mod in self._store.modules.values()}
         silent = frozenset(catalogued - by_mac.keys())
         if silent:
             _LOGGER.warning(
@@ -1759,21 +1759,14 @@ class AmpioAdminClient(AmpioClient):
                 "objects keep whatever record an earlier pass resolved",
                 sorted(silent),
             )
-        resolved = _protocol.resolve_designer(
-            self._store.objects,
-            by_mac,
-            names,
-            self._store.colliding_macs,
-        )
+        resolved = _protocol.resolve_designer(self._store.objects, by_mac, names)
         params_by_mac = {device.mac: device.params for device in devices}
         hardware_by_mac = {
             mod.mac: (mod.typ_urzadzenia, mod.wersja_pcb)
             for mod in self._store.modules.values()
-            if mod.mac is not None
         }
         capabilities = _protocol.resolve_module_capabilities(
-            {device.mac: device.capabilities for device in devices},
-            self._store.colliding_macs,
+            {device.mac: device.capabilities for device in devices}
         )
         self._store.apply_sweep(
             frozenset(by_mac),
@@ -1783,15 +1776,11 @@ class AmpioAdminClient(AmpioClient):
                 params_by_mac,
                 capabilities,
                 hardware_by_mac,
-                self._store.colliding_macs,
             ),
-            _protocol.resolve_module_records(by_mac, names, self._store.colliding_macs),
+            _protocol.resolve_module_records(by_mac, names),
             capabilities,
             _protocol.resolve_panel_settings(
-                params_by_mac,
-                capabilities,
-                hardware_by_mac,
-                self._store.colliding_macs,
+                params_by_mac, capabilities, hardware_by_mac
             ),
         )
         sweep = RecordSweep(

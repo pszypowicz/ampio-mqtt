@@ -563,6 +563,28 @@ async def test_wait_for_initial_discovery_raises_on_a_leafless_row() -> None:
         await client.disconnect()
 
 
+async def test_wait_for_initial_discovery_raises_on_a_mac_collision() -> None:
+    broker = FakeBroker()
+    client = make_admin_client(broker)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    try:
+        feed(client, ADMIN_INFO_TOPIC, info(mac=555, userId=-1, serverVersion="1865"))
+        feed(client, ADMIN_STATES_TOPIC, snapshot())
+        feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of({"id": 10}))
+        feed(client, ADMIN_DATA_DEVICES_TOPIC, details({"id": 10}))
+        feed(
+            client,
+            ADMIN_DEVICES_TOPIC,
+            devices({"id": 1, "mac": 7}, {"id": 2, "mac": 7}),
+        )
+        with pytest.raises(AmpioNotConfigured) as caught:
+            await client.wait_for_initial_discovery(timeout=1.0)
+        assert caught.value.collisions == ((7, (1, 2)),)
+        assert client.diagnostics_snapshot()["mac_collisions"] == [[7, [1, 2]]]
+    finally:
+        await client.disconnect()
+
+
 async def test_a_later_failure_is_not_hidden_by_a_latched_success() -> None:
     broker = FakeBroker()
     client = make_client(broker)

@@ -73,16 +73,19 @@ class ObjectRemoved:
 class NotConfigured:
     """The catalogue lists rows the library cannot admit.
 
-    The same payload as :class:`~ampio_mqtt.AmpioNotConfigured`: the
-    ``(id, name)`` pairs of every object row without a leaf, reported when
-    a catalogue apply changes that set to a non-empty one. Not terminal.
-    The rows stay out of ``objects`` until a later catalogue lists them
-    with a leaf, which produces :class:`ObjectAdded`. At connect time the
-    same condition raises from
+    The same payload as :class:`~ampio_mqtt.AmpioNotConfigured`:
+    ``objects`` holds the ``(id, name)`` pairs of every object row without
+    a leaf, and ``collisions`` the ``(mac, module ids)`` pairs of every
+    override mac two or more module rows share. Each side is reported when
+    a reply changes its set to a non-empty one. Not terminal. The rows
+    stay out of ``objects``/``modules`` until a later reply lists them
+    addressably, which produces :class:`ObjectAdded` or
+    :class:`ModuleUpdated`. At connect time the same conditions raise from
     :meth:`AmpioClient.wait_for_initial_discovery`.
     """
 
-    objects: tuple[tuple[int, str | None], ...]
+    objects: tuple[tuple[int, str | None], ...] = ()
+    collisions: tuple[tuple[int, tuple[int, ...]], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

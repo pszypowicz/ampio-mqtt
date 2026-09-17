@@ -161,6 +161,11 @@ def _devices(*macs: int) -> str:
     )
 
 
+def _module_row(mid: int, mac: int) -> dict:
+    """One module-list row, addressed by ``mac`` and identified by ``mid``."""
+    return {"id": mid, "mac": mac, "mac_global": 100 + mid}
+
+
 def _flaga_rows(*object_mac_pairs: tuple[int, int]) -> list[dict]:
     return [
         {
@@ -789,12 +794,11 @@ def test_a_live_edge_touches_the_module_on_the_leaf_mac() -> None:
     assert store.modules[2].last_seen is not None
 
 
-def test_module_by_mac_reads_none_for_an_unlisted_or_colliding_mac() -> None:
+def test_module_by_mac_reads_none_for_an_unlisted_mac() -> None:
     store = _store()
-    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB))
     assert store.module_by_mac(0xA) is not None
     assert store.module_by_mac(0xC) is None
-    assert store.module_by_mac(0xB) is None
 
 
 # --- catalogues, state pushes, and snapshots --------------------------------
@@ -2459,29 +2463,58 @@ def test_a_formerly_raw_owned_value_survives_a_skewed_snapshot() -> None:
     assert store.objects[50].state == "1"
 
 
-def test_colliding_override_macs_warn_once_and_surface(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Raw routing is keyed by mac, so a shared override mac is loud: one
-    warning when the collision appears, silence while it persists, and a
-    cleared set once Designer resolves it."""
+def _collisions(applied: Applied) -> list[NotConfigured]:
+    return [e for e in applied.events if isinstance(e, NotConfigured)]
+
+
+def test_two_module_rows_on_one_mac_are_refused_at_the_door() -> None:
     store = _store()
-    row_a = {"id": 1, "mac": 0xCAFE, "typ_urzadzenia": 4, "nazwa_urzadzenia": "A"}
-    row_b = {"id": 2, "mac": 0xCAFE, "typ_urzadzenia": 4, "nazwa_urzadzenia": "B"}
-    with caplog.at_level("WARNING", logger="ampio_mqtt._store"):
-        _apply(store, DEVICES_TOPIC, devices(row_a, row_b))
-    assert store.colliding_macs == {0xCAFE}
-    assert "share the override mac" in caplog.text
+    applied = _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
+    assert list(store.modules) == [1]
+    assert store.collisions == ((0xB, (2, 3)),)
+    assert [e.collisions for e in _collisions(applied)] == [((0xB, (2, 3)),)]
+    assert store.admission_failure().collisions == ((0xB, (2, 3)),)
+    assert store.module_by_mac(0xB) is None
 
-    caplog.clear()
-    renamed = dict(row_b, nazwa_urzadzenia="B2")
-    with caplog.at_level("WARNING", logger="ampio_mqtt._store"):
-        _apply(store, DEVICES_TOPIC, devices(row_a, renamed))
-    assert "share the override mac" not in caplog.text
 
-    resolved = dict(row_b, mac=0xBEEF)
-    _apply(store, DEVICES_TOPIC, devices(row_a, resolved))
-    assert store.colliding_macs == frozenset()
+def test_a_collision_found_after_connect_evicts_both_rows() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xC))
+    applied = _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
+    assert [type(e) for e in applied.events] == [
+        ModuleRemoved,
+        ModuleRemoved,
+        NotConfigured,
+    ]
+    assert sorted(
+        e.module.id for e in applied.events if isinstance(e, ModuleRemoved)
+    ) == [
+        2,
+        3,
+    ]
+    assert list(store.modules) == [1]
+    again = _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
+    assert _collisions(again) == []
+
+
+def test_a_reordered_collision_reply_emits_nothing_new() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_module_row(2, 0xB), _module_row(3, 0xB)))
+    again = _apply(
+        store, DEVICES_TOPIC, devices(_module_row(3, 0xB), _module_row(2, 0xB))
+    )
+    assert store.collisions == ((0xB, (2, 3)),)
+    assert _collisions(again) == []
+
+
+def test_a_resolved_collision_re_admits_the_rows() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
+    applied = _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xC))
+    assert sorted(store.modules) == [1, 2, 3]
+    assert store.collisions == ()
+    assert _collisions(applied) == []
+    assert store.admission_failure() is None
 
 
 # --- the sweep datasets ------------------------------------------------------

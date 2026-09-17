@@ -13,6 +13,12 @@ def test_not_configured_names_every_row_for_the_installer() -> None:
     assert "9" in str(err)
 
 
+def test_not_configured_names_a_shared_mac() -> None:
+    err = AmpioNotConfigured(collisions=((0xBE82, (1, 2)),))
+    assert err.objects == ()
+    assert "be82" in str(err) and "1, 2" in str(err)
+
+
 def test_unsupported_is_an_ampio_error_and_not_a_value_error() -> None:
     err = AmpioUnsupported("the module drops the lock")
     assert isinstance(err, AmpioError)

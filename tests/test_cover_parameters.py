@@ -128,17 +128,13 @@ def test_a_cover_joins_through_its_channel() -> None:
             address=ModuleAddress(mac=0xCB89, channel=3, sf_id=5, sub_sf_id=0),
         ),
     }
-    resolved = resolve_cover_parameters(
-        objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset()
-    )
+    resolved = resolve_cover_parameters(objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE)
     assert resolved[10].open_time_s == 52
     assert resolved[11].open_time_s == 300
 
 
 def _resolve(objects: dict[int, AmpioObject]) -> dict[int, CoverParameters]:
-    return resolve_cover_parameters(
-        objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset()
-    )
+    return resolve_cover_parameters(objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE)
 
 
 def test_a_kind_outside_the_roller_class_resolves_nothing() -> None:
@@ -173,19 +169,7 @@ def test_a_module_with_no_blob_resolves_nothing() -> None:
 def test_an_unlisted_board_resolves_nothing() -> None:
     objects = {10: _object(id=10)}
     assert (
-        resolve_cover_parameters(
-            objects, {0xCB89: FOUR_CHANNEL}, {}, {0xCB89: (3, 9)}, frozenset()
-        )
-        == {}
-    )
-
-
-def test_a_colliding_mac_resolves_nothing() -> None:
-    objects = {10: _object(id=10)}
-    assert (
-        resolve_cover_parameters(
-            objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE, frozenset({0xCB89})
-        )
+        resolve_cover_parameters(objects, {0xCB89: FOUR_CHANNEL}, {}, {0xCB89: (3, 9)})
         == {}
     )
 
@@ -195,10 +179,7 @@ def test_a_contradicted_channel_count_resolves_nothing() -> None:
     objects = {10: _object(id=10)}
     caps = {0xCB89: {ModuleFunction.ROLLER: 2}}
     assert (
-        resolve_cover_parameters(
-            objects, {0xCB89: FOUR_CHANNEL}, caps, HARDWARE, frozenset()
-        )
-        == {}
+        resolve_cover_parameters(objects, {0xCB89: FOUR_CHANNEL}, caps, HARDWARE) == {}
     )
 
 
@@ -206,7 +187,5 @@ def test_a_board_that_advertises_no_roller_still_resolves() -> None:
     """The four-channel board advertises none, so the count comes from the table."""
     objects = {10: _object(id=10)}
     caps = {0xCB89: {ModuleFunction.OUT_BIN: 4}}
-    resolved = resolve_cover_parameters(
-        objects, {0xCB89: FOUR_CHANNEL}, caps, HARDWARE, frozenset()
-    )
+    resolved = resolve_cover_parameters(objects, {0xCB89: FOUR_CHANNEL}, caps, HARDWARE)
     assert resolved[10].open_time_s == 52

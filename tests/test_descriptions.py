@@ -307,7 +307,7 @@ def test_resolve_designer_joins_location_and_type() -> None:
     by_mac = {
         0xCB89: _entries((12, 0, 14, 256, "Lampa"), (26, 1, 0, 0, "Roleta")),
     }
-    resolved = resolve_designer(objects, by_mac, {14: "Potter"}, frozenset())
+    resolved = resolve_designer(objects, by_mac, {14: "Potter"})
     assert resolved == {
         64: DesignerRecord(location="Potter", matter_device_type=256, desc="Lampa"),
         48: DesignerRecord(location=None, matter_device_type=None, desc="Roleta"),
@@ -333,19 +333,7 @@ def test_resolve_designer_skips_the_unjoinable() -> None:
         ),
     }
     by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
-    assert resolve_designer(objects, by_mac, {14: "P"}, frozenset()) == {}
-
-
-def test_resolve_designer_skips_colliding_macs() -> None:
-    objects = {
-        64: _object(
-            id=64,
-            typ_komponentu="przekaznik",
-            address=ModuleAddress(mac=0xCB89, channel=0, sf_id=257, sub_sf_id=2),
-        ),
-    }
-    by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
-    assert resolve_designer(objects, by_mac, {14: "P"}, frozenset({0xCB89})) == {}
+    assert resolve_designer(objects, by_mac, {14: "P"}) == {}
 
 
 def test_resolve_designer_reads_empty_desc_as_none() -> None:
@@ -357,7 +345,7 @@ def test_resolve_designer_reads_empty_desc_as_none() -> None:
         ),
     }
     by_mac = {0xCB89: _entries((12, 0, 0, 0, ""))}
-    assert resolve_designer(objects, by_mac, {}, frozenset()) == {
+    assert resolve_designer(objects, by_mac, {}) == {
         64: DesignerRecord(location=None, matter_device_type=None, desc=None)
     }
 
@@ -373,7 +361,7 @@ def test_resolve_designer_reads_clear_sentinels_as_none() -> None:
         ),
     }
     by_mac = {0xCB89: _entries((12, 0, 16383, 0, "."))}
-    assert resolve_designer(objects, by_mac, {16383: "Bogus"}, frozenset()) == {
+    assert resolve_designer(objects, by_mac, {16383: "Bogus"}) == {
         64: DesignerRecord(location=None, matter_device_type=None, desc=None)
     }
 
@@ -387,7 +375,7 @@ def test_resolve_designer_joins_a_flag_on_the_binary_flag_class() -> None:
         )
     }
     by_mac = {1: _entries((6, 0, 19, 21, "flag"), (12, 0, 1, 266, "relay"))}
-    assert resolve_designer(objects, by_mac, {19: "Testowe"}, frozenset()) == {
+    assert resolve_designer(objects, by_mac, {19: "Testowe"}) == {
         152: DesignerRecord(location="Testowe", matter_device_type=21, desc="flag")
     }
 
@@ -399,7 +387,7 @@ def test_resolve_module_records_reads_the_device_name_entry() -> None:
         0xCAFE: _entries((1, 0, 0, 0, "M")),  # DEVICE_NAME with outLoc 0
     }
     names = {14: "Rozdzielnia", 19: "Salon"}
-    assert resolve_module_records(by_mac, names, frozenset()) == {
+    assert resolve_module_records(by_mac, names) == {
         0xCB89: ModuleRecord(location="Rozdzielnia", desc="Modul"),
         0xBEEF: ModuleRecord(),
         0xCAFE: ModuleRecord(location=None, desc="M"),
@@ -408,27 +396,18 @@ def test_resolve_module_records_reads_the_device_name_entry() -> None:
 
 def test_resolve_module_records_reads_clear_sentinels_as_none() -> None:
     by_mac = {0xCB89: _entries((1, 0, 16383, 0, "."))}
-    assert resolve_module_records(by_mac, {16383: "Bogus"}, frozenset()) == {
+    assert resolve_module_records(by_mac, {16383: "Bogus"}) == {
         0xCB89: ModuleRecord(location=None, desc=None)
     }
 
 
-def test_resolve_module_records_skips_colliding_macs() -> None:
-    by_mac = {0xCB89: _entries((1, 0, 14, 0, "M"))}
-    names = {14: "Rozdzielnia"}
-    assert resolve_module_records(by_mac, names, frozenset({0xCB89})) == {}
-
-
-def test_resolve_module_capabilities_keys_by_mac_and_skips_collisions() -> None:
+def test_resolve_module_capabilities_keys_by_mac() -> None:
     by_mac = {
         0xCB89: {ModuleFunction.BACKLIGHT_RGBW: 18},
         0xBEEF: {},
         0xCAFE: {ModuleFunction.BUZZER: 1},
     }
-    assert resolve_module_capabilities(by_mac, frozenset({0xCAFE})) == {
-        0xCB89: {ModuleFunction.BACKLIGHT_RGBW: 18},
-        0xBEEF: {},
-    }
+    assert resolve_module_capabilities(by_mac) == by_mac
 
 
 async def _admin_client_with_catalogue() -> tuple[AmpioAdminClient, FakeBroker]:

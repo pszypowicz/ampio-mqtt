@@ -15,7 +15,7 @@ from typing import Any
 
 from . import _protocol
 from .classification import input_channel_prefix
-from .errors import AmpioProtocolError
+from .errors import AmpioNotConfigured, AmpioProtocolError
 from .events import (
     BusEventRaised,
     ModuleRemoved,
@@ -336,6 +336,12 @@ class AmpioStore:
         self.not_configured = rejected
         if rejected:
             applied.events.append(NotConfigured(objects=rejected))
+
+    def admission_failure(self) -> AmpioNotConfigured | None:
+        """The installer fault the last replies left, or None."""
+        if self.not_configured:
+            return AmpioNotConfigured(objects=self.not_configured)
+        return None
 
     def _drop_sweep_entries(self, oid: int) -> None:
         """Forget what a sweep proved for one object. The base holds no sweep."""
@@ -761,11 +767,10 @@ class AdminStore(AmpioStore):
     def __init__(self) -> None:
         super().__init__()
         self.modules: dict[int, AmpioModule] = {}
-        # Override macs shared by two or more catalogue rows. The raw
-        # routing tables are keyed by mac, so edges and diagnostics on a
-        # colliding mac cannot be attributed reliably; the collision is
-        # warned once per change and surfaced for diagnostics.
-        self.colliding_macs: frozenset[int] = frozenset()
+        # The override macs two or more module rows share, with those
+        # rows' ids, from the last module list. The door admits no row on
+        # a shared mac, because the raw tree cannot attribute its frames.
+        self.collisions: tuple[tuple[int, tuple[int, ...]], ...] = ()
         # Raw-channel bridge: (module mac, prefix, channel) -> the ids of
         # every object on that channel.
         self._input_index: dict[tuple[int, str, int], tuple[int, ...]] = {}
@@ -872,9 +877,27 @@ class AdminStore(AmpioStore):
     # --- catalogues -------------------------------------------------------
 
     def _handle_devices(self, data: Mapping[str, Any], applied: Applied) -> None:
+        """Fold the module list into the store, through the door.
+
+        The list is admin-only and complete, so its arrival is the
+        authority to evict what it stopped listing or stopped admitting.
+        A mac two rows share admits neither: the raw tree keys on that
+        mac and cannot attribute a frame to either row. Those rows are
+        recorded on ``collisions``, and :class:`NotConfigured` reports
+        the set when it changes to a non-empty one.
+        """
         modules = _protocol.parse_devices(data)
-        changed = False
+        rows_by_mac: dict[int, list[AmpioModule]] = {}
         for module in modules:
+            rows_by_mac.setdefault(module.mac, []).append(module)
+        collisions = tuple(
+            (mac, tuple(sorted(row.id for row in rows)))
+            for mac, rows in sorted(rows_by_mac.items())
+            if len(rows) > 1
+        )
+        admitted = [module for module in modules if len(rows_by_mac[module.mac]) == 1]
+        changed = False
+        for module in admitted:
             previous = self.modules.get(module.id)
             if previous is not None:
                 module = replace(
@@ -890,9 +913,7 @@ class AdminStore(AmpioStore):
             if previous != module:
                 changed = True
                 applied.events.append(ModuleUpdated(module))
-        # The module list is admin-only and complete, so its arrival is the
-        # authority to evict what it stopped listing.
-        present = {module.id for module in modules}
+        present = {module.id for module in admitted}
         missing = [mid for mid in self.modules if mid not in present]
         evicted = False
         for mid in missing:
@@ -900,6 +921,21 @@ class AdminStore(AmpioStore):
             applied.events.append(ModuleRemoved(self.modules.pop(mid)))
         if changed or evicted:
             self._rebuild_indexes(applied)
+        self._set_collisions(collisions, applied)
+
+    def _set_collisions(
+        self, collisions: tuple[tuple[int, tuple[int, ...]], ...], applied: Applied
+    ) -> None:
+        """Record the shared macs the door refused and report a change to a non-empty set.
+
+        Both the macs and the ids on each are sorted, so the order the
+        reply listed the rows in never reads as a change.
+        """
+        if collisions == self.collisions:
+            return
+        self.collisions = collisions
+        if collisions:
+            applied.events.append(NotConfigured(collisions=collisions))
 
     # --- live state -------------------------------------------------------
 
@@ -953,10 +989,15 @@ class AdminStore(AmpioStore):
 
     # --- helpers ----------------------------------------------------------
 
+    def admission_failure(self) -> AmpioNotConfigured | None:
+        if self.not_configured or self.collisions:
+            return AmpioNotConfigured(
+                objects=self.not_configured, collisions=self.collisions
+            )
+        return None
+
     def module_by_mac(self, mac: int) -> AmpioModule | None:
-        """The module row on ``mac``, or None when the list has none or two."""
-        if mac in self.colliding_macs:
-            return None
+        """The module row on ``mac``, or None when the list has none."""
         mid = self._module_id_by_mac.get(mac)
         return None if mid is None else self.modules[mid]
 
@@ -1002,22 +1043,9 @@ class AdminStore(AmpioStore):
             key = (obj.address.mac, prefix, obj.funkcja)
             index[key] = (*index.get(key, ()), obj.id)
         self._input_index = index
-        by_mac: dict[int, int] = {}
-        colliding: set[int] = set()
-        for module in self.modules.values():
-            if module.mac in by_mac:
-                colliding.add(module.mac)
-            by_mac[module.mac] = module.id
-        self._module_id_by_mac = by_mac
-        if frozenset(colliding) != self.colliding_macs:
-            self.colliding_macs = frozenset(colliding)
-            if colliding:
-                _LOGGER.warning(
-                    "Ampio modules share the override mac(s) %s; raw edges "
-                    "and diagnostics on a shared mac cannot be attributed "
-                    "reliably - give each module a unique mac in Designer",
-                    sorted(colliding),
-                )
+        self._module_id_by_mac = {
+            module.mac: module.id for module in self.modules.values()
+        }
         # An object the index no longer covers must go back to its
         # per-object updates, or a mac change in Designer would freeze it
         # for good. Ownership is store bookkeeping, so the release changes
