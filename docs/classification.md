@@ -176,7 +176,7 @@ Classification uses exactly three wire fields:
 
 It does **not** use:
 
-- **`opis_menu` (the object name)** - display only. A consumer uses it as the
+- **`name` (the `opis_menu` column)** - display only. A consumer uses it as the
   entity's friendly name, and it never affects the kind. A renamed channel does
   not change what it is.
 - **`funkcja` (the channel index)** - the physical channel index within the

@@ -378,7 +378,8 @@ class AmpioObject:
     # Designer views of one output share it by design, so it is not an
     # identity for the row: `object_key` is. docs/identity.md.
     leaf_key: str
-    opis_menu: str | None = None
+    # The opis_menu column: the object's name in the app, or None.
+    name: str | None = None
     # `params` bitfield (Designer config flags; see `read_only`/`bell`).
     # Defaults to 0, so a payload without the column reads 0 and no bit is
     # set.

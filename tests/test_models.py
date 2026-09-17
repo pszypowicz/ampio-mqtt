@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import fields, replace
 
 import pytest
 
@@ -362,6 +362,23 @@ def test_the_object_has_no_leaf_property() -> None:
         "leaf_io_no",
     ):
         assert not hasattr(obj, name)
+
+
+def test_the_object_has_seven_optional_fields_and_no_more() -> None:
+    optional = {f.name for f in fields(AmpioObject) if "| None" in str(f.type)}
+    assert optional == {
+        "name",
+        "matter_device_type",
+        "state",
+        "updated_at",
+        "lammel",
+        "block",
+        "thermostat",
+    }
+
+
+def test_the_object_name_is_the_opis_menu_column() -> None:
+    assert _object(name="Lamp").name == "Lamp"
 
 
 def test_record_bundle_fields_default_to_none() -> None:

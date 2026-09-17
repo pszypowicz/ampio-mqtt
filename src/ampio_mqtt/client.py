@@ -1712,7 +1712,7 @@ class AmpioAdminClient(AmpioClient):
         :pyattr:`capabilities`, :pyattr:`panel_settings`) for every mac
         the reply answered, sets :pyattr:`last_sweep`, and dispatches one
         :class:`RecordSweepCompleted`. The catalogue facts
-        (``matter_device_type``, ``opis_menu``) are never touched: the
+        (``matter_device_type``, ``name``) are never touched: the
         record is the separate, admin-guarded fact (#133).
 
         Returns a :class:`RecordSweep`. Its ``records`` map is

@@ -249,7 +249,7 @@ def test_a_changed_row_reports_only_that_row() -> None:
     store = _store()
     _feed_catalogue(store, _catalogue_row())
     applied = _feed_catalogue(store, _catalogue_row(opis_menu="Renamed"))
-    assert [o.opis_menu for o in _updated(applied)] == ["Renamed"]
+    assert [o.name for o in _updated(applied)] == ["Renamed"]
 
 
 def test_an_unreadable_reply_is_refused() -> None:
@@ -832,7 +832,7 @@ def test_details_populate_and_classify() -> None:
     assert set(store.objects) == {41, 107, 1}
     temp = store.objects[41]
     assert temp.kind is not None and temp.kind.device_class == "temperature"
-    assert temp.opis_menu == "Salon"
+    assert temp.name == "Salon"
     # The raw `interpretacja` selector is retained on the object for consumers,
     # alongside the resolved `kind` the library derives from it.
     assert store.objects[107].interpretacja == 7
@@ -1208,7 +1208,7 @@ def test_snapshot_before_catalogue_seeds_the_value_at_merge() -> None:
     assert [o.id for o in _updated(applied)] == [20]
     assert store.objects[20].state == "7"
     assert store.objects[20].updated_at == 1779560000.0
-    assert store.objects[20].opis_menu == "T"
+    assert store.objects[20].name == "T"
 
 
 def test_eviction_prunes_the_buffered_snapshot_value() -> None:
@@ -1861,7 +1861,7 @@ def test_data_devices_populate_and_classify() -> None:
     store = _app_store()
     _feed_catalogue(store, _app_row(24, "0_cb9b_74_0_1", interp=7))
     obj = store.objects[24]
-    assert obj.opis_menu == "Air quality"
+    assert obj.name == "Air quality"
     assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
     assert obj.funkcja == 5
     assert obj.address == ModuleAddress(mac=0xCB9B, channel=1, sf_id=74, sub_sf_id=0)
@@ -2309,9 +2309,9 @@ def test_a_cleared_name_clears_in_the_store() -> None:
     surfaces agree on names, so a server-side clear must clear here too."""
     store = _store()
     _feed_catalogue(store, _catalogue_row(id=9, opis_menu="Old name"))
-    assert store.objects[9].opis_menu == "Old name"
+    assert store.objects[9].name == "Old name"
     applied = _feed_catalogue(store, _catalogue_row(id=9, opis_menu=""))
-    assert store.objects[9].opis_menu is None
+    assert store.objects[9].name is None
     assert [o.id for o in _updated(applied)] == [9]
 
 

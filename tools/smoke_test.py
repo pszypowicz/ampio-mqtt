@@ -114,7 +114,7 @@ async def run(
             continue
         unit = kind.unit or ""
         dc = kind.device_class or "-"
-        print(f"  ob/{o.id:<5} {dc:<18} {o.opis_menu!s:<26} = {o.state} {unit}")
+        print(f"  ob/{o.id:<5} {dc:<18} {o.name!s:<26} = {o.state} {unit}")
 
     await client.disconnect()
     return 0

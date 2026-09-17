@@ -115,7 +115,7 @@ def test_parse_app_sync_devices_returns_the_shared_columns() -> None:
     assert items[0].interpretacja == 1
     assert items[0].funkcja == 7
     assert items[0].leaf_id == "0_cb8f_76_0_0"
-    assert items[0].opis_menu == "Salon"
+    assert items[0].name == "Salon"
     assert items[0].matter_device_type is None
 
 

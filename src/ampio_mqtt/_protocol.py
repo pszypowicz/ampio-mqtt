@@ -62,7 +62,8 @@ class ObjectMetadata:
     # leafId, raw; empty for a system row and after a Matter check-then-uncheck,
     # the door decides
     leaf_id: str
-    opis_menu: str | None  # empty reads None: the object carries no name
+    # the opis_menu column; empty reads None: the object carries no name
+    name: str | None
     # `type` column: the Matter device type ID assigned in Designer, carried
     # as a decimal string on the wire ("256" = 0x0100 On/Off Light). Empty or
     # null when the object has no tag - both read as None.
@@ -311,7 +312,7 @@ def _shared_columns(row: Mapping[str, Any]) -> ObjectMetadata:
         interpretacja=_int_column(row, "interpretacja", _CATALOGUE),
         funkcja=_int_column(row, "funkcja", _CATALOGUE),
         leaf_id=_leaf_column(row),
-        opis_menu=_nullable_text_column(row, "opis_menu", _CATALOGUE) or None,
+        name=_nullable_text_column(row, "opis_menu", _CATALOGUE) or None,
         matter_device_type=to_int(_column(row, "type", _CATALOGUE)),
         format=_nullable_text_column(row, "format", _CATALOGUE),
     )

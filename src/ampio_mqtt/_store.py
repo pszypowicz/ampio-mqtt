@@ -302,7 +302,7 @@ class AmpioStore:
             if config.get(meta.id, {}).get("params", 0) & HIDDEN_FLAG:
                 continue
             if not meta.leaf_id:
-                rejected.append((meta.id, meta.opis_menu))
+                rejected.append((meta.id, meta.name))
                 continue
             admitted.append((meta, _protocol.parse_module_address(meta.leaf_id)))
         # The presence merge parses the detection code before it mutates
@@ -421,12 +421,12 @@ class AmpioStore:
                 continue
             if meta.typ_komponentu == _protocol.DETECTION_TYPE:
                 detection = PresenceDetection(
-                    id=meta.id, name=meta.opis_menu, home_status=self._home_status
+                    id=meta.id, name=meta.name, home_status=self._home_status
                 )
             else:
                 simulation = PresenceSimulation(
                     id=meta.id,
-                    name=meta.opis_menu,
+                    name=meta.name,
                     active=cfg.get("czas", 0) == 1,
                 )
         self._set_presence(detection, simulation, applied)

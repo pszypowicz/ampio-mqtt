@@ -201,7 +201,7 @@ def test_read_surface_is_immutable() -> None:
     with pytest.raises(TypeError):
         del client.objects[41]  # type: ignore[attr-defined]
     with pytest.raises(dataclasses.FrozenInstanceError):
-        client.objects[41].opis_menu = "TAMPERED"  # type: ignore[misc]
+        client.objects[41].name = "TAMPERED"  # type: ignore[misc]
     with pytest.raises(TypeError):
         client.modules[99] = client.modules[7]  # type: ignore[index]
     with pytest.raises(dataclasses.FrozenInstanceError):
