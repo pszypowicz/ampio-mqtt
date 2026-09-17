@@ -66,6 +66,7 @@ from .errors import (
     AmpioNotConfigured,
     AmpioProtocolError,
     AmpioTimeoutError,
+    AmpioUnsupported,
     AmpioValueError,
 )
 from .events import (
@@ -972,13 +973,13 @@ class AmpioClient:
         lets a consumer model a writable flag as a switch entity
         (:attr:`InputKind.switchable`). A `wej` is read-only.
 
-        Raises ``ValueError`` for an output whose kind says this verb does
-        not apply. Turning an ``rgbw`` light on means choosing a color - the
-        consumer's call, via :meth:`set_colors` (the rgbw replay pattern in
-        docs/commands.md). A ``ledww`` light refuses for the matching
-        reason: the power it had before is the consumer's to remember, and
-        :meth:`set_ww_power` is what replays it. ``confirm`` awaits the
-        state echo exactly as :meth:`command` documents.
+        Raises ``AmpioUnsupported`` for an output whose kind says this verb
+        does not apply. Turning an ``rgbw`` light on means choosing a
+        color - the consumer's call, via :meth:`set_colors` (the rgbw
+        replay pattern in docs/commands.md). A ``ledww`` light refuses for
+        the matching reason: the power it had before is the consumer's to
+        remember, and :meth:`set_ww_power` is what replays it. ``confirm``
+        awaits the state echo exactly as :meth:`command` documents.
         """
         self._check_switchable(object_id, "turnOn")
         return await self.command(object_id, "turnOn", confirm=confirm)
@@ -1013,8 +1014,8 @@ class AmpioClient:
         Outputs and flags are both valid targets, exactly as
         :meth:`turn_on` documents.
 
-        Raises ``ValueError`` for an output whose kind says the switch verbs
-        do not apply (``rgbw``), exactly as :meth:`turn_on` does.
+        Raises ``AmpioUnsupported`` for an output whose kind says the switch
+        verbs do not apply (``rgbw``), exactly as :meth:`turn_on` does.
         ``confirm`` awaits the state echo exactly as :meth:`command`
         documents.
         """
@@ -1051,7 +1052,7 @@ class AmpioClient:
             return
         answers = kind.toggleable if verb == "switch" else kind.switchable
         if not answers:
-            raise ValueError(
+            raise AmpioUnsupported(
                 f"object {object_id} ({kind.key}) does not answer {verb}; "
                 f"drive it with {'set_ww_power()' if kind.color_temp else 'set_colors()'}"
             )
@@ -1066,7 +1067,7 @@ class AmpioClient:
         kind = obj.kind if obj is not None else None
         if not isinstance(kind, InputKind | OutputKind) or kind.pulsable:
             return
-        raise ValueError(
+        raise AmpioUnsupported(
             f"object {object_id} ({kind.key}) does not pulse; "
             f"the setValue time argument does not revert it"
         )
@@ -1094,8 +1095,8 @@ class AmpioClient:
         echo as :meth:`command` documents - for a pulse that is the set
         edge, not the later revert.
 
-        Raises ``ValueError`` for an output whose level this verb cannot
-        reach: ``rgbw`` (drive it with :meth:`set_colors`), ``ledww``,
+        Raises ``AmpioUnsupported`` for an output whose level this verb
+        cannot reach: ``rgbw`` (drive it with :meth:`set_colors`), ``ledww``,
         whose power axis moves through :meth:`set_ww_power` alone, and
         every cover, whose position axis moves through
         :meth:`set_roller_pos`. The M-SERV drops the plain form for all
@@ -1121,7 +1122,7 @@ class AmpioClient:
                 replacement = "set_ww_power()"
             else:
                 replacement = "set_colors()"
-            raise ValueError(
+            raise AmpioUnsupported(
                 f"object {object_id} ({kind.key}) does not answer setValue; "
                 f"drive it with {replacement}"
             )
@@ -1862,10 +1863,8 @@ class AmpioAdminClient(AmpioClient):
         modules.
         """
         module = self._store.modules.get(module_id)
-        if module is None or module.mac is None:
-            raise ValueError(
-                f"module id {module_id} is not in the catalogue or has no mac"
-            )
+        if module is None:
+            raise AmpioValueError(f"module id {module_id} is not in the catalogue")
         return module.mac
 
     @staticmethod
@@ -1889,10 +1888,9 @@ class AmpioAdminClient(AmpioClient):
         on. Use :meth:`buzz_pattern` with ``cycles=0`` for a sound that
         lasts until :meth:`buzz_stop`.
 
-        ``AmpioValueError`` for an argument outside its range,
-        ``ValueError`` for an unknown module, both before any publish. No
-        readback exists - the panel confirms nothing on the bus - so
-        there is no ``confirm``.
+        ``AmpioValueError`` for an argument outside its range or an
+        unknown module, both before any publish. No readback exists - the
+        panel confirms nothing on the bus - so there is no ``confirm``.
         docs/panel-writes.md ("Panel buzzer") carries the frame and the
         tone table.
         """
@@ -1962,7 +1960,7 @@ class AmpioAdminClient(AmpioClient):
         :meth:`identify_stop`. The library schedules no stop by itself;
         the Designer's 30 s auto-stop is its own timer.
 
-        ``ValueError`` for an unknown module, before any publish. No
+        ``AmpioValueError`` for an unknown module, before any publish. No
         readback exists - the module confirms nothing on the bus - so
         there is no ``confirm``.
         docs/panel-writes.md ("Module identify") carries the frame.
@@ -2017,9 +2015,8 @@ class AmpioAdminClient(AmpioClient):
         on the bus reports the current colour, so there is no readback.
 
         ``AmpioValueError`` for an out-of-range value, including a field
-        above :data:`MAX_PANEL_FIELD`, and ``ValueError`` for an unknown
-        module, both before any publish. docs/panel-writes.md carries the
-        frame.
+        above :data:`MAX_PANEL_FIELD`, or an unknown module, both before
+        any publish. docs/panel-writes.md carries the frame.
         """
         mac = self._raw_write_mac(module_id)
         for name, value in (
@@ -2073,8 +2070,8 @@ class AmpioAdminClient(AmpioClient):
         is locked, and a locked panel is indistinguishable from an idle
         one, so a consumer cannot read this back.
 
-        ``AmpioValueError`` for an out-of-range time, ``ValueError`` for
-        an unknown module, both before any publish.
+        ``AmpioValueError`` for an out-of-range time or an unknown module,
+        both before any publish.
         """
         mac = self._raw_write_mac(module_id)
         ticks = self._buzz_ticks("seconds", seconds, 655.35)

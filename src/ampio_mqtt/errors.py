@@ -48,17 +48,25 @@ class AmpioNotConfigured(AmpioError):
 
 
 class AmpioValueError(AmpioError, ValueError):
-    """Raised when an argument is outside what the API accepts.
+    """Raised when the call is the caller's fault.
 
-    Every check a caller can make on its own raises this: a value beyond
-    the range the frame carries, a mis-typed argument, an unlisted heating
-    mode. ``ValueError`` is a base because that is what a bad argument is
-    in Python, so a handler that catches the builtin keeps working.
+    A value beyond the range the frame carries, a mis-typed argument, an
+    unlisted heating mode, an id the catalogue does not list, or a call
+    that needs a sweep that did not run. ``ValueError`` is a base because
+    that is what a bad argument is in Python, so a handler that catches
+    the builtin keeps working. What the install cannot do raises
+    :class:`AmpioUnsupported` instead.
+    """
 
-    What the install refuses raises a plain ``ValueError``: a module id no
-    catalogue has, or an output whose kind does not answer the verb. The
-    argument is well formed in both, so a consumer that catches this class
-    first tells its own fault from the install's state.
+
+class AmpioUnsupported(AmpioError):
+    """Raised when the install cannot do what the call asks.
+
+    The call is well formed and the object is in the catalogue, and the
+    refusal comes from what the hardware or the firmware answers: an
+    output whose kind does not answer the verb, a kind no timed write
+    pulses, a module generation without the roller lock. Nobody fixes it,
+    so a consumer leaves the control out instead of catching this.
     """
 
 

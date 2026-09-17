@@ -32,6 +32,7 @@ from ampio_mqtt import (
     AmpioClient,
     AmpioConnectionError,
     AmpioTimeoutError,
+    AmpioUnsupported,
     AmpioValueError,
     ModuleFunction,
 )
@@ -252,11 +253,11 @@ async def test_turn_on_and_switch_on_rgbw_are_rejected(
     and turning a color light on means choosing a color - the consumer's
     call via `set_colors()`. Rejecting before the wire beats a silent no-op,
     exactly as the range checks do. The kind comes from the catalogue, so
-    this is the install refusing a well-formed call and stays a plain
-    ``ValueError``."""
+    this is the install refusing a well-formed call, not the caller's
+    fault."""
     client, broker = connected
     _learn(client, 50, "rgbw")
-    with pytest.raises(ValueError) as refused:
+    with pytest.raises(AmpioUnsupported) as refused:
         await call(client)
     assert not isinstance(refused.value, AmpioValueError)
     assert broker.published == []
@@ -380,7 +381,7 @@ async def test_turn_on_on_ledww_is_rejected(
     library refuses before the wire and names the verb that works."""
     client, broker = connected
     _learn(client, 197, "ledww")
-    with pytest.raises(ValueError) as refused:
+    with pytest.raises(AmpioUnsupported) as refused:
         await client.turn_on(197)
     assert "set_ww_power" in str(refused.value)
     assert broker.published == []
@@ -393,7 +394,7 @@ async def test_set_value_on_ledww_is_rejected(
     `setWWPower` alone."""
     client, broker = connected
     _learn(client, 197, "ledww")
-    with pytest.raises(ValueError):
+    with pytest.raises(AmpioUnsupported):
         await client.set_value(197, 200)
     assert broker.published == []
 
@@ -407,7 +408,7 @@ async def test_pulse_is_refused_where_nothing_reverts(
     (#248)."""
     client, broker = connected
     _learn(client, 198, typ)
-    with pytest.raises(ValueError) as refused:
+    with pytest.raises(AmpioUnsupported) as refused:
         await client.set_value(198, 100, pulse_ms=500)
     assert "does not pulse" in str(refused.value)
     assert broker.published == []
@@ -423,7 +424,7 @@ async def test_set_value_on_a_cover_is_rejected(
     (#253)."""
     client, broker = connected
     _learn(client, 193, typ)
-    with pytest.raises(ValueError) as refused:
+    with pytest.raises(AmpioUnsupported) as refused:
         await client.set_value(193, 80, pulse_ms=pulse_ms)
     assert "set_roller_pos()" in str(refused.value)
     assert broker.published == []
@@ -1249,17 +1250,15 @@ async def test_a_field_beyond_the_frame_is_refused() -> None:
         await client.disconnect()
 
 
-async def test_a_bad_field_and_an_unknown_module_raise_apart() -> None:
-    """A consumer validates against ``MAX_PANEL_FIELD`` before it publishes,
-    and the two rejections no longer look alike: the argument fault is an
-    ``AmpioValueError``, the install-state one is not (#220)."""
+async def test_a_bad_field_and_an_unknown_module_both_raise_ampio_value_error() -> None:
+    """A bad field and an unknown module id are both the caller's own
+    fault, before any publish (#220)."""
     client, _broker = await _admin_with_panel_module()
     try:
         with pytest.raises(AmpioValueError):
             await client.set_panel_status_light(7, 0, 255, 0, fields=[0])
-        with pytest.raises(ValueError) as unknown:
+        with pytest.raises(AmpioValueError):
             await client.set_panel_status_light(9, 0, 255, 0, fields=[1])
-        assert not isinstance(unknown.value, AmpioValueError)
     finally:
         await client.disconnect()
 
@@ -1302,7 +1301,7 @@ async def test_panel_writes_reject_bad_arguments_without_a_publish() -> None:
             await client.lock_panel(7, seconds=0)
         with pytest.raises(ValueError):
             await client.lock_panel(7, seconds=655.36)
-        with pytest.raises(ValueError):
+        with pytest.raises(AmpioValueError):
             await client.lock_panel(8, seconds=10)
         with pytest.raises(ValueError):
             await client.set_panel_backlight(7, 256, 0, 0)
@@ -1314,7 +1313,7 @@ async def test_panel_writes_reject_bad_arguments_without_a_publish() -> None:
             await client.set_panel_backlight(7, 0, 0, 0, fields=[25])
         with pytest.raises(ValueError):
             await client.set_panel_status_light(7, 0, 0, 300)
-        with pytest.raises(ValueError):
+        with pytest.raises(AmpioValueError):
             await client.set_panel_status_light(8, 0, 0, 0)
         assert broker.published == []
     finally:
@@ -1335,7 +1334,7 @@ async def test_buzz_rejects_bad_arguments_without_a_publish() -> None:
             await client.buzz_pattern(7, tone=6, seconds=1.0, cycles=255)
         with pytest.raises(ValueError):
             await client.buzz_pattern(7, tone=32, seconds=1.0)
-        with pytest.raises(ValueError):
+        with pytest.raises(AmpioValueError):
             await client.buzz(8)
         with pytest.raises(ValueError):
             await client.buzz(7, tone=True)
@@ -1373,9 +1372,9 @@ async def test_identify_stop_sends_the_stop_frame() -> None:
 async def test_identify_rejects_an_unknown_module_without_a_publish() -> None:
     client, broker = await _admin_with_panel_module()
     try:
-        with pytest.raises(ValueError):
+        with pytest.raises(AmpioValueError):
             await client.identify(8)
-        with pytest.raises(ValueError):
+        with pytest.raises(AmpioValueError):
             await client.identify_stop(8)
         assert broker.published == []
     finally:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ampio_mqtt import AmpioError, AmpioNotConfigured
+from ampio_mqtt import AmpioError, AmpioNotConfigured, AmpioUnsupported
 
 
 def test_not_configured_names_every_row_for_the_installer() -> None:
@@ -11,3 +11,9 @@ def test_not_configured_names_every_row_for_the_installer() -> None:
     assert err.objects == ((5, "Lamp"), (9, None))
     assert "5 (Lamp)" in str(err)
     assert "9" in str(err)
+
+
+def test_unsupported_is_an_ampio_error_and_not_a_value_error() -> None:
+    err = AmpioUnsupported("the module drops the lock")
+    assert isinstance(err, AmpioError)
+    assert not isinstance(err, ValueError)
