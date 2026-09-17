@@ -170,9 +170,9 @@ A module that sends no frame keeps `supply_voltage` and `temperature` at None.
 Its `last_seen` moves on object traffic alone: a state push or a raw edge for
 one of its objects. After a connect, an empty `last_seen` is expected on a
 roller module until one of its covers moves. On the M-SERV it stays empty until
-one of its own objects pushes. A push for a presence row is not object traffic,
-because the two presence rows are not objects. A diagnostics reader must not
-take that empty value as a dead module. A module that sends the frame shows
+one of its own objects pushes. A push for a system row is not object traffic,
+because the M-SERV's two system rows are not objects. A diagnostics reader must
+not take that empty value as a dead module. A module that sends the frame shows
 liveness through it even with no objects of its own.
 
 ### Timing
@@ -194,7 +194,7 @@ minutes.
 | `t` (temperature)                | Same reasoning - the per-object form is sufficient.                                                                                                                                                                                     |
 | `rgbw` (RGBW output)             | Output side. Latency is not the win it is for inputs, and the per-object form carries the user-friendly desc.                                                                                                                           |
 | `o` (non-przekaznik)             | Subscribed, but indexed for `przekaznik` objects alone (see above). Channels of other output classes drop at the lookup.                                                                                                                |
-| the two presence rows            | Not objects, so never indexed. `detekcja` and `symulacja` are client attributes (see [`presence.md`](presence.md)).                                                                                                                     |
+| the M-SERV's two system rows     | Not objects, so never indexed. The library drops both by their type as it reads the catalogue (see [`untapped-surfaces.md`](untapped-surfaces.md)).                                                                                     |
 
 ## The full retained prefix inventory
 

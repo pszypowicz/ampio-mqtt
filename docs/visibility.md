@@ -18,27 +18,26 @@ Every config row that the app-sync catalogue omits carries the bit. Rows that
 app-sync still lists can carry it too, such as a hidden object or a duplicate
 stub. The unfiltered params table serves the bit for those on both tiers.
 
-The two presence rows, `detekcja` and `symulacja`, are not objects. The library
-exposes them as `AmpioClient.presence_detection` and
-`AmpioClient.presence_simulation` (see [`presence.md`](presence.md)). The wire
-facts of their configuration stay here. The devices that take part ride the
-`powiazane` field of the row in `data/params_devices`. It holds
-`<linkId>:<objectId>` pairs separated by commas, and reads null when nothing is
-linked. The M-SERV reassigns the link ids on every write. The library does not
-decode the field. The app writes the whole list at once, on the `simulation` and
-`detection` topics of the account's `control` namespace. The M-SERV answers
-`{ "Response": "OK" }` on the same-named topic under the account's `control`
-reply tree. Each detection entry carries a `type`, 1 for an inside sensor and 2
-for an entrance sensor. The M-SERV sets the matching `params` bit on the sensor
-row. Bit 11 (`params & 2048`) is Designer's "Entrance sensor" and bit 12
-(`params & 4096`) is its "Inside sensor". The simulation switch is the `czas`
-column of the simulation row. The app flips it through the
+The M-SERV creates two system rows of its own, `detekcja` and `symulacja`.
+Neither row is an object (see [`untapped-surfaces.md`](untapped-surfaces.md)).
+The library drops both by their type as it reads the catalogue, so neither
+reaches the door. The wire facts of their configuration stay here. The devices
+that take part ride the `powiazane` field of the row in `data/params_devices`.
+It holds `<linkId>:<objectId>` pairs separated by commas, and reads null when
+nothing is linked. The M-SERV reassigns the link ids on every write. The library
+does not decode the field. The app writes the whole list at once, on the
+`simulation` and `detection` topics of the account's `control` namespace. The
+M-SERV answers `{ "Response": "OK" }` on the same-named topic under the
+account's `control` reply tree. Each detection entry carries a `type`, 1 for an
+inside sensor and 2 for an entrance sensor. The M-SERV sets the matching
+`params` bit on the sensor row. Bit 11 (`params & 2048`) is Designer's "Entrance
+sensor" and bit 12 (`params & 4096`) is its "Inside sensor". The simulation
+switch is the `czas` column of the simulation row. The app flips it through the
 `/api/json/simulation/active` and `/api/json/simulation/deactive` paths on the
 `api` control topic. After each of these writes the M-SERV pushes
 `data/params_devices` and `md5/params_devices` into every account namespace. A
 standard account can do all of this. Both rows live outside the room tree, and
-the app-sync catalogue lists them unconditionally. A hidden presence row reads
-None on its attribute.
+the app-sync catalogue lists them unconditionally.
 
 ## Where the `params` bit semantics come from
 
@@ -165,4 +164,5 @@ soft-deletes the purged object. The app-sync surfaces (`data/devices`,
 `data/params_devices`) hard-remove it instead. The library reads the app-sync
 surfaces on both tiers, so a purge evicts the object on both tiers and fires
 `ObjectRemoved`. On the baseline install the app-sync catalogue lists exactly
-the objects with a room, plus the two presence rows.
+the objects with a room, plus the two system rows the library drops by their
+type.

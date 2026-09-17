@@ -16,13 +16,6 @@ explicit beta posture above and is no longer the supported upgrade path.
 
 ### Changed
 
-- The two presence rows, `detekcja` and `symulacja`, are no longer objects.
-  `AmpioClient.presence_detection` is a
-  `PresenceDetection(id, name, home_status)` and
-  `AmpioClient.presence_simulation` is a `PresenceSimulation(id, name, active)`.
-  Both read None until the row arrives and while the row is hidden.
-  `PresenceChanged` reports every change. `INPUT_KIND_KEYS` loses `detekcja` and
-  `symulacja`.
 - The administrator client reads the same object catalogue as a standard
   account, `data/devices` plus `data/params_devices`, and adds `config/devices`
   for the module rows. `params`, `czas` and `url` come from the params table on
@@ -94,25 +87,22 @@ explicit beta posture above and is no longer the supported upgrade path.
   leave the object. `AmpioModule.record`, `capabilities` and `panel_settings`
   leave the module. The plain `ValueError` on an install refusal leaves the
   error set. The module mac collision warning leaves the log.
+- The two system rows the M-SERV creates, `detekcja` and `symulacja`, with
+  `PresenceDetection`, `PresenceSimulation` and `PresenceChanged`. The library
+  drops both rows as it reads the catalogue. A consumer on 0.70.x saw both as
+  ordinary objects, so a consumer that listed every object sees two fewer
+  (#265). `INPUT_KIND_KEYS` loses `detekcja` and `symulacja`.
+- `InputKind.device_class` and the `BinarySensorDeviceClass` literal. After the
+  system rows left, no kind assigned the one value the literal allowed.
 
 ### Fixed
 
-- The detection row's home-status code no longer reads as a boolean. Code 5 is
-  "home empty" and `PresenceDetection.home_status` carries it as an integer
-  (#265).
 - A `data/states` snapshot with one malformed row is refused whole. Every object
   keeps its value and the held table stays unchanged (#269).
 - The roller lock has one resolver, so the write and its capability answer
   cannot disagree (#256).
-- A home-status code a live push supplied survives the discovery snapshot that
-  follows it, even when the push arrived before the catalogue row.
 - An object leaf the library cannot read is reported against `data/devices`, the
   reply that carries it, whichever reply of the catalogue pair ran the door.
-
-### Documentation
-
-- `presence.md` describes the two presence rows, their types, the home-status
-  code and the `PresenceChanged` event.
 
 ## 0.70.1
 

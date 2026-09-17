@@ -154,8 +154,8 @@ itself. Scene commands are grant-scoped like any other. A scene that touches
 objects outside a standard account's grant does nothing.
 
 A `roleta_lamelki` object carries its lamella angle in a `lammel` field next to
-`state` in its state payload. No other type emits it, so its presence is a
-second, runtime signal that an object has slats.
+`state` in its state payload. No other type emits the field, so it is a second,
+runtime signal that an object has slats.
 
 Covers stream intermediate positions in 5% steps during travel, so a consumer
 sees the movement rather than one jump to the target. See the Cover parameters

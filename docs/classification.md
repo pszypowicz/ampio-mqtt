@@ -29,8 +29,6 @@ value sensor or the `analog_<n>` fallback.
 
 - `reg` state is the running flag. The rich climate readback (measured and
   target temperature, mode, cooling) is `AmpioObject.thermostat`.
-- `detekcja` and `symulacja` are the two presence rows. They are not objects and
-  have no kind. See [`presence.md`](presence.md).
 - `wej` is the per-channel physical-input object the Designer creates for a
   wired button. Its per-object payload is 255 pressed / 0 released. Its
   `interpretacja` mirrors `funkcja` (the channel number), so it refines nothing.

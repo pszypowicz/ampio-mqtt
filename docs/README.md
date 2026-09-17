@@ -19,7 +19,6 @@ the text says in place exactly what is unverified.
 | [`account-tiers.md`](account-tiers.md)             | The two client classes, what each serves, and the M-SERV facts behind the split.                                            |
 | [`identity.md`](identity.md)                       | Which id is which - `mac` vs `mac_global`, `id` vs `funkcja` vs `address`, replacement-stable vs hardware-ordered.          |
 | [`visibility.md`](visibility.md)                   | Hidden rows and the door, the `params` bit enum, the read-only and bell markers, and deletion on the wire.                  |
-| [`presence.md`](presence.md)                       | The two presence rows, their types and their event.                                                                         |
 | [`description-records.md`](description-records.md) | The description record in each module: the Matter tag, the location pointer, the list reply, the join rule, and the sweep.  |
 | [`classification.md`](classification.md)           | The classification model, the wire notes the code tables cannot carry, the consumer-CI key contract.                        |
 | [`raw-channel-bridge.md`](raw-channel-bridge.md)   | The `ampio/from/<MAC>/state/...` parallel topic surface. What is bridged today and what is not.                             |

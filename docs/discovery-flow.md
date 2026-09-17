@@ -123,9 +123,9 @@ seconds.
 
 The store admits a catalogue through one door, on both tiers. The door waits for
 both replies of the pair, `data/devices` and `data/params_devices`, because the
-hidden bit rides the second. Then it decides in one order. The two presence rows
-go to their own types. A row with the hidden bit drops. Every remaining row must
-carry a leaf that parses into `AmpioObject.address`.
+hidden bit rides the second. Then it decides in one order. A row with the hidden
+bit drops. Every remaining row must carry a leaf that parses into
+`AmpioObject.address`.
 
 A row with an empty leaf stays out of `objects`. The store records it, and
 `wait_for_initial_discovery()` raises `AmpioNotConfigured` with the `(id, name)`
