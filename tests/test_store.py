@@ -1482,7 +1482,7 @@ def test_wej_routes_via_digital_input_prefix() -> None:
     _feed_catalogue(store, wej)
     obj = store.objects[62]
     assert isinstance(obj.kind, InputKind)
-    assert obj.kind.key == "wej" and obj.kind.device_class is None
+    assert obj.kind.key == "wej"
     _apply(store, "ampio/from/CAFE/state/i/1", "1")
     assert store.objects[62].state == "1" and store.objects[62].is_on is True
 

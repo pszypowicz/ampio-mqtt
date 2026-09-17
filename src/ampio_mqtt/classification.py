@@ -45,12 +45,6 @@ class SensorKind:
     precision: int | None = 1
 
 
-# binary_sensor device-class strings the library can emit. Extend this
-# Literal when a new input mapping is added. Values match Home Assistant's
-# BinarySensorDeviceClass enum.
-BinarySensorDeviceClass = Literal["presence"]
-
-
 @dataclass(frozen=True, slots=True)
 class InputKind:
     """Neutral description of a binary / flag-shaped input object.
@@ -62,9 +56,6 @@ class InputKind:
 
     key: str
     name: str
-    # HA binary_sensor device class, or None for a generic boolean where the
-    # consumer decides how to model it (binary_sensor vs switch).
-    device_class: BinarySensorDeviceClass | None = None
     # The `turnOn` / `turnOff` / `switch` verb family, over `/api`. True only
     # for `flaga`. A `wej` is a physical input the module scans for itself:
     # the M-SERV drops all three verbs for it on both account tiers, with no
@@ -246,7 +237,7 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     "bit16": TypeProfile(_Selector.NUMERIC),
     "sbit16": TypeProfile(_Selector.NUMERIC),
     "flaga": TypeProfile(
-        InputKind("flaga", "Flag", None, switchable=True, pulsable=True),
+        InputKind("flaga", "Flag", switchable=True, pulsable=True),
         channel_prefix="f",
     ),
     # The analog flags, the module's own u8 and signed-i16 variables. Both
@@ -266,7 +257,7 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     # The per-channel physical-input object (a wall button wired to a module
     # terminal). Same 255/0 payload as flags on the per-object topic; the
     # raw mirror rides the digital-input prefix (#117).
-    "wej": TypeProfile(InputKind("wej", "Input", None), channel_prefix="i"),
+    "wej": TypeProfile(InputKind("wej", "Input"), channel_prefix="i"),
 }
 
 
