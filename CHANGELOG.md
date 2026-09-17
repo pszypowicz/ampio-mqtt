@@ -27,7 +27,7 @@ explicit beta posture above and is no longer the supported upgrade path.
   `ModuleAddress(mac, channel, sf_id, sub_sf_id)` parsed from its leaf, and
   `AmpioObject.leaf_key`, on both tiers. The store admits a catalogue through
   one door. It waits for both `data/devices` and `data/params_devices`, drops
-  hidden rows, and leaves out every row without a leaf.
+  hidden rows, and leaves out every row without a leaf (#264).
   `wait_for_initial_discovery()` raises `AmpioNotConfigured` naming those rows,
   and after connect the `NotConfigured` event reports them. A leaf that does not
   parse refuses the reply as `AmpioProtocolError`. `diagnostics_snapshot()`
@@ -90,7 +90,7 @@ explicit beta posture above and is no longer the supported upgrade path.
 - The two system rows the M-SERV creates, `detekcja` and `symulacja`. The
   library drops both rows as it reads the catalogue. A consumer on 0.70.x saw
   both as ordinary objects, so a consumer that listed every object sees two
-  fewer (#265). `INPUT_KIND_KEYS` loses `detekcja` and `symulacja`.
+  fewer (#265, #270). `INPUT_KIND_KEYS` loses `detekcja` and `symulacja`.
 - `InputKind.device_class` and the `BinarySensorDeviceClass` literal. After the
   system rows left, no kind assigned the one value the literal allowed.
 
