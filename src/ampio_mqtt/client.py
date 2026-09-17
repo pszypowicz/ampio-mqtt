@@ -56,7 +56,6 @@ from ._protocol import (
     raw_write_topic,
     request_topic,
     response_topic,
-    roller_lock_channels,
     scene_payload,
 )
 from ._store import AdminStore, AmpioStore, Applied
@@ -86,6 +85,8 @@ from .models import (
     ConnectionStats,
     CoverParameters,
     DesignerRecord,
+    LockRefusal,
+    LockTarget,
     ModuleFunction,
     ModuleRecord,
     PanelSettings,
@@ -105,6 +106,20 @@ HEATING_MODES: Final[frozenset[str]] = frozenset({"A", "S", "M", "H"})
 # it calls, so a bad one never reaches the same rejection an unknown module
 # raises (#220).
 MAX_PANEL_FIELD: Final[int] = PANEL_MASK_MAX_BYTES * 8
+
+# The refusal message for each way lock_target() can decline, keyed by the
+# LockRefusal the four lock methods raise on.
+_LOCK_REFUSALS: Final[dict[LockRefusal, str]] = {
+    LockRefusal.NOT_A_COVER: (
+        "not a cover, and its channel index can belong to a cover on the same module"
+    ),
+    LockRefusal.NO_ROLLER_COUNT: (
+        "its module advertises no roller channel count and drops the lock frame"
+    ),
+    LockRefusal.PAST_LAST_CHANNEL: (
+        "its channel lies past the roller count its module advertises"
+    ),
+}
 
 EventListener = Callable[[ClientEvent], None]
 _EventT = TypeVar("_EventT", bound=ClientEvent)
@@ -2140,51 +2155,52 @@ class AmpioAdminClient(AmpioClient):
         payload = raw_key_lock_payload(False, 0)
         await self._connection.publish(raw_write_topic(mac), payload.encode())
 
-    def _roller_lock_address(self, object_id: int) -> tuple[int, int, int]:
-        """The (mac, channel, roller channel count) a lock frame needs.
+    def lock_target(self, object_id: int) -> LockTarget | LockRefusal:
+        """The lock frame's target for one cover, or why none can go out.
 
-        The count comes from the module's own capability map, and it is
-        the gate as well as the mask width. A module that advertises no
-        roller count does not implement the lock sub-functions: it takes
-        the ordinary roller moves on the same destination and discards a
-        lock frame in silence (docs/panel-writes.md, "Cover roller lock").
-        Raising beats publishing a frame that vanishes.
+        Reads the catalogue row and the module's entry in
+        :pyattr:`capabilities`. A module that advertises no roller count
+        takes the ordinary roller moves and drops a lock frame in silence,
+        so the count is the gate as well as the mask width
+        (docs/panel-writes.md). A non-cover is refused because its channel
+        index can belong to a cover on the same module. The four lock
+        methods call this and raise on a refusal, so a consumer that
+        builds a lock control calls it after the sweep and leaves the
+        control out on a refusal. Raises ``AmpioValueError`` for an id the
+        catalogue does not list.
         """
         obj = self._store.objects.get(object_id)
         if obj is None:
             raise AmpioValueError(f"object {object_id} is not in the catalogue")
         if not joins_roller_records(obj.typ_komponentu):
-            raise AmpioValueError(
-                f"object {object_id} ({obj.typ_komponentu}) is not a cover, so "
-                "no roller channel is its own"
-            )
+            return LockRefusal.NOT_A_COVER
         mac, channel = obj.address.mac, obj.address.channel
-        capabilities = self._store.capabilities.get(mac, {})
-        channels = roller_lock_channels(capabilities, channel)
-        if channels is None:
-            advertised = capabilities.get(ModuleFunction.ROLLER)
-            if advertised is None:
-                raise AmpioValueError(
-                    f"the module behind object {object_id} advertises no roller "
-                    "channel count, so it does not implement the lock - call "
-                    "resolve_records() first if no sweep has run, because that is "
-                    "what fills the capability map"
-                )
-            raise AmpioValueError(
-                f"object {object_id} sits on roller channel {channel}, past "
-                f"the {advertised} its module advertises"
-            )
-        return mac, channel, channels
+        capabilities = self._store.capabilities.get(mac)
+        if capabilities is None:
+            return LockRefusal.NOT_SWEPT
+        count = capabilities.get(ModuleFunction.ROLLER)
+        if count is None:
+            return LockRefusal.NO_ROLLER_COUNT
+        if channel >= count:
+            return LockRefusal.PAST_LAST_CHANNEL
+        return LockTarget(mac=mac, channel=channel, channels=count)
 
     async def _roller_lock(
         self, object_id: int, sub_function: int, *, assert_lock: bool
     ) -> None:
-        """Publish one roller lock frame for an object's own channel."""
-        mac, channel, channels = self._roller_lock_address(object_id)
+        """Publish one roller lock frame for an object's own channel, or raise."""
+        target = self.lock_target(object_id)
+        if target is LockRefusal.NOT_SWEPT:
+            raise AmpioValueError(
+                f"no sweep has answered the module behind object {object_id}; "
+                "call resolve_records() first"
+            )
+        if isinstance(target, LockRefusal):
+            raise AmpioUnsupported(f"object {object_id}: {_LOCK_REFUSALS[target]}")
         await self._connection.publish(
-            raw_write_topic(mac),
+            raw_write_topic(target.mac),
             raw_roller_lock_payload(
-                sub_function, channel, channels, assert_lock=assert_lock
+                sub_function, target.channel, target.channels, assert_lock=assert_lock
             ).encode(),
         )
 
@@ -2201,13 +2217,11 @@ class AmpioAdminClient(AmpioClient):
 
         Needs :meth:`resolve_records` to have run, because the module's
         roller channel count both gates the write and sizes the frame's
-        channel mask. Raises ``AmpioValueError`` when the module
-        advertises no such count: that module generation takes the
-        ordinary roller moves on the same destination and discards a lock
-        frame in silence, so a raise beats a publish that vanishes. Raises
-        the same for an object that is not a cover: its channel index can
-        belong to a cover on the same module, and the frame would move
-        that cover's lock.
+        channel mask. Calls :meth:`lock_target` and raises on a refusal:
+        ``AmpioValueError`` when no sweep has answered the module yet,
+        and ``AmpioUnsupported`` for the other refusals, a non-cover
+        object or a module whose advertised roller count does not reach
+        this channel.
         """
         await self._roller_lock(object_id, ROLLER_BLOCK_OPENING, assert_lock=True)
 

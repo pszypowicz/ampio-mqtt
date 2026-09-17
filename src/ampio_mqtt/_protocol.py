@@ -1543,21 +1543,6 @@ _ROLLER_ACTION_FUNC = 0
 _ROLLER_LOCK_UNUSED_TAIL = "00000000"
 
 
-def roller_lock_channels(capabilities: Mapping[int, int], channel: int) -> int | None:
-    """The roller channel count a lock frame for ``channel`` can use.
-
-    None when that module cannot hold a lock on that channel. The count
-    is both the gate and the mask width, so one answer settles both: a
-    module that advertises none drops every lock sub-function, and a
-    frame for it could not be sized anyway. docs/panel-writes.md carries
-    the measurement behind the gate.
-    """
-    channels = capabilities.get(ModuleFunction.ROLLER)
-    if channels is None or not 0 <= channel < channels:
-        return None
-    return channels
-
-
 def raw_roller_lock_payload(
     sub_function: int, channel: int, channels: int, *, assert_lock: bool
 ) -> str:

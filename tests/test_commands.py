@@ -34,6 +34,8 @@ from ampio_mqtt import (
     AmpioTimeoutError,
     AmpioUnsupported,
     AmpioValueError,
+    LockRefusal,
+    LockTarget,
     ModuleFunction,
 )
 
@@ -1435,11 +1437,19 @@ async def test_send_notification_rejects_an_ambiguous_message(
 ROLLER_RAW_TOPIC = "ampio/to/be82/raw"
 
 
-async def _admin_with_covers() -> tuple[AmpioAdminClient, FakeBroker]:
+async def _admin_with_covers(
+    *, swept: bool = True, roller_count: int | None = 4
+) -> tuple[AmpioAdminClient, FakeBroker]:
     """Admin client holding two covers and one relay on a module that
     advertises four roller channels, and a cover on a module that
     advertises none. The relay shares channel index 0 with the first
-    cover."""
+    cover.
+
+    ``swept`` False leaves the covers' module unanswered by any sweep.
+    ``roller_count`` None seeds an answered module that advertises no
+    roller count; otherwise it is the roller count the module
+    advertises.
+    """
     broker = FakeBroker()
     client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
@@ -1529,12 +1539,60 @@ async def _admin_with_covers() -> tuple[AmpioAdminClient, FakeBroker]:
     )
     # The newer module advertises its four roller channels; the older one
     # advertises none, which is what tells the two generations apart.
-    client._store.apply_sweep(
-        frozenset({0xBE82}), {}, {}, {}, {0xBE82: {ModuleFunction.ROLLER: 4}}, {}
-    )
+    if swept:
+        capabilities = (
+            {0xBE82: {}}
+            if roller_count is None
+            else {0xBE82: {ModuleFunction.ROLLER: roller_count}}
+        )
+        client._store.apply_sweep(frozenset({0xBE82}), {}, {}, {}, capabilities, {})
     broker.published.clear()
     broker.published_qos.clear()
     return client, broker
+
+
+async def test_lock_target_answers_for_every_case() -> None:
+    client, _broker = await _admin_with_covers()
+    try:
+        cover, relay = 193, 195
+        assert client.lock_target(cover) == LockTarget(
+            mac=0xBE82, channel=0, channels=4
+        )
+        assert client.lock_target(relay) is LockRefusal.NOT_A_COVER
+        with pytest.raises(AmpioValueError, match="999"):
+            client.lock_target(999)
+    finally:
+        await client.disconnect()
+
+
+async def test_lock_target_reads_not_swept_before_any_sweep() -> None:
+    client, _broker = await _admin_with_covers(swept=False)
+    try:
+        assert client.lock_target(193) is LockRefusal.NOT_SWEPT
+        with pytest.raises(AmpioValueError, match="resolve_records"):
+            await client.block_opening(193)
+    finally:
+        await client.disconnect()
+
+
+async def test_lock_target_refuses_a_module_without_a_roller_count() -> None:
+    client, _broker = await _admin_with_covers(roller_count=None)
+    try:
+        assert client.lock_target(193) is LockRefusal.NO_ROLLER_COUNT
+        with pytest.raises(AmpioUnsupported):
+            await client.block_closing(193)
+    finally:
+        await client.disconnect()
+
+
+async def test_lock_target_refuses_a_channel_past_the_count() -> None:
+    client, _broker = await _admin_with_covers(roller_count=0)
+    try:
+        assert client.lock_target(193) is LockRefusal.PAST_LAST_CHANNEL
+        with pytest.raises(AmpioUnsupported):
+            await client.unblock_opening(193)
+    finally:
+        await client.disconnect()
 
 
 @pytest.mark.parametrize(
@@ -1580,7 +1638,7 @@ async def test_roller_lock_refuses_a_channel_past_the_advertised_count() -> None
         client._store.apply_sweep(
             frozenset({0xBE82}), {}, {}, {}, {0xBE82: {ModuleFunction.ROLLER: 1}}, {}
         )
-        with pytest.raises(AmpioValueError, match="past the 1"):
+        with pytest.raises(AmpioUnsupported, match="past the roller count"):
             await client.block_opening(194)
         assert broker.published == []
     finally:
@@ -1593,7 +1651,11 @@ async def test_roller_lock_refuses_a_module_without_a_roller_count() -> None:
     publish that vanishes."""
     client, broker = await _admin_with_covers()
     try:
-        with pytest.raises(AmpioValueError, match="roller channel count"):
+        # Object 48 sits on mac 0xCB86; seed it as an answered module that
+        # advertises no roller count, so the resolver reads that refusal
+        # rather than "no sweep has answered yet".
+        client._store.apply_sweep(frozenset({0xCB86}), {}, {}, {}, {0xCB86: {}}, {})
+        with pytest.raises(AmpioUnsupported, match="advertises no roller"):
             await client.block_opening(48)
         assert broker.published == []
     finally:
@@ -1605,7 +1667,7 @@ async def test_roller_lock_refuses_an_object_that_is_not_a_cover() -> None:
     the frame it would take is that cover's lock."""
     client, broker = await _admin_with_covers()
     try:
-        with pytest.raises(AmpioValueError, match="not a cover"):
+        with pytest.raises(AmpioUnsupported, match="not a cover"):
             await client.block_opening(195)
         assert broker.published == []
     finally:

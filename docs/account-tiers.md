@@ -52,6 +52,7 @@ module row on either class: `AmpioObject.address.mac` carries the key (see
 | `records`, `cover_parameters`                                                         | the sweep, by object id                  | when `resolve_records()` returned       |
 | `module_records`, `capabilities`, `panel_settings`                                    | the sweep, by mac                        | when `resolve_records()` returned       |
 | `last_sweep`                                                                          | the sweep                                | when `resolve_records()` returned       |
+| `lock_target()`                                                                       | the sweep and `address`                  | when `resolve_records()` returns        |
 | `fetch_locations()`                                                                   | `config/locations`                       | when the call returns                   |
 | `block_opening()`, `unblock_opening()`, `block_closing()`, `unblock_closing()`        | `ampio/to/<mac>/raw`                     | after a sweep filled the capability map |
 | `buzz()`, `buzz_pattern()`, `buzz_stop()`                                             | `ampio/to/<mac>/raw`                     | on connect                              |

@@ -288,6 +288,31 @@ class PanelSettings:
 
 
 @dataclass(slots=True, frozen=True)
+class LockTarget:
+    """Where a roller lock frame for one cover goes.
+
+    ``channels`` is the module's roller channel count, which sizes the
+    frame's channel mask. docs/panel-writes.md.
+    """
+
+    mac: int
+    channel: int
+    channels: int
+
+
+class LockRefusal(Enum):
+    """Why no roller lock frame can go out for an object.
+
+    ``NOT_SWEPT`` changes with the next sweep; the other three do not.
+    """
+
+    NOT_A_COVER = "not_a_cover"
+    NOT_SWEPT = "not_swept"
+    NO_ROLLER_COUNT = "no_roller_count"
+    PAST_LAST_CHANNEL = "past_last_channel"
+
+
+@dataclass(slots=True, frozen=True)
 class CoverParameters:
     """One cover channel's stored travel configuration.
 
