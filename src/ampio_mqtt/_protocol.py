@@ -1356,8 +1356,8 @@ ENDPOINTS: tuple[Endpoint, ...] = (
 ENDPOINT_BY_NAME: dict[str, Endpoint] = {ep.name: ep for ep in ENDPOINTS}
 
 # The endpoints each client class is served. The base client and the base
-# store read the first; the admin client and the admin store read the
-# second. `Endpoint.tier` is the wire fact both derive from.
+# store read the first. The admin client and the admin store read the second.
+# `Endpoint.tier` is the wire fact both derive from.
 BASE_ENDPOINTS: tuple[Endpoint, ...] = tuple(ep for ep in ENDPOINTS if ep.tier is None)
 ADMIN_ENDPOINTS: tuple[Endpoint, ...] = ENDPOINTS
 
@@ -1838,8 +1838,8 @@ class Router:
     (hence ``user``); the raw ``ampio/from`` tree is global.
 
     The admin-only shapes (the raw tree, the digests, the device list) are
-    routed for the admin client alone, so a router built without them returns
-    None for a digest, the device list and every raw topic.
+    routed for the admin client alone, so a router built with ``admin=False``
+    returns None for a digest, the device list, and every raw topic.
     """
 
     __slots__ = ("_admin", "_by_response", "_user")
