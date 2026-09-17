@@ -914,32 +914,6 @@ def resolve_module_capabilities(
     }
 
 
-def resolve_roller_lock_support(
-    objects: Mapping[int, AmpioObject],
-    capabilities_by_mac: Mapping[int, Mapping[int, int]],
-) -> dict[int, bool]:
-    """Whether each cover's module takes a roller lock write, by object id.
-
-    ``capabilities_by_mac`` is the resolved map, so a mac in it answered
-    the sweep and a colliding mac is already gone. An object is therefore
-    absent when no answer is known, and present and False when the module
-    answered and cannot hold a lock on that channel. A row outside the
-    roller class is absent as well.
-
-    The channel key matches ``resolve_designer``: ``address.channel``.
-    """
-    out: dict[int, bool] = {}
-    for obj in objects.values():
-        if not joins_roller_records(obj.typ_komponentu):
-            continue
-        mac, channel = obj.address.mac, obj.address.channel
-        capabilities = capabilities_by_mac.get(mac)
-        if capabilities is None:
-            continue
-        out[obj.id] = roller_lock_channels(capabilities, channel) is not None
-    return out
-
-
 def resolve_module_records(
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
     location_names: Mapping[int, str],

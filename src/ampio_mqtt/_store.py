@@ -104,18 +104,6 @@ class AmpioStore:
         # Designer config flag as unset. Warned once per change and
         # surfaced for diagnostics.
         self.missing_params_ids: frozenset[int] = frozenset()
-        # `{object_id: DesignerRecord}` accumulated across resolve
-        # sweeps (a sweep updates its joined ids and leaves the rest),
-        # kept so a catalogue refresh re-applies what the CAN records
-        # proved (the catalogue itself never carries them).
-        self._record_by_id: dict[int, DesignerRecord] = {}
-        # `{object_id: CoverParameters}` accumulated across sweeps, kept
-        # for the same reason as the record table: the catalogue never
-        # carries the params blob either.
-        self._cover_parameters_by_id: dict[int, CoverParameters] = {}
-        # `{object_id: bool}` accumulated across sweeps, on the same terms.
-        # False is an answer, so absence is the only unresolved state.
-        self._lock_support_by_id: dict[int, bool] = {}
         # `{object_id: seed}` from the last `data/states` snapshot,
         # kept for the same reason; a snapshot row for an id no catalogue
         # established creates nothing.
@@ -176,49 +164,6 @@ class AmpioStore:
         """
         self._guarded.clear()
         self._detection_pushed = False
-
-    def apply_designer_records(
-        self,
-        resolved: Mapping[int, DesignerRecord],
-        cover_parameters: Mapping[int, CoverParameters],
-        lock_support: Mapping[int, bool],
-    ) -> Applied:
-        """Hold one sweep's per-object facts and fold them into known objects.
-
-        A joined object's ``record`` is replaced wholesale - the entry is
-        what its module answered, None fields included. All three maps
-        come from one ``device_api`` reply, so an object changed by any of
-        them reports one event. Objects a sweep did not join keep what
-        they had, and the held tables accumulate across sweeps so a
-        catalogue re-seed re-folds everything this session learned. A row
-        that left the roller class is the exception: the merge drops its
-        cover parameters and its lock support, facts only a roller kind
-        carries.
-        """
-        applied = Applied()
-        self._record_by_id.update(resolved)
-        self._cover_parameters_by_id.update(cover_parameters)
-        self._lock_support_by_id.update(lock_support)
-        # Insertion order, so the event order follows the maps rather than
-        # a set's hash order.
-        for oid in dict.fromkeys((*resolved, *cover_parameters, *lock_support)):
-            obj = self.objects.get(oid)
-            if obj is None:
-                continue
-            updated = obj
-            if oid in resolved and updated.record != resolved[oid]:
-                updated = replace(updated, record=resolved[oid])
-            if (
-                oid in cover_parameters
-                and updated.cover_parameters != cover_parameters[oid]
-            ):
-                updated = replace(updated, cover_parameters=cover_parameters[oid])
-            if oid in lock_support and updated.block_writable != lock_support[oid]:
-                updated = replace(updated, block_writable=lock_support[oid])
-            if updated is not obj:
-                self.objects[oid] = updated
-                self._record(updated, applied)
-        return applied
 
     def apply(self, msg: _protocol.Inbound, *, retained: bool = False) -> Applied:
         """Apply one typed message and report what it changed.
@@ -393,15 +338,7 @@ class AmpioStore:
             applied.events.append(NotConfigured(objects=rejected))
 
     def _drop_sweep_entries(self, oid: int) -> None:
-        """Forget what a sweep proved for one object.
-
-        A sweep result belongs to an admitted object at one address, so an
-        eviction and an address change both drop it until a later sweep
-        covers the object again.
-        """
-        self._record_by_id.pop(oid, None)
-        self._cover_parameters_by_id.pop(oid, None)
-        self._lock_support_by_id.pop(oid, None)
+        """Forget what a sweep proved for one object. The base holds no sweep."""
 
     def _evict_missing_objects(self, present: set[int], applied: Applied) -> bool:
         """Drop the objects the door did not admit this time.
@@ -582,18 +519,6 @@ class AmpioStore:
             # channel reports, and the guard lifts because the held value
             # belongs to another channel.
             self._release_raw(meta.id)
-        # The catalogue never carries a sweep result, so the held tables
-        # re-apply on every merge, the re-creation after an eviction
-        # included, and an entry dropped since the last merge clears.
-        updates["record"] = self._record_by_id.get(meta.id)
-        # A travel configuration and a lock answer belong to a roller kind
-        # alone. A row that left the class drops both held entries, so a
-        # later return to the class waits for a sweep of its own.
-        if not _protocol.joins_roller_records(meta.typ_komponentu):
-            self._cover_parameters_by_id.pop(meta.id, None)
-            self._lock_support_by_id.pop(meta.id, None)
-        updates["cover_parameters"] = self._cover_parameters_by_id.get(meta.id)
-        updates["block_writable"] = self._lock_support_by_id.get(meta.id)
         changed = any(getattr(obj, name) != value for name, value in updates.items())
         updated = replace(obj, **updates)
         # The states snapshot is the one seed source on both tiers, so a
@@ -830,7 +755,7 @@ class AdminStore(AmpioStore):
 
     Adds what the M-SERV serves that account alone: the module list, the
     raw tree with its routing index and raw ownership, the module
-    diagnostics broadcasts, and the module-keyed sweep tables.
+    diagnostics broadcasts, and the description-record sweep datasets.
     """
 
     def __init__(self) -> None:
@@ -859,19 +784,16 @@ class AdminStore(AmpioStore):
         # the catalogue builds the routing.
         self._pending_raw: dict[tuple[int, str, int], str] = {}
         self._pending_diagnostics: dict[int, _protocol.ModuleDiagnostics] = {}
-        # `{mac: ModuleRecord}` accumulated across sweeps on the module
-        # side, kept so a module-list refresh re-applies what the sweep
-        # proved (the list itself never carries it); an empty bundle is an
-        # authoritative "answered, unassigned".
-        self._module_record_by_mac: dict[int, ModuleRecord] = {}
-        # `{mac: {function id: channel count}}` accumulated on the same
-        # terms; an empty map is an authoritative "answered, advertising
-        # nothing".
-        self._module_capabilities_by_mac: dict[int, Mapping[int, int]] = {}
-        # `{mac: PanelSettings}` accumulated on the same terms. A module
-        # absent here is one whose panel layout the sweep could not
-        # resolve, which includes everything that is not a touch panel.
-        self._panel_settings_by_mac: dict[int, PanelSettings] = {}
+        # The sweep datasets, by object id and by mac. A sweep replaces
+        # every entry of the macs it answered, so absence with the mac
+        # answered is an authoritative "no entry" until the next sweep, and
+        # absence with the mac not answered is not known.
+        # docs/description-records.md.
+        self.records: dict[int, DesignerRecord] = {}
+        self.cover_parameters: dict[int, CoverParameters] = {}
+        self.module_records: dict[int, ModuleRecord] = {}
+        self.capabilities: dict[int, Mapping[int, int]] = {}
+        self.panel_settings: dict[int, PanelSettings] = {}
 
     def _endpoint_set(self) -> tuple[_protocol.Endpoint, ...]:
         return _protocol.ADMIN_ENDPOINTS
@@ -904,40 +826,39 @@ class AdminStore(AmpioStore):
                 return super().apply(msg, retained=retained)
         return applied
 
-    def apply_module_sweep(
+    def apply_sweep(
         self,
-        records: Mapping[int, ModuleRecord],
+        answered_macs: frozenset[int],
+        records: Mapping[int, DesignerRecord],
+        cover_parameters: Mapping[int, CoverParameters],
+        module_records: Mapping[int, ModuleRecord],
         capabilities: Mapping[int, Mapping[int, int]],
         panel_settings: Mapping[int, PanelSettings],
-    ) -> Applied:
-        """Hold one sweep's module facts and fold them into modules.
+    ) -> None:
+        """Replace the datasets of every module that answered one sweep.
 
-        Both maps come from the same ``device_api`` reply, so they fold
-        together and a module changed by either reports one event.
-        Wholesale per answering mac, exactly as the object side; a mac
-        the sweep did not cover leaves both the held tables and the
-        module untouched.
+        An entry an answered module no longer carries leaves, so absence
+        with the mac answered is authoritative until the next sweep. A
+        module the sweep did not answer keeps its entries. No model field
+        changes, so nothing is reported.
         """
-        applied = Applied()
-        self._module_record_by_mac.update(records)
-        self._module_capabilities_by_mac.update(capabilities)
-        self._panel_settings_by_mac.update(panel_settings)
-        for mac in {*records, *capabilities, *panel_settings}:
-            mid = self._module_id_by_mac.get(mac)
-            if mid is None:
-                continue
-            module = self.modules[mid]
-            updated = module
-            if mac in records and updated.record != records[mac]:
-                updated = replace(updated, record=records[mac])
-            if mac in capabilities and updated.capabilities != capabilities[mac]:
-                updated = replace(updated, capabilities=capabilities[mac])
-            if mac in panel_settings and updated.panel_settings != panel_settings[mac]:
-                updated = replace(updated, panel_settings=panel_settings[mac])
-            if updated is not module:
-                self.modules[mid] = updated
-                applied.events.append(ModuleUpdated(updated))
-        return applied
+        for oid, obj in self.objects.items():
+            if obj.address.mac in answered_macs:
+                self.records.pop(oid, None)
+                self.cover_parameters.pop(oid, None)
+        for mac in answered_macs:
+            self.module_records.pop(mac, None)
+            self.capabilities.pop(mac, None)
+            self.panel_settings.pop(mac, None)
+        self.records.update(records)
+        self.cover_parameters.update(cover_parameters)
+        self.module_records.update(module_records)
+        self.capabilities.update(capabilities)
+        self.panel_settings.update(panel_settings)
+
+    def _drop_sweep_entries(self, oid: int) -> None:
+        self.records.pop(oid, None)
+        self.cover_parameters.pop(oid, None)
 
     # --- admin hooks ------------------------------------------------------
 
@@ -962,21 +883,6 @@ class AdminStore(AmpioStore):
                     supply_voltage=previous.supply_voltage,
                     temperature=previous.temperature,
                 )
-            # The catalogue never carries the record entry; the held
-            # table re-applies it on every merge - including the
-            # re-creation after an eviction.
-            mac = module.mac
-            if mac is not None:
-                if mac in self._module_record_by_mac:
-                    module = replace(module, record=self._module_record_by_mac[mac])
-                if mac in self._module_capabilities_by_mac:
-                    module = replace(
-                        module, capabilities=self._module_capabilities_by_mac[mac]
-                    )
-                if mac in self._panel_settings_by_mac:
-                    module = replace(
-                        module, panel_settings=self._panel_settings_by_mac[mac]
-                    )
             self.modules[module.id] = module
             # A new module or a changed catalogue row is news, exactly as an
             # object catalogue row is; the live fields were carried over

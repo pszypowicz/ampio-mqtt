@@ -343,11 +343,6 @@ def test_position_reads_none_off_the_position_axis() -> None:
     assert _cover("55", typ="roleta_lamelki").position == 55
 
 
-def test_record_survives_replace() -> None:
-    obj = _object(id=1, record=DesignerRecord(location="Potter"))
-    assert replace(obj, state="1").record == DesignerRecord(location="Potter")
-
-
 def test_the_alarm_halves_classify_on_the_address_sub_function() -> None:
     armed = ModuleAddress(mac=0xCAFE, channel=0, sf_id=296, sub_sf_id=3)
     assert (
@@ -367,11 +362,6 @@ def test_the_object_has_no_leaf_property() -> None:
         "leaf_io_no",
     ):
         assert not hasattr(obj, name)
-
-
-def test_record_bundles_default_to_none() -> None:
-    assert _object(id=1).record is None
-    assert _module(id=1).record is None
 
 
 def test_record_bundle_fields_default_to_none() -> None:

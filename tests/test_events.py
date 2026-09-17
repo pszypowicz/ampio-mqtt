@@ -16,6 +16,8 @@ from ampio_mqtt import (
     NotConfigured,
     ObjectAdded,
     ObjectUpdated,
+    RecordSweep,
+    RecordSweepCompleted,
 )
 from ampio_mqtt.events import ClientEvent, StoreEvent
 
@@ -131,3 +133,10 @@ def test_not_configured_is_a_store_event_and_a_client_event() -> None:
     assert event.objects == ((5, "Lamp"),)
     assert NotConfigured in get_args(StoreEvent)
     assert NotConfigured in get_args(ClientEvent)
+
+
+def test_record_sweep_completed_is_a_client_event_the_store_never_raises() -> None:
+    sweep = RecordSweep(records={}, answered_macs=frozenset(), silent_macs=frozenset())
+    assert RecordSweepCompleted(sweep).sweep is sweep
+    assert RecordSweepCompleted in get_args(ClientEvent)
+    assert RecordSweepCompleted not in get_args(StoreEvent)

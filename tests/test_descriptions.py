@@ -28,6 +28,7 @@ from ampio_mqtt import (
     ModuleRecord,
     ModuleUpdated,
     ObjectUpdated,
+    RecordSweepCompleted,
 )
 from ampio_mqtt._protocol import (
     DEVICE_API_LIST_PAYLOAD,
@@ -89,6 +90,22 @@ def panel_params(fields: int) -> str:
     blob += bytes(mask_len) + bytes([0])  # multitouch mask, send mode
     blob += bytes([10, 50])  # dim after 10 s to 50 %
     return base64.b64encode(blob).decode()
+
+
+def roller_params() -> str:
+    """A params blob whose roller section is the one-channel M-REL-2 layout."""
+    section = bytes.fromhex(
+        "00"  # work mode: plain
+        "2800"  # opening: 40 s
+        "2800"  # closing: 40 s
+        "0A"  # calibration: 10 %
+        "6400"  # slat movement: 100 ticks
+        "32"  # reversal lag: 50 ticks
+        "00"  # unlabeled
+        "14"  # start lag, same direction: 20 ticks
+        "0C"  # start lag, other direction: 12 ticks
+    )
+    return base64.b64encode(bytes(33) + section).decode()
 
 
 def _device(
@@ -519,21 +536,73 @@ async def test_resolve_records_reads_the_list_joins_and_merges() -> None:
         }
         assert result.answered_macs == frozenset({0xCB89})
         assert result.silent_macs == frozenset()
-        assert client.objects[64].record == DesignerRecord(
+        assert client.records[64] == DesignerRecord(
             location="Potter", matter_device_type=256, desc="L"
         )
         assert client.objects[64].matter_device_type is None
         assert (DEVICE_API_LIST_REQUEST, DEVICE_API_LIST_PAYLOAD) in broker.published
-        assert [e.object.record.location for e in events] == ["Potter"]
-        assert client.modules[16].record == ModuleRecord(
+        assert client.module_records[0xCB89] == ModuleRecord(
             location="Rozdzielnia", desc="Modul"
         )
-        assert [m.module.record.location for m in module_events] == ["Rozdzielnia"]
-        # The same sweep folds the capability map - no extra request.
-        assert client.modules[16].capabilities == {
+        # The datasets sit beside the models, so no object and no module
+        # changed.
+        assert events == []
+        assert module_events == []
+        # The same sweep fills the capability map - no extra request.
+        assert client.capabilities[0xCB89] == {
             ModuleFunction.BACKLIGHT_RGBW: 18,
             ModuleFunction.KEY_LOCK: 1,
         }
+    finally:
+        await client.disconnect()
+
+
+async def test_resolve_records_fills_the_datasets_and_fires_once() -> None:
+    client, broker = await _admin_client_with_catalogue()
+    try:
+        # An M-REL-2: a board whose roller layout the library has proven,
+        # with a cover of its own beside the relay the fixture catalogues.
+        rows = (
+            {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"},
+            {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"},
+        )
+        feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(*rows))
+        feed(client, ADMIN_DATA_DEVICES_TOPIC, details(*rows))
+        feed(
+            client,
+            ADMIN_DEVICES_TOPIC,
+            devices({"id": 16, "mac": 0xCB89, "typ_urzadzenia": 24, "wersja_pcb": 11}),
+        )
+        events: list[RecordSweepCompleted] = []
+        client.subscribe(events.append, of=RecordSweepCompleted)
+        assert client.last_sweep is None
+        delivery = asyncio.create_task(
+            _deliver_causally(
+                client,
+                broker,
+                json.dumps({"List": [{"id": 14, "opis_menu": "Hall"}]}),
+                _list(
+                    _device(
+                        0xCB89,
+                        0xCB89,
+                        frame(12, 0, 14, 0, "x"),
+                        functions=caps((ModuleFunction.ROLLER, 1)),
+                        params=roller_params(),
+                    )
+                ),
+            )
+        )
+        try:
+            sweep = await client.resolve_records(timeout=1.0)
+        finally:
+            await delivery
+        assert client.last_sweep is sweep
+        assert client.records[64].location == "Hall"
+        assert client.capabilities[0xCB89] == {ModuleFunction.ROLLER: 1}
+        assert client.cover_parameters[70].open_time_s == 40
+        assert client.cover_parameters[70].calibration_percent == 10
+        assert [e.sweep for e in events] == [sweep]
+        assert 0xCB89 in sweep.answered_macs
     finally:
         await client.disconnect()
 
@@ -573,8 +642,7 @@ async def test_resolve_records_decodes_panel_settings_for_a_proven_board() -> No
             await client.resolve_records(timeout=1.0)
         finally:
             await delivery
-        settings = client.modules[16].panel_settings
-        assert settings is not None
+        settings = client.panel_settings[0xCB89]
         # The field count came from the capability, not from a table here.
         assert len(settings.backlight_active) == 4
         assert settings.touch_field_color == (0, 0, 0, 255)
@@ -585,9 +653,7 @@ async def test_resolve_records_decodes_panel_settings_for_a_proven_board() -> No
         await client.disconnect()
 
 
-async def test_resolve_records_leaves_panel_settings_none_for_an_unproven_board() -> (
-    None
-):
+async def test_resolve_records_leaves_an_unproven_board_out_of_panel_settings() -> None:
 
     client, broker = await _admin_client_with_catalogue()
     try:
@@ -617,8 +683,8 @@ async def test_resolve_records_leaves_panel_settings_none_for_an_unproven_board(
         finally:
             await delivery
         # The capability is there, so only the unproven layout stops it.
-        assert client.modules[16].capabilities == {ModuleFunction.BACKLIGHT_RGBW: 18}
-        assert client.modules[16].panel_settings is None
+        assert client.capabilities[0xCB89] == {ModuleFunction.BACKLIGHT_RGBW: 18}
+        assert 0xCB89 not in client.panel_settings
     finally:
         await client.disconnect()
 
@@ -703,7 +769,7 @@ async def test_resolve_records_joins_by_the_override_mac_the_reply_carries() -> 
         }
         assert result.answered_macs == frozenset({0xCB89, 1})
         assert result.silent_macs == frozenset()
-        assert client.modules[1].record == ModuleRecord()
+        assert client.module_records[1] == ModuleRecord()
     finally:
         await client.disconnect()
 
@@ -726,7 +792,7 @@ async def test_resolve_records_counts_an_empty_record_as_answered() -> None:
         assert result.records == {}
         assert result.answered_macs == frozenset({0xCB89})
         assert result.silent_macs == frozenset()
-        assert client.objects[64].record is None
+        assert 64 not in client.records
     finally:
         await client.disconnect()
 
@@ -742,6 +808,7 @@ async def test_resolve_records_raises_when_the_list_never_answers() -> None:
                 await client.resolve_records(timeout=0.2)
         finally:
             await delivery
-        assert client.objects[64].record is None
+        assert client.records == {}
+        assert client.last_sweep is None
     finally:
         await client.disconnect()

@@ -153,7 +153,7 @@ async def run(
                 print(f"no module on row {a.module}")
                 return 1
             print(f"row {a.module}: {module.model or '?'}")
-            for fn, count in sorted(module.capabilities.items()):
+            for fn, count in sorted(client.capabilities.get(module.mac, {}).items()):
                 try:
                     name = ModuleFunction(fn).name
                 except ValueError:
@@ -175,14 +175,15 @@ async def run(
         print(header)
         shown = 0
         for row, m in modules.items():
-            if wanted is not None and wanted not in m.capabilities:
+            caps = client.capabilities.get(m.mac, {})
+            if wanted is not None and wanted not in caps:
                 continue
             shown += 1
             volt = f"{m.supply_voltage:.1f}" if m.supply_voltage is not None else "-"
             temp = f"{m.temperature:.0f}" if m.temperature is not None else "-"
             line = (
                 f"{row:>4}  {(m.model or '?'):<12} {m.wersja_softu or '-'!s:>4} "
-                f"{volt:>6} {temp:>6}  {len(m.capabilities):>2}"
+                f"{volt:>6} {temp:>6}  {len(caps):>2}"
             )
             if a.show_names:
                 line += f"  {m.nazwa_urzadzenia or '-'}"

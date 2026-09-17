@@ -17,20 +17,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import AmpioModule, AmpioObject, PresenceDetection, PresenceSimulation
+from .models import (
+    AmpioModule,
+    AmpioObject,
+    PresenceDetection,
+    PresenceSimulation,
+    RecordSweep,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class ObjectUpdated:
     """An object's state or metadata changed.
 
-    Fires on live pushes, raw-channel edges, snapshot corrections,
-    catalogue rows that actually changed something, and a
-    :meth:`AmpioAdminClient.resolve_records` pass that changed the object's
-    ``record`` - a re-requested catalogue that says nothing new
-    dispatches nothing. A catalogue row
-    establishing an id the store did not already hold dispatches the
-    :class:`ObjectAdded` subclass instead.
+    Fires on live pushes, raw-channel edges, snapshot corrections, and
+    catalogue rows that actually changed something. A re-requested
+    catalogue that says nothing new dispatches nothing, and a
+    :meth:`AmpioAdminClient.resolve_records` pass changes no object field
+    at all. A catalogue row establishing an id the store did not already
+    hold dispatches the :class:`ObjectAdded` subclass instead.
     """
 
     object: AmpioObject
@@ -97,12 +102,13 @@ class PresenceChanged:
 
 @dataclass(frozen=True, slots=True)
 class ModuleUpdated:
-    """A module's catalogue row, its diagnostics broadcast, or its record changed.
+    """A module's catalogue row or its diagnostics broadcast changed.
 
-    Fires for a module the list adds or changes, for each diagnostics
-    broadcast, and for a :meth:`AmpioAdminClient.resolve_records` pass that
-    changed its ``record``. All three sources are administrator-only, so it
-    never fires on a standard account.
+    Fires for a module the list adds or changes and for each diagnostics
+    broadcast. Both sources are administrator-only, so it never fires on a
+    standard account. A :meth:`AmpioAdminClient.resolve_records` pass
+    changes no module field, and reports itself with
+    :class:`RecordSweepCompleted`.
     """
 
     module: AmpioModule
@@ -117,6 +123,19 @@ class ModuleRemoved:
     """
 
     module: AmpioModule
+
+
+@dataclass(frozen=True, slots=True)
+class RecordSweepCompleted:
+    """One :meth:`AmpioAdminClient.resolve_records` pass finished.
+
+    Carries the :class:`RecordSweep` the call returned. The datasets on
+    the admin client changed with it, so a consumer that reads them
+    refreshes on this event. Dispatched from the caller's task, once per
+    pass, on the admin client alone.
+    """
+
+    sweep: RecordSweep
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,4 +214,10 @@ StoreEvent = (
 )
 
 # Everything a subscriber can receive.
-ClientEvent = StoreEvent | AvailabilityChanged | AuthFailed | ConnectionDied
+ClientEvent = (
+    StoreEvent
+    | RecordSweepCompleted
+    | AvailabilityChanged
+    | AuthFailed
+    | ConnectionDied
+)

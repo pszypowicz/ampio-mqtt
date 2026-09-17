@@ -36,7 +36,7 @@ class ModuleFunction(IntEnum):
 
     The ids and names are the Designer's own. Membership is limited to
     ids a module on the baseline install advertises, so an id here is one
-    the wire has shown. :pyattr:`AmpioModule.capabilities` is keyed by the
+    the wire has shown. :pyattr:`AmpioAdminClient.capabilities` is keyed by the
     raw id, so an id without a member still reads through under its
     number.
 
@@ -189,13 +189,10 @@ class ThermostatState:
 class DesignerRecord:
     """One object's entry of its module's CAN description record.
 
-    Admin-guarded: only :meth:`AmpioAdminClient.resolve_records` fills it, and
-    only the admin tier can run that sweep, so ``AmpioObject.record`` is
-    None on the restricted tier and before a sweep covers the object. A
-    None field inside means the entry carries no value: an unassigned
-    location, an untagged type, an empty description.
-    docs/description-records.md holds the wire shape, docs/account-tiers.md
-    the tier rule.
+    An entry of :pyattr:`AmpioAdminClient.records`. A None field means the
+    entry carries no value: an unassigned location, an untagged type, an
+    empty description. docs/description-records.md holds the wire shape,
+    docs/account-tiers.md the tier rule.
     """
 
     location: str | None = None
@@ -207,11 +204,12 @@ class DesignerRecord:
 class RecordSweep:
     """What one :meth:`AmpioAdminClient.resolve_records` pass covered.
 
-    ``records`` is the join result. The two mac sets separate the case a
-    bare record map cannot: a module in ``answered_macs`` whose object
-    still reads ``record`` None carries no entry for that output, while a
+    ``records`` is this pass's join result, while the datasets on the
+    admin client accumulate across passes. The two mac sets separate the
+    case a bare record map cannot. A module in ``answered_macs`` with no
+    entry for one of its outputs answered and carries none for it. A
     module in ``silent_macs`` is catalogued but missing from the device
-    list reply and says nothing either way. The M-SERV's own row is a
+    list reply, and says nothing either way. The M-SERV's own row is a
     device like any other in both sets.
     """
 
@@ -224,9 +222,9 @@ class RecordSweep:
 class ModuleRecord:
     """The DEVICE_NAME entry of a module's CAN description record.
 
-    Admin-guarded, exactly as :class:`DesignerRecord` is. ``location`` is
+    An entry of :pyattr:`AmpioAdminClient.module_records`. ``location`` is
     the module-level "Lokalizacja" (where the box is mounted, not where
-    its loads are) and ``desc`` the CAN-resident module name; either can
+    its loads are) and ``desc`` the CAN-resident module name. Either can
     differ from the admin catalogue row.
     """
 
@@ -255,9 +253,9 @@ class PanelSettings:
 
     These are the panel's configured defaults, held in the module and
     read back with the rest of its record. They are what the panel
-    returns to after a restart. Admin-guarded, exactly as
-    :class:`ModuleRecord` is, and None on a module whose panel layout
-    this library has not proven.
+    returns to after a restart. An entry of
+    :pyattr:`AmpioAdminClient.panel_settings`, which carries no entry for
+    a module whose panel layout this library has not proven.
 
     Every per-field tuple is as long as the panel has touch fields, so
     index 0 is field 1. docs/description-records.md holds the wire shape.
@@ -295,8 +293,9 @@ class CoverParameters:
 
     These are the values the Designer shows under "Roller blinds
     parameters", held in the module and read back with the rest of its
-    record. Admin-guarded, exactly as :class:`PanelSettings` is, and None
-    on a board whose roller layout this library has not proven.
+    record. An entry of :pyattr:`AmpioAdminClient.cover_parameters`, which
+    carries no entry for a board whose roller layout this library has not
+    proven.
 
     This is configuration, not state. :pyattr:`AmpioObject.block` is the
     live roller lock the module pushes, and it says nothing about travel.
@@ -362,10 +361,10 @@ class AmpioObject:
     # Matter device type ID from the Designer "Description in device" tag
     # (`type` column; "256" = 0x0100 On/Off Light). None when untagged. A
     # pure catalogue fact, served identically to both tiers and never
-    # mutated after the seed; the record's own (fresher, admin-only) tag
-    # is `record.matter_device_type`, and which one wins is the
-    # consumer's choice. docs/identity.md holds the vocabulary and the
-    # storage path.
+    # mutated after the seed. The description record's own (fresher,
+    # admin-only) tag is `DesignerRecord.matter_device_type`, and which one
+    # wins is the consumer's choice. docs/identity.md holds the vocabulary
+    # and the storage path.
     matter_device_type: int | None = None
     # The `czas` column as served, in the wire unit of 10 ms ticks. Its
     # meaning follows the component type: Designer's "turn-on time" on the
@@ -383,15 +382,6 @@ class AmpioObject:
     # optionally followed by a unit ("%.3f A"). The catalogue carries it
     # on both tiers. `unit` and `decimals` read it.
     format: str = ""
-    # The object's description-record entry, admin sweep only; None on
-    # the restricted tier and before a sweep covers the object.
-    record: DesignerRecord | None = None
-    # The stored travel configuration of this cover's channel, read from
-    # the module's params blob during a sweep. Admin sweep only, and None
-    # on anything that is not a cover on a board whose roller layout this
-    # library has proven. `block` is the live lock the module pushes, and
-    # it is a different fact from a different surface.
-    cover_parameters: CoverParameters | None = None
     # What this object is. Derived - never passed: computed from
     # `typ_komponentu` and `interpretacja` on every construction,
     # `dataclasses.replace` included, so no instance can hold a kind that
@@ -414,15 +404,6 @@ class AmpioObject:
     # `blocks_opening` read the bits. docs/commands.md holds the Designer
     # actions that set them.
     block: int | None = None
-    # Whether a lock write for this cover reaches its module, read from the
-    # module's capability map during a sweep. True when the module answered
-    # and advertises a roller channel count covering this channel, False when
-    # it answered and does not, None until a sweep covers it - so a consumer
-    # that builds controls before `resolve_records()` must not read None as
-    # False. The count both gates the write and sizes its channel mask.
-    # Admin sweep only, and None on anything that is not a cover.
-    # docs/panel-writes.md carries what the wire answered.
-    block_writable: bool | None = None
     # Climate readback, from the rich state shape only `reg` objects push.
     # None until a reg-shaped report arrives; a later report that lacks the
     # shape keeps the last readback, like `lammel` does.
@@ -701,18 +682,6 @@ class AmpioModule:
     # Decoration for device info only - never a topology input. None when
     # unclassified.
     mounting: Mounting | None = field(init=False)
-    # The module's DEVICE_NAME record entry, admin sweep only; None
-    # until a sweep covers the module.
-    record: ModuleRecord | None = None
-    # What the module reports it can do, as `{function id: channel count}`
-    # (#197). Admin sweep only, so it stays empty on a standard account and
-    # until a sweep covers the module. Index it with `ModuleFunction`; an id
-    # without a member reads through under its raw number.
-    capabilities: Mapping[int, int] = field(default_factory=dict)
-    # The panel's stored appearance and behaviour settings (#194). Admin
-    # sweep only, and None on anything that is not a touch panel whose
-    # params layout this library has proven.
-    panel_settings: PanelSettings | None = None
     # Local epoch seconds when this process last received live evidence of
     # the module: a state push or raw edge for one of its objects, or its own
     # diagnostics broadcast. One clock only - snapshot and catalogue seeds do

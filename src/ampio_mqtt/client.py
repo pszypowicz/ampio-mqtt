@@ -76,6 +76,7 @@ from .events import (
     ConnectionDied,
     ObjectRemoved,
     ObjectUpdated,
+    RecordSweepCompleted,
 )
 from .models import (
     AmpioModule,
@@ -83,7 +84,11 @@ from .models import (
     AmpioScene,
     AmpioServerInfo,
     ConnectionStats,
+    CoverParameters,
+    DesignerRecord,
     ModuleFunction,
+    ModuleRecord,
+    PanelSettings,
     PresenceDetection,
     PresenceSimulation,
     RecordSweep,
@@ -1425,6 +1430,8 @@ class AmpioAdminClient(AmpioClient):
         # garbage-collected mid-publish.
         self._digests: dict[str, str] = {}
         self._module_list_tasks: set[asyncio.Task[None]] = set()
+        # What the last resolve_records() pass covered. None until one runs.
+        self._last_sweep: RecordSweep | None = None
         self._module_list_endpoint = ENDPOINT_BY_NAME["devices"]
         super().__init__(
             host,
@@ -1584,6 +1591,52 @@ class AmpioAdminClient(AmpioClient):
         """
         return self._store.module_by_mac(obj.address.mac)
 
+    @property
+    def records(self) -> Mapping[int, DesignerRecord]:
+        """Each object's description-record entry, by object id.
+
+        Present: the module answered a sweep and carries the entry. Absent
+        with the object's ``address.mac`` in ``last_sweep.answered_macs``:
+        the module answered and carries no entry, which holds until the
+        next sweep. Absent with the mac not answered: not known.
+        docs/description-records.md.
+        """
+        return MappingProxyType(self._store.records)
+
+    @property
+    def cover_parameters(self) -> Mapping[int, CoverParameters]:
+        """Each cover's stored travel parameters, by object id, under the
+        rule :pyattr:`records` states."""
+        return MappingProxyType(self._store.cover_parameters)
+
+    @property
+    def module_records(self) -> Mapping[int, ModuleRecord]:
+        """Each module's DEVICE_NAME entry, by mac, under the rule
+        :pyattr:`records` states."""
+        return MappingProxyType(self._store.module_records)
+
+    @property
+    def capabilities(self) -> Mapping[int, Mapping[int, int]]:
+        """Each module's ``{function id: channel count}`` map, by mac.
+
+        Every module that answered a sweep has an entry, an empty map when
+        it advertises nothing. Index a map with :class:`ModuleFunction`; an
+        id without a member reads through under its number.
+        """
+        return MappingProxyType(self._store.capabilities)
+
+    @property
+    def panel_settings(self) -> Mapping[int, PanelSettings]:
+        """Each touch panel's stored settings, by mac, under the rule
+        :pyattr:`records` states."""
+        return MappingProxyType(self._store.panel_settings)
+
+    @property
+    def last_sweep(self) -> RecordSweep | None:
+        """What the last :meth:`resolve_records` pass covered, or None
+        before the first."""
+        return self._last_sweep
+
     def diagnostics_snapshot(self) -> dict[str, Any]:
         """The base report plus what the module catalogue adds.
 
@@ -1617,7 +1670,7 @@ class AmpioAdminClient(AmpioClient):
 
         The name table the per-output location pointer resolves through;
         :meth:`resolve_records` consumes it and per-object consumers read
-        :pyattr:`AmpioObject.record` instead.
+        :pyattr:`records` instead.
 
         Requires ``connect()`` to have completed. Raises
         ``AmpioConnectionError`` if the broker is not connected and
@@ -1636,26 +1689,20 @@ class AmpioAdminClient(AmpioClient):
 
         Fetches the locations name table, reads the ``device_api`` list
         reply - one message carrying every catalogued module's record,
-        the M-SERV's own included - joins the entries to objects, and
-        folds each joined object's entry into :pyattr:`AmpioObject.record`
-        - wholesale, None fields included - with :class:`ObjectUpdated`
-        dispatched on change. The same record's DEVICE_NAME entry folds
-        into :pyattr:`AmpioModule.record` with :class:`ModuleUpdated`
-        (#114). The catalogue facts (``matter_device_type``,
-        ``opis_menu``) are never touched: the record is the separate,
-        admin-guarded fact (#133).
-
-        The same pass also fills :pyattr:`AmpioModule.capabilities`,
-        :pyattr:`AmpioModule.panel_settings`, and
-        :pyattr:`AmpioObject.cover_parameters` from the same reply.
+        the M-SERV's own included - and joins the entries to objects. The
+        result replaces the five datasets (:pyattr:`records`,
+        :pyattr:`cover_parameters`, :pyattr:`module_records`,
+        :pyattr:`capabilities`, :pyattr:`panel_settings`) for every mac
+        the reply answered, sets :pyattr:`last_sweep`, and dispatches one
+        :class:`RecordSweepCompleted`. The catalogue facts
+        (``matter_device_type``, ``opis_menu``) are never touched: the
+        record is the separate, admin-guarded fact (#133).
 
         Returns a :class:`RecordSweep`. Its ``records`` map is
-        ``{object_id: DesignerRecord}`` for what resolved, and its two
-        mac sets say which modules the reply listed and which catalogued
-        modules it left out - a caller
-        that reads ``record`` None needs them to tell an empty entry from
-        an unlisted module. An object absent from a pass keeps its
-        previous ``record`` until a later pass covers it.
+        ``{object_id: DesignerRecord}`` for what this pass resolved, and
+        its two mac sets say which modules the reply listed and which
+        catalogued modules it left out. A module the reply left out keeps
+        every dataset entry an earlier pass gave it.
 
         ``timeout`` bounds each of the two replies, the name table and
         the list, so the call ends within twice that.
@@ -1713,7 +1760,8 @@ class AmpioAdminClient(AmpioClient):
             {device.mac: device.capabilities for device in devices},
             self._store.colliding_macs,
         )
-        applied = self._store.apply_designer_records(
+        self._store.apply_sweep(
+            frozenset(by_mac),
             resolved,
             _protocol.resolve_cover_parameters(
                 self._store.objects,
@@ -1722,9 +1770,6 @@ class AmpioAdminClient(AmpioClient):
                 hardware_by_mac,
                 self._store.colliding_macs,
             ),
-            _protocol.resolve_roller_lock_support(self._store.objects, capabilities),
-        )
-        module_applied = self._store.apply_module_sweep(
             _protocol.resolve_module_records(by_mac, names, self._store.colliding_macs),
             capabilities,
             _protocol.resolve_panel_settings(
@@ -1734,13 +1779,14 @@ class AmpioAdminClient(AmpioClient):
                 self._store.colliding_macs,
             ),
         )
-        for event in (*applied.events, *module_applied.events):
-            self._dispatch(event)
-        return RecordSweep(
+        sweep = RecordSweep(
             records=dict(resolved),
             answered_macs=frozenset(by_mac),
             silent_macs=silent,
         )
+        self._last_sweep = sweep
+        self._dispatch(RecordSweepCompleted(sweep))
+        return sweep
 
     def _raw_output_address(self, object_id: int) -> tuple[int, int, int] | None:
         """The (module mac, frame channel, function byte) of an output the
@@ -2010,9 +2056,10 @@ class AmpioAdminClient(AmpioClient):
         most installs configure.
 
         This is a runtime override, not a setting. It takes effect at
-        once, writes no configuration, and a panel restart restores
-        :pyattr:`AmpioModule.panel_settings`, its stored default. Nothing
-        on the bus reports the current colour, so there is no readback.
+        once, writes no configuration, and a panel restart restores the
+        module's :pyattr:`panel_settings` entry, its stored default.
+        Nothing on the bus reports the current colour, so there is no
+        readback.
 
         ``AmpioValueError`` for an out-of-range value, including a field
         above :data:`MAX_PANEL_FIELD`, or an unknown module, both before
@@ -2102,10 +2149,6 @@ class AmpioAdminClient(AmpioClient):
         the ordinary roller moves on the same destination and discards a
         lock frame in silence (docs/panel-writes.md, "Cover roller lock").
         Raising beats publishing a frame that vanishes.
-
-        :pyattr:`AmpioObject.block_writable` answers the same question
-        without raising, from the same rule, so a consumer can leave the
-        control out instead of catching this.
         """
         obj = self._store.objects.get(object_id)
         if obj is None:
@@ -2116,8 +2159,7 @@ class AmpioAdminClient(AmpioClient):
                 "no roller channel is its own"
             )
         mac, channel = obj.address.mac, obj.address.channel
-        module = self.module_for(obj)
-        capabilities = module.capabilities if module is not None else {}
+        capabilities = self._store.capabilities.get(mac, {})
         channels = roller_lock_channels(capabilities, channel)
         if channels is None:
             advertised = capabilities.get(ModuleFunction.ROLLER)

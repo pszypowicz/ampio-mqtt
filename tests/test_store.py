@@ -72,7 +72,6 @@ from ampio_mqtt.models import (
     AmpioObject,
     CoverParameters,
     DesignerRecord,
-    ModuleFunction,
     ModuleRecord,
     PanelSettings,
     ThermostatState,
@@ -190,6 +189,32 @@ def _catalogue_row(**overrides: object) -> dict:
 
 # A module whose mac is 0xCAFE, so its raw topics are `ampio/from/CAFE/...`.
 _PANEL = {"id": 7, "mac": 0xCAFE, "typ_urzadzenia": 11, "nazwa_urzadzenia": "panel"}
+
+# The stored settings of a two-field touch panel, as a sweep reads them.
+_PANEL_SETTINGS = PanelSettings(
+    touch_field_color=(0, 0, 0, 255),
+    status_color=(255, 10, 10),
+    light_signal=(1, 1),
+    beep_time=2,
+    sound_signal=(True, True),
+    backlight_active=(True, True),
+    multitouch_lock=(False, False),
+    multitouch_send_count=False,
+    dim_after_s=10,
+    dim_brightness=50,
+)
+
+# The stored travel configuration of one cover channel, as a sweep reads it.
+_COVER_PARAMS = CoverParameters(
+    with_slats=False,
+    open_time_s=40,
+    close_time_s=40,
+    calibration_percent=10,
+    slat_time_ms=1000,
+    reversal_lag_ms=500,
+    start_lag_same_ms=None,
+    start_lag_other_ms=None,
+)
 
 
 def _flaga_row(oid: int, funkcja: int, mac: int = 0xCAFE) -> dict:
@@ -934,15 +959,15 @@ def test_a_malformed_leaf_refuses_the_reply_whole() -> None:
 def test_a_leaf_that_disappears_after_admission_evicts_the_row() -> None:
     store = _store()
     _feed_catalogue(store, {"id": 41, "typ_komponentu": "przekaznik"})
-    store.apply_designer_records({41: DesignerRecord(location="Hall")}, {}, {})
-    assert store.objects[41].record is not None
+    _sweep(store, {0xCAFE}, records={41: DesignerRecord(location="Hall")})
+    assert 41 in store.records
     applied = _feed_catalogue(store, {"id": 41, "leafId": ""})
     assert [type(e) for e in applied.events] == [ObjectRemoved, NotConfigured]
     assert store.not_configured == ((41, None),)
     restored = _feed_catalogue(store, {"id": 41, "typ_komponentu": "przekaznik"})
     assert [type(e) for e in restored.events] == [ObjectAdded]
     assert store.not_configured == ()
-    assert store.objects[41].record is None
+    assert 41 not in store.records
 
 
 def test_not_configured_reports_a_change_of_the_rejected_set_only() -> None:
@@ -951,18 +976,6 @@ def test_not_configured_reports_a_change_of_the_rejected_set_only() -> None:
     again = _feed_catalogue(store, {"id": 41, "leafId": ""})
     assert len(_not_configured(first)) == 1
     assert _not_configured(again) == []
-
-
-def test_a_moved_leaf_drops_the_held_sweep_entries() -> None:
-    store = _store()
-    _feed_catalogue(store, {"id": 41, "typ_komponentu": "przekaznik"})
-    store.apply_designer_records({41: DesignerRecord(location="Hall")}, {}, {})
-    applied = _feed_catalogue(
-        store, {"id": 41, "typ_komponentu": "przekaznik", "leafId": "0_cafe_257_0_1"}
-    )
-    obj = _updated(applied)[-1]
-    assert obj.address == ModuleAddress(mac=0xCAFE, channel=1, sf_id=257, sub_sf_id=0)
-    assert obj.record is None
 
 
 def test_a_refused_catalogue_leaves_the_held_reply_untouched() -> None:
@@ -1491,107 +1504,6 @@ def test_wej_per_object_edge_reads_255_as_on() -> None:
     assert store.objects[63].is_on is True
     _apply(store, f"ampio/fromDB/{USER}/ob/63/state", '{"state": "0", "on": 1701}')
     assert store.objects[63].is_on is False
-
-
-def test_module_record_survives_refresh_and_eviction() -> None:
-    """The catalogue never carries the record entry; the held table
-    re-applies it on every merge, including re-creation after eviction."""
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    rec = ModuleRecord(location="Rozdzielnia", desc="Panel")
-    applied = store.apply_module_sweep({0xCAFE: rec}, {}, {})
-    assert store.modules[7].record == rec
-    assert [e.module.record for e in applied.events] == [rec]
-
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # refresh keeps it
-    assert store.modules[7].record == rec
-
-    _apply(store, DEVICES_TOPIC, devices())  # evict
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # re-add re-applies
-    assert store.modules[7].record == rec
-
-
-def test_module_record_unswept_mac_is_untouched() -> None:
-    """A sweep that does not cover a module leaves its record standing."""
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    store.apply_module_sweep({0xCAFE: ModuleRecord(location="Rozdzielnia")}, {}, {})
-    applied = store.apply_module_sweep({}, {}, {})
-    assert store.modules[7].record == ModuleRecord(location="Rozdzielnia")
-    assert applied.events == []
-    # The empty bundle is authoritative: the module answered, unassigned.
-    applied = store.apply_module_sweep({0xCAFE: ModuleRecord()}, {}, {})
-    assert store.modules[7].record == ModuleRecord()
-    assert [e.module.record for e in applied.events] == [ModuleRecord()]
-
-
-def test_module_capabilities_survive_refresh_and_eviction() -> None:
-    """The catalogue never carries capabilities; the held table re-applies
-    them on every merge, including re-creation after eviction."""
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    caps: dict[int, int] = {
-        ModuleFunction.BACKLIGHT_RGBW: 18,
-        ModuleFunction.KEY_LOCK: 1,
-    }
-    applied = store.apply_module_sweep({}, {0xCAFE: caps}, {})
-    assert store.modules[7].capabilities == caps
-    assert [e.module.capabilities for e in applied.events] == [caps]
-
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # refresh keeps them
-    assert store.modules[7].capabilities == caps
-
-    _apply(store, DEVICES_TOPIC, devices())  # evict
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # re-add re-applies
-    assert store.modules[7].capabilities == caps
-
-
-def test_module_capabilities_unswept_mac_is_untouched() -> None:
-    """A sweep that does not cover a module leaves its capabilities standing."""
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    store.apply_module_sweep({}, {0xCAFE: {ModuleFunction.BUZZER: 1}}, {})
-    applied = store.apply_module_sweep({}, {}, {})
-    assert store.modules[7].capabilities == {ModuleFunction.BUZZER: 1}
-    assert applied.events == []
-    # An empty map is authoritative: the module answered, advertising nothing.
-    applied = store.apply_module_sweep({}, {0xCAFE: {}}, {})
-    assert store.modules[7].capabilities == {}
-    assert [e.module.capabilities for e in applied.events] == [{}]
-
-
-def test_panel_settings_survive_refresh_and_eviction() -> None:
-    """The catalogue never carries panel settings; the held table re-applies
-    them on every merge, including re-creation after eviction."""
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    settings = PanelSettings(
-        touch_field_color=(0, 0, 0, 255),
-        status_color=(255, 10, 10),
-        light_signal=(1, 1),
-        beep_time=2,
-        sound_signal=(True, True),
-        backlight_active=(True, True),
-        multitouch_lock=(False, False),
-        multitouch_send_count=False,
-        dim_after_s=10,
-        dim_brightness=50,
-    )
-    applied = store.apply_module_sweep({}, {}, {0xCAFE: settings})
-    assert store.modules[7].panel_settings == settings
-    assert [e.module.panel_settings for e in applied.events] == [settings]
-
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # refresh keeps them
-    assert store.modules[7].panel_settings == settings
-
-    _apply(store, DEVICES_TOPIC, devices())  # evict
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # re-add re-applies
-    assert store.modules[7].panel_settings == settings
-
-    # A sweep that does not cover the module leaves the settings standing.
-    applied = store.apply_module_sweep({}, {}, {})
-    assert store.modules[7].panel_settings == settings
-    assert applied.events == []
 
 
 # --- the two presence rows ---------------------------------------------------
@@ -2572,223 +2484,116 @@ def test_colliding_override_macs_warn_once_and_surface(
     assert store.colliding_macs == frozenset()
 
 
-# --- Designer record bundles -------------------------------------------------
+# --- the sweep datasets ------------------------------------------------------
 
 
-def _seed_catalogue(store: AmpioStore, *rows: dict) -> Applied:
-    """Apply an object-catalogue reply carrying `rows` (or none)."""
-    return _feed_catalogue(store, *rows)
-
-
-def test_apply_designer_records_sets_the_bundle() -> None:
-    store = AdminStore()
-    _seed_catalogue(
-        store, {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
+def _sweep(store: AdminStore, answered: set[int], **datasets: dict) -> None:
+    """One sweep pass: the macs that answered and what they carried."""
+    store.apply_sweep(
+        frozenset(answered),
+        datasets.get("records", {}),
+        datasets.get("cover_parameters", {}),
+        datasets.get("module_records", {}),
+        datasets.get("capabilities", {}),
+        datasets.get("panel_settings", {}),
     )
-    rec = DesignerRecord(location="Potter", matter_device_type=256, desc="Lampa")
-    applied = store.apply_designer_records({64: rec}, {}, {})
-    assert store.objects[64].record == rec
-    assert [e.object.id for e in applied.events] == [64]
-    # Re-applying the identical table is not news.
-    assert store.apply_designer_records({64: rec}, {}, {}).events == []
 
 
-def test_sweep_never_touches_the_catalogue_type_column() -> None:
-    store = AdminStore()
-    _seed_catalogue(
+def test_a_sweep_holds_the_datasets_by_id_and_by_mac() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA))
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    _sweep(
         store,
-        {
-            "id": 5,
-            "typ_komponentu": "przekaznik",
-            "leafId": "0_cb89_257_2_1",
-            "type": "266",
+        {0xA},
+        records={41: DesignerRecord(location="Hall")},
+        cover_parameters={41: _COVER_PARAMS},
+        module_records={0xA: ModuleRecord(desc="Box")},
+        capabilities={0xA: {5: 4}},
+    )
+    assert store.records[41] == DesignerRecord(location="Hall")
+    assert store.cover_parameters[41] == _COVER_PARAMS
+    assert store.module_records[0xA] == ModuleRecord(desc="Box")
+    assert store.capabilities[0xA] == {5: 4}
+
+
+def test_a_sweep_replaces_every_entry_of_an_answered_mac() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB))
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA), _flaga_row(42, 3, mac=0xB))
+    _sweep(
+        store,
+        {0xA, 0xB},
+        records={
+            41: DesignerRecord(location="Hall"),
+            42: DesignerRecord(location="Bath"),
         },
+        cover_parameters={41: _COVER_PARAMS, 42: _COVER_PARAMS},
+        capabilities={0xA: {5: 4}, 0xB: {}},
+        panel_settings={0xA: _PANEL_SETTINGS, 0xB: _PANEL_SETTINGS},
     )
-    store.apply_designer_records(
-        {5: DesignerRecord(location="Testowe", matter_device_type=256)}, {}, {}
+    _sweep(store, {0xA}, records={}, capabilities={0xA: {}})
+    assert 41 not in store.records
+    assert 41 not in store.cover_parameters
+    assert store.records[42] == DesignerRecord(location="Bath")
+    assert store.cover_parameters[42] == _COVER_PARAMS
+    assert store.capabilities == {0xA: {}, 0xB: {}}
+    assert list(store.panel_settings) == [0xB]
+
+
+def test_a_sweep_emits_nothing() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA))
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    assert (
+        store.apply_sweep(
+            frozenset({0xA}), {41: DesignerRecord()}, {}, {}, {0xA: {}}, {}
+        )
+        is None
     )
-    assert store.objects[5].matter_device_type == 266
-    assert store.objects[5].record == DesignerRecord(
-        location="Testowe", matter_device_type=256
-    )
 
 
-def test_record_replaces_wholesale() -> None:
-    store = AdminStore()
-    row = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
-    _seed_catalogue(store, row)
-    store.apply_designer_records(
-        {64: DesignerRecord(location="Potter", matter_device_type=256, desc="Lampa")},
-        {},
-        {},
-    )
-    applied = store.apply_designer_records(
-        {64: DesignerRecord(location="Salon")}, {}, {}
-    )
-    assert store.objects[64].record == DesignerRecord(location="Salon")
-    assert [e.object.id for e in applied.events] == [64]
-
-
-def test_held_records_accumulate_across_partial_sweeps() -> None:
-    store = AdminStore()
-    row_a = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
-    row_b = {"id": 48, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_1"}
-    _seed_catalogue(store, row_a, row_b)
-    store.apply_designer_records({64: DesignerRecord(location="Potter")}, {}, {})
-    store.apply_designer_records({48: DesignerRecord(location="Salon")}, {}, {})
-    _seed_catalogue(store, row_a, row_b)  # a refresh re-applies both
-    assert store.objects[64].record == DesignerRecord(location="Potter")
-    assert store.objects[48].record == DesignerRecord(location="Salon")
-
-
-def test_record_for_an_unknown_id_waits_for_the_catalogue() -> None:
-    """A resolution racing ahead of the catalogue (or arriving for an
-    object just evicted) creates no placeholder - the held table applies
-    it once the id's own catalogue row lands."""
-    store = AdminStore()
-    applied = store.apply_designer_records({999: DesignerRecord(location="X")}, {}, {})
-    assert applied.events == []
-    assert store.objects == {}
-    _seed_catalogue(
-        store, {"id": 999, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
-    )
-    assert store.objects[999].record == DesignerRecord(location="X")
-
-
-def test_apply_designer_records_folds_both_maps_into_one_event() -> None:
-    store = AdminStore()
-    _seed_catalogue(
+def test_an_eviction_drops_the_object_datasets() -> None:
+    store = _store()
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    _sweep(
         store,
-        {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"},
+        {0xA},
+        records={41: DesignerRecord(location="Hall")},
+        cover_parameters={41: _COVER_PARAMS},
     )
-    rec = DesignerRecord(location="Potter", desc="Roleta")
-    params = CoverParameters(
-        with_slats=False,
-        open_time_s=40,
-        close_time_s=40,
-        calibration_percent=10,
-        slat_time_ms=1000,
-        reversal_lag_ms=500,
-        start_lag_same_ms=None,
-        start_lag_other_ms=None,
-    )
-    applied = store.apply_designer_records({70: rec}, {70: params}, {})
-    assert store.objects[70].record == rec
-    assert store.objects[70].cover_parameters == params
-    assert [e.object.id for e in applied.events] == [70]
-    # Re-applying the identical pair is not news.
-    assert store.apply_designer_records({70: rec}, {70: params}, {}).events == []
+    _feed_catalogue(store)
+    assert 41 not in store.records
+    assert 41 not in store.cover_parameters
 
 
-def test_an_eviction_drops_the_held_cover_parameters() -> None:
-    """A sweep result belongs to an admitted object, so an eviction takes
-    it with the object and the row that returns waits for a fresh sweep."""
-    store = AdminStore()
-    row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
-    _seed_catalogue(store, row)
-    params = CoverParameters(
-        with_slats=True,
-        open_time_s=52,
-        close_time_s=52,
-        calibration_percent=10,
-        slat_time_ms=1500,
-        reversal_lag_ms=500,
-        start_lag_same_ms=200,
-        start_lag_other_ms=120,
-    )
-    store.apply_designer_records({}, {70: params}, {})
-    _seed_catalogue(store)  # eviction: empty catalogue
-    _seed_catalogue(store, row)  # the row returns
-    assert store.objects[70].cover_parameters is None
-
-
-def test_a_kind_change_drops_the_held_cover_parameters() -> None:
-    """``cover_parameters`` is None on anything outside the roller class, so
-    a row that leaves the class clears the field and the held entry both. A
-    later return to the class waits for a sweep rather than folding the old
-    value back (#219)."""
-    store = AdminStore()
-    row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
-    _seed_catalogue(store, row)
-    params = CoverParameters(
-        with_slats=False,
-        open_time_s=40,
-        close_time_s=40,
-        calibration_percent=10,
-        slat_time_ms=1000,
-        reversal_lag_ms=500,
-        start_lag_same_ms=None,
-        start_lag_other_ms=None,
-    )
-    store.apply_designer_records({}, {70: params}, {})
-    _seed_catalogue(store, {**row, "typ_komponentu": "przekaznik"})
-    assert store.objects[70].cover_parameters is None
-    _seed_catalogue(store, row)
-    assert store.objects[70].cover_parameters is None
-
-
-def test_apply_designer_records_folds_the_lock_support() -> None:
-    store = AdminStore()
-    _seed_catalogue(
+def test_a_moved_leaf_drops_the_object_datasets() -> None:
+    store = _store()
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    _sweep(
         store,
-        {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"},
+        {0xA},
+        records={41: DesignerRecord(location="Hall")},
+        cover_parameters={41: _COVER_PARAMS},
     )
-    applied = store.apply_designer_records({}, {}, {70: True})
-    assert store.objects[70].block_writable is True
-    assert [e.object.id for e in applied.events] == [70]
-    # Re-applying the identical answer is not news.
-    assert store.apply_designer_records({}, {}, {70: True}).events == []
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xB))
+    assert 41 not in store.records
+    assert 41 not in store.cover_parameters
 
 
-def test_an_eviction_drops_the_held_lock_support() -> None:
-    """False is an answer for the object the sweep covered, so the row that
-    returns reads the unresolved None until a sweep answers for it again."""
-    store = AdminStore()
-    row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
-    _seed_catalogue(store, row)
-    store.apply_designer_records({}, {}, {70: False})
-    _seed_catalogue(store)  # eviction: empty catalogue
-    _seed_catalogue(store, row)  # the row returns
-    assert store.objects[70].block_writable is None
+def test_the_base_store_holds_no_dataset() -> None:
+    store = _app_store()
+    _feed_catalogue(store, {"id": 41})
+    assert not hasattr(store, "records")
+    _feed_catalogue(store)
+    assert 41 not in store.objects
 
 
-def test_a_kind_change_drops_the_held_lock_support() -> None:
-    store = AdminStore()
-    row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
-    _seed_catalogue(store, row)
-    store.apply_designer_records({}, {}, {70: True})
-    _seed_catalogue(store, {**row, "typ_komponentu": "przekaznik"})
-    assert store.objects[70].block_writable is None
-    _seed_catalogue(store, row)
-    assert store.objects[70].block_writable is None
-
-
-def test_a_locked_cover_keeps_both_facts() -> None:
-    """The lock is a live push and the parameters are a sweep read."""
-    store = AdminStore()
-    _seed_catalogue(
-        store,
-        {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"},
-    )
-    _apply(
-        store,
-        f"ampio/fromDB/{USER}/ob/70/state",
-        '{ "state": "70","block": "3","on": 1789000000000 }',
-    )
-    params = CoverParameters(
-        with_slats=False,
-        open_time_s=40,
-        close_time_s=40,
-        calibration_percent=10,
-        slat_time_ms=1000,
-        reversal_lag_ms=500,
-        start_lag_same_ms=None,
-        start_lag_other_ms=None,
-    )
-    store.apply_designer_records({}, {70: params}, {})
-    assert store.objects[70].cover_parameters == params
-    assert store.objects[70].blocks_opening is True
-    assert store.objects[70].blocks_closing is True
+def test_a_sweep_never_touches_the_catalogue_type_column() -> None:
+    store = _store()
+    _feed_catalogue(store, {**_flaga_row(41, 3, mac=0xA), "type": "256"})
+    _sweep(store, {0xA}, records={41: DesignerRecord(matter_device_type=515)})
+    assert store.objects[41].matter_device_type == 256
 
 
 # --- ObjectAdded: an object's first event -----------------------------------
@@ -2796,17 +2601,17 @@ def test_a_locked_cover_keeps_both_facts() -> None:
 
 def test_new_catalogue_row_dispatches_object_added() -> None:
     store = AdminStore()
-    applied = _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
+    applied = _feed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
     assert [type(e) for e in applied.events] == [ObjectAdded]
     assert applied.events[0].object.id == 7
     # The same reply again says nothing new.
-    assert _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"}).events == []
+    assert _feed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"}).events == []
 
 
 def test_known_row_change_dispatches_updated_not_added() -> None:
     store = AdminStore()
-    _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
-    applied = _seed_catalogue(
+    _feed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
+    applied = _feed_catalogue(
         store, {"id": 7, "typ_komponentu": "flaga", "opis_menu": "x"}
     )
     assert [type(e) for e in applied.events] == [ObjectUpdated]
@@ -2814,16 +2619,16 @@ def test_known_row_change_dispatches_updated_not_added() -> None:
 
 def test_recreation_after_eviction_dispatches_added_again() -> None:
     store = AdminStore()
-    _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
-    removed = _seed_catalogue(store)  # empty catalogue evicts
+    _feed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
+    removed = _feed_catalogue(store)  # empty catalogue evicts
     assert [type(e) for e in removed.events] == [ObjectRemoved]
-    readded = _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
+    readded = _feed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
     assert [type(e) for e in readded.events] == [ObjectAdded]
 
 
 def test_bare_row_creation_still_dispatches_added() -> None:
     store = AdminStore()
-    applied = _seed_catalogue(store, {"id": 9})
+    applied = _feed_catalogue(store, {"id": 9})
     assert [type(e) for e in applied.events] == [ObjectAdded]
 
 

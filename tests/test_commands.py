@@ -1225,8 +1225,13 @@ async def test_the_panel_mask_is_one_width_whatever_the_module_reports() -> None
     client, broker = await _admin_with_panel_module()
     try:
         await client.set_panel_backlight(7, 0, 255, 0)
-        client._store.apply_module_sweep(
-            {}, {0xCAFE: {ModuleFunction.BACKLIGHT_RGBW: 4}}, {}
+        client._store.apply_sweep(
+            frozenset({0xCAFE}),
+            {},
+            {},
+            {},
+            {0xCAFE: {ModuleFunction.BACKLIGHT_RGBW: 4}},
+            {},
         )
         await client.set_panel_backlight(7, 0, 255, 0)
         assert broker.published == [
@@ -1524,7 +1529,9 @@ async def _admin_with_covers() -> tuple[AmpioAdminClient, FakeBroker]:
     )
     # The newer module advertises its four roller channels; the older one
     # advertises none, which is what tells the two generations apart.
-    client._store.apply_module_sweep({}, {0xBE82: {ModuleFunction.ROLLER: 4}}, {})
+    client._store.apply_sweep(
+        frozenset({0xBE82}), {}, {}, {}, {0xBE82: {ModuleFunction.ROLLER: 4}}, {}
+    )
     broker.published.clear()
     broker.published_qos.clear()
     return client, broker
@@ -1556,7 +1563,9 @@ async def test_roller_lock_mask_is_as_wide_as_the_channel_count_needs() -> None:
     width as a four-channel module: both round up to one byte."""
     client, broker = await _admin_with_covers()
     try:
-        client._store.apply_module_sweep({}, {0xBE82: {ModuleFunction.ROLLER: 1}}, {})
+        client._store.apply_sweep(
+            frozenset({0xBE82}), {}, {}, {}, {0xBE82: {ModuleFunction.ROLLER: 1}}, {}
+        )
         await client.block_opening(193)
         assert broker.published == [(ROLLER_RAW_TOPIC, b"0c0703f0050a0100000000")]
     finally:
@@ -1568,7 +1577,9 @@ async def test_roller_lock_refuses_a_channel_past_the_advertised_count() -> None
     mask would silently land on a channel that does not exist."""
     client, broker = await _admin_with_covers()
     try:
-        client._store.apply_module_sweep({}, {0xBE82: {ModuleFunction.ROLLER: 1}}, {})
+        client._store.apply_sweep(
+            frozenset({0xBE82}), {}, {}, {}, {0xBE82: {ModuleFunction.ROLLER: 1}}, {}
+        )
         with pytest.raises(AmpioValueError, match="past the 1"):
             await client.block_opening(194)
         assert broker.published == []

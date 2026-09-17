@@ -46,6 +46,7 @@ from .events import (
     ObjectRemoved,
     ObjectUpdated,
     PresenceChanged,
+    RecordSweepCompleted,
 )
 from .models import (
     AccessTier,
@@ -115,6 +116,7 @@ __all__ = [
     "PresenceDetection",
     "PresenceSimulation",
     "RecordSweep",
+    "RecordSweepCompleted",
     "SensorKind",
     "ThermostatKind",
     "ThermostatState",
