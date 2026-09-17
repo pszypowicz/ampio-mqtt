@@ -145,9 +145,12 @@ default mac `1` is not unique (see [`identity.md`](identity.md)), so two rows
 left on it fail the door. The installer gives each module its own mac in
 Designer. `diagnostics_snapshot()` lists the pairs under `mac_collisions`.
 
-A leaf of another shape is a server fault. The store refuses the reply whole as
-`AmpioProtocolError`, before any field changes. The apply is atomic, so no
-half-merged state is ever observable.
+A hidden row drops before the door reads its leaf, so a leaf on a row nothing
+drives never refuses a reply. A leaf of another shape is a server fault. The
+store refuses the reply whole as `AmpioProtocolError`, before any field changes.
+The apply is atomic, so no half-merged state is ever observable. `data/devices`
+carries the leaf, so `protocol_violations` names that topic whichever reply of
+the pair ran the door.
 
 A push of `data/params_devices` alone re-runs the door on the held catalogue. A
 hidden bit that changes evicts or admits its row.

@@ -39,6 +39,7 @@ from ampio_mqtt import (
     LockTarget,
     ModuleFunction,
 )
+from ampio_mqtt.client import _LOCK_REFUSALS
 
 
 async def test_command_builds_payload_on_the_account_topic(
@@ -1552,7 +1553,14 @@ async def _admin_with_covers(
     return client, broker
 
 
-async def test_lock_target_answers_for_every_case() -> None:
+def test_every_lock_refusal_carries_a_message() -> None:
+    """`NOT_SWEPT` raises with its own message, and each of the other
+    members has one in `_LOCK_REFUSALS`. A member added later must not
+    reach that lookup as a bare `KeyError`."""
+    assert set(_LOCK_REFUSALS) | {LockRefusal.NOT_SWEPT} == set(LockRefusal)
+
+
+async def test_lock_target_answers_a_cover_a_non_cover_and_an_unknown_id() -> None:
     client, _broker = await _admin_with_covers()
     try:
         cover, relay = 193, 195
@@ -1610,6 +1618,9 @@ async def test_lock_target_refuses_a_mac_no_admitted_module_carries() -> None:
         with pytest.raises(AmpioNotConfigured):
             await client.block_opening(193)
         assert broker.published == []
+        # The raise reaches the caller through all four lock methods, so the
+        # docstring the other three reference names the class as well.
+        assert "AmpioNotConfigured" in AmpioAdminClient.block_opening.__doc__
     finally:
         await client.disconnect()
 

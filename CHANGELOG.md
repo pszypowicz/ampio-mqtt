@@ -104,6 +104,10 @@ explicit beta posture above and is no longer the supported upgrade path.
   keeps its value and the held table stays unchanged (#269).
 - The roller lock has one resolver, so the write and its capability answer
   cannot disagree (#256).
+- A home-status code a live push supplied survives the discovery snapshot that
+  follows it, even when the push arrived before the catalogue row.
+- An object leaf the library cannot read is reported against `data/devices`, the
+  reply that carries it, whichever reply of the catalogue pair ran the door.
 
 ### Documentation
 

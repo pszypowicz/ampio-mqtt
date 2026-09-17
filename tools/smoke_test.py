@@ -82,6 +82,34 @@ async def run(
     print(f"Connecting to {args.host}:{args.port} ...")
     try:
         await client.connect(timeout=15)
+        print("Connected. Listening for discovery + retained state...\n")
+
+        await asyncio.sleep(args.duration)
+
+        objs = client.objects
+        types: dict[str, int] = {}
+        for o in objs.values():
+            types[o.typ_komponentu] = types.get(o.typ_komponentu, 0) + 1
+        sensors = [o for o in objs.values() if isinstance(o.kind, SensorKind)]
+        print(f"\n=== Client: {type(client).__name__} ===")
+        # The module catalogue answers the admin login alone, so only the
+        # admin client holds one.
+        modules = len(client.modules) if isinstance(client, AmpioAdminClient) else 0
+        print(
+            f"=== Objects: {len(objs)} (sensors: {len(sensors)}), "
+            f"modules: {modules} ==="
+        )
+        print("  by typ_komponentu:", types)
+
+        print("\n=== Sensors (auto-discovered) ===")
+        for o in sorted(sensors, key=lambda o: o.id):
+            kind = o.kind
+            if not isinstance(kind, SensorKind):
+                continue
+            unit = kind.unit or ""
+            dc = kind.device_class or "-"
+            print(f"  ob/{o.id:<5} {dc:<18} {o.name!s:<26} = {o.state} {unit}")
+        return 0
     except AmpioConnectionError as err:
         print(f"FAILED to connect: {err}")
         return 1
@@ -91,33 +119,8 @@ async def run(
         for mac, ids in err.collisions:
             print(f"mac collision: {mac:x} on modules {', '.join(map(str, ids))}")
         return 1
-    print("Connected. Listening for discovery + retained state...\n")
-
-    await asyncio.sleep(args.duration)
-
-    objs = client.objects
-    types: dict[str, int] = {}
-    for o in objs.values():
-        types[o.typ_komponentu] = types.get(o.typ_komponentu, 0) + 1
-    sensors = [o for o in objs.values() if isinstance(o.kind, SensorKind)]
-    print(f"\n=== Client: {type(client).__name__} ===")
-    # The module catalogue answers the admin login alone, so only the admin
-    # client holds one.
-    modules = len(client.modules) if isinstance(client, AmpioAdminClient) else 0
-    print(f"=== Objects: {len(objs)} (sensors: {len(sensors)}), modules: {modules} ===")
-    print("  by typ_komponentu:", types)
-
-    print("\n=== Sensors (auto-discovered) ===")
-    for o in sorted(sensors, key=lambda o: o.id):
-        kind = o.kind
-        if not isinstance(kind, SensorKind):
-            continue
-        unit = kind.unit or ""
-        dc = kind.device_class or "-"
-        print(f"  ob/{o.id:<5} {dc:<18} {o.name!s:<26} = {o.state} {unit}")
-
-    await client.disconnect()
-    return 0
+    finally:
+        await client.disconnect()
 
 
 def main() -> int:

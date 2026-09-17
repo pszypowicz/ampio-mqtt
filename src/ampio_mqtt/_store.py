@@ -288,12 +288,15 @@ class AmpioStore:
         """Fold the whole object catalogue into the store, through the door.
 
         The door decides admission in one order on both tiers: the two
-        presence rows go to their own types, a hidden row drops, and every
-        remaining row must carry a leaf that parses. A row with an empty
-        leaf is recorded on ``not_configured`` and left out, and
+        presence rows go to their own types, a hidden row drops before its
+        leaf is read because nothing drives it, and every remaining row
+        must carry a leaf that parses. A row with an empty leaf is
+        recorded on ``not_configured`` and left out, and
         :class:`NotConfigured` reports the set when it changes to a
         non-empty one. A leaf that does not parse is a server fault, raised
         here before any store field changes, so the reply is refused whole.
+        `data/devices` carries the leaf, and the raise names that surface
+        whichever reply of the pair ran the door.
         """
         presence = [m for m in served if m.typ_komponentu in _protocol.PRESENCE_TYPES]
         rows = [m for m in served if m.typ_komponentu not in _protocol.PRESENCE_TYPES]
@@ -393,10 +396,14 @@ class AmpioStore:
             (m for m in rows if m.typ_komponentu == _protocol.DETECTION_TYPE), None
         )
         home_status = self._home_status
+        pushed = self._detection_pushed
         if detection_meta is not None:
             pending = self._pending_state.get(detection_meta.id)
             if pending is not None:
+                # A push that raced the catalogue row is still a push, so
+                # the snapshot of this cycle must not replace its code.
                 home_status = _home_status(pending.state)
+                pushed = True
             elif self._home_status is None:
                 seed = self._stan_by_id.get(detection_meta.id)
                 if seed is not None:
@@ -406,7 +413,7 @@ class AmpioStore:
         new_rows = {meta.id: meta for meta in rows}
         if previous_detection_id is not None and previous_detection_id not in new_rows:
             home_status = None
-            self._detection_pushed = False
+            pushed = False
             self._stan_by_id.pop(previous_detection_id, None)
         if (
             previous_simulation_id is not None
@@ -417,6 +424,7 @@ class AmpioStore:
         if detection_meta is not None:
             self._pending_state.pop(detection_meta.id, None)
         self._home_status = home_status
+        self._detection_pushed = pushed
         detection: PresenceDetection | None = None
         simulation: PresenceSimulation | None = None
         for meta in rows:

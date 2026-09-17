@@ -247,9 +247,9 @@ reaches the module. The lock sub-functions are absent from that firmware.
 #### What a consumer reads
 
 `AmpioAdminClient.lock_target(object_id)` resolves one cover's lock write. It
-returns a `LockTarget` or one of the four `LockRefusal` members. It raises
-`AmpioValueError` for an id the catalogue does not list, and
-`AmpioNotConfigured` for a mac no admitted module row carries:
+raises `AmpioValueError` for an id the catalogue does not list. The table covers
+every other answer: the `LockTarget`, the four `LockRefusal` members, and the
+raise for a mac no admitted module row carries.
 
 | Result               | Meaning                                                                                                              |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------- |

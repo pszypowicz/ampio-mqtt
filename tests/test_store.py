@@ -1815,6 +1815,20 @@ def test_snapshot_after_a_refresh_loses_to_a_push_in_the_same_cycle() -> None:
     assert store.presence_detection.home_status == 8
 
 
+def test_a_buffered_push_beats_the_snapshot_of_the_same_cycle() -> None:
+    """The push raced ahead of the catalogue row, so the merge folds it in.
+    It is still the newest code the cycle carries, and the snapshot of that
+    cycle does not replace it."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    store.begin_refresh()
+    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "5"))
+    _feed_catalogue(store, _DET)
+    _apply(store, STATES_TOPIC, snapshot({"id": 60, "stan_json": _push(60, "1")}))
+    assert store.presence_detection is not None
+    assert store.presence_detection.home_status == 5
+
+
 def test_hidden_detection_row_keeps_its_live_code() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))

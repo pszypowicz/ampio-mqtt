@@ -277,9 +277,10 @@ module answered and carries no such entry. That answer covers the objects the
 catalogue lists when the sweep runs, and it stays true until the next sweep. If
 the catalogue admits an object after the sweep, that object needs another sweep
 before absence answers for it. Absent with the mac not answered means not known.
-A sweep replaces every entry of every mac it answered, and
-`RecordSweepCompleted` fires once per sweep with the `RecordSweep` the call
-returned. `answered_macs` names every module the list reply listed, and
+Absence in `cover_parameters` or `panel_settings` can also mean the library has
+not proven that board's layout. A sweep replaces every entry of every mac it
+answered, and `RecordSweepCompleted` fires once per sweep with the `RecordSweep`
+the call returned. `answered_macs` names every module the list reply listed, and
 `silent_macs` names the catalogued modules the reply left out. The M-SERV's own
 row is a device like any other in both sets.
 

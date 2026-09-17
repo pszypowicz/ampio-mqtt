@@ -277,6 +277,16 @@ _MEMBERSHIP = "room membership table"
 _LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_(\d+)_(\d+)_(\d+)")
 
 
+class LeafFault(AmpioProtocolError):
+    """A ``leafId`` the library cannot read.
+
+    ``leafId`` rides `data/devices` alone, and the door that reads it runs
+    on whichever reply of the catalogue pair completes it. The client keys
+    this refusal on `data/devices`, so the report names the reply that
+    carried the row rather than the reply that ran the door.
+    """
+
+
 def parse_module_address(leaf_id: str) -> ModuleAddress:
     """The bus address a non-empty ``leafId`` token embeds.
 
@@ -285,7 +295,7 @@ def parse_module_address(leaf_id: str) -> ModuleAddress:
     """
     match = _LEAF_ID_RE.fullmatch(leaf_id)
     if match is None:
-        raise AmpioProtocolError(
+        raise LeafFault(
             f"The Ampio object catalogue carries the leafId {leaf_id!r}, "
             "which is not a 0_<macHex>_<sfId>_<subSfId>_<ioNo> token"
         )

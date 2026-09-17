@@ -38,6 +38,7 @@ from ._protocol import (
     ROLLER_BLOCK_CLOSING,
     ROLLER_BLOCK_OPENING,
     Endpoint,
+    LeafFault,
     account_free_topic,
     command_payload,
     command_topic,
@@ -317,6 +318,14 @@ class AmpioClient:
                 channel.latch()
             else:
                 applied = self._apply_inbound(msg, retained)
+        except LeafFault as err:
+            # `leafId` rides `data/devices` alone, and the door that reads
+            # it runs on whichever reply of the pair completes it. The
+            # report names the reply that carried the row.
+            self._note_protocol_violation(
+                response_topic(ENDPOINT_BY_NAME["data_devices"], self._username), err
+            )
+            return
         except AmpioProtocolError as err:
             self._note_protocol_violation(topic, err)
             return
@@ -1624,8 +1633,9 @@ class AmpioAdminClient(AmpioClient):
     @property
     def cover_parameters(self) -> Mapping[int, CoverParameters]:
         """Each cover's stored travel parameters, by object id, under the
-        rule :pyattr:`records` states. An object the catalogue moves out of
-        the roller class drops its entry."""
+        rule :pyattr:`records` states. Absence can also mean this library
+        has not proven that board's roller layout. An object the catalogue
+        moves out of the roller class drops its entry."""
         return MappingProxyType(self._store.cover_parameters)
 
     @property
@@ -1647,7 +1657,8 @@ class AmpioAdminClient(AmpioClient):
     @property
     def panel_settings(self) -> Mapping[int, PanelSettings]:
         """Each touch panel's stored settings, by mac, under the rule
-        :pyattr:`records` states."""
+        :pyattr:`records` states. Absence can also mean this library has not
+        proven that panel's layout."""
         return MappingProxyType(self._store.panel_settings)
 
     @property
@@ -2219,9 +2230,10 @@ class AmpioAdminClient(AmpioClient):
         roller channel count both gates the write and sizes the frame's
         channel mask. Calls :meth:`lock_target` and raises on a refusal:
         ``AmpioValueError`` when no sweep has answered the module yet,
-        and ``AmpioUnsupported`` for the other refusals, a non-cover
-        object or a module whose advertised roller count does not reach
-        this channel.
+        ``AmpioUnsupported`` for the other refusals, a non-cover object or
+        a module whose advertised roller count does not reach this
+        channel, and ``AmpioNotConfigured`` for a mac no admitted module
+        row carries.
         """
         await self._roller_lock(object_id, ROLLER_BLOCK_OPENING, assert_lock=True)
 

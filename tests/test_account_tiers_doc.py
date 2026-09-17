@@ -32,7 +32,6 @@ def test_the_admin_table_pins_the_admin_only_members() -> None:
     assert documented == _public(AmpioAdminClient) - _public(AmpioClient)
 
 
-def test_the_base_table_names_members_the_base_client_has() -> None:
+def test_the_base_table_names_every_member_the_base_client_has() -> None:
     documented = _first_column_members("## What AmpioClient serves")
-    assert documented
-    assert documented <= _public(AmpioClient)
+    assert documented == _public(AmpioClient)

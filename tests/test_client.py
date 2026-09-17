@@ -595,49 +595,6 @@ def test_snapshot_withholds_unparseable_info_bytes() -> None:
     assert client.diagnostics_snapshot()["last_payloads"]["info"] == REDACTED
 
 
-ADMIN_ONLY = {
-    "modules",
-    "mserv",
-    "module_for",
-    "records",
-    "cover_parameters",
-    "module_records",
-    "capabilities",
-    "panel_settings",
-    "last_sweep",
-    "fetch_locations",
-    "resolve_records",
-    "lock_target",
-    "block_opening",
-    "unblock_opening",
-    "block_closing",
-    "unblock_closing",
-    "buzz",
-    "buzz_pattern",
-    "buzz_stop",
-    "identify",
-    "identify_stop",
-    "set_panel_backlight",
-    "set_panel_status_light",
-    "lock_panel",
-    "unlock_panel",
-}
-
-
-def test_the_base_client_has_no_admin_member() -> None:
-    """The base class carries what every account is served and nothing
-    more, so an admin-only call on it fails at import or attribute
-    lookup rather than at runtime on the wire."""
-    client = AmpioClient("host", username="admin")
-    assert [n for n in sorted(ADMIN_ONLY | {"access_tier"}) if hasattr(client, n)] == []
-
-
-def test_the_admin_client_has_every_admin_member() -> None:
-    """The admin class carries the whole admin surface."""
-    client = AmpioAdminClient("host")
-    assert all(hasattr(client, name) for name in ADMIN_ONLY)
-
-
 def test_the_base_client_never_inspects_the_username() -> None:
     """The reserved login through the base class gets the standard view:
     a valid least-privilege choice, not an admin session."""
