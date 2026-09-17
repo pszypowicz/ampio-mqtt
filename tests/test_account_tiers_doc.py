@@ -35,3 +35,11 @@ def test_the_admin_table_pins_the_admin_only_members() -> None:
 def test_the_base_table_names_every_member_the_base_client_has() -> None:
     documented = _first_column_members("## What AmpioClient serves")
     assert documented == _public(AmpioClient)
+
+
+def test_neither_client_assigns_a_public_instance_attribute() -> None:
+    """Each client's constructor assigns only private instance attributes."""
+    base = AmpioClient("broker.invalid", "throwaway-user", "throwaway-pass")
+    admin = AmpioAdminClient("broker.invalid", "throwaway-pass")
+    for instance in (base, admin):
+        assert not {name for name in vars(instance) if not name.startswith("_")}
