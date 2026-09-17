@@ -61,7 +61,7 @@ the API detail.
   every update and the terminal `AuthFailed` and `ConnectionDied` signals
   ([`docs/events.md`](docs/events.md)).
 - Discovery of the object catalogue on either account tier (the module catalogue
-  is admin-only), with the detected tier exposed for setup flows
+  is admin-only), with `AmpioAdminClient` for the reserved login
   ([`docs/account-tiers.md`](docs/account-tiers.md)).
 - Classification of every object into a sensor, input, output, or thermostat
   kind with Home-Assistant-compatible hints
@@ -74,7 +74,8 @@ the API detail.
   surface. The M-DOT panel buzzer, its touch field colours and touch lock, and
   the module identify LED are admin-only. The `command()` escape hatch sends any
   other `/api` verb ([`docs/commands.md`](docs/commands.md)).
-- A low-latency input bridge from the raw per-channel topics on the admin tier
+- A low-latency input bridge from the raw per-channel topics on
+  `AmpioAdminClient`
   ([`docs/raw-channel-bridge.md`](docs/raw-channel-bridge.md)).
 - Room mapping, per-module health, reported capabilities, touch panel settings
   and cover travel parameters, eviction events for server-side deletions, and
@@ -85,8 +86,8 @@ the API detail.
 ## Choosing an account
 
 A dedicated standard account is the recommended shape for Home Assistant. It
-sees exactly the objects granted in the Ampio app and can command only those. An
-administrator account adds the module catalogue, the low-latency raw tree, the
+sees exactly the objects granted in the Ampio app and can command only those.
+`AmpioAdminClient` adds the module catalogue, the low-latency raw tree, the
 module diagnostics, and the CAN write surfaces (panel LEDs and colours, the
 buzzer, the touch lock, and the identify LED). Bus events are the exception on
 both tiers. Any account can raise any event number, and the logic behind an

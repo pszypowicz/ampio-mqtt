@@ -23,8 +23,15 @@ import os
 from collections.abc import Callable
 
 import aiomqtt
+from _session import make_client
 
-from ampio_mqtt import AmpioClient, AmpioObject, ObjectUpdated
+from ampio_mqtt import (
+    AmpioClient,
+    AmpioNotConfigured,
+    AmpioObject,
+    AmpioValueError,
+    ObjectUpdated,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -118,12 +125,12 @@ async def run(
     client_factory: Callable[[], aiomqtt.Client] | None = None,
 ) -> int:
     """Drive the run; ``client_factory`` is the test seam for the session."""
-    client = AmpioClient(
+    client = make_client(
         a.host,
         a.username,
         a.password,
         port=a.port,
-        mqtt_client_factory=client_factory,
+        client_factory=client_factory,
     )
 
     def on_object(obj: AmpioObject) -> None:
@@ -131,24 +138,38 @@ async def run(
             print(f"  state  ob/{obj.id} = {obj.state}")
 
     client.subscribe(lambda e: on_object(e.object), of=ObjectUpdated)
-    await client.connect()
-    print(f"Connected as {a.username!r} (tier: {client.access_tier.value})")
+    try:
+        await client.connect()
+        print(f"Connected as {a.username!r} ({type(client).__name__})")
 
-    obj = client.objects.get(a.object_id)
-    print(
-        f"before: ob/{a.object_id} = {obj.state if obj else '<not in this account view>'}"
-    )
+        obj = client.objects.get(a.object_id)
+        print(
+            f"before: ob/{a.object_id} = "
+            f"{obj.state if obj else '<not in this account view>'}"
+        )
 
-    await send(client, a)
-    print(f"command sent; watching {a.watch}s ...")
-    await asyncio.sleep(a.watch)
+        try:
+            await send(client, a)
+        except AmpioValueError as err:
+            print(f"refused: {err}")
+            return 1
+        print(f"command sent; watching {a.watch}s ...")
+        await asyncio.sleep(a.watch)
 
-    obj = client.objects.get(a.object_id)
-    print(
-        f"after:  ob/{a.object_id} = {obj.state if obj else '<not in this account view>'}"
-    )
-    await client.disconnect()
-    return 0
+        obj = client.objects.get(a.object_id)
+        print(
+            f"after:  ob/{a.object_id} = "
+            f"{obj.state if obj else '<not in this account view>'}"
+        )
+        return 0
+    except AmpioNotConfigured as err:
+        for oid, name in err.objects:
+            print(f"not configured: ob/{oid} {name or ''}")
+        for mac, ids in err.collisions:
+            print(f"mac collision: {mac:x} on modules {', '.join(map(str, ids))}")
+        return 1
+    finally:
+        await client.disconnect()
 
 
 if __name__ == "__main__":

@@ -37,12 +37,13 @@ bundle embeds it:
 
 The description record in the module is authoritative for the tag. The `type`
 column mirror lags it. An output tagged 256 (0x0100) in the description record
-can still show an empty `type` column. `AmpioClient.resolve_records()` reads the
-description record into `AmpioObject.record`, a `DesignerRecord`. The tag lands
-in `record.matter_device_type`, the location pointer in `record.location`, and
-the entry's own description string in `record.desc`. The column mirror stays in
-`matter_device_type`, identical on both tiers. The two fields are separate
-facts. The consumer picks which one to trust.
+can still show an empty `type` column. `AmpioAdminClient.resolve_records()`
+reads the description record into `AmpioAdminClient.records`, one
+`DesignerRecord` per object id. The tag lands in the entry's
+`matter_device_type`, the location pointer in its `location`, and the entry's
+own description string in its `desc`. The column mirror stays in
+`AmpioObject.matter_device_type`, identical on both tiers. The two fields are
+separate facts. The consumer picks which one to trust.
 
 ## The Designer location (per-output `outLoc`)
 
@@ -102,27 +103,26 @@ bundle's enum):
 | 26    | ROLLER                                                               |
 | 34    | (the RGBW output class - no symbolic name recovered from the bundle) |
 
-### The module-level record (`AmpioModule.record`, a `ModuleRecord`)
+### The module-level record (`AmpioAdminClient.module_records`)
 
 The record's one DEVICE_NAME frame (descType 1) describes the module itself. Its
 `desc` is the module name, and its `outLoc` is the module-level "Lokalizacja" -
 where the module is mounted, not where its loads are. `resolve_records()` reads
-it from the same reply and sets `AmpioModule.record`, with a `ModuleUpdated`
-dispatch on change. `record.location` is the mounting location and `record.desc`
-the module name from the description record. A record without the frame, or with
-`outLoc` 0, reads unassigned (None). The module answered, so None is
-authoritative. A module the sweep did not cover keeps its previous value,
-exactly like the per-object side. On the baseline install the installer tagged
-the wall devices this way, and left the cabinet modules untagged. An M-SENS and
-three M-DOT panels carry room names.
+it from the same reply into `AmpioAdminClient.module_records`, one
+`ModuleRecord` per mac. The entry's `location` is the mounting location and its
+`desc` the module name from the description record. Every module that answered
+has an entry. A record without the frame gives an entry whose fields read None,
+and an `outLoc` of 0 reads unassigned. The module answered, so None is
+authoritative. On the baseline install the installer tagged the wall devices
+this way, and left the cabinet modules untagged. An M-SENS and three M-DOT
+panels carry room names.
 
-### Module capabilities (`AmpioModule.capabilities`)
+### Module capabilities (`AmpioAdminClient.capabilities`)
 
 The same reply carries `supportedFunctions`, a base64 blob of 2-byte pairs. Each
 pair is a function id and the number of channels the module has of that
-function. `resolve_records()` decodes it and sets `AmpioModule.capabilities`,
-with a `ModuleUpdated` dispatch on change. The sweep folds it together with the
-module record, so a module that both change reports one event.
+function. `resolve_records()` decodes it into `AmpioAdminClient.capabilities`,
+one `{function id: channel count}` map per mac.
 
 The mapping is keyed by the raw function id. The `ModuleFunction` enum names the
 ids that a module on the baseline install advertises. An id without a member
@@ -143,21 +143,20 @@ On the baseline install the count matches the model name on all 12 panels. The
 two facts are independent: the model name comes from the device type table, and
 the count comes from the module itself.
 
-A blob that is absent, not base64, or of odd length reads as an empty mapping,
-and the device keeps its description record. Capabilities are additive, so an
-unreadable capability blob must not cost the descriptions. A module the sweep
-did not cover keeps its previous mapping. An empty mapping from a module that
-answered is authoritative: it advertises nothing.
+A blob that is absent, not base64, or of odd length gives an empty map, and the
+module keeps its description record. Capabilities are additive, so an unreadable
+capability blob must not cost the descriptions. An empty map from a module that
+answered is authoritative. That module advertises nothing.
 
-### Panel settings (`AmpioModule.panel_settings`)
+### Panel settings (`AmpioAdminClient.panel_settings`)
 
 A module's record also carries `params`, a base64 blob of its stored settings.
 On a touch panel the blob opens with the settings the Designer groups under
 "Touch fields and statuses". The rest of the blob holds power-on defaults for
 the module's outputs and flags, which the library does not read.
 
-`resolve_records()` decodes the panel section into `AmpioModule.panel_settings`,
-a `PanelSettings`, with a `ModuleUpdated` dispatch on change. These are the
+`resolve_records()` decodes the panel section into
+`AmpioAdminClient.panel_settings`, one `PanelSettings` per mac. These are the
 panel's configured defaults. They are what it returns to after a restart.
 
 The section is laid out by the touch field count, which the library takes from
@@ -190,16 +189,16 @@ Only a board whose layout is live-proven resolves. The Designer keys the layout
 by `(typ_urzadzenia, wersja_pcb)`, and other boards differ: an older revision
 puts the touch field colour at offset 1 as three bytes with no white channel,
 and shifts the masks. Reading one of those with this layout would produce
-confident wrong values, so an unlisted board reads None. The proven boards are
-the M-DOT-2, M-DOT-4, M-DOT-9, and M-DOT-18.
+confident wrong values, so an unlisted board gets no entry. The proven boards
+are the M-DOT-2, M-DOT-4, M-DOT-9, and M-DOT-18.
 
-### Cover parameters (`AmpioObject.cover_parameters`)
+### Cover parameters (`AmpioAdminClient.cover_parameters`)
 
 A module's record carries `params`, a base64 blob of its stored settings. Part
 of that blob holds the travel configuration of every roller channel the module
-drives. `resolve_records()` decodes it into `AmpioObject.cover_parameters`, a
-`CoverParameters`, with an `ObjectUpdated` dispatch on change. These are the
-values the Designer shows under "Roller blinds parameters".
+drives. `resolve_records()` decodes it into `AmpioAdminClient.cover_parameters`,
+one `CoverParameters` per cover object id. These are the values the Designer
+shows under "Roller blinds parameters".
 
 The section holds one group of fields per channel, interleaved by field rather
 than by channel. The Index column counts from the start of the section. For a
@@ -227,24 +226,23 @@ Designer hides them. The byte range `9N` to `10N - 1` has no label on either
 board, and the library does not read it.
 
 An object joins its channel the same way it joins its description record. The
-key is `leaf_io_no` for a leafed object, and `funkcja` minus one for a leafless
-one. Either cover kind joins the same way, so a cover carries the same values
-whichever type the app has it set to.
+key is `address.channel`. Either cover kind joins the same way, so a cover
+carries the same values whichever type the app has it set to.
 
 Only the two roller kinds carry these values. If the app changes an object to
-another kind, the library drops what it read for that object. The object reads
-None until a later sweep joins it again.
+another kind, the library drops its entry. The object keeps no entry until a
+later sweep joins it again.
 
 Only a board whose layout is live-proven resolves. The Designer keys the layout
 by `(typ_urzadzenia, wersja_pcb)`, and the boards differ in the offset, the
 channel count, and the stride. Reading one with another's layout produces
-confident wrong values, so an unlisted board reads None. The proven boards are
-the M-ROL-4s and the M-REL-2.
+confident wrong values, so an unlisted board resolves nothing. The proven boards
+are the M-ROL-4s and the M-REL-2.
 
 The channel count comes from the layout and not from the module. The M-ROL-4s
 reports no roller capability at all, so its own report cannot supply the count.
 Where a module does report one and it disagrees with the layout, the module
-reads None rather than guessing.
+resolves nothing rather than guessing.
 
 `AmpioObject.block` is a different fact. It is the live roller lock the module
 pushes, and it reports whether a cover will move at all. The fields here hold
@@ -253,10 +251,9 @@ the configuration, and the two never describe each other.
 ### The join rule
 
 An object joins its entry through
-`(DESC_TYPE_BY_KIND[typ_komponentu], leaf_io_no)` within the description record
-of its own module (`AmpioObject.module_mac`). `leaf_io_no` is the last `leafId`
-segment, and it is the Designer's own channel key. `DESC_TYPE_BY_KIND` ships
-only these pairs:
+`(DESC_TYPE_BY_KIND[typ_komponentu], address.channel)` within the record of
+`address.mac`. `address.channel` is the last `leafId` segment, and it is the
+Designer's own channel key. `DESC_TYPE_BY_KIND` ships only these pairs:
 
 - `przekaznik` -> 12 (OUTPUTS)
 - `roleta_procenty` and `roleta_lamelki` -> 26 (ROLLER)
@@ -269,25 +266,39 @@ in another class proves nothing on its own. The object name is the proof. Every
 leafed flag on the baseline install has a class-6 frame at its channel. That
 frame carries the object's own name wherever a name is set. A kind outside the
 table (`bit32`, `lin_wej`, `satel_alarm`, `temp` among them) resolves no
-location, because no class was proven for it.
+location, because no class was proven for it. The read is admin-only, so the
+module catalogue is present for the join.
 
-A leafless object has no `leaf_io_no`. The join then uses the module that
-`id_urzadzenia` resolves to and `funkcja` minus one as the channel. On the
-baseline install `funkcja` minus one equals `leaf_io_no` for every leafed object
-of every kind except `lin_wej`. The M-SENS analog channels follow another
-numbering. The read is admin-only, so the module catalogue is present for the
-join.
+### Coverage
 
-### Sweep coverage
+One rule reads every dataset. Present means the module answered a sweep and
+carries the entry. Absent with the mac in `last_sweep.answered_macs` means the
+module answered and carries no such entry. That answer covers the objects the
+catalogue lists when the sweep runs, and it stays true until the next sweep. If
+the catalogue admits an object after the sweep, that object needs another sweep
+before absence answers for it. Absent with the mac not answered means not known.
+Absence in `cover_parameters` or `panel_settings` can also mean the library has
+not proven that board's layout. A sweep replaces every entry of every mac it
+answered, and `RecordSweepCompleted` fires once per sweep with the `RecordSweep`
+the call returned. `answered_macs` names every module the list reply listed, and
+`silent_macs` names the catalogued modules the reply left out. The M-SERV's own
+row is a device like any other in both sets.
 
-`resolve_records()` returns a `RecordSweep`. Its `records` map holds the join
-result. Its `answered_macs` set names every module the list reply listed, and
-its `silent_macs` set names the catalogued modules the reply left out. The two
-sets matter because `AmpioObject.record` reads None in two different cases. A
-module in `answered_macs` is in the reply and carries no entry for that output.
-A module in `silent_macs` is in the module catalogue but missing from the reply,
-so its objects say nothing either way. The M-SERV's own row is a device like any
-other in both sets.
+An entry leaves with the row it belongs to. An object that leaves the catalogue
+drops its `records` and `cover_parameters` entry. A module that leaves the list
+drops its `module_records`, `capabilities` and `panel_settings` entry.
+
+A sweep changes no model field. It dispatches no `ObjectUpdated` and no
+`ModuleUpdated`, so a consumer that reads a dataset refreshes on
+`RecordSweepCompleted`.
+
+Two module rows on one override mac have no usable module identity. The admin
+door admits neither row (see [`discovery-flow.md`](discovery-flow.md)). A sweep
+reads each module's own reply, so `records`, `module_records` and `capabilities`
+can still carry entries on the shared mac. `cover_parameters` and
+`panel_settings` need the catalogue row for the board layout, so they carry
+nothing. The installer gives each module its own mac in Designer, and a consumer
+fixes the install rather than reading around the gap.
 
 One request returns every record. The `timeout` argument bounds each of the two
 replies, the name table and the list, so the call ends within twice that. A
@@ -296,6 +307,5 @@ reply that never arrives raises `AmpioTimeoutError`.
 ### Tier gate
 
 The whole `device_api` tree is admin-only, exactly like the raw tree. A standard
-account gets silence on both the subscribe and the request.
-`AmpioClient.resolve_records()` raises `RuntimeError` at once, instead of a hang
-on a reply that never comes.
+account gets silence on both the subscribe and the request. `resolve_records()`
+is a member of `AmpioAdminClient` alone, so a standard client cannot call it.

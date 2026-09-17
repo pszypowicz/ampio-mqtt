@@ -7,10 +7,10 @@ Router (what the wire says back). No I/O and no state mutation - the
 
 Topics are namespaced by the connecting account:
   state:     ampio/fromDB/<user>/ob/<id>/state   -> {"state","desc","on"}
-  objects:   publish ampio/control/<user>/config = "devicesDetails"
-             -> ampio/fromDB/<user>/config/devicesDetails = {"Status":0,"List":[...]}
   modules:   publish ampio/control/<user>/config = "devices"
              -> ampio/fromDB/<user>/config/devices = {"List":[...]}
+  catalogue: publish ampio/control/<user>/data = "devices" or "params_devices"
+             -> ampio/fromDB/<user>/data/<keyword> = {"List":[...]}
   digests:   ampio/fromDB/<user>/md5/<table> (retained) = MD5 of an app-sync
              table's reply, rewritten by the M-SERV on a Designer save
 
@@ -28,6 +28,7 @@ import binascii
 import json
 import logging
 import math
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -42,6 +43,7 @@ from .models import (
     AmpioServerInfo,
     CoverParameters,
     DesignerRecord,
+    ModuleAddress,
     ModuleFunction,
     ModuleRecord,
     PanelSettings,
@@ -51,15 +53,17 @@ from .models import (
 
 @dataclass(slots=True)
 class ObjectMetadata:
-    """One object-catalogue row, in the columns both surfaces serve."""
+    """One object-catalogue row, in the columns `data/devices` serves."""
 
     id: int
-    id_urzadzenia: int  # physical module
     typ_komponentu: str
     interpretacja: int
     funkcja: int  # physical channel index within the module
-    leaf_id: str  # `leafId`; empty for system objects, and after a Matter uncheck
-    opis_menu: str | None  # empty reads None: the object carries no name
+    # leafId, raw; empty for a system row and after a Matter check-then-uncheck,
+    # the door decides
+    leaf_id: str
+    # the opis_menu column; empty reads None: the object carries no name
+    name: str | None
     # `type` column: the Matter device type ID assigned in Designer, carried
     # as a decimal string on the wire ("256" = 0x0100 On/Off Light). Empty or
     # null when the object has no tag - both read as None.
@@ -71,24 +75,10 @@ class ObjectMetadata:
     format: str
 
 
-@dataclass(slots=True)
-class AdminObjectMetadata:
-    """A `config/devicesDetails` row: the shared columns plus three more.
-
-    The app-sync catalogue serves none of the three, and
-    `data/params_devices` is the app-sync tier's source for them. Which
-    surface answers follows from the account tier, so each of these facts
-    has exactly one source per tier (docs/account-tiers.md).
-    """
-
-    shared: ObjectMetadata
-    # `params` bitfield; bit 4 = hidden/stub, bit 37 = matter-exposed.
-    params: int
-    # `czas` column as served, in 10 ms ticks; `AmpioObject.pulse_ms` reads
-    # it on the kinds a timed write pulses.
-    czas: int
-    # Designer's "Unit" column, verbatim. `AmpioObject.unit` reads it.
-    url: str
+# The two rows the M-SERV creates itself. Neither is a module output and
+# neither carries a leaf. The store drops both by their type as it reads the
+# catalogue, before the door reads any leaf.
+SYSTEM_ROW_TYPES = frozenset(("detekcja", "symulacja"))
 
 
 @dataclass(slots=True)
@@ -250,6 +240,24 @@ def _nullable_text_column(row: Mapping[str, Any], column: str, surface: str) -> 
     return value if isinstance(value, str) else ""
 
 
+def _leaf_column(row: Mapping[str, Any]) -> str:
+    """The `leafId` column: the string as is, "" for a null value.
+
+    Anything else is a server fault: a `leafId` of another JSON type is
+    neither a real leaf token nor the empty-leaf sentinel, so the door
+    could not tell an unconfigured object from a malformed one.
+    """
+    value = _column(row, "leafId", _CATALOGUE)
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    raise AmpioProtocolError(
+        f"The Ampio object catalogue carries the leafId {value!r}, which is "
+        "neither a string nor null"
+    )
+
+
 # The surface names the protocol errors speak, one per reply shape.
 _CATALOGUE = "object catalogue"
 _MODULE_LIST = "module list"
@@ -262,53 +270,72 @@ _PUSH = "state push"
 _GROUPS = "room table"
 _MEMBERSHIP = "room membership table"
 
+# The `leafId` shape: `0_<macHex>_<sfId>_<subSfId>_<ioNo>`, a leading
+# literal `0`, then the four fields the parse reads (docs/identity.md).
+# Strict: a half-parsed address that is wrong is worse than a refused reply.
+_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_(\d+)_(\d+)_(\d+)")
+
+
+class LeafFault(AmpioProtocolError):
+    """A ``leafId`` the library cannot read.
+
+    ``leafId`` rides `data/devices` alone, and the door that reads it runs
+    on whichever reply of the catalogue pair completes it. The client keys
+    this refusal on `data/devices`, so the report names the reply that
+    carried the row rather than the reply that ran the door.
+    """
+
+
+def parse_module_address(leaf_id: str) -> ModuleAddress:
+    """The bus address a non-empty ``leafId`` token embeds.
+
+    An empty token is the door's decision, not a parse failure, so the
+    caller tests for it first. Any other shape is a server fault.
+    """
+    match = _LEAF_ID_RE.fullmatch(leaf_id)
+    if match is None:
+        raise LeafFault(
+            f"The Ampio object catalogue carries the leafId {leaf_id!r}, "
+            "which is not a 0_<macHex>_<sfId>_<subSfId>_<ioNo> token"
+        )
+    return ModuleAddress(
+        mac=int(match.group(1), 16),
+        channel=int(match.group(4)),
+        sf_id=int(match.group(2)),
+        sub_sf_id=int(match.group(3)),
+    )
+
 
 def _shared_columns(row: Mapping[str, Any]) -> ObjectMetadata:
-    """The object-catalogue columns both surfaces serve on every row.
+    """The object-catalogue columns `data/devices` serves on every row.
 
-    ``leafId`` holds an empty string for a system object and for one whose
-    Matter box is unchecked in Designer. Otherwise it is a short
+    ``leafId`` holds an empty string for a system row and after a Matter
+    check-then-uncheck. The door decides. Otherwise it is a short
     underscored token like ``0_cb8f_76_0_0``, which the Designer reads as
     ``macGroup``, ``mac``, ``sfId``, ``subSfId``, and ``ioNo``. The parse
     keeps the raw string.
     """
     return ObjectMetadata(
         id=_int_column(row, "id", _CATALOGUE),
-        id_urzadzenia=_int_column(row, "id_urzadzenia", _CATALOGUE),
         typ_komponentu=_text_column(row, "typ_komponentu", _CATALOGUE),
         interpretacja=_int_column(row, "interpretacja", _CATALOGUE),
         funkcja=_int_column(row, "funkcja", _CATALOGUE),
-        leaf_id=_nullable_text_column(row, "leafId", _CATALOGUE),
-        opis_menu=_nullable_text_column(row, "opis_menu", _CATALOGUE) or None,
+        leaf_id=_leaf_column(row),
+        name=_nullable_text_column(row, "opis_menu", _CATALOGUE) or None,
         matter_device_type=to_int(_column(row, "type", _CATALOGUE)),
         format=_nullable_text_column(row, "format", _CATALOGUE),
     )
 
 
-def parse_details(data: Mapping[str, Any]) -> list[AdminObjectMetadata]:
-    """Every row of a `config/devicesDetails` reply, the admin catalogue.
-
-    An empty list is a valid reply that lists nothing. `params` can exceed
-    32 bits (the matter-exposed flag is bit 37), which Python ints handle
-    natively.
-    """
-    return [
-        AdminObjectMetadata(
-            shared=_shared_columns(row),
-            params=_int_column(row, "params", _CATALOGUE),
-            czas=_int_column(row, "czas", _CATALOGUE),
-            url=_text_column(row, "url", _CATALOGUE),
-        )
-        for row in require_rows(data, _CATALOGUE)
-    ]
-
-
 def parse_app_sync_devices(data: Mapping[str, Any]) -> list[ObjectMetadata]:
-    """Every row of a `data/devices` reply, the app-sync catalogue.
+    """Every row of a `data/devices` reply, the object catalogue.
 
-    The rows are the objects the account was granted in the Ampio app. The
-    surface serves no `params`, `czas`, or `url` column, so nothing here
-    reads one - `data/params_devices` is this tier's source for the three.
+    The rows are the connecting account's app-sync view: every object in a
+    room on the reserved admin login, and the account's own grants
+    otherwise. Every reply also carries the two system rows, which the
+    store drops by their type. The surface serves no `params`, `czas`, or
+    `url` column, so nothing here reads one - `data/params_devices` carries
+    the three on every tier.
     """
     return [_shared_columns(row) for row in require_rows(data, _CATALOGUE)]
 
@@ -340,8 +367,14 @@ def parse_devices(data: Mapping[str, Any]) -> list[AmpioModule]:
 class ParamsEntry:
     """One object's row in the ``data/params_devices`` table."""
 
+    # `params` bitfield; see `HIDDEN_FLAG` and its neighbors in models.py.
+    # `params` can exceed 32 bits (the matter-exposed flag is bit 37),
+    # which Python ints handle natively.
     params: int
+    # `czas` column as served, in 10 ms ticks; `AmpioObject.pulse_ms` reads
+    # it on the kinds a timed write pulses.
     czas: int
+    # Designer's "Unit" column, verbatim. `AmpioObject.unit` reads it.
     url: str
 
 
@@ -632,43 +665,15 @@ def _entry_desc(entry: OutputDescription) -> str | None:
     return None if entry.desc in ("", _EMPTY_DESC) else entry.desc
 
 
-def _object_channel(
-    obj: AmpioObject, mac_by_device_id: Mapping[int, int]
-) -> tuple[int, int] | None:
-    """The `(mac, channel)` pair an object joins through.
-
-    This is the one join rule `resolve_designer` and
-    `resolve_cover_parameters` both share. A leafed object joins through
-    its own `module_mac` and `leaf_io_no`. A leafless object joins through
-    `mac_by_device_id[id_urzadzenia]` and `funkcja` minus one. Returns
-    None when either part is missing.
-    """
-    if obj.leaf_id:
-        mac = obj.module_mac
-        channel = obj.leaf_io_no
-    else:
-        mac = mac_by_device_id.get(obj.id_urzadzenia)
-        channel = obj.funkcja - 1
-    if mac is None or channel is None:
-        return None
-    return mac, channel
-
-
 def resolve_designer(
     objects: Mapping[int, AmpioObject],
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
     location_names: Mapping[int, str],
-    colliding_macs: frozenset[int],
-    mac_by_device_id: Mapping[int, int],
 ) -> dict[int, DesignerRecord]:
     """Join each object to its module's description entry.
 
-    The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], leaf_io_no)`` within
-    the module record of ``module_mac``. A leafless object joins through
-    ``mac_by_device_id[id_urzadzenia]`` and ``funkcja - 1`` instead: its
-    module row's mac, and the channel every leafed object of these kinds
-    embeds as ``leaf_io_no`` (docs/identity.md). Objects on a colliding
-    mac are skipped - the reply cannot be attributed to one module.
+    The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], address.channel)``
+    within the module record of ``address.mac``.
     ``out_loc`` 0 or 16383 reads unassigned and ``out_type`` 0 untagged,
     so none produces a value. A ``desc`` that is empty or the ``.``
     placeholder reads as None, like the other two fields.
@@ -682,12 +687,7 @@ def resolve_designer(
         desc_type = DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "")
         if desc_type is None:
             continue
-        joined = _object_channel(obj, mac_by_device_id)
-        if joined is None:
-            continue
-        mac, out_no = joined
-        if mac in colliding_macs:
-            continue
+        mac, out_no = obj.address.mac, obj.address.channel
         entry = entries_by_key.get(mac, {}).get((desc_type, out_no))
         if entry is None:
             continue
@@ -763,20 +763,17 @@ def resolve_panel_settings(
     params_by_mac: Mapping[int, bytes],
     capabilities_by_mac: Mapping[int, Mapping[int, int]],
     hardware_by_mac: Mapping[int, tuple[int | None, int | None]],
-    colliding_macs: frozenset[int],
 ) -> dict[int, PanelSettings]:
     """The panel settings of every module whose layout is proven, by mac.
 
     A module resolves only when its ``(typ_urzadzenia, wersja_pcb)`` pair
     is a proven layout and it advertises a backlight channel count - that
     count is the number of touch fields. Everything else resolves
-    nothing, so a module that is not a panel, a board this library has
-    not read, and a colliding mac are all simply absent.
+    nothing, so a module that is not a panel and a board this library
+    has not read are both simply absent.
     """
     out: dict[int, PanelSettings] = {}
     for mac, blob in params_by_mac.items():
-        if mac in colliding_macs:
-            continue
         typ, pcb = hardware_by_mac.get(mac, (None, None))
         if typ is None or pcb is None or (typ, pcb) not in PANEL_PARAMS_LAYOUTS:
             continue
@@ -860,8 +857,6 @@ def resolve_cover_parameters(
     params_by_mac: Mapping[int, bytes],
     capabilities_by_mac: Mapping[int, Mapping[int, int]],
     hardware_by_mac: Mapping[int, tuple[int | None, int | None]],
-    colliding_macs: frozenset[int],
-    mac_by_device_id: Mapping[int, int],
 ) -> dict[int, CoverParameters]:
     """Join each cover object to its channel's stored travel parameters.
 
@@ -872,35 +867,28 @@ def resolve_cover_parameters(
     disagrees with the layout, the module resolves nothing rather than
     guessing.
 
-    The channel key matches ``resolve_designer``: ``leaf_io_no`` for a
-    leafed object, ``funkcja`` minus one for a leafless one. A colliding
-    mac is skipped, because the reply cannot be attributed to one module.
+    The channel key matches ``resolve_designer``: ``address.channel``.
     """
     channels_by_mac: dict[int, tuple[CoverParameters, ...]] = {}
-    for module_mac, blob in params_by_mac.items():
-        if module_mac in colliding_macs:
-            continue
-        typ, pcb = hardware_by_mac.get(module_mac, (None, None))
+    for mac, blob in params_by_mac.items():
+        typ, pcb = hardware_by_mac.get(mac, (None, None))
         if typ is None or pcb is None:
             continue
         layout = COVER_PARAMS_LAYOUTS.get((typ, pcb))
         if layout is None:
             continue
-        advertised = capabilities_by_mac.get(module_mac, {}).get(ModuleFunction.ROLLER)
+        advertised = capabilities_by_mac.get(mac, {}).get(ModuleFunction.ROLLER)
         if advertised is not None and advertised != layout.channels:
             continue
         channels = parse_cover_parameters(blob, layout)
         if channels is not None:
-            channels_by_mac[module_mac] = channels
+            channels_by_mac[mac] = channels
 
     out: dict[int, CoverParameters] = {}
     for obj in objects.values():
         if not joins_roller_records(obj.typ_komponentu):
             continue
-        joined = _object_channel(obj, mac_by_device_id)
-        if joined is None:
-            continue
-        mac, channel = joined
+        mac, channel = obj.address.mac, obj.address.channel
         channels = channels_by_mac.get(mac)
         if channels is None or not 0 <= channel < len(channels):
             continue
@@ -910,69 +898,28 @@ def resolve_cover_parameters(
 
 def resolve_module_capabilities(
     capabilities_by_mac: Mapping[int, Mapping[int, int]],
-    colliding_macs: frozenset[int],
 ) -> dict[int, Mapping[int, int]]:
     """The capability map of every answering module, by mac.
 
     An empty map is authoritative: the module answered and advertised
-    nothing. Colliding macs are skipped, exactly as the record side skips
-    them - the reply cannot be attributed.
+    nothing.
     """
-    return {
-        mac: caps
-        for mac, caps in capabilities_by_mac.items()
-        if mac not in colliding_macs
-    }
-
-
-def resolve_roller_lock_support(
-    objects: Mapping[int, AmpioObject],
-    capabilities_by_mac: Mapping[int, Mapping[int, int]],
-    mac_by_device_id: Mapping[int, int],
-) -> dict[int, bool]:
-    """Whether each cover's module takes a roller lock write, by object id.
-
-    ``capabilities_by_mac`` is the resolved map, so a mac in it answered
-    the sweep and a colliding mac is already gone. An object is therefore
-    absent when no answer is known, and present and False when the module
-    answered and cannot hold a lock on that channel. A row outside the
-    roller class is absent as well.
-
-    The channel key matches ``resolve_designer``: ``leaf_io_no`` for a
-    leafed object, ``funkcja`` minus one for a leafless one.
-    """
-    out: dict[int, bool] = {}
-    for obj in objects.values():
-        if not joins_roller_records(obj.typ_komponentu):
-            continue
-        joined = _object_channel(obj, mac_by_device_id)
-        if joined is None:
-            continue
-        mac, channel = joined
-        capabilities = capabilities_by_mac.get(mac)
-        if capabilities is None:
-            continue
-        out[obj.id] = roller_lock_channels(capabilities, channel) is not None
-    return out
+    return dict(capabilities_by_mac)
 
 
 def resolve_module_records(
     descriptions_by_mac: Mapping[int, tuple[OutputDescription, ...]],
     location_names: Mapping[int, str],
-    colliding_macs: frozenset[int],
 ) -> dict[int, ModuleRecord]:
     """The DEVICE_NAME record entry of every answering module, by mac.
 
     A record without the entry reads an empty bundle - the module
     answered, so the emptiness is authoritative. The unassigned and
     placeholder sentinels read None, exactly as ``resolve_designer``
-    reads them. Colliding macs are skipped: the reply cannot be
-    attributed.
+    reads them.
     """
     out: dict[int, ModuleRecord] = {}
     for mac, entries in descriptions_by_mac.items():
-        if mac in colliding_macs:
-            continue
         entry = next((e for e in entries if e.desc_type == DEVICE_NAME_DESC_TYPE), None)
         if entry is None:
             out[mac] = ModuleRecord()
@@ -1294,8 +1241,8 @@ class Endpoint:
     # wait_for_initial_discovery(). The rooms/scenes endpoints are on-demand.
     initial: bool = False
     # The one tier this endpoint answers for, or None for both. The M-SERV
-    # serves the `config` catalogues to administrators only, and an admin
-    # session never needs the app-sync pair (it repeats the `config` view).
+    # serves the config surfaces to administrators only. The object
+    # catalogue rides the data surface on every account.
     tier: AccessTier | None = None
     # The reply parser for a pure request/response endpoint. The dispatcher
     # runs it exactly once, and the parsed value is what a fetch returns. A
@@ -1312,15 +1259,6 @@ class Endpoint:
 
 ENDPOINTS: tuple[Endpoint, ...] = (
     Endpoint(
-        "details",
-        "config",
-        "devicesDetails",
-        "config",
-        "devicesDetails",
-        initial=True,
-        tier=AccessTier.ADMIN,
-    ),
-    Endpoint(
         "devices",
         "config",
         "devices",
@@ -1333,10 +1271,10 @@ ENDPOINTS: tuple[Endpoint, ...] = (
     Endpoint(
         "info", "info", "", "data", "info", initial=True, redacts=redact_info_reply
     ),
-    # App-sync object catalogue. Same wire keyword as the module list above but
-    # on the `data` surface, and a different payload: DB objects (the
-    # `devicesDetails` row shape minus `params`/`stan_json`), filtered to the
-    # objects the account was granted in the Ampio app.
+    # The object catalogue, served to every account: the objects in the
+    # account's app-sync view, which on the reserved admin login is every
+    # object in a room. Every reply also carries the two system rows, and
+    # the store drops them by their type.
     Endpoint(
         "data_devices",
         "data",
@@ -1344,11 +1282,9 @@ ENDPOINTS: tuple[Endpoint, ...] = (
         "data",
         "devices",
         initial=True,
-        tier=AccessTier.RESTRICTED,
     ),
-    # Per-object `params` bitfields for the app-sync catalogue. NOT
-    # grant-filtered: every account receives the full table, which is what
-    # lets a restricted account apply the hidden-flag visibility rule.
+    # Per-object params bitfields for the catalogue. Not grant-filtered:
+    # every account receives the full table.
     Endpoint(
         "params_devices",
         "data",
@@ -1356,7 +1292,6 @@ ENDPOINTS: tuple[Endpoint, ...] = (
         "data",
         "params_devices",
         initial=True,
-        tier=AccessTier.RESTRICTED,
     ),
     Endpoint("groups", "data", "groups", "data", "groups", parses=parse_groups),
     Endpoint(
@@ -1383,6 +1318,12 @@ ENDPOINTS: tuple[Endpoint, ...] = (
 )
 
 ENDPOINT_BY_NAME: dict[str, Endpoint] = {ep.name: ep for ep in ENDPOINTS}
+
+# The endpoints each client class is served. The base client and the base
+# store read the first. The admin client and the admin store read the second.
+# `Endpoint.tier` is the wire fact both derive from.
+BASE_ENDPOINTS: tuple[Endpoint, ...] = tuple(ep for ep in ENDPOINTS if ep.tier is None)
+ADMIN_ENDPOINTS: tuple[Endpoint, ...] = ENDPOINTS
 
 
 # The M-SERV software baseline this library is developed and live-tested
@@ -1471,7 +1412,7 @@ def raw_output_payload(function: int, value: int, channel: int) -> str:
 
     ``function`` is the leaf class's first byte
     (:data:`RAW_OUTPUT_FUNCTION_BY_SF`). ``channel`` is the 0-based output
-    index - :pyattr:`AmpioObject.leaf_io_no`, one below the 1-based raw
+    index - ``AmpioObject.address.channel``, one below the 1-based raw
     state channel.
     """
     return f"{function:02x}f9{value:02x}{channel:02x}"
@@ -1592,21 +1533,6 @@ _ROLLER_ACTION_FUNC = 0
 _ROLLER_LOCK_UNUSED_TAIL = "00000000"
 
 
-def roller_lock_channels(capabilities: Mapping[int, int], channel: int) -> int | None:
-    """The roller channel count a lock frame for ``channel`` can use.
-
-    None when that module cannot hold a lock on that channel. The count
-    is both the gate and the mask width, so one answer settles both: a
-    module that advertises none drops every lock sub-function, and a
-    frame for it could not be sized anyway. docs/panel-writes.md carries
-    the measurement behind the gate.
-    """
-    channels = capabilities.get(ModuleFunction.ROLLER)
-    if channels is None or not 0 <= channel < channels:
-        return None
-    return channels
-
-
 def raw_roller_lock_payload(
     sub_function: int, channel: int, channels: int, *, assert_lock: bool
 ) -> str:
@@ -1664,9 +1590,10 @@ def ob_state_wildcard(user: str) -> str:
     return f"ampio/fromDB/{user}/ob/+/state"
 
 
-# The app-sync tables whose retained `md5/<keyword>` digest the M-SERV
-# rewrites when a Designer save changes them. The admin tier watches these
-# to learn that its `config` catalogues went stale (docs/discovery-flow.md).
+# The app-sync tables the M-SERV pushes into every account namespace on a
+# Designer save, rewriting their retained `md5/<keyword>` digest with them.
+# The admin client uses a changed digest to re-request the module list,
+# which is never pushed (docs/discovery-flow.md).
 CATALOGUE_DIGEST_KEYWORDS = ("devices", "params_devices")
 
 
@@ -1858,12 +1785,19 @@ class Router:
     outside it is unroutable like any other unknown shape. Endpoint reply
     and per-object state topics are namespaced by the connecting account
     (hence ``user``); the raw ``ampio/from`` tree is global.
+
+    The admin-only shapes (the raw tree, the digests, the device list) are
+    routed for the admin client alone, so a router built with ``admin=False``
+    returns None for a digest, the device list, and every raw topic.
     """
 
-    __slots__ = ("_by_response", "_user")
+    __slots__ = ("_admin", "_by_response", "_user")
 
-    def __init__(self, user: str, endpoints: tuple[Endpoint, ...]) -> None:
+    def __init__(
+        self, user: str, endpoints: tuple[Endpoint, ...], *, admin: bool = False
+    ) -> None:
         self._user = user
+        self._admin = admin
         self._by_response: dict[str, Endpoint] = {
             response_topic(ep, user): ep for ep in endpoints
         }
@@ -1885,6 +1819,8 @@ class Router:
         ):
             oid = to_int(parts[4])
             return None if oid is None else _parse_state_payload(oid, payload)
+        if not self._admin:
+            return None
         if (
             len(parts) == 5
             and parts[0] == "ampio"

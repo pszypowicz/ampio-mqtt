@@ -11,30 +11,32 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields, replace
+from types import MappingProxyType
 from typing import Any
 
 from . import _protocol
 from .classification import input_channel_prefix
-from .errors import AmpioProtocolError
+from .errors import AmpioNotConfigured
 from .events import (
     BusEventRaised,
     ModuleRemoved,
     ModuleUpdated,
+    NotConfigured,
     ObjectAdded,
     ObjectRemoved,
     ObjectUpdated,
     StoreEvent,
 )
 from .models import (
-    AccessTier,
+    HIDDEN_FLAG,
     AmpioModule,
     AmpioObject,
     AmpioServerInfo,
     CoverParameters,
     DesignerRecord,
+    ModuleAddress,
     ModuleRecord,
     PanelSettings,
-    leaf_mac,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,74 +54,43 @@ class Applied:
 
 
 class AmpioStore:
-    """Applies typed M-SERV messages to the object, module and server state.
+    """Applies typed M-SERV messages to the object and server state.
 
-    The account tier decides which surfaces answer (docs/account-tiers.md),
-    so the store holds the handlers of that tier alone. Each fact then has
-    one source: the admin catalogue carries the Designer config columns
-    inline, and on the app-sync tier `data/params_devices` carries them.
+    Holds what every account is served: the object catalogue, its config
+    columns, the states snapshot and the server's self-report.
+    :class:`AdminStore` adds what the reserved admin login alone receives
+    (docs/account-tiers.md). Each fact has one source: `data/params_devices`
+    carries the Designer config columns for every account.
     """
 
-    def __init__(self, tier: AccessTier) -> None:
-        self._tier = tier
+    def __init__(self) -> None:
         self.objects: dict[int, AmpioObject] = {}
-        self.modules: dict[int, AmpioModule] = {}
         self.server_info: AmpioServerInfo | None = None
-        # Override macs shared by two or more catalogue rows. The raw
-        # routing tables are keyed by mac, so edges and diagnostics on a
-        # colliding mac cannot be attributed reliably; the collision is
-        # warned once per change and surfaced for diagnostics.
-        self.colliding_macs: frozenset[int] = frozenset()
-        # Raw-channel bridge: (module mac, prefix, channel) -> object id.
-        self._input_index: dict[tuple[int, str, int], int] = {}
-        # Effective bus mac -> module id, for routing a module's own
-        # broadcasts. Ids, not instances: modules are frozen and replaced on
-        # every change, so a cached instance would go stale.
-        self._module_id_by_mac: dict[int, int] = {}
+        # The last `data/devices` reply, held whole so a `data/params_devices`
+        # push alone re-runs the door on it. None until the first reply.
+        self._catalogue: list[_protocol.ObjectMetadata] | None = None
+        # The `(id, name)` pairs of the rows the door left out because they
+        # carry no leaf, from the last apply. Empty when every listed row
+        # was admitted or hidden. The client raises and reports from it.
+        self.not_configured: tuple[tuple[int, str | None], ...] = ()
         # Full-catalogue per-object config facts (`params`, `czas`, `url`)
-        # from `data/params_devices`, the app-sync tier's one source for
-        # them. Held because the two app-sync replies arrive in no fixed
-        # order, and re-applied on every merge - an eviction included.
-        # Stays empty on the admin tier, which is served neither the table
-        # nor a catalogue that needs it.
+        # from `data/params_devices`, this store's one source for them on
+        # both tiers. Held because the two catalogue replies arrive in no
+        # fixed order, and re-applied on every merge - an eviction included.
         self._params_by_id: dict[int, _protocol.ParamsEntry] = {}
         # Whether the config table has answered at least once, so a gap in
         # its coverage is told apart from a table still in flight.
         self._params_received = False
-        # Granted objects the config table carries no row for. The table
-        # covers the full catalogue, so a non-empty set is a server fault:
-        # those objects read every Designer config flag as unset. Warned
-        # once per change and surfaced for diagnostics.
+        # Catalogue objects the params table carries no row for. Every
+        # object the catalogue lists has a row on both tiers, so a
+        # non-empty set is a server fault: those objects read every
+        # Designer config flag as unset. Warned once per change and
+        # surfaced for diagnostics.
         self.missing_params_ids: frozenset[int] = frozenset()
-        # `{object_id: DesignerRecord}` accumulated across resolve
-        # sweeps (a sweep updates its joined ids and leaves the rest),
-        # kept so a catalogue refresh re-applies what the CAN records
-        # proved (the catalogue itself never carries them).
-        self._record_by_id: dict[int, DesignerRecord] = {}
-        # `{object_id: CoverParameters}` accumulated across sweeps, kept
-        # for the same reason as the record table: the catalogue never
-        # carries the params blob either.
-        self._cover_parameters_by_id: dict[int, CoverParameters] = {}
-        # `{object_id: bool}` accumulated across sweeps, on the same terms.
-        # False is an answer, so absence is the only unresolved state.
-        self._lock_support_by_id: dict[int, bool] = {}
-        # `{mac: ModuleRecord}` accumulated across sweeps, kept for the
-        # same reason on the module side; an empty bundle is an
-        # authoritative "answered, unassigned".
-        self._module_record_by_mac: dict[int, ModuleRecord] = {}
-        # `{mac: {function id: channel count}}` accumulated across sweeps,
-        # kept for the same reason; an empty map is an authoritative
-        # "answered, advertising nothing".
-        self._module_capabilities_by_mac: dict[int, Mapping[int, int]] = {}
-        # `{mac: PanelSettings}` accumulated across sweeps, kept for the
-        # same reason. A module absent here is one whose panel layout the
-        # sweep could not resolve, which includes everything that is not a
-        # touch panel.
-        self._panel_settings_by_mac: dict[int, PanelSettings] = {}
-        # `{object_id: stan_json}` from the last `data/states` snapshot,
+        # `{object_id: seed}` from the last `data/states` snapshot,
         # kept for the same reason; a snapshot row for an id no catalogue
         # established creates nothing.
-        self._stan_by_id: dict[int, str] = {}
+        self._stan_by_id: dict[int, _protocol.StanJsonSeed] = {}
         # Latest live push per id no catalogue has established. Only the
         # catalogues decide which objects exist, so a push that races ahead
         # of them waits here and surfaces with the catalogue row.
@@ -134,41 +105,34 @@ class AmpioStore:
         # clears the guard; a server-stamped report clears both.
         self._local_stamped: set[int] = set()
         self._guarded: set[int] = set()
-        # The broker replays its retained raw tree within a second of the
-        # subscribe, before any catalogue reply, so the routing tables above
-        # are still empty when those frames land. They wait here, keyed the
-        # way the tables key them, and `_rebuild_indexes` folds them in once
-        # the catalogue builds the routing. Both stay empty on the app-sync
-        # tier, which is served no raw tree.
-        self._pending_raw: dict[tuple[int, str, int], str] = {}
-        self._pending_diagnostics: dict[int, _protocol.ModuleDiagnostics] = {}
-        # This tier's endpoints whose reply mutates state. The rest are pure
-        # request/response, parsed by the dispatcher with the endpoint's own
-        # `parses` gate and never sent here.
-        self._handlers: dict[str, Callable[[Mapping[str, Any], Applied], None]] = {
-            "states": self._handle_states_snapshot,
-            "info": self._handle_info,
-        }
-        if tier is AccessTier.ADMIN:
-            self._handlers["details"] = self._handle_admin_catalogue
-            self._handlers["devices"] = self._handle_devices
-        else:
-            self._handlers["data_devices"] = self._handle_app_sync_catalogue
-            self._handlers["params_devices"] = self._handle_params_devices
-        # The endpoint table and this handler table are edited separately;
+        self._handlers = self._handler_table()
+        # The endpoint table and the handler table are edited separately;
         # a name typo between them would otherwise surface as a silent
         # discovery hang, so misalignment fails construction instead.
-        handler_gated = {
-            ep.name
-            for ep in _protocol.ENDPOINTS
-            if ep.parses is None and ep.tier in (None, tier)
-        }
+        handler_gated = {ep.name for ep in self._endpoint_set() if ep.parses is None}
         if set(self._handlers) != handler_gated:
             raise RuntimeError(
                 f"store handlers {sorted(self._handlers)} do not match the "
-                f"{tier.value} tier's handler-gated endpoints "
-                f"{sorted(handler_gated)}"
+                f"handler-gated endpoints {sorted(handler_gated)}"
             )
+
+    def _endpoint_set(self) -> tuple[_protocol.Endpoint, ...]:
+        """The endpoints this store's handlers must cover."""
+        return _protocol.BASE_ENDPOINTS
+
+    def _handler_table(self) -> dict[str, Callable[[Mapping[str, Any], Applied], None]]:
+        """The reply handlers this store applies, by endpoint name.
+
+        Every endpoint here answers with a reply that mutates state. The
+        rest are pure request/response, parsed by the dispatcher with the
+        endpoint's own `parses` gate and never sent to a store.
+        """
+        return {
+            "states": self._handle_states_snapshot,
+            "info": self._handle_info,
+            "data_devices": self._handle_catalogue,
+            "params_devices": self._handle_params_devices,
+        }
 
     # --- routing ----------------------------------------------------------
 
@@ -181,105 +145,22 @@ class AmpioStore:
         """
         self._guarded.clear()
 
-    def apply_designer_records(
-        self,
-        resolved: Mapping[int, DesignerRecord],
-        cover_parameters: Mapping[int, CoverParameters],
-        lock_support: Mapping[int, bool],
-    ) -> Applied:
-        """Hold one sweep's per-object facts and fold them into known objects.
-
-        A joined object's ``record`` is replaced wholesale - the entry is
-        what its module answered, None fields included. All three maps
-        come from one ``device_api`` reply, so an object changed by any of
-        them reports one event. Objects a sweep did not join keep what
-        they had, and the held tables accumulate across sweeps so a
-        catalogue re-seed re-folds everything this session learned. A row
-        that left the roller class is the exception: the merge drops its
-        cover parameters and its lock support, facts only a roller kind
-        carries.
-        """
-        applied = Applied()
-        self._record_by_id.update(resolved)
-        self._cover_parameters_by_id.update(cover_parameters)
-        self._lock_support_by_id.update(lock_support)
-        # Insertion order, so the event order follows the maps rather than
-        # a set's hash order.
-        for oid in dict.fromkeys((*resolved, *cover_parameters, *lock_support)):
-            obj = self.objects.get(oid)
-            if obj is None:
-                continue
-            updated = obj
-            if oid in resolved and updated.record != resolved[oid]:
-                updated = replace(updated, record=resolved[oid])
-            if (
-                oid in cover_parameters
-                and updated.cover_parameters != cover_parameters[oid]
-            ):
-                updated = replace(updated, cover_parameters=cover_parameters[oid])
-            if oid in lock_support and updated.block_writable != lock_support[oid]:
-                updated = replace(updated, block_writable=lock_support[oid])
-            if updated is not obj:
-                self.objects[oid] = updated
-                self._record(updated, applied)
-        return applied
-
-    def apply_module_sweep(
-        self,
-        records: Mapping[int, ModuleRecord],
-        capabilities: Mapping[int, Mapping[int, int]],
-        panel_settings: Mapping[int, PanelSettings],
-    ) -> Applied:
-        """Hold one sweep's module facts and fold them into modules.
-
-        Both maps come from the same ``device_api`` reply, so they fold
-        together and a module changed by either reports one event.
-        Wholesale per answering mac, exactly as the object side; a mac
-        the sweep did not cover leaves both the held tables and the
-        module untouched.
-        """
-        applied = Applied()
-        self._module_record_by_mac.update(records)
-        self._module_capabilities_by_mac.update(capabilities)
-        self._panel_settings_by_mac.update(panel_settings)
-        for mac in {*records, *capabilities, *panel_settings}:
-            mid = self._module_id_by_mac.get(mac)
-            if mid is None:
-                continue
-            module = self.modules[mid]
-            updated = module
-            if mac in records and updated.record != records[mac]:
-                updated = replace(updated, record=records[mac])
-            if mac in capabilities and updated.capabilities != capabilities[mac]:
-                updated = replace(updated, capabilities=capabilities[mac])
-            if mac in panel_settings and updated.panel_settings != panel_settings[mac]:
-                updated = replace(updated, panel_settings=panel_settings[mac])
-            if updated is not module:
-                self.modules[mid] = updated
-                applied.events.append(ModuleUpdated(updated))
-        return applied
-
     def apply(self, msg: _protocol.Inbound, *, retained: bool = False) -> Applied:
         """Apply one typed message and report what it changed.
 
-        ``retained`` marks a broker replay from its retained store. A
-        replay carries the value but says nothing about whether the
-        module is alive now, so it never touches ``last_seen``.
+        The base store applies the account namespace alone: a per-object
+        push. The base router routes no shape but the endpoint replies and
+        the per-object push, so any other message here is an invariant
+        broken. ``retained`` marks a broker replay, which the admin store
+        reads.
         """
         applied = Applied()
-        match msg:
-            case _protocol.StateUpdate() as update:
-                self._apply_state(update, applied)
-            case _protocol.RawChannelEdge() as edge:
-                self._apply_raw_channel(edge, applied, retained=retained)
-            case _protocol.ColorTempFrame(edges=edges):
-                for edge in edges:
-                    self._apply_raw_channel(edge, applied, retained=retained)
-            case _protocol.DiagnosticsReport(mac=mac, diagnostics=diagnostics):
-                self._apply_diagnostics(mac, diagnostics, applied, retained=retained)
-            case BusEventRaised() as event:
-                applied.events.append(event)
-        return applied
+        if isinstance(msg, _protocol.StateUpdate):
+            self._apply_state(msg, applied)
+            return applied
+        raise RuntimeError(
+            f"{type(msg).__name__} is not a message the base store applies"
+        )
 
     def apply_endpoint(
         self, endpoint: _protocol.Endpoint, data: Mapping[str, Any]
@@ -294,59 +175,94 @@ class AmpioStore:
         applied = Applied()
         handler = self._handlers.get(endpoint.name)
         if handler is None:
-            raise AmpioProtocolError(
-                f"The Ampio {endpoint.name!r} reply is not served on "
-                f"the {self._tier.value} tier"
+            # The router yields the served endpoints alone, so a reply for
+            # one this store has no handler for never reaches here.
+            raise RuntimeError(
+                f"endpoint {endpoint.name!r} has no handler on this store"
             )
         handler(data, applied)
         return applied
 
+    # --- admin hooks ------------------------------------------------------
+
+    def _touch_module(self, mac: int) -> None:
+        """Mark the module on ``mac`` as alive now. The base holds no module list."""
+
+    def _rebuild_indexes(self, applied: Applied) -> None:
+        """Rebuild the raw routing after a catalogue change.
+
+        The base routes no raw tree.
+        """
+
+    def _raw_owns(self, oid: int) -> bool:
+        """Whether the raw path owns the object. The base has no raw path."""
+        return False
+
+    def _release_raw(self, oid: int) -> None:
+        """Return the object to per-object updates. The base has nothing to release."""
+
     # --- catalogues -------------------------------------------------------
 
-    def _handle_admin_catalogue(
-        self, data: Mapping[str, Any], applied: Applied
-    ) -> None:
-        """Apply a `config/devicesDetails` reply, the admin object catalogue.
+    def _handle_catalogue(self, data: Mapping[str, Any], applied: Applied) -> None:
+        """Apply a `data/devices` reply through the door, then hold it.
 
-        Every row carries the Designer config columns inline, so the row is
-        their one source on this tier.
+        The reply carries two rows the M-SERV creates itself, and no module
+        drives either one. The handler drops them by type, so the held
+        reply, the door and the buffered-push prune never see one.
+
+        The door runs once the params table is in hand, and a reply the
+        door refuses leaves every held field as it was. A reply that
+        arrives before the params table is held unseen, and a later params
+        push runs the door on it.
         """
-        served = _protocol.parse_details(data)
-        self._apply_catalogue(
-            [row.shared for row in served],
-            {
-                row.shared.id: {
-                    "params": row.params,
-                    "czas": row.czas,
-                    "url": row.url,
-                }
-                for row in served
-            },
-            applied,
-        )
-
-    def _handle_app_sync_catalogue(
-        self, data: Mapping[str, Any], applied: Applied
-    ) -> None:
-        """Apply a `data/devices` reply, the grant-filtered app-sync catalogue.
-
-        The surface serves no Designer config columns, so the held
-        `data/params_devices` table is their one source here. The table
-        re-applies on every merge, the re-creation after an eviction
-        included.
-        """
-        served = _protocol.parse_app_sync_devices(data)
-        self._apply_catalogue(served, self._held_config(served), applied)
+        served = [
+            meta
+            for meta in _protocol.parse_app_sync_devices(data)
+            if meta.typ_komponentu not in _protocol.SYSTEM_ROW_TYPES
+        ]
+        if self._params_received:
+            self._apply_catalogue(
+                served, self._config_for(served, self._params_by_id), applied
+            )
+        self._catalogue = served
+        # The reply is the whole catalogue this account holds, so a buffered
+        # push for an id it does not list will never gain a row. The params
+        # reply of the pair runs the door on the older held catalogue, which
+        # is why only this reply may prune.
+        listed = {meta.id for meta in served}
+        for oid in list(self._pending_state):
+            if oid not in listed:
+                del self._pending_state[oid]
         self._report_params_coverage()
 
-    def _held_config(
-        self, served: list[_protocol.ObjectMetadata]
+    def _handle_params_devices(self, data: Mapping[str, Any], applied: Applied) -> None:
+        """Apply the `data/params_devices` table through the door, then hold it.
+
+        The table is this store's one source for `params`, `czas` and `url`
+        on both tiers, the hidden bit included, so the door waits for it. A
+        push of the table alone re-runs the door on the held catalogue, so
+        a hidden bit that changes evicts or admits its row. The table is
+        held only after the door admitted the result.
+        """
+        params = _protocol.parse_params_devices(data)
+        if self._catalogue is not None:
+            self._apply_catalogue(
+                self._catalogue, self._config_for(self._catalogue, params), applied
+            )
+        self._params_by_id = params
+        self._params_received = True
+        self._report_params_coverage()
+
+    def _config_for(
+        self,
+        served: list[_protocol.ObjectMetadata],
+        params: Mapping[int, _protocol.ParamsEntry],
     ) -> dict[int, Mapping[str, Any]]:
-        """The config columns the held table holds for the served rows."""
+        """The config columns one params table holds for the served rows."""
         return {
             meta.id: {"params": entry.params, "czas": entry.czas, "url": entry.url}
             for meta in served
-            if (entry := self._params_by_id.get(meta.id)) is not None
+            if (entry := params.get(meta.id)) is not None
         }
 
     def _apply_catalogue(
@@ -355,43 +271,77 @@ class AmpioStore:
         config: Mapping[int, Mapping[str, Any]],
         applied: Applied,
     ) -> None:
-        """Fold one tier's whole object catalogue into the store.
+        """Fold the whole object catalogue into the store, through the door.
 
-        ``config`` carries the Designer config columns per object id, from
-        whichever source this tier serves them on. An id absent from it is
-        one whose columns have not arrived yet, which leaves the object
-        reading the unset values until they do.
+        The door decides admission in one order on both tiers: a hidden row
+        drops before its leaf is read because nothing drives it, and every
+        remaining row must carry a leaf that parses. A row with an empty
+        leaf is recorded on ``not_configured`` and left out, and
+        :class:`NotConfigured` reports the set when it changes to a
+        non-empty one. A leaf that does not parse is a server fault, raised
+        here before any store field changes, so the reply is refused whole.
+        `data/devices` carries the leaf, and the raise names that surface
+        whichever reply of the pair ran the door.
         """
-        # One reply is the whole catalogue this tier holds, so its leafed
-        # rows are every sibling a leafless row can learn its module from.
-        sibling_macs: dict[int, int] = {}
+        admitted: list[tuple[_protocol.ObjectMetadata, ModuleAddress]] = []
+        rejected: list[tuple[int, str | None]] = []
         for meta in served:
-            mac = leaf_mac(meta.leaf_id)
-            if mac is not None:
-                sibling_macs[meta.id_urzadzenia] = mac
+            if config.get(meta.id, {}).get("params", 0) & HIDDEN_FLAG:
+                continue
+            if not meta.leaf_id:
+                rejected.append((meta.id, meta.name))
+                continue
+            admitted.append((meta, _protocol.parse_module_address(meta.leaf_id)))
         touched = False
-        for meta in served:
+        for meta, address in admitted:
             touched |= self._merge_metadata(
-                meta, config.get(meta.id, {}), sibling_macs, applied
+                meta, address, config.get(meta.id, {}), applied
             )
-        evicted = self._evict_missing_objects({meta.id for meta in served}, applied)
+        evicted = self._evict_missing_objects(
+            {meta.id for meta, _ in admitted}, applied
+        )
         if touched or evicted:
             self._rebuild_indexes(applied)
+        self._set_not_configured(
+            tuple(sorted(rejected, key=lambda pair: pair[0])), applied
+        )
+
+    def _set_not_configured(
+        self, rejected: tuple[tuple[int, str | None], ...], applied: Applied
+    ) -> None:
+        """Record the rows the door left out and report a change to a non-empty set.
+
+        ``rejected`` is sorted by id, so the order the reply listed the
+        rows in never reads as a change.
+        """
+        if rejected == self.not_configured:
+            return
+        self.not_configured = rejected
+        if rejected:
+            applied.events.append(NotConfigured(objects=rejected))
+
+    def admission_failure(self) -> AmpioNotConfigured | None:
+        """The installer fault the last replies left, or None."""
+        if self.not_configured:
+            return AmpioNotConfigured(objects=self.not_configured)
+        return None
+
+    def _drop_sweep_entries(self, oid: int) -> None:
+        """Forget what a sweep proved for one object. The base holds no sweep."""
+
+    def _drop_cover_parameters(self, oid: int) -> None:
+        """Forget one object's travel parameters. The base holds no sweep."""
 
     def _evict_missing_objects(self, present: set[int], applied: Applied) -> bool:
-        """Drop objects the authoritative catalogue no longer lists.
+        """Drop the objects the door did not admit this time.
 
-        Each tier's catalogue is complete for its account - the ``config``
-        catalogue by being admin-only, the app-sync one because the grant
-        bounds everything a restricted store could ever hold - so a reply's
-        arrival is the authority to evict what it stopped listing, an empty
-        reply included (a full grant revocation empties the app-sync view).
+        The admitted set is the authority: a row the reply stopped listing,
+        a row that now carries the hidden bit, and a row the door rejected
+        all leave here, an empty reply included (a full grant revocation
+        empties a restricted view). Each evicted id also drops its held
+        sweep entries. The explicit `_guarded.discard` is what clears the
+        guard on the base store, where `_release_raw` does nothing.
         """
-        # The same completeness proves a buffered push's id will never gain
-        # a catalogue row; without the prune, pushes for such ids accumulate.
-        for oid in list(self._pending_state):
-            if oid not in present:
-                del self._pending_state[oid]
         missing = [oid for oid in self.objects if oid not in present]
         if not missing:
             return False
@@ -403,14 +353,16 @@ class AmpioStore:
             self._stan_by_id.pop(oid, None)
             self._local_stamped.discard(oid)
             self._guarded.discard(oid)
+            self._release_raw(oid)
+            self._drop_sweep_entries(oid)
             applied.events.append(ObjectRemoved(obj))
         return True
 
     def _merge_metadata(
         self,
         meta: _protocol.ObjectMetadata,
+        address: ModuleAddress,
         config: Mapping[str, Any],
-        sibling_macs: Mapping[int, int],
         applied: Applied,
     ) -> bool:
         """Fold one catalogue row into its object; True when anything changed.
@@ -421,49 +373,48 @@ class AmpioStore:
         """
         obj = self.objects.get(meta.id)
         created = obj is None
+        moved = False
+        leaf_key = f"leaf_{meta.leaf_id}"
         if obj is None:
             obj = AmpioObject(
                 id=meta.id,
-                id_urzadzenia=meta.id_urzadzenia,
                 typ_komponentu=meta.typ_komponentu,
                 interpretacja=meta.interpretacja,
                 funkcja=meta.funkcja,
+                address=address,
+                leaf_key=leaf_key,
             )
+        elif obj.address != address:
+            # A leaf that moved the object to another channel invalidates
+            # what a sweep proved for the old one.
+            moved = True
+            self._drop_sweep_entries(meta.id)
+        kind = meta.typ_komponentu
+        if obj.typ_komponentu != kind and not _protocol.joins_roller_records(kind):
+            # Travel parameters belong to a roller channel, and a kind
+            # outside the roller class joins none. A fresh object carries
+            # the row's own kind, so only a retype reaches here.
+            self._drop_cover_parameters(meta.id)
         updates: dict[str, Any] = {
             name: getattr(meta, name) for name in _METADATA_FIELDS
         }
-        updates["sibling_module_mac"] = sibling_macs.get(meta.id_urzadzenia)
         updates.update(config)
-        # The catalogue never carries the record entry, so the held table
-        # re-applies it on every merge - including the re-creation after
-        # an eviction.
-        record = self._record_by_id.get(meta.id)
-        if record is not None:
-            updates["record"] = record
-        # A travel configuration and a lock answer belong to a roller kind
-        # alone. A row that left the class clears both fields and drops both
-        # held entries, so a later return to the class waits for a sweep of
-        # its own instead of folding back what the object no longer is.
-        if _protocol.joins_roller_records(meta.typ_komponentu):
-            parameters = self._cover_parameters_by_id.get(meta.id)
-            if parameters is not None:
-                updates["cover_parameters"] = parameters
-            writable = self._lock_support_by_id.get(meta.id)
-            if writable is not None:
-                updates["block_writable"] = writable
-        else:
-            self._cover_parameters_by_id.pop(meta.id, None)
-            updates["cover_parameters"] = None
-            self._lock_support_by_id.pop(meta.id, None)
-            updates["block_writable"] = None
+        updates["address"] = address
+        updates["leaf_key"] = leaf_key
+        if moved:
+            # The raw form of the old channel says nothing about the new
+            # one, so the object reads per-object reports until the new
+            # channel reports, and the guard lifts because the held value
+            # belongs to another channel.
+            self._release_raw(meta.id)
         changed = any(getattr(obj, name) != value for name, value in updates.items())
         updated = replace(obj, **updates)
         # The states snapshot is the one seed source on both tiers, so a
         # buffered snapshot value applies here and reply order never decides
         # whether an object starts with its state.
-        stan_json = self._stan_by_id.get(meta.id)
-        if stan_json is not None:
-            updated, seeded = self._apply_stan_json(updated, stan_json)
+        seed = self._stan_by_id.get(meta.id)
+        if seed is not None:
+            updated, seeded = self._apply_stan_json(updated, seed)
             changed |= seeded
         # Replay a buffered push under the same stamp-supersedes rule the
         # seed follows: both carry the M-SERV's own clock.
@@ -503,82 +454,14 @@ class AmpioStore:
             self._record(updated, applied)
         return changed or created
 
-    def _handle_devices(self, data: Mapping[str, Any], applied: Applied) -> None:
-        modules = _protocol.parse_devices(data)
-        changed = False
-        for module in modules:
-            previous = self.modules.get(module.id)
-            if previous is not None:
-                module = replace(
-                    module,
-                    last_seen=previous.last_seen,
-                    supply_voltage=previous.supply_voltage,
-                    temperature=previous.temperature,
-                )
-            # The catalogue never carries the record entry; the held
-            # table re-applies it on every merge - including the
-            # re-creation after an eviction.
-            mac = module.mac
-            if mac is not None:
-                if mac in self._module_record_by_mac:
-                    module = replace(module, record=self._module_record_by_mac[mac])
-                if mac in self._module_capabilities_by_mac:
-                    module = replace(
-                        module, capabilities=self._module_capabilities_by_mac[mac]
-                    )
-                if mac in self._panel_settings_by_mac:
-                    module = replace(
-                        module, panel_settings=self._panel_settings_by_mac[mac]
-                    )
-            self.modules[module.id] = module
-            # A new module or a changed catalogue row is news, exactly as an
-            # object catalogue row is; the live fields were carried over
-            # above, so any difference left is the catalogue's.
-            if previous != module:
-                changed = True
-                applied.events.append(ModuleUpdated(module))
-        # The module list is admin-only and complete, so its arrival is the
-        # authority to evict what it stopped listing.
-        present = {module.id for module in modules}
-        missing = [mid for mid in self.modules if mid not in present]
-        evicted = False
-        for mid in missing:
-            evicted = True
-            applied.events.append(ModuleRemoved(self.modules.pop(mid)))
-        if changed or evicted:
-            self._rebuild_indexes(applied)
-
-    def _handle_params_devices(self, data: Mapping[str, Any], applied: Applied) -> None:
-        """Apply the ``data/params_devices`` config table.
-
-        The app-sync tier's one source for `params`, `czas` and `url`. The
-        whole table is held for catalogue rows that arrive later, and
-        objects already known are updated in place. An id with no known
-        object creates no placeholder: the table is not grant-filtered, so
-        most of it refers to objects the account cannot otherwise see.
-        """
-        self._params_by_id = _protocol.parse_params_devices(data)
-        self._params_received = True
-        for oid, entry in self._params_by_id.items():
-            obj = self.objects.get(oid)
-            if obj is not None and (
-                obj.params != entry.params
-                or obj.czas != entry.czas
-                or obj.url != entry.url
-            ):
-                obj = replace(obj, params=entry.params, czas=entry.czas, url=entry.url)
-                self.objects[oid] = obj
-                self._record(obj, applied)
-        self._report_params_coverage()
-
     def _report_params_coverage(self) -> None:
-        """Name the granted objects the config table carries no row for.
+        """Name the catalogue objects the params table carries no row for.
 
-        The table covers the whole object catalogue, so every object a
-        grant lists has a row. A gap leaves those objects reading every
-        Designer config flag as unset, which is a server fault to report
-        rather than a state to model. Warned once per change, and held for
-        diagnostics either way.
+        The table covers the whole object catalogue, so every object the
+        catalogue lists has a row on both tiers. A gap leaves those objects
+        reading every Designer config flag as unset, which is a server
+        fault to report rather than a state to model. Warned once per
+        change, and held for diagnostics either way.
         """
         if not self._params_received:
             return
@@ -596,19 +479,11 @@ class AmpioStore:
     def _handle_info(self, data: Mapping[str, Any], applied: Applied) -> None:
         """Apply a `data/info` reply, the M-SERV's self-report.
 
-        The reply names the asking account, which is the wire's own verdict
-        on the tier. The username decided the same question at
-        construction, and every subscription and request follows from that
-        decision, so a disagreement means the session is aimed at the wrong
-        surfaces. Nothing in the reply can fix that, so it is refused.
+        The reply names the asking account, a wire fact the store records
+        as it reads it. Which client class a session runs is the consumer's
+        own choice, so no store compares the two.
         """
         info = _protocol.parse_server_info(data)
-        if info.access_tier is not self._tier:
-            raise AmpioProtocolError(
-                f"The Ampio server reports account id {info.user_id}, the "
-                f"{info.access_tier.value} tier, for a session connected on "
-                f"the {self._tier.value} tier"
-            )
         previous = self.server_info
         # Warn when the version first becomes known or changes, not on the
         # re-request every reconnect issues.
@@ -622,17 +497,23 @@ class AmpioStore:
         """Apply a `data/states` reply, the one initial-value source.
 
         The snapshot answers both tiers, so neither catalogue needs to seed
-        a value. An id no catalogue established stays out of the store, and
-        its value waits here for the catalogue row that may establish it.
+        a value. Every row parses before any field changes, so a reply
+        with one malformed row is refused whole and the held table stays.
+        An id no catalogue established stays out of the store, and its
+        seed waits here for the catalogue row that may establish it.
         """
         entries = _protocol.parse_states_snapshot(data)
-        self._stan_by_id = {entry.id: entry.stan_json for entry in entries}
-        for entry in entries:
-            obj = self.objects.get(entry.id)
+        seeds = {
+            entry.id: _protocol.parse_stan_json(entry.stan_json) for entry in entries
+        }
+        # No code below this line raises.
+        self._stan_by_id = seeds
+        for oid, seed in seeds.items():
+            obj = self.objects.get(oid)
             if obj is None:
                 continue
-            obj, changed = self._apply_stan_json(obj, entry.stan_json)
-            self.objects[entry.id] = obj
+            obj, changed = self._apply_stan_json(obj, seed)
+            self.objects[oid] = obj
             if changed:
                 self._record(obj, applied)
 
@@ -643,12 +524,12 @@ class AmpioStore:
         if obj is None:
             self._pending_state[update.id] = update
             return
-        if obj.raw_owned:
+        if self._raw_owns(update.id):
             # The raw path owns this object: the per-object echo repeats
             # what the raw edge delivered ~150 ms earlier, so it is
             # dropped whole. It still counts as live evidence of the
             # module.
-            self._touch_module(obj.id_urzadzenia)
+            self._touch_module(obj.address.mac)
             return
         obj = replace(
             obj,
@@ -665,62 +546,13 @@ class AmpioStore:
         # bookkeeping a raw edge left behind no longer applies.
         self._local_stamped.discard(update.id)
         self._guarded.discard(update.id)
-        self._touch_module(obj.id_urzadzenia)
+        self._touch_module(obj.address.mac)
         self._record(obj, applied)
-
-    def _apply_raw_channel(
-        self, edge: _protocol.RawChannelEdge, applied: Applied, *, retained: bool
-    ) -> None:
-        key = (edge.mac, edge.prefix, edge.channel)
-        oid = self._input_index.get(key)
-        if oid is None:
-            # A replay waits for the routing table; a live frame for a
-            # channel no object exposes is one nothing will ever route.
-            if retained:
-                self._pending_raw[key] = edge.state
-            return
-        obj = replace(
-            self.objects[oid],
-            raw_owned=True,
-            state=edge.state,
-            updated_at=time.time(),
-        )
-        self.objects[oid] = obj
-        self._local_stamped.add(oid)
-        self._guarded.add(oid)
-        if not retained:
-            self._touch_module(obj.id_urzadzenia)
-        self._record(obj, applied)
-
-    def _apply_diagnostics(
-        self,
-        mac: int,
-        diagnostics: _protocol.ModuleDiagnostics,
-        applied: Applied,
-        *,
-        retained: bool,
-    ) -> None:
-        mid = self._module_id_by_mac.get(mac)
-        if mid is None:
-            # The same rule as a raw channel edge: a replay waits for the
-            # module list, a live frame for an unlisted module drops.
-            if retained:
-                self._pending_diagnostics[mac] = diagnostics
-            return
-        previous = self.modules[mid]
-        module = replace(
-            previous,
-            supply_voltage=diagnostics.supply_voltage,
-            temperature=diagnostics.temperature,
-            last_seen=previous.last_seen if retained else time.time(),
-        )
-        self.modules[mid] = module
-        applied.events.append(ModuleUpdated(module))
 
     # --- helpers ----------------------------------------------------------
 
     def _apply_stan_json(
-        self, obj: AmpioObject, stan_json: str
+        self, obj: AmpioObject, seed: _protocol.StanJsonSeed
     ) -> tuple[AmpioObject, bool]:
         """Return `obj` with a bulk-snapshot value applied when it supersedes.
 
@@ -734,9 +566,8 @@ class AmpioStore:
         resync is the broker's retained raw table, and a DB snapshot may be
         staler than that raw truth with no comparable clock to prove it.
         """
-        if obj.raw_owned:
+        if self._raw_owns(obj.id):
             return obj, False
-        seed = _protocol.parse_stan_json(stan_json)
         reported_at = float(seed.on_ms) / 1000.0
         if not self._supersedes(obj, reported_at):
             return obj, False
@@ -784,27 +615,295 @@ class AmpioStore:
             return True
         return reported_at >= obj.updated_at
 
-    def _touch_module(self, module_id: int) -> None:
-        """Mark the module as having produced live evidence just now.
+    def _record(self, obj: AmpioObject, applied: Applied) -> None:
+        applied.events.append(ObjectUpdated(obj))
+
+
+class AdminStore(AmpioStore):
+    """The store for the reserved admin login.
+
+    Adds what the M-SERV serves that account alone: the module list, the
+    raw tree with its routing index and raw ownership, the module
+    diagnostics broadcasts, and the description-record sweep datasets.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.modules: dict[int, AmpioModule] = {}
+        # The override macs two or more module rows share, with those
+        # rows' ids, from the last module list. The door admits no row on
+        # a shared mac, because the raw tree cannot attribute its frames.
+        self.collisions: tuple[tuple[int, tuple[int, ...]], ...] = ()
+        # Raw-channel bridge: (module mac, prefix, channel) -> the ids of
+        # every object on that channel.
+        self._input_index: dict[tuple[int, str, int], tuple[int, ...]] = {}
+        # Effective bus mac -> module id, for routing a module's own
+        # broadcasts. Ids, not instances: modules are frozen and replaced on
+        # every change, so a cached instance would go stale.
+        self._module_id_by_mac: dict[int, int] = {}
+        # The ids the raw path owns: a per-object echo and a snapshot row
+        # for one of them is skipped, because the retained raw tree is its
+        # resync. docs/raw-channel-bridge.md.
+        self._raw_owned: set[int] = set()
+        # The broker replays its retained raw tree within a second of the
+        # subscribe, before any catalogue reply, so the routing tables above
+        # are still empty when those frames land. They wait here, keyed the
+        # way the tables key them, and `_rebuild_indexes` folds them in once
+        # the catalogue builds the routing.
+        self._pending_raw: dict[tuple[int, str, int], str] = {}
+        self._pending_diagnostics: dict[int, _protocol.ModuleDiagnostics] = {}
+        # The sweep datasets, by object id and by mac. A sweep replaces
+        # every entry of the macs it answered, so absence with the mac
+        # answered is an authoritative "no entry" until the next sweep, and
+        # absence with the mac not answered is not known.
+        # docs/description-records.md.
+        self.records: dict[int, DesignerRecord] = {}
+        self.cover_parameters: dict[int, CoverParameters] = {}
+        self.module_records: dict[int, ModuleRecord] = {}
+        self.capabilities: dict[int, Mapping[int, int]] = {}
+        self.panel_settings: dict[int, PanelSettings] = {}
+
+    def _endpoint_set(self) -> tuple[_protocol.Endpoint, ...]:
+        return _protocol.ADMIN_ENDPOINTS
+
+    def _handler_table(self) -> dict[str, Callable[[Mapping[str, Any], Applied], None]]:
+        return {**super()._handler_table(), "devices": self._handle_devices}
+
+    # --- routing ----------------------------------------------------------
+
+    def apply(self, msg: _protocol.Inbound, *, retained: bool = False) -> Applied:
+        """Apply one typed message and report what it changed.
+
+        Adds the shapes the admin session receives: the raw tree and the
+        module broadcasts. ``retained`` marks a broker replay from its
+        retained store. A replay carries the value but says nothing about
+        whether the module is alive now, so it never touches ``last_seen``.
+        """
+        applied = Applied()
+        match msg:
+            case _protocol.RawChannelEdge() as edge:
+                self._apply_raw_channel(edge, applied, retained=retained)
+            case _protocol.ColorTempFrame(edges=edges):
+                for edge in edges:
+                    self._apply_raw_channel(edge, applied, retained=retained)
+            case _protocol.DiagnosticsReport(mac=mac, diagnostics=diagnostics):
+                self._apply_diagnostics(mac, diagnostics, applied, retained=retained)
+            case BusEventRaised() as event:
+                applied.events.append(event)
+            case _:
+                return super().apply(msg, retained=retained)
+        return applied
+
+    def apply_sweep(
+        self,
+        answered_macs: frozenset[int],
+        records: Mapping[int, DesignerRecord],
+        cover_parameters: Mapping[int, CoverParameters],
+        module_records: Mapping[int, ModuleRecord],
+        capabilities: Mapping[int, Mapping[int, int]],
+        panel_settings: Mapping[int, PanelSettings],
+    ) -> None:
+        """Replace the datasets of every module that answered one sweep.
+
+        An entry an answered module no longer carries leaves, so absence
+        with the mac answered is authoritative until the next sweep. A
+        module the sweep did not answer keeps its entries. Each capability
+        map is held read-only, because the client hands it out as it is.
+        No model field changes, so nothing is reported.
+        """
+        for oid, obj in self.objects.items():
+            if obj.address.mac in answered_macs:
+                self.records.pop(oid, None)
+                self.cover_parameters.pop(oid, None)
+        for mac in answered_macs:
+            self.module_records.pop(mac, None)
+            self.capabilities.pop(mac, None)
+            self.panel_settings.pop(mac, None)
+        self.records.update(records)
+        self.cover_parameters.update(cover_parameters)
+        self.module_records.update(module_records)
+        self.capabilities.update(
+            (mac, MappingProxyType(dict(functions)))
+            for mac, functions in capabilities.items()
+        )
+        self.panel_settings.update(panel_settings)
+
+    def _drop_sweep_entries(self, oid: int) -> None:
+        self.records.pop(oid, None)
+        self.cover_parameters.pop(oid, None)
+
+    def _drop_cover_parameters(self, oid: int) -> None:
+        self.cover_parameters.pop(oid, None)
+
+    def _drop_module_datasets(self, mac: int) -> None:
+        """Forget what a sweep proved for the module on ``mac``.
+
+        The mac-keyed entries belong to the module row that carries the
+        mac, so a row that leaves the list takes them with it.
+        """
+        self.module_records.pop(mac, None)
+        self.capabilities.pop(mac, None)
+        self.panel_settings.pop(mac, None)
+
+    # --- admin hooks ------------------------------------------------------
+
+    def _raw_owns(self, oid: int) -> bool:
+        return oid in self._raw_owned
+
+    def _release_raw(self, oid: int) -> None:
+        self._raw_owned.discard(oid)
+        self._guarded.discard(oid)
+
+    # --- catalogues -------------------------------------------------------
+
+    def _handle_devices(self, data: Mapping[str, Any], applied: Applied) -> None:
+        """Fold the module list into the store, through the door.
+
+        The list is admin-only and complete, so its arrival is the
+        authority to evict what it stopped listing or stopped admitting.
+        A mac two rows share admits neither: the raw tree keys on that
+        mac and cannot attribute a frame to either row. Those rows are
+        recorded on ``collisions``, and :class:`NotConfigured` reports
+        the set when it changes to a non-empty one.
+        """
+        modules = _protocol.parse_devices(data)
+        rows_by_mac: dict[int, list[AmpioModule]] = {}
+        for module in modules:
+            rows_by_mac.setdefault(module.mac, []).append(module)
+        collisions = tuple(
+            (mac, tuple(sorted(row.id for row in rows)))
+            for mac, rows in sorted(rows_by_mac.items())
+            if len(rows) > 1
+        )
+        admitted = [module for module in modules if len(rows_by_mac[module.mac]) == 1]
+        changed = False
+        for module in admitted:
+            previous = self.modules.get(module.id)
+            if previous is not None:
+                module = replace(
+                    module,
+                    last_seen=previous.last_seen,
+                    supply_voltage=previous.supply_voltage,
+                    temperature=previous.temperature,
+                )
+            self.modules[module.id] = module
+            # A new module or a changed catalogue row is news, exactly as an
+            # object catalogue row is; the live fields were carried over
+            # above, so any difference left is the catalogue's.
+            if previous != module:
+                changed = True
+                applied.events.append(ModuleUpdated(module))
+        present = {module.id for module in admitted}
+        missing = [mid for mid in self.modules if mid not in present]
+        evicted = False
+        for mid in missing:
+            evicted = True
+            module = self.modules.pop(mid)
+            self._drop_module_datasets(module.mac)
+            applied.events.append(ModuleRemoved(module))
+        if changed or evicted:
+            self._rebuild_indexes(applied)
+        self._set_collisions(collisions, applied)
+
+    def _set_collisions(
+        self, collisions: tuple[tuple[int, tuple[int, ...]], ...], applied: Applied
+    ) -> None:
+        """Record the macs the door refused and report a change to a non-empty set.
+
+        Both the macs and the ids on each are sorted, so the order the
+        reply listed the rows in never reads as a change.
+        """
+        if collisions == self.collisions:
+            return
+        self.collisions = collisions
+        if collisions:
+            applied.events.append(NotConfigured(collisions=collisions))
+
+    # --- live state -------------------------------------------------------
+
+    def _apply_raw_channel(
+        self, edge: _protocol.RawChannelEdge, applied: Applied, *, retained: bool
+    ) -> None:
+        key = (edge.mac, edge.prefix, edge.channel)
+        ids = self._input_index.get(key)
+        if ids is None:
+            # A replay waits for the routing table; a live frame for a
+            # channel no object exposes is one nothing will ever route.
+            if retained:
+                self._pending_raw[key] = edge.state
+            return
+        # Two Designer views of one output share the module and the
+        # channel, so one raw channel feeds every object on that channel.
+        for oid in ids:
+            self._raw_owned.add(oid)
+            obj = replace(self.objects[oid], state=edge.state, updated_at=time.time())
+            self.objects[oid] = obj
+            self._local_stamped.add(oid)
+            self._guarded.add(oid)
+            self._record(obj, applied)
+        if not retained:
+            self._touch_module(edge.mac)
+
+    def _apply_diagnostics(
+        self,
+        mac: int,
+        diagnostics: _protocol.ModuleDiagnostics,
+        applied: Applied,
+        *,
+        retained: bool,
+    ) -> None:
+        mid = self._module_id_by_mac.get(mac)
+        if mid is None:
+            # The same rule as a raw channel edge: a replay waits for the
+            # module list, a live frame for an unlisted module drops.
+            if retained:
+                self._pending_diagnostics[mac] = diagnostics
+            return
+        previous = self.modules[mid]
+        module = replace(
+            previous,
+            supply_voltage=diagnostics.supply_voltage,
+            temperature=diagnostics.temperature,
+            last_seen=previous.last_seen if retained else time.time(),
+        )
+        self.modules[mid] = module
+        applied.events.append(ModuleUpdated(module))
+
+    # --- helpers ----------------------------------------------------------
+
+    def admission_failure(self) -> AmpioNotConfigured | None:
+        if self.not_configured or self.collisions:
+            return AmpioNotConfigured(
+                objects=self.not_configured, collisions=self.collisions
+            )
+        return None
+
+    def module_by_mac(self, mac: int) -> AmpioModule | None:
+        """The module row on ``mac``, or None when the list has none."""
+        mid = self._module_id_by_mac.get(mac)
+        return None if mid is None else self.modules[mid]
+
+    def _touch_module(self, mac: int) -> None:
+        """Mark the module on ``mac`` as having produced live evidence just now.
 
         One clock only: the local receive time, because a live message is by
         definition received "now". Snapshot and catalogue seeds do not touch
         this - they replay DB state that may be arbitrarily old, which says
-        nothing about whether the module is alive. An id the module list
-        does not carry touches nothing, which on the reference install is
-        the soft-deleted rows alone.
+        nothing about whether the module is alive. A mac the module list
+        does not carry touches nothing.
         """
-        module = self.modules.get(module_id)
-        if module is not None:
-            self.modules[module_id] = replace(module, last_seen=time.time())
+        mid = self._module_id_by_mac.get(mac)
+        if mid is not None:
+            self.modules[mid] = replace(self.modules[mid], last_seen=time.time())
 
     def _rebuild_indexes(self, applied: Applied) -> None:
         """Rebuild the routing tables for the raw tree.
 
-        Both are keyed on the module's effective bus address (`mac`, the
-        Designer override) - never `mac_global`, which diverges from the
-        raw-topic MAC on replaced modules. `(mac, prefix, channel)` routes a
-        raw channel to its object: the bridgeable input types, plus
+        The raw-channel index keys on the object's own `address.mac`, the
+        override mac the leaf embeds, which the raw topics carry - never
+        `mac_global`, which diverges from the raw-topic MAC on replaced
+        modules. `(mac, prefix, channel)` routes a raw channel to every
+        object on that channel: the bridgeable input types, plus
         `przekaznik` outputs on the `o` prefix, or on `a` for an
         open-collector leaf - a panel's status LEDs have no other retained
         surface, an OC output never echoes on its object topic, and every
@@ -812,57 +911,43 @@ class AmpioStore:
         color-temperature prefix, whose channels its broadcast fans out to.
         `mac` alone routes a module's own diagnostics broadcast.
         """
-        index: dict[tuple[int, str, int], int] = {}
+        index: dict[tuple[int, str, int], tuple[int, ...]] = {}
         for obj in self.objects.values():
             prefix = input_channel_prefix(obj.typ_komponentu)
             if prefix is None and obj.typ_komponentu == "przekaznik":
                 # A binary output reports on `o`; an open-collector output
                 # (leaf class 67) reports a u8 on `a`, same 1-based channel.
-                prefix = "a" if obj.sf_id == _protocol.OC_OUTPUT_SF else "o"
+                prefix = "a" if obj.address.sf_id == _protocol.OC_OUTPUT_SF else "o"
             if prefix is None and obj.typ_komponentu == "ledww":
                 prefix = _protocol.CCT_PREFIX
             if prefix is None:
                 continue
-            module = self.modules.get(obj.id_urzadzenia)
-            if module is None:
-                continue
-            index[(module.mac, prefix, obj.funkcja)] = obj.id
+            key = (obj.address.mac, prefix, obj.funkcja)
+            index[key] = (*index.get(key, ()), obj.id)
         self._input_index = index
-        by_mac: dict[int, int] = {}
-        colliding: set[int] = set()
-        for module in self.modules.values():
-            if module.mac in by_mac:
-                colliding.add(module.mac)
-            by_mac[module.mac] = module.id
-        self._module_id_by_mac = by_mac
-        if frozenset(colliding) != self.colliding_macs:
-            self.colliding_macs = frozenset(colliding)
-            if colliding:
-                _LOGGER.warning(
-                    "Ampio modules share the override mac(s) %s; raw edges "
-                    "and diagnostics on a shared mac cannot be attributed "
-                    "reliably - give each module a unique mac in Designer",
-                    sorted(colliding),
-                )
-        # An object the index no longer covers must go back to its per-object
-        # updates, or a mac change in Designer would freeze it for good. The
-        # flip is public state, so it dispatches like any other change.
-        covered = set(index.values())
-        for oid, obj in self.objects.items():
-            if obj.raw_owned and oid not in covered:
-                obj = replace(obj, raw_owned=False)
-                self.objects[oid] = obj
-                self._record(obj, applied)
+        self._module_id_by_mac = {
+            module.mac: module.id for module in self.modules.values()
+        }
+        # An object the index no longer covers must go back to its
+        # per-object updates, or a mac change in Designer would freeze it
+        # for good. Ownership is store bookkeeping, so the release changes
+        # nothing a consumer can read and reports nothing.
+        covered = {oid for ids in index.values() for oid in ids}
+        self._raw_owned.intersection_update(covered)
+        # The guard stays set on an object the index stopped covering,
+        # because its held value still belongs to its own channel and the
+        # next request cycle lifts it, while a moved leaf lifts the guard
+        # through `_release_raw`.
         self._fold_pending_diagnostics(applied)
         self._fold_pending_raw(index, applied)
 
     def _fold_pending_raw(
-        self, index: Mapping[tuple[int, str, int], int], applied: Applied
+        self, index: Mapping[tuple[int, str, int], tuple[int, ...]], applied: Applied
     ) -> None:
         """Apply the held channel values the fresh index can now route.
 
         Each lands exactly as the live replay of it would have: the value,
-        the bridge claim on the object, and no touch of the module's
+        the raw ownership in the store's set, and no touch of the module's
         `last_seen`, because a replay says what the channel last reported
         rather than that the module is alive now.
         """
@@ -897,15 +982,13 @@ class AmpioStore:
             del self._pending_diagnostics[mac]
             self._apply_diagnostics(mac, diagnostics, applied, retained=True)
 
-    def _record(self, obj: AmpioObject, applied: Applied) -> None:
-        applied.events.append(ObjectUpdated(obj))
-
 
 # The object fields both catalogue surfaces own, derived from the shared
 # row's own shape so a new column is added in one place and flows through
-# the merge. `id` keys the merge, so it is not metadata. The Designer
-# config columns are not here: each tier serves them from its own surface,
-# and the merge takes them as `config`.
+# the merge. `id` keys the merge, so it is not metadata. `leaf_id` is the
+# door's input: it reaches the object as `address` and `leaf_key`, not as
+# a field of its own. The Designer config columns are not here: each tier
+# serves them from its own surface, and the merge takes them as `config`.
 _METADATA_FIELDS = tuple(
-    f.name for f in fields(_protocol.ObjectMetadata) if f.name != "id"
+    f.name for f in fields(_protocol.ObjectMetadata) if f.name not in ("id", "leaf_id")
 )

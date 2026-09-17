@@ -1,6 +1,6 @@
 # Object classification
 
-The `devicesDetails` payload returns one row per logical object. The library
+The `data/devices` payload returns one row per logical object. The library
 classifies each row into exactly one kind. The kinds are `SensorKind`
 (sensor-side platforms), `InputKind` (binary or boolean platforms), `OutputKind`
 (controllable platforms), and `ThermostatKind` (the `reg` temperature
@@ -15,8 +15,8 @@ optional slots on the object.
 
 The tables themselves live in
 [`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py) and
-are not repeated here. `TYPE_PROFILES` is one row per known `typ_komponentu`:
-its kind, its raw-bridge channel prefix, and its system flag.
+are not repeated here. Each row of `TYPE_PROFILES` covers one known
+`typ_komponentu`. It gives the kind and the raw-bridge channel prefix.
 `_LIN_WEJ_BY_INTERP` maps a `lin_wej` object's `interpretacja` to its
 measurement. The `OutputKind` flags say which command verbs an output answers,
 and `InputKind.switchable` says the same for an input. `pulsable` sits on both
@@ -29,9 +29,6 @@ value sensor or the `analog_<n>` fallback.
 
 - `reg` state is the running flag. The rich climate readback (measured and
   target temperature, mode, cooling) is `AmpioObject.thermostat`.
-- `detekcja` and `symulacja` are the two system objects (`is_system`, see
-  [`visibility.md`](visibility.md)). `detekcja` is the whole-home presence
-  boolean, so its device class is `presence`. Neither bridges a raw channel.
 - `wej` is the per-channel physical-input object the Designer creates for a
   wired button. Its per-object payload is 255 pressed / 0 released. Its
   `interpretacja` mirrors `funkcja` (the channel number), so it refines nothing.
@@ -79,15 +76,11 @@ value sensor or the `analog_<n>` fallback.
   catalogue row cannot tell the two halves apart, because both carry the same
   `typ_komponentu`, `funkcja` and `interpretacja`. Only the leaf sub-function
   differs, 3 for armed and 4 for alarmed, so this is the one type that
-  classifies on `AmpioObject.sub_sf_id`. Designer marks both halves read-only
-  and neither takes a device class, because the alarmed half also reads 1
-  through the panel's exit delay and so is not a safety indicator on its own. A
-  sub-function outside those two, and a row with no leaf at all, classify as the
-  base `alarm` kind, which takes no device class either. `leafId` is not
-  durable, because Designer clears it on a Matter uncheck (see
-  [`identity.md`](identity.md)). The family must therefore come from
-  `typ_komponentu` alone, and the leaf must only refine the name. The `arm` and
-  `disarm` verbs still reach the armed half (see [`commands.md`](commands.md)).
+  classifies on `AmpioObject.address.sub_sf_id`. Designer marks both halves
+  read-only. The alarmed half also reads 1 through the panel's exit delay, so it
+  is not a safety indicator on its own. A sub-function outside those two
+  classifies as the base `alarm` kind. The `arm` and `disarm` verbs still reach
+  the armed half (see [`commands.md`](commands.md)).
 - Ampio's vocabulary also carries `rgb`, `rgbww`, `ac`, `radio`, and `ip_radio`
   - types absent from `TYPE_PROFILES` that classify as the generic value sensor.
 
@@ -111,9 +104,8 @@ derived properties.
   (`%.3f` reads 3). Every other conversion reads None.
 
 Both properties read None on every kind but a sensor. An output has no
-measurement to label, and the system objects carry a placeholder in the `url`
-column. Both columns reach the standard tier. `format` rides `data/devices`, and
-`url` rides the unfiltered `data/params_devices` table.
+measurement to label. Both columns reach the standard tier. `format` rides
+`data/devices`, and `url` rides the unfiltered `data/params_devices` table.
 
 The unit a kind fixes and the unit Designer stores are separate facts. On a
 `lin_wej` air-quality object the kind says no unit, and Designer can say `IAQ`.
@@ -175,13 +167,13 @@ Classification uses exactly three wire fields:
 - **`interpretacja`** - a refinement. For `lin_wej` it selects the measurement,
   or names the `analog_<n>` fallback. For `bit8`, `bit16`, `sbit16`, and `bit32`
   it names the `value_<n>` key.
-- **`sub_sf_id`** - a refinement for `satel_alarm` only. It names the armed half
-  or the alarmed half. It reads None on a row with no leaf, and the object then
-  classifies as the base `alarm` kind.
+- **`sub_sf_id`** - a refinement for `satel_alarm` only, read from
+  `address.sub_sf_id`. It names the armed half or the alarmed half. A
+  sub-function outside those two classifies as the base `alarm` kind.
 
 It does **not** use:
 
-- **`opis_menu` (the object name)** - display only. A consumer uses it as the
+- **`name` (the `opis_menu` column)** - display only. A consumer uses it as the
   entity's friendly name, and it never affects the kind. A renamed channel does
   not change what it is.
 - **`funkcja` (the channel index)** - the physical channel index within the
@@ -198,14 +190,15 @@ mislabels temperature as humidity.
 ## Why classification is split from visibility
 
 Classification answers "what kind of thing is this row". Visibility (see
-[`visibility.md`](visibility.md)) answers "surface it or not". They compose:
+[`visibility.md`](visibility.md)) answers "surface it or not". The door drops
+hidden rows before classification runs, so every object in `objects` is one to
+surface. `classify()` still yields a kind for a hidden row a diagnostics report
+reads from the wire.
 
 ```python
-should_surface = obj.visible          # classify() always yields a kind
 platform = obj.kind    # ObjectKind = SensorKind | InputKind | OutputKind | ThermostatKind
 ```
 
-A hidden row is still classifiable, because the type field is intact, but it
-must not become an entity. The two checks stay separate so that a consumer can
-use one without the other. For example, a diagnostics report wants the hidden
-row classified, so it can show "hidden objects of type X".
+The two checks stay separate so that a consumer can use one without the other. A
+diagnostics report classifies a hidden row straight off the wire, so it can show
+"hidden objects of type X".

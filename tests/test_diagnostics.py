@@ -5,8 +5,16 @@ import json
 import pytest
 from conftest import details, devices, feed, params_table, rows, snapshot
 
-from ampio_mqtt import AmpioClient
+from ampio_mqtt import AmpioAdminClient, AmpioClient
 from ampio_mqtt._protocol import REDACTED
+
+
+def _client_for(username: str) -> AmpioClient:
+    """The client class the account gets, as a consumer would pick it."""
+    if username == "admin":
+        return AmpioAdminClient("host")
+    return AmpioClient("host", username=username)
+
 
 _URL = "https://example.invalid/private-url-token"
 
@@ -27,21 +35,22 @@ _URL = "https://example.invalid/private-url-token"
             ),
         ),
         (
-            "details",
-            "config/devicesDetails",
-            "admin",
-            details(
-                {"id": 1, "opis_menu": "private-object-name", "url": _URL},
-                {"id": 2, "opis_menu": "private-second-object", "url": _URL},
-            ),
-        ),
-        (
             "states",
             "data/states",
             "admin",
             snapshot(
-                {"id": 1, "stan_json": json.dumps({"state": "private-state-text"})},
-                {"id": 2, "stan_json": json.dumps({"state": "private-second-state"})},
+                {
+                    "id": 1,
+                    "stan_json": json.dumps(
+                        {"state": "private-state-text", "on": 1779560000000}
+                    ),
+                },
+                {
+                    "id": 2,
+                    "stan_json": json.dumps(
+                        {"state": "private-second-state", "on": 1779560000000}
+                    ),
+                },
             ),
         ),
         (
@@ -109,7 +118,7 @@ _URL = "https://example.invalid/private-url-token"
 def test_retained_reply_omits_private_keys_and_values(
     endpoint: str, surface: str, username: str, payload: str
 ) -> None:
-    client = AmpioClient("host", username=username)
+    client = _client_for(username)
     feed(client, f"ampio/fromDB/{username}/{surface}", payload)
     report = client.diagnostics_snapshot()
     # A refused row reaches no store, which would let the privacy assertion
@@ -147,7 +156,7 @@ def test_retained_summary_distinguishes_empty_reply_from_missing_reply() -> None
 
 
 def test_summary_preserves_module_diagnostics_and_live_names() -> None:
-    client = AmpioClient("host", username="admin")
+    client = AmpioAdminClient("host")
     feed(
         client,
         "ampio/fromDB/admin/config/devices",

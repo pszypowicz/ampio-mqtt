@@ -12,6 +12,109 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.71.0
+
+This release makes the account tier the client's type. `AmpioClient` serves any
+account, and `AmpioAdminClient` extends it for the reserved administrator login,
+so a session can hold only what its class declares. The catalogue door requires
+a leaf on every drivable object and refuses two module rows that share one
+override mac. The record sweep fills five datasets on the administrator client
+instead of writing fields onto objects and modules. One resolver decides every
+roller lock write. Each error class says who fixes the problem. The two system
+rows the M-SERV creates for itself leave the object catalogue.
+
+This is a breaking release for any consumer that reads an object or module
+attribute the record sweep used to fill.
+
+### Changed
+
+- The administrator client reads the same object catalogue as a standard
+  account, `data/devices` plus `data/params_devices`, and adds `config/devices`
+  for the module rows. `params`, `czas` and `url` come from the params table on
+  both tiers. A Designer save reaches both tiers through the pushed tables, and
+  the retained `md5` digests re-request the module list alone. A purged object
+  or an object outside every room leaves `objects` on an administrator login. It
+  fires `ObjectRemoved`, where the config catalogue kept it as a hidden row.
+- Every object carries `AmpioObject.address`, a
+  `ModuleAddress(mac, channel, sf_id, sub_sf_id)` parsed from its leaf, and
+  `AmpioObject.leaf_key`, on both tiers. The store admits a catalogue through
+  one door. It waits for both `data/devices` and `data/params_devices`, drops
+  hidden rows, and leaves out every row without a leaf (#264).
+  `wait_for_initial_discovery()` raises `AmpioNotConfigured` naming those rows,
+  and after connect the `NotConfigured` event reports them. A leaf that does not
+  parse refuses the reply as `AmpioProtocolError`. `diagnostics_snapshot()`
+  lists the rows under `not_configured`.
+- The raw routing index keys on `address.mac` and routes one channel to every
+  object that shares the leaf. `module_for()` looks the module up on
+  `address.mac`. The record sweep, the cover parameters and the roller lock join
+  on `address`. A write for an id the catalogue does not list raises
+  `AmpioValueError`.
+- The account tier is a type. `AmpioClient(host, username, password)` is the
+  client every account gets. `AmpioAdminClient(host, password)` carries the
+  reserved login and adds the module catalogue, the raw tree, the record sweep
+  and the CAN writes. The base class never inspects the username, and neither
+  class checks the account id the `info` reply reports. `docs/account-tiers.md`
+  lists the members of each class, and a test pins the admin table to the code.
+- On `AmpioAdminClient`, `turn_on()`, `turn_off()`, `switch()` and the untimed
+  `set_value()` ride the raw CAN frame for a binary or open-collector output on
+  a CAN module. The base class always publishes `/api`.
+- `diagnostics_snapshot()` carries `mac_collisions` and `modules` on
+  `AmpioAdminClient` only.
+- The record sweep fills five datasets on `AmpioAdminClient`: `records` and
+  `cover_parameters` by object id, `module_records`, `capabilities` and
+  `panel_settings` by mac. One rule reads every dataset. Present means the
+  module answered and carries the entry. Absent with the mac in
+  `last_sweep.answered_macs` means the module carries no such entry. That answer
+  covers the objects the catalogue lists when the sweep runs, so a catalogue
+  change needs another sweep. Absent with the mac not answered means not known.
+  An entry leaves with the row it belongs to. `RecordSweepCompleted` fires once
+  per sweep.
+- `lock_target()` is the one roller lock resolver. It returns a `LockTarget` or
+  a `LockRefusal`, and the four lock methods raise from it: `AmpioValueError`
+  when no sweep answered the module, `AmpioUnsupported` otherwise. A cover whose
+  mac no admitted module row carries raises `AmpioNotConfigured`.
+- Two module rows on one override mac fail the admin door as
+  `AmpioNotConfigured`, and `NotConfigured` reports a collision after connect.
+  The door admits no row on a shared mac. The M-SERV's default override mac is
+  `1`. An install that leaves a second module on it must give that module its
+  own mac.
+- What the install cannot do raises `AmpioUnsupported`: a kind that does not
+  answer the verb, a kind no timed write pulses, a module without the roller
+  lock. A module id the list does not hold raises `AmpioValueError`.
+- `AmpioObject.name` is the object's name from the `opis_menu` column.
+
+### Removed
+
+- `AmpioObject.is_system`, `is_system_type()`, and the `system` flag on
+  `TypeProfile`.
+- The `config/devicesDetails` request, its parser and its column set.
+- `AmpioObject.leaf_id`, `id_urzadzenia`, `sibling_module_mac`, `hidden`,
+  `visible`, `module_mac`, `sf_id`, `sub_sf_id` and `leaf_io_no` leave the
+  object. `leaf_mac()` leaves the package. The `funkcja - 1` record join and the
+  `/api` fallback for a relay without a leaf leave the client.
+- `AmpioClient.access_tier`, the `RuntimeError` on an admin-only call from a
+  standard account, the `info` reply tier check, `AmpioObject.raw_owned`, and
+  the `access_tier` entry of `diagnostics_snapshot()`.
+- `AmpioObject.record`, `cover_parameters`, `block_writable` and `opis_menu`
+  leave the object. `AmpioModule.record`, `capabilities` and `panel_settings`
+  leave the module. The plain `ValueError` on an install refusal leaves the
+  error set. The module mac collision warning leaves the log.
+- The two system rows the M-SERV creates, `detekcja` and `symulacja`. The
+  library drops both rows as it reads the catalogue. A consumer on 0.70.x saw
+  both as ordinary objects, so a consumer that listed every object sees two
+  fewer (#265, #270). `INPUT_KIND_KEYS` loses `detekcja` and `symulacja`.
+- `InputKind.device_class` and the `BinarySensorDeviceClass` literal. After the
+  system rows left, no kind assigned the one value the literal allowed.
+
+### Fixed
+
+- A `data/states` snapshot with one malformed row is refused whole. Every object
+  keeps its value and the held table stays unchanged (#269).
+- The roller lock has one resolver, so the write and its capability answer
+  cannot disagree (#256).
+- An object leaf the library cannot read is reported against `data/devices`, the
+  reply that carries it, whichever reply of the catalogue pair ran the door.
+
 ## 0.70.1
 
 The four roller lock methods never checked the object's kind. A relay on a

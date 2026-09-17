@@ -18,8 +18,9 @@ import sys
 from collections.abc import Callable
 
 import aiomqtt
+from _session import ADMIN_USERNAME
 
-from ampio_mqtt import AccessTier, AmpioClient, ModuleFunction
+from ampio_mqtt import AmpioAdminClient, AmpioNotConfigured, ModuleFunction
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -102,7 +103,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-async def watch_readings(client: AmpioClient, seconds: float) -> None:
+async def watch_readings(client: AmpioAdminClient, seconds: float) -> None:
     """Count the modules reporting a reading, as the frames arrive."""
     marks = [t for t in (5.0, 15.0, 30.0, 60.0, 120.0) if t < seconds]
     marks.append(seconds)
@@ -125,21 +126,20 @@ async def run(
 
     ``client_factory`` is the test seam for the session.
     """
-    client = AmpioClient(
-        a.host,
-        a.username,
-        a.password,
-        port=a.port,
-        mqtt_client_factory=client_factory,
-    )
-    if client.access_tier is not AccessTier.ADMIN:
+    if a.username != ADMIN_USERNAME:
         print(
             f"{a.username!r} is not the admin account. "
             "The device_api tree answers no other account."
         )
         return 2
-    await client.connect()
+    client = AmpioAdminClient(
+        a.host,
+        a.password,
+        port=a.port,
+        mqtt_client_factory=client_factory,
+    )
     try:
+        await client.connect()
         sweep = await client.resolve_records(timeout=a.timeout)
         print(
             f"sweep: {len(sweep.answered_macs)} answered, "
@@ -153,7 +153,7 @@ async def run(
                 print(f"no module on row {a.module}")
                 return 1
             print(f"row {a.module}: {module.model or '?'}")
-            for fn, count in sorted(module.capabilities.items()):
+            for fn, count in sorted(client.capabilities.get(module.mac, {}).items()):
                 try:
                     name = ModuleFunction(fn).name
                 except ValueError:
@@ -175,14 +175,15 @@ async def run(
         print(header)
         shown = 0
         for row, m in modules.items():
-            if wanted is not None and wanted not in m.capabilities:
+            caps = client.capabilities.get(m.mac, {})
+            if wanted is not None and wanted not in caps:
                 continue
             shown += 1
             volt = f"{m.supply_voltage:.1f}" if m.supply_voltage is not None else "-"
             temp = f"{m.temperature:.0f}" if m.temperature is not None else "-"
             line = (
                 f"{row:>4}  {(m.model or '?'):<12} {m.wersja_softu or '-'!s:>4} "
-                f"{volt:>6} {temp:>6}  {len(m.capabilities):>2}"
+                f"{volt:>6} {temp:>6}  {len(caps):>2}"
             )
             if a.show_names:
                 line += f"  {m.nazwa_urzadzenia or '-'}"
@@ -191,6 +192,12 @@ async def run(
         if a.watch:
             await watch_readings(client, a.watch)
         return 0
+    except AmpioNotConfigured as err:
+        for oid, obj_name in err.objects:
+            print(f"not configured: ob/{oid} {obj_name or ''}")
+        for mac, ids in err.collisions:
+            print(f"mac collision: {mac:x} on modules {', '.join(map(str, ids))}")
+        return 1
     finally:
         await client.disconnect()
 

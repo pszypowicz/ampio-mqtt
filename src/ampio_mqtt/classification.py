@@ -1,11 +1,10 @@
 """Object classification for the Ampio DB-object protocol.
 
 One `TypeProfile` row per known ``typ_komponentu`` drives everything the
-library derives from a component type: its sensor/input/output kind, the
-raw-channel bridge prefix, and the system-object marker. This module is
-Home Assistant agnostic; device/state class strings match Home Assistant's
-SensorDeviceClass / SensorStateClass enum values so consumers can pass
-them through unchanged.
+library derives from a component type: its sensor/input/output kind and the
+raw-channel bridge prefix. This module is Home Assistant agnostic;
+device/state class strings match Home Assistant's SensorDeviceClass /
+SensorStateClass enum values so consumers can pass them through unchanged.
 """
 
 from __future__ import annotations
@@ -46,12 +45,6 @@ class SensorKind:
     precision: int | None = 1
 
 
-# binary_sensor device-class strings the library can emit. Extend this
-# Literal when a new input mapping is added. Values match Home Assistant's
-# BinarySensorDeviceClass enum.
-BinarySensorDeviceClass = Literal["presence"]
-
-
 @dataclass(frozen=True, slots=True)
 class InputKind:
     """Neutral description of a binary / flag-shaped input object.
@@ -63,13 +56,10 @@ class InputKind:
 
     key: str
     name: str
-    # HA binary_sensor device class, or None for a generic boolean where the
-    # consumer decides how to model it (binary_sensor vs switch).
-    device_class: BinarySensorDeviceClass | None = None
     # The `turnOn` / `turnOff` / `switch` verb family, over `/api`. True only
     # for `flaga`. A `wej` is a physical input the module scans for itself:
     # the M-SERV drops all three verbs for it on both account tiers, with no
-    # effect and no reply. `detekcja` and `symulacja` have never been driven.
+    # effect and no reply.
     switchable: bool = False
     # The inclusive range `setValue` holds, for a flag with a value axis;
     # None for a flag that carries no value. The M-SERV truncates an
@@ -78,8 +68,8 @@ class InputKind:
     value_range: tuple[int, int] | None = None
     # Whether a `setValue` time argument runs a timed pulse. True only for
     # `flaga`. Both analog flags take the timed form, set the value and
-    # latch: the revert never arrives, at any time argument. `wej`,
-    # `detekcja` and `symulacja` take no value verb at all.
+    # latch: the revert never arrives, at any time argument. `wej` takes no
+    # value verb at all.
     pulsable: bool = False
 
 
@@ -127,23 +117,22 @@ class OutputKind:
 
 
 # The two halves of an alarm partition, keyed by the leaf sub-function
-# (`AmpioObject.sub_sf_id`). The catalogue row cannot tell them apart: both
-# carry the same `typ_komponentu`, `funkcja` and `interpretacja`, and only
-# the leaf's fourth segment differs. The Designer names the special function
-# after the alarm panel family, and marks both halves read-only. Neither
-# takes a device class: "alarmed" also reads 1 through the panel's exit
-# delay, so it is not a safety indicator on its own (docs/commands.md).
+# (`AmpioObject.address.sub_sf_id`). The catalogue row cannot tell them
+# apart: both carry the same `typ_komponentu`, `funkcja` and
+# `interpretacja`, and only the leaf's sub-function differs. The Designer
+# names the special function after the alarm panel family, and marks both
+# halves read-only. Neither takes a device class: "alarmed" also reads 1
+# through the panel's exit delay, so it is not a safety indicator on its
+# own (docs/commands.md).
 _ALARM_BY_SUB_SF: dict[int, InputKind] = {
     3: InputKind("alarm_armed", "Alarm armed"),
     4: InputKind("alarm_alarmed", "Alarm triggered"),
 }
 
-# The alarm family when the leaf names no half. `leafId` is not durable,
-# because Designer clears it on any object whose Matter box is unchecked
-# (docs/identity.md), and `sub_sf_id` then reads None. Such an object still
-# publishes the same boolean, so `typ_komponentu` alone holds the family and
-# the leaf only refines the name. No device class, for the reason the two
-# halves take none.
+# The alarm family when the sub-function names neither half.
+# `typ_komponentu` holds the family and the leaf's sub-function refines the
+# name, so an unlisted sub-function keeps the base kind. No device class,
+# for the reason the two halves take none.
 _BASE_ALARM = InputKind("alarm", "Alarm")
 
 # lin_wej (analog input) measurement kind, keyed by `interpretacja`.
@@ -211,13 +200,8 @@ class TypeProfile:
 
     kind: ObjectKind | _Selector
     # Raw ``ampio/from/<mac>/state/<prefix>/<ch>`` bridge prefix. Only known
-    # prefixes are set; an input without one (the two system objects) falls
-    # back to the per-object topic.
+    # prefixes are set; an input without one falls back to the per-object topic.
     channel_prefix: str | None = None
-    # System objects (presence simulation / detection) live outside the
-    # room/group hierarchy, and the M-SERV lists them unconditionally.
-    # Backs `AmpioObject.is_system`.
-    system: bool = False
 
 
 TYPE_PROFILES: dict[str, TypeProfile] = {
@@ -253,7 +237,7 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     "bit16": TypeProfile(_Selector.NUMERIC),
     "sbit16": TypeProfile(_Selector.NUMERIC),
     "flaga": TypeProfile(
-        InputKind("flaga", "Flag", None, switchable=True, pulsable=True),
+        InputKind("flaga", "Flag", switchable=True, pulsable=True),
         channel_prefix="f",
     ),
     # The analog flags, the module's own u8 and signed-i16 variables. Both
@@ -273,19 +257,7 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     # The per-channel physical-input object (a wall button wired to a module
     # terminal). Same 255/0 payload as flags on the per-object topic; the
     # raw mirror rides the digital-input prefix (#117).
-    "wej": TypeProfile(InputKind("wej", "Input", None), channel_prefix="i"),
-    # The two system objects the M-SERV creates itself, on its own module row
-    # with a fixed `funkcja`. Neither names a raw channel: the M-SERV publishes
-    # its own digital inputs under that mac, so an `i` route delivers the
-    # M-SERV's input 1 as a presence change. Both update through the
-    # per-object topic alone. Presence detection is one whole-home boolean,
-    # "on" is home, which is the HA `presence` class.
-    "detekcja": TypeProfile(
-        InputKind("detekcja", "Presence detection", "presence"), system=True
-    ),
-    "symulacja": TypeProfile(
-        InputKind("symulacja", "Presence simulation", None), system=True
-    ),
+    "wej": TypeProfile(InputKind("wej", "Input"), channel_prefix="i"),
 }
 
 
@@ -336,13 +308,15 @@ SENSOR_KIND_KEY_PREFIXES: tuple[str, ...] = ("analog_", "value_")
 def classify(
     typ_komponentu: str | None,
     interpretacja: int | None,
-    sub_sf_id: int | None = None,
+    sub_sf_id: int = 0,
 ) -> ObjectKind:
     """Classify a DB object into the one kind it is.
 
     ``interpretacja`` selects the lin_wej measurement. A ``typ_komponentu``
     with no table entry (unknown, or no metadata yet) is the generic
-    value-only sensor, so such an object still surfaces.
+    value-only sensor, so such an object still surfaces. ``sub_sf_id`` is
+    the leaf sub-function, 0 for a single-role class, which refines
+    ``satel_alarm`` alone.
     """
     profile = TYPE_PROFILES.get(typ_komponentu) if typ_komponentu is not None else None
     if profile is None:
@@ -355,19 +329,9 @@ def classify(
         case _Selector.NUMERIC:
             return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
         case _Selector.ALARM:
-            # A leafless row carries no sub-function, and the guard narrows
-            # the type for the int-keyed lookup below.
-            if sub_sf_id is None:
-                return _BASE_ALARM
             return _ALARM_BY_SUB_SF.get(sub_sf_id, _BASE_ALARM)
         case kind:
             return kind
-
-
-def is_system_type(typ_komponentu: str | None) -> bool:
-    """Whether ``typ_komponentu`` is a system component the M-SERV always exposes."""
-    profile = TYPE_PROFILES.get(typ_komponentu) if typ_komponentu is not None else None
-    return profile.system if profile is not None else False
 
 
 def input_channel_prefix(typ_komponentu: str | None) -> str | None:

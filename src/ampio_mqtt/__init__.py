@@ -22,13 +22,15 @@ from .classification import (
     SensorKind,
     ThermostatKind,
 )
-from .client import HEATING_MODES, MAX_PANEL_FIELD, AmpioClient
+from .client import HEATING_MODES, MAX_PANEL_FIELD, AmpioAdminClient, AmpioClient
 from .errors import (
     AmpioAuthError,
     AmpioConnectionError,
     AmpioError,
+    AmpioNotConfigured,
     AmpioProtocolError,
     AmpioTimeoutError,
+    AmpioUnsupported,
     AmpioValueError,
 )
 from .events import (
@@ -39,9 +41,11 @@ from .events import (
     ConnectionDied,
     ModuleRemoved,
     ModuleUpdated,
+    NotConfigured,
     ObjectAdded,
     ObjectRemoved,
     ObjectUpdated,
+    RecordSweepCompleted,
 )
 from .models import (
     AccessTier,
@@ -51,6 +55,9 @@ from .models import (
     AmpioServerInfo,
     CoverParameters,
     DesignerRecord,
+    LockRefusal,
+    LockTarget,
+    ModuleAddress,
     ModuleFunction,
     ModuleRecord,
     PanelLightSignal,
@@ -68,16 +75,19 @@ __all__ = [
     "SENSOR_KIND_KEY_PREFIXES",
     "THERMOSTAT_KIND_KEYS",
     "AccessTier",
+    "AmpioAdminClient",
     "AmpioAuthError",
     "AmpioClient",
     "AmpioConnectionError",
     "AmpioError",
     "AmpioModule",
+    "AmpioNotConfigured",
     "AmpioObject",
     "AmpioProtocolError",
     "AmpioScene",
     "AmpioServerInfo",
     "AmpioTimeoutError",
+    "AmpioUnsupported",
     "AmpioValueError",
     "AuthFailed",
     "AvailabilityChanged",
@@ -88,10 +98,14 @@ __all__ = [
     "DesignerRecord",
     "DiscoveryResult",
     "InputKind",
+    "LockRefusal",
+    "LockTarget",
+    "ModuleAddress",
     "ModuleFunction",
     "ModuleRecord",
     "ModuleRemoved",
     "ModuleUpdated",
+    "NotConfigured",
     "ObjectAdded",
     "ObjectKind",
     "ObjectRemoved",
@@ -100,13 +114,14 @@ __all__ = [
     "PanelLightSignal",
     "PanelSettings",
     "RecordSweep",
+    "RecordSweepCompleted",
     "SensorKind",
     "ThermostatKind",
     "ThermostatState",
     "discover",
 ]
 
-__version__ = "0.70.1"
+__version__ = "0.71.0"
 
 
 def __getattr__(name: str) -> object:

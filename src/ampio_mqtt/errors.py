@@ -24,18 +24,75 @@ class AmpioAuthError(AmpioError):
     """Raised when the broker rejects the credentials."""
 
 
+class AmpioNotConfigured(AmpioError):
+    """Raised when the Designer configuration leaves a row unaddressable.
+
+    A drivable object row carries no leaf: Designer clears the leaf when
+    an object's Matter box is checked and then unchecked, and the library
+    addresses an object on the bus through its leaf alone, so ``objects``
+    names every such row as an ``(id, name)`` pair.
+
+    ``collisions`` names each mac no single module row carries, with the
+    ids of the rows on it. Two or more ids are the rows that share the
+    mac, which the raw tree keys on and cannot attribute a frame to. An
+    empty tuple is a mac the module list carries no row for, so a write
+    addressed by that mac reaches no module.
+
+    The installer fixes each in Designer. The connection stays up, and
+    every other row is served.
+    """
+
+    def __init__(
+        self,
+        objects: tuple[tuple[int, str | None], ...] = (),
+        collisions: tuple[tuple[int, tuple[int, ...]], ...] = (),
+    ) -> None:
+        self.objects = objects
+        self.collisions = collisions
+        parts: list[str] = []
+        if objects:
+            listed = ", ".join(
+                f"{oid} ({name})" if name else str(oid) for oid, name in objects
+            )
+            parts.append(
+                f"Ampio object(s) {listed} carry no leaf. Designer clears the leaf "
+                "when the Matter box is checked and unchecked. Restore each in "
+                "Designer and save"
+            )
+        for mac, ids in collisions:
+            if ids:
+                parts.append(
+                    f"Ampio modules {', '.join(map(str, ids))} share the override "
+                    f"mac {mac:x}. Give each module its own mac in Designer and save"
+                )
+            else:
+                parts.append(
+                    f"No Ampio module row carries the override mac {mac:x}. Add the "
+                    "module in Designer, or remove the objects that name it, and save"
+                )
+        super().__init__(". ".join(parts))
+
+
 class AmpioValueError(AmpioError, ValueError):
-    """Raised when an argument is outside what the API accepts.
+    """Raised when the call is the caller's fault.
 
-    Every check a caller can make on its own raises this: a value beyond
-    the range the frame carries, a mis-typed argument, an unlisted heating
-    mode. ``ValueError`` is a base because that is what a bad argument is
-    in Python, so a handler that catches the builtin keeps working.
+    A value beyond the range the frame carries, a mis-typed argument, an
+    unlisted heating mode, an id the catalogue does not list, or a call
+    that needs a sweep that did not run. ``ValueError`` is a base because
+    that is what a bad argument is in Python, so a handler that catches
+    the builtin keeps working. What the install cannot do raises
+    :class:`AmpioUnsupported` instead.
+    """
 
-    What the install refuses raises a plain ``ValueError``: a module id no
-    catalogue has, or an output whose kind does not answer the verb. The
-    argument is well formed in both, so a consumer that catches this class
-    first tells its own fault from the install's state.
+
+class AmpioUnsupported(AmpioError):
+    """Raised when the install cannot do what the call asks.
+
+    The call is well formed and the object is in the catalogue, and the
+    refusal comes from what the hardware or the firmware answers: an
+    output whose kind does not answer the verb, a kind no timed write
+    pulses, a module generation without the roller lock. Nobody fixes it,
+    so a consumer leaves the control out instead of catching this.
     """
 
 

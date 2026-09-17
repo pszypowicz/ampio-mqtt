@@ -14,7 +14,6 @@ from .classification import (
     OutputKind,
     SensorKind,
     classify,
-    is_system_type,
 )
 from .device_types import Mounting, module_model, module_mounting
 
@@ -37,7 +36,7 @@ class ModuleFunction(IntEnum):
 
     The ids and names are the Designer's own. Membership is limited to
     ids a module on the baseline install advertises, so an id here is one
-    the wire has shown. :pyattr:`AmpioModule.capabilities` is keyed by the
+    the wire has shown. :pyattr:`AmpioAdminClient.capabilities` is keyed by the
     raw id, so an id without a member still reads through under its
     number.
 
@@ -81,25 +80,21 @@ class ModuleFunction(IntEnum):
 # Bit flags inside the `params` integer (`obiekty.params`); the names come
 # from the Designer web bundle's own enum, and the semantics of the bits
 # read here are corroborated by the M-SERV's Matter bridge and by live
-# probing (docs/visibility.md). Bit 4 is the hidden/stub marker (see
-# `AmpioObject.hidden`); bit 6 is the Designer read-only checkbox (see
-# `AmpioObject.read_only`); bit 37 is the per-object Matter opt-in, not a
-# visibility signal, and nothing here reads it. Bit 15 is the generic
-# `OPTION1` slot, whose meaning depends on the component type - Designer
-# labels it "Bell object" on `przekaznik` and `flaga` only, so
-# `AmpioObject.bell` gates on the type before reading it.
-_HIDDEN_FLAG = 1 << 4
+# probing (docs/visibility.md). Bit 4 is the hidden marker: the store's door
+# drops a row that carries it, so no admitted object is ever hidden; bit 6
+# is the Designer read-only checkbox (see `AmpioObject.read_only`); bit 37
+# is the per-object Matter opt-in, not a visibility signal, and nothing
+# here reads it. Bit 15 is the generic `OPTION1` slot, whose meaning
+# depends on the component type - Designer labels it "Bell object" on
+# `przekaznik` and `flaga` only, so `AmpioObject.bell` gates on the type
+# before reading it.
+HIDDEN_FLAG = 1 << 4
 _READ_ONLY_FLAG = 1 << 6
 _BELL_FLAG = 1 << 15
 # The component types whose Designer editor renders `OPTION1` as the
 # "Bell object" checkbox. On every other type the bit means something
 # else (slider layout, lamella step, ...), so it must not read as bell.
 _BELL_TYPES = frozenset({"przekaznik", "flaga"})
-
-# The `leafId` shape: `0_<macHex>_<sfId>_<subSfId>_<ioNo>` - a leading
-# literal `0`, then the four fields the regex captures (docs/identity.md).
-# Strict on purpose - a half-parsed mac that is wrong is worse than None.
-_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_([^_]+)_([^_]+)_([^_]+)")
 
 # One printf conversion in Designer's "String format" column, or the `%%`
 # escape (matched first so it never reads as a conversion). Designer's own
@@ -119,17 +114,28 @@ def _last_conversion(fmt: str) -> re.Match[str] | None:
     return last
 
 
-def leaf_mac(leaf_id: str) -> int | None:
-    """The override mac a `leafId` embeds, or None for an empty or odd shape."""
-    match = _LEAF_ID_RE.fullmatch(leaf_id)
-    return int(match.group(1), 16) if match is not None else None
-
-
-# The M-SERV's Designer override mac: its objects' leafId embeds this value
-# (not the factory mac_global), and its own module row reports it as
+# The M-SERV's Designer override mac: its objects' address embeds this
+# value (not the factory mac_global), and its own module row reports it as
 # `AmpioModule.mac`. The one place the rule lives - consumers read
 # `AmpioObject.is_server_owned` instead of comparing macs themselves.
 MSERV_MAC = 1
+
+
+@dataclass(slots=True, frozen=True)
+class ModuleAddress:
+    """Where an object sits on the CAN bus, parsed from its Designer leaf.
+
+    Every admitted object carries one, on both account tiers. ``mac`` is
+    the owning module's override mac: the key of the raw tree and the
+    value of ``AmpioModule.mac``. ``channel`` is the 0-based leaf channel,
+    the Designer's description-record key. ``sf_id`` is the leaf class and
+    ``sub_sf_id`` the sub-function inside it (docs/identity.md).
+    """
+
+    mac: int
+    channel: int
+    sf_id: int
+    sub_sf_id: int
 
 
 @dataclass(slots=True, frozen=True)
@@ -154,13 +160,10 @@ class ThermostatState:
 class DesignerRecord:
     """One object's entry of its module's CAN description record.
 
-    Admin-guarded: only :meth:`AmpioClient.resolve_records` fills it, and
-    only the admin tier can run that sweep, so ``AmpioObject.record`` is
-    None on the restricted tier and before a sweep covers the object. A
-    None field inside means the entry carries no value: an unassigned
-    location, an untagged type, an empty description.
-    docs/description-records.md holds the wire shape, docs/account-tiers.md
-    the tier rule.
+    An entry of :pyattr:`AmpioAdminClient.records`. A None field means the
+    entry carries no value: an unassigned location, an untagged type, an
+    empty description. docs/description-records.md holds the wire shape,
+    docs/account-tiers.md the tier rule.
     """
 
     location: str | None = None
@@ -170,13 +173,14 @@ class DesignerRecord:
 
 @dataclass(slots=True, frozen=True)
 class RecordSweep:
-    """What one :meth:`AmpioClient.resolve_records` pass covered.
+    """What one :meth:`AmpioAdminClient.resolve_records` pass covered.
 
-    ``records`` is the join result. The two mac sets separate the case a
-    bare record map cannot: a module in ``answered_macs`` whose object
-    still reads ``record`` None carries no entry for that output, while a
+    ``records`` is this pass's join result, while the datasets on the
+    admin client accumulate across passes. The two mac sets separate the
+    case a bare record map cannot. A module in ``answered_macs`` with no
+    entry for one of its outputs answered and carries none for it. A
     module in ``silent_macs`` is catalogued but missing from the device
-    list reply and says nothing either way. The M-SERV's own row is a
+    list reply, and says nothing either way. The M-SERV's own row is a
     device like any other in both sets.
     """
 
@@ -189,9 +193,9 @@ class RecordSweep:
 class ModuleRecord:
     """The DEVICE_NAME entry of a module's CAN description record.
 
-    Admin-guarded, exactly as :class:`DesignerRecord` is. ``location`` is
+    An entry of :pyattr:`AmpioAdminClient.module_records`. ``location`` is
     the module-level "Lokalizacja" (where the box is mounted, not where
-    its loads are) and ``desc`` the CAN-resident module name; either can
+    its loads are) and ``desc`` the CAN-resident module name. Either can
     differ from the admin catalogue row.
     """
 
@@ -220,9 +224,9 @@ class PanelSettings:
 
     These are the panel's configured defaults, held in the module and
     read back with the rest of its record. They are what the panel
-    returns to after a restart. Admin-guarded, exactly as
-    :class:`ModuleRecord` is, and None on a module whose panel layout
-    this library has not proven.
+    returns to after a restart. An entry of
+    :pyattr:`AmpioAdminClient.panel_settings`, which carries no entry for
+    a module whose panel layout this library has not proven.
 
     Every per-field tuple is as long as the panel has touch fields, so
     index 0 is field 1. docs/description-records.md holds the wire shape.
@@ -255,13 +259,39 @@ class PanelSettings:
 
 
 @dataclass(slots=True, frozen=True)
+class LockTarget:
+    """Where a roller lock frame for one cover goes.
+
+    ``channels`` is the module's roller channel count, which sizes the
+    frame's channel mask. docs/panel-writes.md.
+    """
+
+    mac: int
+    channel: int
+    channels: int
+
+
+class LockRefusal(Enum):
+    """Why no roller lock frame can go out for an object.
+
+    ``NOT_SWEPT`` changes with the next sweep; the other three do not.
+    """
+
+    NOT_A_COVER = "not_a_cover"
+    NOT_SWEPT = "not_swept"
+    NO_ROLLER_COUNT = "no_roller_count"
+    PAST_LAST_CHANNEL = "past_last_channel"
+
+
+@dataclass(slots=True, frozen=True)
 class CoverParameters:
     """One cover channel's stored travel configuration.
 
     These are the values the Designer shows under "Roller blinds
     parameters", held in the module and read back with the rest of its
-    record. Admin-guarded, exactly as :class:`PanelSettings` is, and None
-    on a board whose roller layout this library has not proven.
+    record. An entry of :pyattr:`AmpioAdminClient.cover_parameters`, which
+    carries no entry for a board whose roller layout this library has not
+    proven.
 
     This is configuration, not state. :pyattr:`AmpioObject.block` is the
     live roller lock the module pushes, and it says nothing about travel.
@@ -299,69 +329,56 @@ class AmpioObject:
     """
 
     # The columns every catalogue row carries on both tiers, so every
-    # object holds them (docs/protocol.md). The per-object identity source
-    # is `id`, exposed as `object_key`. An object delete is soft on the
-    # `config` catalogue, so the autoincrement never renumbers.
-    # `id_urzadzenia` is the volatile one: it mirrors the module row, which
-    # is reassigned when a module is replaced. docs/identity.md is the home
-    # for the identity model.
+    # object holds them (docs/protocol.md). The per-object identity is
+    # `id`, exposed as `object_key`; the module identity is `address.mac`.
+    # An object delete is soft on the `config` catalogue, so the
+    # autoincrement never renumbers. docs/identity.md is the home for the
+    # identity model.
     id: int
-    id_urzadzenia: int  # physical module
     typ_komponentu: str
     interpretacja: int
     # Physical channel index within the module (obiekty.funkcja);
     # replacement-stable but NOT unique - objects can share one. Routes raw
     # channel events to this object.
     funkcja: int
-    opis_menu: str | None = None
-    # `leafId`, identical on both discovery surfaces. Empty for system
-    # objects, and Designer clears it when an object's Matter box is
-    # unchecked. The physical-output key (`leaf_key`) and the parse source
-    # for `module_mac` - docs/identity.md.
-    leaf_id: str = ""
-    # The override mac that leafed objects on the same `id_urzadzenia`
-    # embed, read out of the catalogue this tier holds - a leafless
-    # object's module on both tiers, None without such a sibling in the
-    # grant. `module_mac` stays the leaf-parsed fact - docs/identity.md.
-    sibling_module_mac: int | None = None
-    # `params` bitfield (Designer config flags; see `hidden`/`visible`).
-    # Defaults to 0 so a payload without the column reads "nothing hidden".
+    # Where the object sits on the bus, parsed from its Designer leaf at the
+    # door. Every admitted object carries one on both tiers, so nothing
+    # downstream tests for its absence. docs/identity.md.
+    address: ModuleAddress
+    # The physical output this object drives, `leaf_<leafId>`. Several
+    # Designer views of one output share it by design, so it is not an
+    # identity for the row: `object_key` is. docs/identity.md.
+    leaf_key: str
+    # The opis_menu column: the object's name in the app, or None.
+    name: str | None = None
+    # `params` bitfield (Designer config flags; see `read_only`/`bell`).
+    # Defaults to 0, so a payload without the column reads 0 and no bit is
+    # set.
     params: int = 0
     # Matter device type ID from the Designer "Description in device" tag
     # (`type` column; "256" = 0x0100 On/Off Light). None when untagged. A
     # pure catalogue fact, served identically to both tiers and never
-    # mutated after the seed; the record's own (fresher, admin-only) tag
-    # is `record.matter_device_type`, and which one wins is the
-    # consumer's choice. docs/identity.md holds the vocabulary and the
-    # storage path.
+    # mutated after the seed. The description record's own (fresher,
+    # admin-only) tag is `DesignerRecord.matter_device_type`, and which one
+    # wins is the consumer's choice. docs/identity.md holds the vocabulary
+    # and the storage path.
     matter_device_type: int | None = None
     # The `czas` column as served, in the wire unit of 10 ms ticks. Its
     # meaning follows the component type: Designer's "turn-on time" on the
     # ten types its editor offers the field on (docs/visibility.md), a
     # refresh time in milliseconds on a camera. `pulse_ms` reads the
     # subset of those ten that a timed write actually pulses.
-    # 0 when not configured. Served on both tiers: `devicesDetails` carries
-    # the column, and `data/params_devices` supplies it unfiltered where the
-    # app-sync catalogue omits it.
+    # 0 when not configured. `data/params_devices` carries it on both
+    # tiers; the object catalogue itself carries no config column.
     czas: int = 0
-    # Designer's "Unit" column, verbatim. Served on both tiers the way
-    # `czas` is: `devicesDetails` carries it, and `data/params_devices`
-    # supplies it where the app-sync catalogue omits it. Designer writes a
-    # single space for "without unit". `unit` reads it.
+    # Designer's "Unit" column, verbatim. `data/params_devices` carries it
+    # on both tiers, the way it carries `czas`. Designer writes a single
+    # space for "without unit". `unit` reads it.
     url: str = ""
     # Designer's "String format" column, verbatim: a printf conversion,
-    # optionally followed by a unit ("%.3f A"). Both catalogues carry it.
-    # `unit` and `decimals` read it.
+    # optionally followed by a unit ("%.3f A"). The catalogue carries it
+    # on both tiers. `unit` and `decimals` read it.
     format: str = ""
-    # The object's description-record entry, admin sweep only; None on
-    # the restricted tier and before a sweep covers the object.
-    record: DesignerRecord | None = None
-    # The stored travel configuration of this cover's channel, read from
-    # the module's params blob during a sweep. Admin sweep only, and None
-    # on anything that is not a cover on a board whose roller layout this
-    # library has proven. `block` is the live lock the module pushes, and
-    # it is a different fact from a different surface.
-    cover_parameters: CoverParameters | None = None
     # What this object is. Derived - never passed: computed from
     # `typ_komponentu` and `interpretacja` on every construction,
     # `dataclasses.replace` included, so no instance can hold a kind that
@@ -375,11 +392,6 @@ class AmpioObject:
     # its own. Lets a later bulk snapshot be compared against what is held
     # instead of applied or dropped blind. None until any report arrives.
     updated_at: float | None = None
-    # Whether the raw path owns this object (its raw-channel form has been
-    # observed): per-object echoes and snapshot rows are then skipped -
-    # resync is the broker's retained raw table. Admin tier only; cleared
-    # when the raw index stops covering the object. docs/raw-channel-bridge.md.
-    raw_owned: bool = False
     # Slat angle percent. Only tilt-capable covers report it.
     lammel: int | None = None
     # The roller lock, verbatim from the wire: two bits the module keeps per
@@ -389,15 +401,6 @@ class AmpioObject:
     # `blocks_opening` read the bits. docs/commands.md holds the Designer
     # actions that set them.
     block: int | None = None
-    # Whether a lock write for this cover reaches its module, read from the
-    # module's capability map during a sweep. True when the module answered
-    # and advertises a roller channel count covering this channel, False when
-    # it answered and does not, None until a sweep covers it - so a consumer
-    # that builds controls before `resolve_records()` must not read None as
-    # False. The count both gates the write and sizes its channel mask.
-    # Admin sweep only, and None on anything that is not a cover.
-    # docs/panel-writes.md carries what the wire answered.
-    block_writable: bool | None = None
     # Climate readback, from the rich state shape only `reg` objects push.
     # None until a reg-shaped report arrives; a later report that lacks the
     # shape keeps the last readback, like `lammel` does.
@@ -408,7 +411,7 @@ class AmpioObject:
         object.__setattr__(
             self,
             "kind",
-            classify(self.typ_komponentu, self.interpretacja, self.sub_sf_id),
+            classify(self.typ_komponentu, self.interpretacja, self.address.sub_sf_id),
         )
 
     @property
@@ -535,26 +538,6 @@ class AmpioObject:
         return pos if 0 <= pos <= 100 else None
 
     @property
-    def is_system(self) -> bool:
-        """Whether this is a system object (always present regardless of grouping).
-
-        ``symulacja`` (presence simulation) and ``detekcja`` (presence
-        detection) live outside the room/group hierarchy by design; the
-        M-SERV always exposes them.
-        """
-        return is_system_type(self.typ_komponentu)
-
-    @property
-    def hidden(self) -> bool:
-        """Whether the M-SERV flags this object as hidden / a stub (``params`` bit 4).
-
-        The authoritative "do not surface" marker, honored by the
-        M-SERV's own Matter bridge; it catches the phantom rows that
-        duplicate a real Designer channel. See docs/visibility.md.
-        """
-        return bool(self.params & _HIDDEN_FLAG)
-
-    @property
     def read_only(self) -> bool:
         """Whether Designer marks this object read-only (``params`` bit 6).
 
@@ -615,8 +598,7 @@ class AmpioObject:
         the unit, so the tail wins when the two disagree. None when
         neither yields text, which includes the single space Designer
         writes for "without unit". None on every kind but a sensor: an
-        input, an output, or a thermostat has no measurement to label,
-        and the system objects carry a placeholder in the column.
+        input, an output, or a thermostat has no measurement to label.
         """
         if not isinstance(self.kind, SensorKind):
             return None
@@ -645,19 +627,6 @@ class AmpioObject:
         return int(precision) if precision is not None else None
 
     @property
-    def leaf_key(self) -> str | None:
-        """The physical output this object drives (``leaf_<leaf_id>``), or None.
-
-        Identical on both access tiers. It is not an identity for the
-        object row. Several Designer views of one output share one
-        ``leafId``, so two objects can return the same key. The
-        per-object identity is :pyattr:`object_key`. None for an empty
-        ``leaf_id`` (system objects, Matter box unchecked). See
-        docs/identity.md.
-        """
-        return f"leaf_{self.leaf_id}" if self.leaf_id else None
-
-    @property
     def object_key(self) -> str:
         """Snapshot-unique identity token (``obj_<id>``).
 
@@ -671,78 +640,14 @@ class AmpioObject:
         return f"obj_{self.id}"
 
     @property
-    def module_mac(self) -> int | None:
-        """The owning module's effective bus mac, parsed from ``leaf_id``.
-
-        The replacement-stable ``AmpioModule.mac``, served identically on
-        both account tiers - the module key a consumer can group entities
-        by even on a restricted account, which never receives the module
-        catalogue (docs/identity.md). None when ``leaf_id`` is empty or,
-        on no observed install, has an unexpected shape.
-        """
-        return leaf_mac(self.leaf_id)
-
-    def _leaf_segment(self, group: int) -> int | None:
-        """One numeric `leaf_id` segment, or None when it does not parse."""
-        match = _LEAF_ID_RE.fullmatch(self.leaf_id)
-        if match is None:
-            return None
-        try:
-            return int(match.group(group))
-        except ValueError:
-            return None
-
-    @property
-    def sf_id(self) -> int | None:
-        """The special-function id, the third ``leaf_id`` segment.
-
-        The Designer's own name for the per-leaf function class. None when
-        ``leaf_id`` is empty, malformed, or the segment is not a number.
-        See docs/identity.md.
-        """
-        return self._leaf_segment(2)
-
-    @property
-    def sub_sf_id(self) -> int | None:
-        """The sub-function id, the fourth ``leaf_id`` segment.
-
-        Its meaning is scoped to :pyattr:`sf_id`. None when ``leaf_id`` is
-        empty, malformed, or the segment is not a number. See
-        docs/identity.md.
-        """
-        return self._leaf_segment(3)
-
-    @property
-    def leaf_io_no(self) -> int | None:
-        """The I/O index within the module's description record.
-
-        The last ``leaf_id`` segment, and the join key that pairs this
-        object with its :class:`OutputDescription` entry. It covers inputs
-        as well as outputs. None when ``leaf_id`` is empty, malformed, or
-        the segment is not a number.
-        """
-        return self._leaf_segment(4)
-
-    @property
     def is_server_owned(self) -> bool:
         """Whether this object belongs to the M-SERV itself.
 
-        True when ``leaf_id`` embeds the M-SERV's override mac; works on
-        both account tiers, so a consumer can anchor server-owned objects
-        to its hub device without the module catalogue. False when
-        ``leaf_id`` is empty.
+        The address embeds the M-SERV's override mac on both account
+        tiers, so a consumer can anchor server-owned objects to its hub
+        device without the module catalogue.
         """
-        return self.module_mac == MSERV_MAC
-
-    @property
-    def visible(self) -> bool:
-        """Whether the M-SERV means to surface this object: ``not hidden``.
-
-        The ``params`` DELETED bit is the one wire-side marker. ``leaf_id``
-        says nothing here: Designer clears it when an object's Matter box
-        is unchecked, and the row stays a real object. See docs/visibility.md.
-        """
-        return not self.hidden
+        return self.address.mac == MSERV_MAC
 
 
 @dataclass(slots=True, frozen=True)
@@ -774,18 +679,6 @@ class AmpioModule:
     # Decoration for device info only - never a topology input. None when
     # unclassified.
     mounting: Mounting | None = field(init=False)
-    # The module's DEVICE_NAME record entry, admin sweep only; None
-    # until a sweep covers the module.
-    record: ModuleRecord | None = None
-    # What the module reports it can do, as `{function id: channel count}`
-    # (#197). Admin sweep only, so it stays empty on a standard account and
-    # until a sweep covers the module. Index it with `ModuleFunction`; an id
-    # without a member reads through under its raw number.
-    capabilities: Mapping[int, int] = field(default_factory=dict)
-    # The panel's stored appearance and behaviour settings (#194). Admin
-    # sweep only, and None on anything that is not a touch panel whose
-    # params layout this library has proven.
-    panel_settings: PanelSettings | None = None
     # Local epoch seconds when this process last received live evidence of
     # the module: a state push or raw edge for one of its objects, or its own
     # diagnostics broadcast. One clock only - snapshot and catalogue seeds do
@@ -860,11 +753,10 @@ class AmpioServerInfo:
 
         The wire's own verdict on the question the authenticated username
         answers at construction. A config flow reads it from a
-        :meth:`AmpioClient.check_connection` result, and a running client
-        refuses a reply that contradicts its own tier. The reserved
-        ``admin`` login reports the pseudo-user id ``-1``; app-created
-        users carry a positive row id and are always the standard tier
-        (docs/account-tiers.md).
+        :meth:`AmpioClient.check_connection` result to pick the client
+        class. The reserved ``admin`` login reports the pseudo-user id
+        ``-1``; app-created users carry a positive row id and are always
+        the standard tier (docs/account-tiers.md).
         """
         return AccessTier.ADMIN if self.user_id == -1 else AccessTier.RESTRICTED
 

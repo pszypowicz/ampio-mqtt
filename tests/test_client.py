@@ -7,33 +7,36 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+from collections.abc import Iterator
 
 import aiomqtt
 import pytest
 from conftest import (
+    ADMIN_PARAMS_DEVICES_TOPIC,
     ADMIN_USER,
-    DATA_DEVICES_TOPIC,
-    DETAILS_TOPIC,
-    DEVICES_TOPIC,
     INFO_TOPIC,
     PARAMS_DEVICES_TOPIC,
     STATES_TOPIC,
     USER,
     FakeBroker,
+    catalogue,
     details,
     devices,
     feed,
     info,
+    make_admin_client,
+    params_of,
     params_table,
     rows,
     snapshot,
 )
 
 from ampio_mqtt import (
-    AccessTier,
+    AmpioAdminClient,
     AmpioClient,
     AmpioConnectionError,
     AvailabilityChanged,
+    ModuleFunction,
     ModuleRemoved,
     ObjectRemoved,
     ObjectUpdated,
@@ -42,10 +45,9 @@ from ampio_mqtt import (
 from ampio_mqtt._protocol import REDACTED
 
 
-def _flaga(oid: int, funkcja: int, dev: int = 7) -> dict:
+def _flaga(oid: int, funkcja: int) -> dict:
     return {
         "id": oid,
-        "id_urzadzenia": dev,
         "typ_komponentu": "flaga",
         "interpretacja": 1,
         "funkcja": funkcja,
@@ -57,9 +59,16 @@ def _client() -> AmpioClient:
     return AmpioClient("host", username=USER)
 
 
-def _admin_client() -> AmpioClient:
-    """For the module-catalogue machinery, which only the admin tier is served."""
-    return AmpioClient("host", username=ADMIN_USER)
+def _admin_client() -> AmpioAdminClient:
+    """For the module-catalogue machinery, which the admin client alone holds."""
+    return AmpioAdminClient("host")
+
+
+@pytest.fixture
+def admin_client() -> Iterator[tuple[AmpioAdminClient, FakeBroker]]:
+    broker = FakeBroker()
+    client = make_admin_client(broker)
+    yield client, broker
 
 
 def test_mserv_prefers_info_mac_cross_check() -> None:
@@ -113,25 +122,10 @@ def test_mserv_reads_none_until_both_replies_land() -> None:
     assert client.mserv is not None and client.mserv.id == 5
 
 
-def test_the_module_catalogue_refuses_a_standard_account() -> None:
-    """The M-SERV serves the module list to the admin login alone, so a
-    standard account reading it is a consumer fault, not an empty install.
-    Tier-independent grouping reads `AmpioObject.module_mac`."""
-    client = _client()
-    feed(client, DATA_DEVICES_TOPIC, details(_object_row(10, 7, "cafe")))
-    with pytest.raises(RuntimeError, match="admin"):
-        _ = client.modules
-    with pytest.raises(RuntimeError, match="admin"):
-        _ = client.mserv
-    with pytest.raises(RuntimeError, match="admin"):
-        client.module_for(client.objects[10])
-
-
-# --- module_for: the mac-validated object-to-module join (#93) --------------
+# --- module_for: the leaf-mac join -------------------------------------------
 
 
 ADMIN_DEVICES = f"ampio/fromDB/{ADMIN_USER}/config/devices"
-ADMIN_DETAILS = f"ampio/fromDB/{ADMIN_USER}/config/devicesDetails"
 
 
 def _module_row(mid: int, mac: int | None, name: str = "MREL") -> dict:
@@ -146,74 +140,23 @@ def _module_row(mid: int, mac: int | None, name: str = "MREL") -> dict:
     return row
 
 
-def _object_row(oid: int, dev: int | None, mac_hex: str | None) -> dict:
+def _object_row(oid: int, mac_hex: str | None) -> dict:
     row: dict = {"id": oid, "typ_komponentu": "flaga", "opis_menu": "Flag"}
-    if dev is not None:
-        row["id_urzadzenia"] = dev
     if mac_hex is not None:
         row["leafId"] = f"0_{mac_hex}_1_0_0"
     return row
 
 
-def test_module_for_returns_the_mac_agreeing_row() -> None:
+def test_module_for_joins_on_the_leaf_mac() -> None:
     client = _admin_client()
     feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
-    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, "cafe")))
-    module = client.module_for(client.objects[10])
-    assert module is not None
-    assert module.id == 7
-
-
-def test_module_for_rejects_a_mac_disagreement() -> None:
-    """id_urzadzenia pointing at a row whose mac is not the object's leaf
-    mac is the stale-join shape a module replacement produces; None beats
-    the wrong module."""
-    client = _admin_client()
-    feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
-    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, "beef")))
-    assert client.module_for(client.objects[10]) is None
-
-
-@pytest.mark.parametrize("module_mac", [0xCAFE, None])
-def test_module_for_joins_a_leafless_object_without_the_mac_gate(
-    module_mac: int | None,
-) -> None:
-    """An object with no leafId (its Matter box unchecked in Designer) has
-    no leaf mac to gate on, so the id_urzadzenia join stands as is."""
-    client = _admin_client()
-    feed(client, ADMIN_DEVICES, devices(_module_row(7, module_mac)))
-    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, None)))
-    module = client.module_for(client.objects[10])
-    assert module is not None
-    assert module.id == 7
-
-
-def test_module_for_without_a_join_key() -> None:
-    client = _admin_client()
-    feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
-    feed(
+    catalogue(
         client,
-        ADMIN_DETAILS,
-        details(_object_row(10, None, "cafe"), _object_row(11, 99, "cafe")),
+        {"id": 10, "leafId": "0_cafe_3_0_0"},
+        {"id": 11, "leafId": "0_beef_3_0_0"},
     )
-    # No id_urzadzenia, and an id_urzadzenia no row answers.
-    assert client.module_for(client.objects[10]) is None
+    assert client.module_for(client.objects[10]).id == 7
     assert client.module_for(client.objects[11]) is None
-
-
-def test_module_for_resolves_colliding_macs_by_the_join() -> None:
-    """Override macs may collide across rows; the join picks the row, the
-    mac only gates it."""
-    client = _admin_client()
-    feed(
-        client,
-        ADMIN_DEVICES,
-        devices(_module_row(7, 0xCAFE, "FIRST"), _module_row(8, 0xCAFE, "SECOND")),
-    )
-    feed(client, ADMIN_DETAILS, details(_object_row(10, 8, "cafe")))
-    module = client.module_for(client.objects[10])
-    assert module is not None
-    assert (module.id, module.nazwa_urzadzenia) == (8, "SECOND")
 
 
 def test_mserv_matches_the_override_mac_arm() -> None:
@@ -240,29 +183,41 @@ def test_mserv_matches_the_override_mac_arm() -> None:
 
 
 def test_read_surface_is_immutable() -> None:
-    """Neither the mappings nor the frozen instances in them can be mutated
-    from consumer code - the promise core builds its entity layer on."""
+    """Neither the mappings, the maps they hold, nor the frozen instances
+    in them can be mutated from consumer code - the promise core builds
+    its entity layer on."""
     client = _admin_client()
-    feed(
-        client,
-        f"ampio/fromDB/{ADMIN_USER}/config/devicesDetails",
-        details(_flaga(41, 3)),
-    )
+    feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3))
     feed(
         client,
         f"ampio/fromDB/{ADMIN_USER}/config/devices",
         devices({"id": 7, "mac": 1}),
+    )
+    client._store.apply_sweep(
+        frozenset({1}), {}, {}, {}, {1: {ModuleFunction.ROLLER: 4}}, {}
     )
     with pytest.raises(TypeError):
         client.objects[99] = client.objects[41]  # type: ignore[index]
     with pytest.raises(TypeError):
         del client.objects[41]  # type: ignore[attr-defined]
     with pytest.raises(dataclasses.FrozenInstanceError):
-        client.objects[41].opis_menu = "TAMPERED"  # type: ignore[misc]
+        client.objects[41].name = "TAMPERED"  # type: ignore[misc]
     with pytest.raises(TypeError):
         client.modules[99] = client.modules[7]  # type: ignore[index]
     with pytest.raises(dataclasses.FrozenInstanceError):
         client.modules[7].nazwa_urzadzenia = "TAMPERED"  # type: ignore[misc]
+    for view in (
+        client.records,
+        client.cover_parameters,
+        client.module_records,
+        client.capabilities,
+        client.panel_settings,
+    ):
+        with pytest.raises(TypeError):
+            view[99] = None  # type: ignore[index]
+    with pytest.raises(TypeError):
+        client.capabilities[1][ModuleFunction.ROLLER] = 0  # type: ignore[index]
 
 
 def test_mserv_reads_none_when_no_row_carries_the_server_mac() -> None:
@@ -280,17 +235,14 @@ def test_mserv_reads_none_when_no_row_carries_the_server_mac() -> None:
 
 def test_state_updates_object_and_notifies() -> None:
     client = _client()
-    feed(
+    catalogue(
         client,
-        DATA_DEVICES_TOPIC,
-        details(
-            {
-                "id": 41,
-                "typ_komponentu": "temp",
-                "interpretacja": 1,
-                "opis_menu": "Salon",
-            }
-        ),
+        {
+            "id": 41,
+            "typ_komponentu": "temp",
+            "interpretacja": 1,
+            "opis_menu": "Salon",
+        },
     )
     received: list = []
     client.subscribe(lambda e: received.append(e.object), of=ObjectUpdated)
@@ -311,15 +263,14 @@ def test_object_removal_listener_fires_after_eviction() -> None:
     unsubscribe = client.subscribe(
         lambda e: removed.append(e.object.id), of=ObjectRemoved
     )
-    topic = DATA_DEVICES_TOPIC
-    feed(client, topic, details(_flaga(41, 3), _flaga(42, 4)))
-    feed(client, topic, details(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3), _flaga(42, 4))
+    catalogue(client, _flaga(41, 3))
     assert removed == [42]
     assert 42 not in client.objects
 
     unsubscribe()
-    feed(client, topic, details(_flaga(41, 3), _flaga(42, 4)))
-    feed(client, topic, details(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3), _flaga(42, 4))
+    catalogue(client, _flaga(41, 3))
     assert removed == [42]
 
 
@@ -343,13 +294,12 @@ def test_unsubscribe_removes_only_its_own_registration() -> None:
 
     first = client.subscribe(listener, of=ObjectUpdated)
     client.subscribe(listener, of=ObjectUpdated)
-    topic = DATA_DEVICES_TOPIC
-    feed(client, topic, details(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3))
     assert seen == [41, 41]
 
     first()
     first()  # repeat must not touch the surviving registration
-    feed(client, topic, details(_flaga(41, 4)))
+    catalogue(client, _flaga(41, 4))
     assert seen == [41, 41, 41]
 
 
@@ -371,9 +321,8 @@ def test_subscribe_filters_and_preserves_order() -> None:
     only_updates: list[object] = []
     client.subscribe(everything.append)
     client.subscribe(only_updates.append, of=ObjectUpdated)
-    topic = DATA_DEVICES_TOPIC
-    feed(client, topic, details(_flaga(41, 3), _flaga(42, 4)))
-    feed(client, topic, details(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3), _flaga(42, 4))
+    catalogue(client, _flaga(41, 3))
     assert [type(e).__name__ for e in everything] == [
         "ObjectAdded",
         "ObjectAdded",
@@ -395,7 +344,7 @@ def test_subscribe_object_id_dispatches_only_matching_object() -> None:
     client.subscribe(
         lambda e: other.append(e.object.id), of=ObjectUpdated, object_id=42
     )
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3), _flaga(42, 4)))
+    catalogue(client, _flaga(41, 3), _flaga(42, 4))
     assert mine == [41]
     assert other == [42]
 
@@ -410,8 +359,8 @@ def test_subscribe_object_id_tuple_covers_update_and_removal() -> None:
         of=(ObjectUpdated, ObjectRemoved),
         object_id=42,
     )
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3), _flaga(42, 4)))
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3), _flaga(42, 4))
+    catalogue(client, _flaga(41, 3))
     assert seen == ["ObjectAdded", "ObjectRemoved"]
 
 
@@ -448,12 +397,12 @@ def test_subscribe_object_id_unsubscribe_contract() -> None:
 
     first = client.subscribe(listener, of=ObjectUpdated, object_id=41)
     client.subscribe(listener, of=ObjectUpdated, object_id=41)
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3))
     assert seen == [41, 41]
 
     first()
     first()  # repeat must not touch the surviving registration
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 4)))
+    catalogue(client, _flaga(41, 4))
     assert seen == [41, 41, 41]
 
 
@@ -481,8 +430,8 @@ def test_subscribe_object_id_listener_can_unsubscribe_mid_dispatch() -> None:
 
     unsub = client.subscribe(one_shot, of=ObjectUpdated, object_id=41)
     client.subscribe(lambda e: calls.append("steady"), of=ObjectUpdated, object_id=41)
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3)))
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 4)))
+    catalogue(client, _flaga(41, 3))
+    catalogue(client, _flaga(41, 4))
     assert calls == ["one_shot", "steady", "steady"]
 
 
@@ -497,7 +446,7 @@ def test_subscribe_object_id_listener_exception_is_isolated() -> None:
 
     client.subscribe(broken, of=ObjectUpdated, object_id=41)
     client.subscribe(lambda e: seen.append(e.object.id), of=ObjectUpdated, object_id=41)
-    feed(client, DATA_DEVICES_TOPIC, details(_flaga(41, 3)))
+    catalogue(client, _flaga(41, 3))
     assert seen == [41]
 
 
@@ -539,26 +488,31 @@ def test_a_table_reply_is_decoded_once(
         return real(payload)
 
     monkeypatch.setattr(_protocol.json, "loads", counting)
-    client = AmpioClient("host", username="admin")
+    client = AmpioAdminClient("host")
     feed(client, f"ampio/fromDB/admin/{topic}", payload_of())
     assert calls == 1
 
 
 def test_last_payloads_retained_for_each_handler() -> None:
     """Each served endpoint retains a summary of its last reply."""
-    admin = AmpioClient("host", username="admin")
+    admin = AmpioAdminClient("host")
     devices_payload = devices({"id": 1, "mac": 1, "typ_urzadzenia": 10})
-    details_payload = details(
-        {"id": 5, "id_urzadzenia": 1, "typ_komponentu": "temp", "interpretacja": 1}
+    admin_details_payload = details(
+        {"id": 5, "typ_komponentu": "temp", "interpretacja": 1}
     )
+    admin_params_payload = params_table({"id": 5, "params": 17})
     feed(admin, "ampio/fromDB/admin/config/devices", devices_payload)
-    feed(admin, "ampio/fromDB/admin/config/devicesDetails", details_payload)
+    feed(admin, "ampio/fromDB/admin/data/devices", admin_details_payload)
+    feed(admin, "ampio/fromDB/admin/data/params_devices", admin_params_payload)
     assert admin.diagnostics_snapshot()["last_payloads"]["devices"] == json.dumps(
         {"row_count": 1}
     )
-    assert admin.diagnostics_snapshot()["last_payloads"]["details"] == json.dumps(
+    assert admin.diagnostics_snapshot()["last_payloads"]["data_devices"] == json.dumps(
         {"row_count": 1}
     )
+    assert admin.diagnostics_snapshot()["last_payloads"][
+        "params_devices"
+    ] == json.dumps({"row_count": 1})
 
     client = _client()
     info_payload = info(mac=12345, userId=4, serverVersion="2025")
@@ -637,11 +591,25 @@ def test_snapshot_withholds_unparseable_info_bytes() -> None:
     assert client.diagnostics_snapshot()["last_payloads"]["info"] == REDACTED
 
 
-def test_access_tier_is_the_authenticated_username() -> None:
-    """The broker authenticates the login at CONNACK and only the reserved
-    `admin` name is the administrator, so the tier is a constructor fact."""
-    assert _client().access_tier is AccessTier.RESTRICTED
-    assert AmpioClient("host", username="admin").access_tier is AccessTier.ADMIN
+def test_the_base_client_never_inspects_the_username() -> None:
+    """The reserved login through the base class gets the standard view:
+    a valid least-privilege choice, not an admin session."""
+    filters = {
+        topic for topic, _ in AmpioClient("host", username="admin")._subscriptions()
+    }
+    assert not any(
+        t.startswith("ampio/from/") or "/config/" in t or "/md5/" in t for t in filters
+    )
+
+
+def test_the_admin_client_subscribes_to_the_raw_tree_and_the_digests() -> None:
+    """The admin class widens the base filter set with the shapes the
+    M-SERV serves the reserved login alone."""
+    filters = {topic for topic, _ in AmpioAdminClient("host")._subscriptions()}
+    assert "ampio/from/+/state/f/+" in filters
+    assert "ampio/fromDB/admin/config/devices" in filters
+    assert "ampio/fromDB/admin/md5/devices" in filters
+    assert "device_api/from/list" in filters
 
 
 def test_dispatch_updates_last_message_at() -> None:
@@ -696,15 +664,13 @@ async def test_discovery_stays_incomplete_without_server_identity(
     wait promises the identity a consumer scopes its registry by (#78)."""
     client, _broker = connected
     feed(client, STATES_TOPIC, devices())
-    feed(client, INFO_TOPIC, info())  # unparseable: carries no identity
-    feed(client, DATA_DEVICES_TOPIC, details())
+    feed(client, INFO_TOPIC, info(mac=None, userId=4))  # carries no identity
+    catalogue(client)
     feed(client, PARAMS_DEVICES_TOPIC, devices())
     assert await client.wait_for_initial_discovery(timeout=0.05) is False
     assert client.server_info is None
 
     feed(client, INFO_TOPIC, info(mac=555, userId=4, serverVersion="1865"))
-    feed(client, DETAILS_TOPIC, details())
-    feed(client, DEVICES_TOPIC, devices())
     assert await client.wait_for_initial_discovery(timeout=1.0) is True
     assert client.server_info.server_key == "555"
 
@@ -745,10 +711,9 @@ async def test_fetch_rejects_a_store_gated_endpoint() -> None:
 def test_diagnostics_snapshot_is_credential_free_and_complete() -> None:
     """The one dict a consumer diagnostics platform emits as-is: every
     documented key present, no trace of host or password."""
-    client = AmpioClient(
+    client = AmpioAdminClient(
         "secret-host.local",
-        username=ADMIN_USER,
-        password="s3cr3t-pw",  # betterleaks:allow
+        "s3cr3t-pw",  # betterleaks:allow
     )
     feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
     feed(
@@ -757,7 +722,6 @@ def test_diagnostics_snapshot_is_credential_free_and_complete() -> None:
         info(mac="555", userId=-1, serverVersion="1865"),
     )
     snap = client.diagnostics_snapshot()
-    assert snap["access_tier"] == "admin"
     assert snap["available"] is False
     assert snap["auth_failure"] is None
     assert snap["server_info"]["mac"] == 555
@@ -810,7 +774,8 @@ def test_diagnostics_snapshot_module_rows_mirror_liveness() -> None:
         ADMIN_DEVICES,
         devices(_module_row(9, 0xBEEF), _module_row(7, 0xCAFE)),
     )
-    feed(client, ADMIN_DETAILS, details(_object_row(10, 7, "cafe")))
+    feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(_object_row(10, "cafe")))
+    catalogue(client, _object_row(10, "cafe"))
     rows = client.diagnostics_snapshot()["modules"]
     assert [row["id"] for row in rows] == [7, 9]
     assert rows[0]["last_seen"] is None

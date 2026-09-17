@@ -11,9 +11,18 @@ import asyncio
 import logging
 
 import pytest
-from conftest import USER, FakeBroker, details, devices, feed, make_client
+from conftest import (
+    USER,
+    FakeBroker,
+    catalogue,
+    details,
+    devices,
+    feed,
+    make_client,
+    params_of,
+)
 
-from ampio_mqtt import AmpioClient, ConnectionDied, ObjectUpdated
+from ampio_mqtt import AmpioAdminClient, AmpioClient, ConnectionDied, ObjectUpdated
 
 
 def _client() -> AmpioClient:
@@ -22,11 +31,7 @@ def _client() -> AmpioClient:
 
 def _establish(client: AmpioClient, *oids: int) -> None:
     """Catalogue rows establishing the objects the live pushes then update."""
-    feed(
-        client,
-        f"ampio/fromDB/{USER}/data/devices",
-        details(*({"id": oid} for oid in oids)),
-    )
+    catalogue(client, *({"id": oid} for oid in oids))
 
 
 # --- listeners are consumer code and may raise ------------------------------
@@ -67,7 +72,6 @@ def test_a_raising_listener_does_not_stop_later_messages() -> None:
 @pytest.mark.parametrize(
     "surface",
     [
-        "config/devicesDetails",
         "config/devices",
         "data/devices",
         "data/params_devices",
@@ -100,9 +104,42 @@ def test_a_refused_reply_is_reported_in_the_diagnostics() -> None:
     feed(client, topic, b'{"List": [{"id": 5}]}')
     snapshot = client.diagnostics_snapshot()
     violations = snapshot["connection"]["protocol_violations"]
-    assert "id_urzadzenia" in violations["ampio/fromDB/<account>/data/devices"]
+    assert "typ_komponentu" in violations["ampio/fromDB/<account>/data/devices"]
     assert snapshot["last_payloads"]["data_devices"] == '{"row_count": 1}'
     assert client.objects == {}
+
+
+def test_a_malformed_leaf_names_the_reply_that_carried_it() -> None:
+    """The two catalogue replies arrive in no fixed order. A leaf the
+    library cannot parse is a fault of the reply that carried it, whichever
+    of the two landed first."""
+    client = _client()
+    feed(
+        client,
+        f"ampio/fromDB/{USER}/data/devices",
+        details({"id": 41, "leafId": "garbage"}),
+    )
+    feed(client, f"ampio/fromDB/{USER}/data/params_devices", params_of({"id": 41}))
+    violations = client.diagnostics_snapshot()["connection"]["protocol_violations"]
+    assert list(violations) == ["ampio/fromDB/<account>/data/devices"]
+
+
+def test_a_hidden_row_with_a_malformed_leaf_refuses_nothing() -> None:
+    """A hidden row is soft-deleted and nothing drives it, so the door drops
+    it before it reads the leaf. The rest of the reply is served."""
+    client = _client()
+    feed(
+        client,
+        f"ampio/fromDB/{USER}/data/devices",
+        details({"id": 41, "leafId": "garbage"}, {"id": 42}),
+    )
+    feed(
+        client,
+        f"ampio/fromDB/{USER}/data/params_devices",
+        params_of({"id": 41, "params": 16}, {"id": 42}),
+    )
+    assert list(client.objects) == [42]
+    assert client.diagnostics_snapshot()["connection"]["protocol_violations"] == {}
 
 
 @pytest.mark.parametrize(
@@ -110,7 +147,7 @@ def test_a_refused_reply_is_reported_in_the_diagnostics() -> None:
     [b'{"d":[254,79,null,0]}', b'{"d":[254,79,"x",0]}', b'{"d":"nope"}', b"null"],
 )
 def test_malformed_diagnostics_frames_are_ignored(payload: bytes) -> None:
-    client = AmpioClient("host", username="admin")
+    client = AmpioAdminClient("host")
     feed(client, "ampio/fromDB/admin/config/devices", devices({"id": 7, "mac": 0xCAFE}))
     feed(client, "ampio/from/CAFE/b/4F", payload)  # must not raise
     assert client.modules[7].supply_voltage is None

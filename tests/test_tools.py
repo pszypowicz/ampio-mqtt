@@ -22,9 +22,10 @@ import pytest
 import set_object
 import smoke_test
 from conftest import (
-    ADMIN_DETAILS_TOPIC,
+    ADMIN_DATA_DEVICES_TOPIC,
     ADMIN_DEVICES_TOPIC,
     ADMIN_INFO_TOPIC,
+    ADMIN_PARAMS_DEVICES_TOPIC,
     ADMIN_STATES_TOPIC,
     ADMIN_USER,
     DATA_DEVICES_TOPIC,
@@ -37,6 +38,7 @@ from conftest import (
     details,
     devices,
     info,
+    params_of,
     params_table,
     snapshot,
 )
@@ -219,11 +221,33 @@ async def test_set_object_sends_the_command_and_reports_the_state(
     assert "after:  ob/64 = 0" in printed
 
 
+async def test_set_object_reports_the_refusal_for_an_unknown_id(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broker = FakeBroker()
+    broker.scripted_messages = _discovery()
+    a = _parse(monkeypatch, set_object, "--object-id", "999", "--on", "--watch", "0.01")
+    assert await set_object.run(a, client_factory=broker.factory) == 1
+    assert (API_TOPIC, b"/api/set/999/turnOn") not in broker.published
+    printed = capsys.readouterr().out
+    assert "refused: object 999 is not in the catalogue" in printed
+
+
+async def test_set_object_reports_a_leafless_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broker = FakeBroker()
+    broker.scripted_messages = _discovery({"id": 10, "leafId": "", "opis_menu": "Lamp"})
+    a = _parse(monkeypatch, set_object, "--object-id", "10", "--on", "--watch", "0.01")
+    assert await set_object.run(a, client_factory=broker.factory) == 1
+    assert "not configured: ob/10 Lamp" in capsys.readouterr().out
+
+
 async def test_set_object_passes_a_raw_verb_and_its_arguments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     broker = FakeBroker()
-    broker.scripted_messages = _discovery()
+    broker.scripted_messages = _discovery({"id": 135})
     a = _parse(
         monkeypatch,
         set_object,
@@ -262,7 +286,7 @@ async def test_set_object_drives_a_cct_light(
     """The two axes travel packed, so the flag takes them apart and the
     client packs them - the caller never writes `power | coldness<<8`."""
     broker = FakeBroker()
-    broker.scripted_messages = _discovery()
+    broker.scripted_messages = _discovery({"id": 72, "typ_komponentu": "ledww"})
     a = _parse(
         monkeypatch, set_object, "--object-id", "72", flag, value, "--watch", "0.01"
     )
@@ -302,8 +326,23 @@ async def test_smoke_test_prints_the_discovery_summary(
     assert await smoke_test.run(a, client_factory=broker.factory) == 0
     printed = capsys.readouterr().out
     assert "  state  ob/41" in printed and "= 22.5" in printed
+    assert "=== Client: AmpioClient ===" in printed
     assert "=== Objects: 1 (sensors: 1), modules: 0 ===" in printed
     assert "Salon" in printed
+
+
+async def test_smoke_test_on_the_admin_account_counts_the_modules(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The reserved login gets the admin client, so the summary reports a
+    module catalogue the same run on any other account cannot read."""
+    broker = FakeBroker()
+    broker.scripted_messages = _admin_discovery(PANEL)
+    a = _parse(monkeypatch, smoke_test, "--duration", "0.01", user=ADMIN_USER)
+    assert await smoke_test.run(a, client_factory=broker.factory) == 0
+    printed = capsys.readouterr().out
+    assert "=== Client: AmpioAdminClient ===" in printed
+    assert "modules: 1 ===" in printed
 
 
 async def test_smoke_test_reports_a_failed_connect(
@@ -314,6 +353,16 @@ async def test_smoke_test_reports_a_failed_connect(
     a = _parse(monkeypatch, smoke_test, "--duration", "0.01")
     assert await smoke_test.run(a, client_factory=broker.factory) == 1
     assert "FAILED to connect: Connection loop died: boom" in capsys.readouterr().out
+
+
+async def test_smoke_test_reports_a_leafless_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broker = FakeBroker()
+    broker.scripted_messages = _discovery({"id": 10, "leafId": "", "opis_menu": "Lamp"})
+    a = _parse(monkeypatch, smoke_test, "--duration", "0.01")
+    assert await smoke_test.run(a, client_factory=broker.factory) == 1
+    assert "not configured: ob/10 Lamp" in capsys.readouterr().out
 
 
 # --- modules.py -------------------------------------------------------------
@@ -329,9 +378,10 @@ RELAY = {"id": 17, "mac": 0xBEEF, "typ_urzadzenia": 15}  # M-IN-8s
 
 
 def _admin_discovery(*rows: dict) -> list[Message]:
-    """The admin tier's four initial replies, so ``connect()`` completes."""
+    """The admin tier's five initial replies, so ``connect()`` completes."""
     return [
-        Message(ADMIN_DETAILS_TOPIC, details().encode()),
+        Message(ADMIN_PARAMS_DEVICES_TOPIC, params_of().encode()),
+        Message(ADMIN_DATA_DEVICES_TOPIC, details().encode()),
         Message(ADMIN_DEVICES_TOPIC, devices(*rows).encode()),
         Message(ADMIN_STATES_TOPIC, snapshot().encode()),
         Message(ADMIN_INFO_TOPIC, info(mac=1, userId="-1").encode()),
@@ -404,6 +454,37 @@ async def test_modules_refuses_a_restricted_account(
     assert await modules.run(a, client_factory=broker.factory) == 2
     assert "is not the admin account" in capsys.readouterr().out
     assert broker.published == []
+
+
+async def test_modules_reports_a_leafless_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broker = FakeBroker()
+    broker.scripted_messages = [
+        Message(ADMIN_PARAMS_DEVICES_TOPIC, params_table({"id": 10}).encode()),
+        Message(
+            ADMIN_DATA_DEVICES_TOPIC,
+            details({"id": 10, "leafId": "", "opis_menu": "Lamp"}).encode(),
+        ),
+        Message(ADMIN_DEVICES_TOPIC, devices().encode()),
+        Message(ADMIN_STATES_TOPIC, snapshot().encode()),
+        Message(ADMIN_INFO_TOPIC, info(mac=1, userId="-1").encode()),
+    ]
+    a = _parse(monkeypatch, modules, user=ADMIN_USER)
+    assert await modules.run(a, client_factory=broker.factory) == 1
+    assert "not configured: ob/10 Lamp" in capsys.readouterr().out
+
+
+async def test_modules_reports_a_mac_collision(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broker = FakeBroker()
+    broker.scripted_messages = _admin_discovery(
+        {"id": 4, "mac": 0xBE82}, {"id": 5, "mac": 0xBE82}
+    )
+    a = _parse(monkeypatch, modules, user=ADMIN_USER)
+    assert await modules.run(a, client_factory=broker.factory) == 1
+    assert "mac collision: be82 on modules 4, 5" in capsys.readouterr().out
 
 
 async def test_modules_prints_a_row_per_module(

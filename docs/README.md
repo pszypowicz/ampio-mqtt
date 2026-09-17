@@ -16,9 +16,9 @@ the text says in place exactly what is unverified.
 | [`designer-surfaces.md`](designer-surfaces.md)     | The legacy CAN bridge endpoints and every surface the Designer itself uses, the flag write frames included.                 |
 | [`bus-events.md`](bus-events.md)                   | Bus events: how to raise one, how to receive one, and which tier gets which.                                                |
 | [`events.md`](events.md)                           | The typed event stream: subscription patterns, what each event announces per tier, ordering, and the terminal signals.      |
-| [`account-tiers.md`](account-tiers.md)             | What an administrator account gets that a standard one does not, with the measured latency difference.                      |
-| [`identity.md`](identity.md)                       | Which id is which - `mac` vs `mac_global`, `id` vs `funkcja` vs `leaf_id`, replacement-stable vs hardware-ordered.          |
-| [`visibility.md`](visibility.md)                   | The `visible` predicate, the `params` bit enum, the read-only and bell markers, and deletion on the wire.                   |
+| [`account-tiers.md`](account-tiers.md)             | The two client classes, what each serves, and the M-SERV facts behind the split.                                            |
+| [`identity.md`](identity.md)                       | Which id is which - `mac` vs `mac_global`, `id` vs `funkcja` vs `address`, replacement-stable vs hardware-ordered.          |
+| [`visibility.md`](visibility.md)                   | Hidden rows and the door, the `params` bit enum, the read-only and bell markers, and deletion on the wire.                  |
 | [`description-records.md`](description-records.md) | The description record in each module: the Matter tag, the location pointer, the list reply, the join rule, and the sweep.  |
 | [`classification.md`](classification.md)           | The classification model, the wire notes the code tables cannot carry, the consumer-CI key contract.                        |
 | [`raw-channel-bridge.md`](raw-channel-bridge.md)   | The `ampio/from/<MAC>/state/...` parallel topic surface. What is bridged today and what is not.                             |

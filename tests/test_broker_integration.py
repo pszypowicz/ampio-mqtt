@@ -15,6 +15,7 @@ import pytest
 from conftest import details, devices, info, params_table, snapshot
 
 from ampio_mqtt import (
+    AmpioAdminClient,
     AmpioAuthError,
     AmpioClient,
     AuthFailed,
@@ -103,6 +104,11 @@ class Broker:
         )
 
     def client(self, username: str = "u", password: str = _PASSWORD) -> AmpioClient:
+        """The client class the account gets, as a consumer would pick it."""
+        if username == "admin":
+            return AmpioAdminClient(
+                _HOST, password, port=self.port, reconnect_interval=0.1
+            )
         return AmpioClient(
             _HOST,
             username,
@@ -139,7 +145,6 @@ async def responding(
 ) -> AsyncIterator[aiomqtt.Client]:
     row = {
         "id": 5,
-        "id_urzadzenia": 2,
         "typ_komponentu": "flaga",
         "leafId": "0_a_76_0_0",
         "funkcja": 1,
@@ -162,7 +167,6 @@ async def responding(
                 }
             ),
         ),
-        ("config", "devicesDetails"): ("config/devicesDetails", details(row)),
         ("config", "devices"): ("config/devices", devices({"id": 2, "mac": 10})),
         ("data", "devices"): ("data/devices", details(row)),
         ("data", "params_devices"): ("data/params_devices", params_table({"id": 5})),

@@ -25,8 +25,8 @@ Ampio-branded. Inference: this is most likely a Matter or Thread process
 co-located on the same physical host, not something the M-SERV or Ampio process
 itself serves. But a discovery client that browses every service type and
 filters by address will see these two instances next to the hostname match. It
-must not treat their presence, or their TXT content, as confirmation of an Ampio
-broker.
+must not treat these two instances, or their TXT content, as confirmation of an
+Ampio broker.
 
 ## Manifest zeroconf matching has nothing reliable to match
 

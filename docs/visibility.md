@@ -1,81 +1,43 @@
 # Visibility and the params bits
 
-This page continues [`identity.md`](identity.md) with the visibility predicate,
+This page continues [`identity.md`](identity.md) with hidden rows and the door,
 the `params` bit semantics, the read-only marker, and deletion on the wire.
 
-## Visibility (`AmpioObject.visible`)
+## Hidden rows and the door
 
-Not every row in the catalogue is meant to be surfaced. The predicate is:
-
-```
-visible = not hidden
-```
-
-`hidden` is `params` bit 4 (`params & 16`), the bit the Designer enum names
-`DELETED`. It is the M-SERV's own "do not surface" marker, and the one wire-side
-visibility signal. It marks the rows the user deleted or hid, and the phantom
-stubs that duplicate a real Designer channel (same `leaf_id`, no value). It is a
-Designer config flag, so unlike `id_urzadzenia` it is replacement-stable. Every
-account tier receives `params` on a baseline install, through `devicesDetails`
-or `data/params_devices`. A row without a received value reads `0`, so it is
-visible. This is the same gate the M-SERV's Matter bridge uses
+`hidden` is `params` bit 4, the bit the Designer enum names `DELETED`. It marks
+the rows the user deleted or hid, and the stubs that duplicate a real Designer
+channel. The door drops a row that carries it on both tiers, so `objects` never
+holds a hidden row. A `data/params_devices` push that sets or clears the bit
+evicts or admits the row. This is the same gate the M-SERV's Matter bridge uses
 (`(params & 2**37) && !(params & 16)`) - see the section on the bit semantics
 below. Bit 37 is a Matter-only opt-in. The library deliberately does not filter
 on it and does not surface it.
 
 Every config row that the app-sync catalogue omits carries the bit. Rows that
-app-sync still lists can carry it too, such as a hidden object or a phantom
-stub. The unfiltered params table serves the bit for those on both tiers. So
-`not hidden` selects the same set on the admin tier that a standard client with
-a full grant sees.
+app-sync still lists can carry it too, such as a hidden object or a duplicate
+stub. The unfiltered params table serves the bit for those on both tiers.
 
-`leaf_id` is not a visibility marker. Designer clears it when an object's Matter
-box is unchecked, and the row keeps its type, its module, its rooms, and its
-state. A re-check of the box writes `leafId` back from the linked leaf record. A
-leafless object is a real object without leaf-derived facts. `leaf_key`,
-`module_mac`, `sf_id`, `sub_sf_id`, and `leaf_io_no` read None, and
-`is_server_owned` reads False. `sibling_module_mac` names its module when a
-leafed sibling is in the catalogue. `AmpioClient.module_for()` resolves the
-module row on the admin tier, and the record join falls back to `funkcja` (see
-the join rule in [`description-records.md`](description-records.md)).
-
-`is_system` (`typ_komponentu in {symulacja, detekcja}`) names the two system
-objects, presence simulation and presence detection. The M-SERV creates both
-rows itself, on its own module row, with a fixed `funkcja` of 1. Designer lists
-both types but cannot create, delete or configure them. The Ampio app is the
-configuration surface. Its presence-detection page picks the sensors that decide
-whether someone is at home, and its presence-simulation page switches the
-feature on and off and picks the devices that take part. The presence-detection
-object is one whole-home boolean, and "on" means someone is home. The devices
-that take part ride the `powiazane` field of the system object's row in
-`data/params_devices`, as `<linkId>:<objectId>` pairs separated by commas, and
-null when nothing is linked. The M-SERV reassigns the link ids on every write.
-The library does not decode the field. The app writes the whole list at once, on
-the `simulation` and `detection` topics of the account's `control` namespace,
-and the M-SERV answers `{ "Response": "OK" }` on the same-named topic under the
+The M-SERV creates two system rows of its own, `detekcja` and `symulacja`.
+Neither row is an object (see [`untapped-surfaces.md`](untapped-surfaces.md)).
+The library drops both by their type as it reads the catalogue, so neither
+reaches the door. The wire facts of their configuration stay here. The devices
+that take part ride the `powiazane` field of the row in `data/params_devices`.
+It holds `<linkId>:<objectId>` pairs separated by commas, and reads null when
+nothing is linked. The M-SERV reassigns the link ids on every write. The library
+does not decode the field. The app writes the whole list at once, on the
+`simulation` and `detection` topics of the account's `control` namespace. The
+M-SERV answers `{ "Response": "OK" }` on the same-named topic under the
 account's `control` reply tree. Each detection entry carries a `type`, 1 for an
-inside sensor and 2 for an entrance sensor, and the M-SERV sets the matching
-`params` bit on the sensor row. The simulation switch is the `czas` column of
-the simulation row, 1 for on and 0 for off. The app flips it through the
+inside sensor and 2 for an entrance sensor. The M-SERV sets the matching
+`params` bit on the sensor row. Bit 11 (`params & 2048`) is Designer's "Entrance
+sensor" and bit 12 (`params & 4096`) is its "Inside sensor". The simulation
+switch is the `czas` column of the simulation row. The app flips it through the
 `/api/json/simulation/active` and `/api/json/simulation/deactive` paths on the
 `api` control topic. After each of these writes the M-SERV pushes
-`data/params_devices` and `md5/params_devices` into every account namespace, the
-same push a Designer save produces. A standard account can do all of this. A
-detection sensor's role is a `params` bit on the sensor itself. Bit 11
-(`params & 2048`) is Designer's "Entrance sensor" and bit 12 (`params & 4096`)
-is its "Inside sensor". The simulation object carries no state. The detection
-object carries none until the M-SERV computes one, and that value is a
-home-status code, not 255 or 0. Code 5 is "home empty" in the Ampio app. The
-other codes are unknown. `AmpioObject.is_on` therefore reads "home empty" as on,
-so do not map the `presence` class onto `is_on` yet. The M-SERV wrote the first
-code fifteen minutes after the sensors were linked and held it through forty
-minutes of single sensor pulses and one pair 62 seconds apart. What moves the
-code is unverified. Both live outside the room tree, the app-sync catalogue
-lists them unconditionally, and they carry no `leafId`. Neither bridges a raw
-channel (see [`raw-channel-bridge.md`](raw-channel-bridge.md)). The flag does
-not enter `visible`, so a hidden system object stays hidden.
-
-Treat `visible` as the discovery filter.
+`data/params_devices` and `md5/params_devices` into every account namespace. A
+standard account can do all of this. Both rows live outside the room tree, and
+the app-sync catalogue lists them unconditionally.
 
 ## Where the `params` bit semantics come from
 
@@ -115,8 +77,8 @@ Designer sets the bit on every new relay. On `ledww` the same bit is "Flux".
 
 A reader of an OPTION bit must gate on the component type first.
 
-The library reads three of these bits. `DELETED` (bit 4) backs `hidden` and
-`visible`. `READ_ONLY` (bit 6) backs `read_only`. `OPTION1` (bit 15) backs
+The library reads three of these bits. `DELETED` (bit 4) backs the door's
+admission check. `READ_ONLY` (bit 6) backs `read_only`. `OPTION1` (bit 15) backs
 `bell`, gated on the two component types the label applies to.
 
 `MAKE_SEMICOLON` (bit 5) is Designer's "Divide by" checkbox. The library reads
@@ -135,8 +97,7 @@ meaning follows the component type. The Designer editor renders the column as
 `flaga_p`, `przekaznik`, `led`, `flaga_liniowa`, `flaga_liniowa16`, `rgb`,
 `rgbww`, and `ledww`. A camera reads the same column as a refresh time in
 milliseconds. No other type gets the field, so a cover never carries a value.
-The column rides `devicesDetails`, and the unfiltered `data/params_devices`
-table supplies it where the app-sync catalogue omits it.
+The column rides the unfiltered `data/params_devices` table.
 
 That editor list is a catalogue fact. It is wider than the set of types that a
 timed write pulses. The M-SERV never applies the value server-side: a plain
@@ -161,15 +122,14 @@ time. Read `AmpioObject.czas` for the raw column on any type.
 The M-SERV ships its own Matter bridge (a matter.js app launched by
 `ampio-server`). That bridge's production gate corroborates the enum: it exposes
 an object only when `(params & 2**37) && !(params & 16)`. Bit 37 is the
-per-object Matter opt-in set in Designer. Bit 4 is the hidden/stub marker that
-`hidden` and `visible` build on. The `leafId` structure
-`0_<macHex>_<sfId>_<subSfId>_<ioNo>` that `AmpioObject.module_mac` parses is
-likewise the structure the bridge's own classifier reads. The bridge also shows
-why a dedicated integration is the right path for sensors. It types objects
-through a registry with known gaps (no `lin_wej` branch, and loudness has no
-Matter device type at all). And it exposes only the channels hand-flagged for
-Matter - a dozen on the baseline install, with humidity, pressure, illuminance,
-and CO2 on zero modules.
+per-object Matter opt-in set in Designer. Bit 4 is the hidden/stub marker the
+door checks. The `leafId` structure `0_<macHex>_<sfId>_<subSfId>_<ioNo>` that
+`AmpioObject.address` parses is likewise the structure the bridge's own
+classifier reads. The bridge also shows why a dedicated integration is the right
+path for sensors. It types objects through a registry with known gaps (no
+`lin_wej` branch, and loudness has no Matter device type at all). And it exposes
+only the channels hand-flagged for Matter - a dozen on the baseline install,
+with humidity, pressure, illuminance, and CO2 on zero modules.
 
 ## The read-only marker (`AmpioObject.read_only`)
 
@@ -199,9 +159,10 @@ Deletion behaves as follows on the wire, on the baseline install. A **module**
 delete hard-removes its row from the `devices` list, and the library evicts it
 and dispatches `ModuleRemoved`. The delete does not cascade to the module's
 objects. An **object** delete in the Ampio app is two-stage: the object first
-moves to "Ungrouped", and a second delete purges it. On the `config` catalogue
-the purge is soft. The row stays, `leaf_id` intact, with the `params` hidden bit
-set, so it drops out through `visible`. The app-sync surfaces (`data/devices`,
-`data/params_devices`) hard-remove it, and that is what lets the standard tier
-evict for real. On the baseline install the app-sync catalogue lists exactly the
-objects with a room, plus the two system objects.
+moves to "Ungrouped", and a second delete purges it. The `config` catalogue
+soft-deletes the purged object. The app-sync surfaces (`data/devices`,
+`data/params_devices`) hard-remove it instead. The library reads the app-sync
+surfaces on both tiers, so a purge evicts the object on both tiers and fires
+`ObjectRemoved`. On the baseline install the app-sync catalogue lists exactly
+the objects with a room, plus the two system rows the library drops by their
+type.

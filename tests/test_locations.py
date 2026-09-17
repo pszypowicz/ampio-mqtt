@@ -7,7 +7,7 @@ import json
 import pytest
 from conftest import ADMIN_USER, FakeBroker, deliver_later
 
-from ampio_mqtt import AmpioClient, AmpioProtocolError
+from ampio_mqtt import AmpioAdminClient, AmpioProtocolError
 from ampio_mqtt._protocol import parse_locations
 
 LOCATIONS_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/locations"
@@ -50,9 +50,7 @@ def test_parse_locations_refuses_a_reply_of_the_wrong_shape(payload: str) -> Non
 
 async def test_fetch_locations_requests_and_parses() -> None:
     broker = FakeBroker()
-    client = AmpioClient(
-        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
-    )
+    client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     broker.published.clear()
     try:
@@ -69,16 +67,5 @@ async def test_fetch_locations_requests_and_parses() -> None:
             await delivery
         assert result == {14: "Potter"}
         assert (f"ampio/control/{ADMIN_USER}/config", b"locations") in broker.published
-    finally:
-        await client.disconnect()
-
-
-async def test_fetch_locations_raises_on_restricted_tier() -> None:
-    broker = FakeBroker()
-    client = AmpioClient("host", username="u", mqtt_client_factory=broker.factory)
-    await client.connect(timeout=2.0, discovery_timeout=0.01)
-    try:
-        with pytest.raises(RuntimeError, match="restricted"):
-            await client.fetch_locations(timeout=0.1)
     finally:
         await client.disconnect()

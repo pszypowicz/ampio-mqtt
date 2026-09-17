@@ -8,16 +8,19 @@ import json
 
 import pytest
 from conftest import (
-    ADMIN_DETAILS_TOPIC,
+    ADMIN_DATA_DEVICES_TOPIC,
     ADMIN_DEVICES_TOPIC,
+    ADMIN_PARAMS_DEVICES_TOPIC,
     ADMIN_USER,
     FakeBroker,
     details,
     devices,
     feed,
+    params_of,
 )
 
 from ampio_mqtt import (
+    AmpioAdminClient,
     AmpioClient,
     AmpioTimeoutError,
     DesignerRecord,
@@ -25,6 +28,7 @@ from ampio_mqtt import (
     ModuleRecord,
     ModuleUpdated,
     ObjectUpdated,
+    RecordSweepCompleted,
 )
 from ampio_mqtt._protocol import (
     DEVICE_API_LIST_PAYLOAD,
@@ -40,17 +44,18 @@ from ampio_mqtt._protocol import (
     resolve_module_capabilities,
     resolve_module_records,
 )
-from ampio_mqtt.models import AmpioObject
+from ampio_mqtt.models import AmpioObject, ModuleAddress
 
 
 def _object(**over: object) -> AmpioObject:
     """An object carrying the catalogue columns every row serves."""
     row: dict[str, object] = {
         "id": 1,
-        "id_urzadzenia": 1,
         "typ_komponentu": "",
         "interpretacja": 0,
         "funkcja": 1,
+        "address": ModuleAddress(mac=0xCAFE, channel=0, sf_id=257, sub_sf_id=0),
+        "leaf_key": "leaf_0_cafe_257_0_0",
     }
     return AmpioObject(**{**row, **over})  # type: ignore[arg-type]
 
@@ -85,6 +90,22 @@ def panel_params(fields: int) -> str:
     blob += bytes(mask_len) + bytes([0])  # multitouch mask, send mode
     blob += bytes([10, 50])  # dim after 10 s to 50 %
     return base64.b64encode(blob).decode()
+
+
+def roller_params() -> str:
+    """A params blob whose roller section is the one-channel M-REL-2 layout."""
+    section = bytes.fromhex(
+        "00"  # work mode: plain
+        "2800"  # opening: 40 s
+        "2800"  # closing: 40 s
+        "0A"  # calibration: 10 %
+        "6400"  # slat movement: 100 ticks
+        "32"  # reversal lag: 50 ticks
+        "00"  # unlabeled
+        "14"  # start lag, same direction: 20 ticks
+        "0C"  # start lag, other direction: 12 ticks
+    )
+    return base64.b64encode(bytes(33) + section).decode()
 
 
 def _device(
@@ -250,7 +271,7 @@ def test_device_list_rejects_garbage() -> None:
 
 
 def test_router_routes_the_list_reply() -> None:
-    router = Router("admin", ENDPOINTS)
+    router = Router("admin", ENDPOINTS, admin=True)
     msg = router.route(
         DEVICE_API_LIST_TOPIC, _list(_device(0xCB89, 0xCB89, frame(12, 2, 3, 0, "x")))
     )
@@ -272,13 +293,21 @@ def _entries(*specs: tuple[int, int, int, int, str]) -> tuple[OutputDescription,
 
 def test_resolve_designer_joins_location_and_type() -> None:
     objects = {
-        64: _object(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
-        48: _object(id=48, typ_komponentu="roleta_procenty", leaf_id="0_cb89_5_0_1"),
+        64: _object(
+            id=64,
+            typ_komponentu="przekaznik",
+            address=ModuleAddress(mac=0xCB89, channel=0, sf_id=257, sub_sf_id=2),
+        ),
+        48: _object(
+            id=48,
+            typ_komponentu="roleta_procenty",
+            address=ModuleAddress(mac=0xCB89, channel=1, sf_id=5, sub_sf_id=0),
+        ),
     }
     by_mac = {
         0xCB89: _entries((12, 0, 14, 256, "Lampa"), (26, 1, 0, 0, "Roleta")),
     }
-    resolved = resolve_designer(objects, by_mac, {14: "Potter"}, frozenset(), {})
+    resolved = resolve_designer(objects, by_mac, {14: "Potter"})
     assert resolved == {
         64: DesignerRecord(location="Potter", matter_device_type=256, desc="Lampa"),
         48: DesignerRecord(location=None, matter_device_type=None, desc="Roleta"),
@@ -287,29 +316,36 @@ def test_resolve_designer_joins_location_and_type() -> None:
 
 def test_resolve_designer_skips_the_unjoinable() -> None:
     objects = {
-        1: _object(id=1, typ_komponentu="flaga_x", leaf_id="0_cb89_3_0_0"),
-        2: _object(id=2, typ_komponentu="przekaznik", leaf_id=""),
-        3: _object(id=3, typ_komponentu="przekaznik", leaf_id="0_beef_257_2_0"),
-        4: _object(id=4, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_9"),
+        1: _object(
+            id=1,
+            typ_komponentu="flaga_x",
+            address=ModuleAddress(mac=0xCB89, channel=0, sf_id=3, sub_sf_id=0),
+        ),
+        3: _object(
+            id=3,
+            typ_komponentu="przekaznik",
+            address=ModuleAddress(mac=0xBEEF, channel=0, sf_id=257, sub_sf_id=2),
+        ),
+        4: _object(
+            id=4,
+            typ_komponentu="przekaznik",
+            address=ModuleAddress(mac=0xCB89, channel=9, sf_id=257, sub_sf_id=2),
+        ),
     }
     by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
-    assert resolve_designer(objects, by_mac, {14: "P"}, frozenset(), {}) == {}
-
-
-def test_resolve_designer_skips_colliding_macs() -> None:
-    objects = {
-        64: _object(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
-    }
-    by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
-    assert resolve_designer(objects, by_mac, {14: "P"}, frozenset({0xCB89}), {}) == {}
+    assert resolve_designer(objects, by_mac, {14: "P"}) == {}
 
 
 def test_resolve_designer_reads_empty_desc_as_none() -> None:
     objects = {
-        64: _object(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
+        64: _object(
+            id=64,
+            typ_komponentu="przekaznik",
+            address=ModuleAddress(mac=0xCB89, channel=0, sf_id=257, sub_sf_id=2),
+        ),
     }
     by_mac = {0xCB89: _entries((12, 0, 0, 0, ""))}
-    assert resolve_designer(objects, by_mac, {}, frozenset(), {}) == {
+    assert resolve_designer(objects, by_mac, {}) == {
         64: DesignerRecord(location=None, matter_device_type=None, desc=None)
     }
 
@@ -318,61 +354,30 @@ def test_resolve_designer_reads_clear_sentinels_as_none() -> None:
     """A cleared Designer entry (outLoc 16383, desc ".") reads all-None,
     even when the names table carries the sentinel id."""
     objects = {
-        64: _object(id=64, typ_komponentu="przekaznik", leaf_id="0_cb89_257_2_0"),
+        64: _object(
+            id=64,
+            typ_komponentu="przekaznik",
+            address=ModuleAddress(mac=0xCB89, channel=0, sf_id=257, sub_sf_id=2),
+        ),
     }
     by_mac = {0xCB89: _entries((12, 0, 16383, 0, "."))}
-    assert resolve_designer(objects, by_mac, {16383: "Bogus"}, frozenset(), {}) == {
+    assert resolve_designer(objects, by_mac, {16383: "Bogus"}) == {
         64: DesignerRecord(location=None, matter_device_type=None, desc=None)
     }
 
 
 def test_resolve_designer_joins_a_flag_on_the_binary_flag_class() -> None:
-    objects = {152: _object(id=152, typ_komponentu="flaga", leaf_id="0_1_3_0_0")}
+    objects = {
+        152: _object(
+            id=152,
+            typ_komponentu="flaga",
+            address=ModuleAddress(mac=1, channel=0, sf_id=3, sub_sf_id=0),
+        )
+    }
     by_mac = {1: _entries((6, 0, 19, 21, "flag"), (12, 0, 1, 266, "relay"))}
-    assert resolve_designer(objects, by_mac, {19: "Testowe"}, frozenset(), {}) == {
+    assert resolve_designer(objects, by_mac, {19: "Testowe"}) == {
         152: DesignerRecord(location="Testowe", matter_device_type=21, desc="flag")
     }
-
-
-def test_resolve_designer_joins_a_leafless_object_through_funkcja() -> None:
-    """No leaf: the module comes from id_urzadzenia and the channel from
-    funkcja - 1, the relation every leafed object of the table kinds holds."""
-    objects = {
-        153: _object(
-            id=153, typ_komponentu="flaga", id_urzadzenia=1, funkcja=2, leaf_id=""
-        ),
-        143: _object(
-            id=143, typ_komponentu="przekaznik", id_urzadzenia=3, funkcja=1, leaf_id=""
-        ),
-    }
-    by_mac = {
-        1: _entries((6, 1, 19, 21, "test2")),
-        0xBE82: _entries((12, 0, 19, 266, "Test Switch")),
-    }
-    resolved = resolve_designer(
-        objects, by_mac, {19: "Testowe"}, frozenset(), {1: 1, 3: 0xBE82}
-    )
-    assert resolved == {
-        153: DesignerRecord(location="Testowe", matter_device_type=21, desc="test2"),
-        143: DesignerRecord(
-            location="Testowe", matter_device_type=266, desc="Test Switch"
-        ),
-    }
-
-
-def test_resolve_designer_skips_a_leafless_object_without_a_module() -> None:
-    objects = {
-        # A module id the sweep has no mac for, and a channel the answering
-        # module wrote no entry for.
-        153: _object(
-            id=153, typ_komponentu="flaga", id_urzadzenia=9, funkcja=2, leaf_id=""
-        ),
-        155: _object(
-            id=155, typ_komponentu="flaga", id_urzadzenia=1, funkcja=9, leaf_id=""
-        ),
-    }
-    by_mac = {1: _entries((6, 1, 19, 21, "test2"))}
-    assert resolve_designer(objects, by_mac, {19: "Testowe"}, frozenset(), {1: 1}) == {}
 
 
 def test_resolve_module_records_reads_the_device_name_entry() -> None:
@@ -382,7 +387,7 @@ def test_resolve_module_records_reads_the_device_name_entry() -> None:
         0xCAFE: _entries((1, 0, 0, 0, "M")),  # DEVICE_NAME with outLoc 0
     }
     names = {14: "Rozdzielnia", 19: "Salon"}
-    assert resolve_module_records(by_mac, names, frozenset()) == {
+    assert resolve_module_records(by_mac, names) == {
         0xCB89: ModuleRecord(location="Rozdzielnia", desc="Modul"),
         0xBEEF: ModuleRecord(),
         0xCAFE: ModuleRecord(location=None, desc="M"),
@@ -391,38 +396,34 @@ def test_resolve_module_records_reads_the_device_name_entry() -> None:
 
 def test_resolve_module_records_reads_clear_sentinels_as_none() -> None:
     by_mac = {0xCB89: _entries((1, 0, 16383, 0, "."))}
-    assert resolve_module_records(by_mac, {16383: "Bogus"}, frozenset()) == {
+    assert resolve_module_records(by_mac, {16383: "Bogus"}) == {
         0xCB89: ModuleRecord(location=None, desc=None)
     }
 
 
-def test_resolve_module_records_skips_colliding_macs() -> None:
-    by_mac = {0xCB89: _entries((1, 0, 14, 0, "M"))}
-    names = {14: "Rozdzielnia"}
-    assert resolve_module_records(by_mac, names, frozenset({0xCB89})) == {}
-
-
-def test_resolve_module_capabilities_keys_by_mac_and_skips_collisions() -> None:
+def test_resolve_module_capabilities_keys_by_mac() -> None:
     by_mac = {
         0xCB89: {ModuleFunction.BACKLIGHT_RGBW: 18},
         0xBEEF: {},
         0xCAFE: {ModuleFunction.BUZZER: 1},
     }
-    assert resolve_module_capabilities(by_mac, frozenset({0xCAFE})) == {
-        0xCB89: {ModuleFunction.BACKLIGHT_RGBW: 18},
-        0xBEEF: {},
-    }
+    assert resolve_module_capabilities(by_mac) == by_mac
 
 
-async def _admin_client_with_catalogue() -> tuple[AmpioClient, FakeBroker]:
+async def _admin_client_with_catalogue() -> tuple[AmpioAdminClient, FakeBroker]:
     broker = FakeBroker()
-    client = AmpioClient(
-        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
-    )
+    client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     feed(
         client,
-        ADMIN_DETAILS_TOPIC,
+        ADMIN_PARAMS_DEVICES_TOPIC,
+        params_of(
+            {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
+        ),
+    )
+    feed(
+        client,
+        ADMIN_DATA_DEVICES_TOPIC,
         details({"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}),
     )
     feed(client, ADMIN_DEVICES_TOPIC, devices({"id": 16, "mac": 0xCB89}))
@@ -455,9 +456,7 @@ async def _deliver_causally(
 
 async def test_admin_subscribes_the_device_api_list_topic() -> None:
     broker = FakeBroker()
-    client = AmpioClient(
-        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
-    )
+    client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         assert DEVICE_API_LIST_TOPIC in broker.subscribed
@@ -516,21 +515,73 @@ async def test_resolve_records_reads_the_list_joins_and_merges() -> None:
         }
         assert result.answered_macs == frozenset({0xCB89})
         assert result.silent_macs == frozenset()
-        assert client.objects[64].record == DesignerRecord(
+        assert client.records[64] == DesignerRecord(
             location="Potter", matter_device_type=256, desc="L"
         )
         assert client.objects[64].matter_device_type is None
         assert (DEVICE_API_LIST_REQUEST, DEVICE_API_LIST_PAYLOAD) in broker.published
-        assert [e.object.record.location for e in events] == ["Potter"]
-        assert client.modules[16].record == ModuleRecord(
+        assert client.module_records[0xCB89] == ModuleRecord(
             location="Rozdzielnia", desc="Modul"
         )
-        assert [m.module.record.location for m in module_events] == ["Rozdzielnia"]
-        # The same sweep folds the capability map - no extra request.
-        assert client.modules[16].capabilities == {
+        # The datasets sit beside the models, so no object and no module
+        # changed.
+        assert events == []
+        assert module_events == []
+        # The same sweep fills the capability map - no extra request.
+        assert client.capabilities[0xCB89] == {
             ModuleFunction.BACKLIGHT_RGBW: 18,
             ModuleFunction.KEY_LOCK: 1,
         }
+    finally:
+        await client.disconnect()
+
+
+async def test_resolve_records_fills_the_datasets_and_fires_once() -> None:
+    client, broker = await _admin_client_with_catalogue()
+    try:
+        # An M-REL-2: a board whose roller layout the library has proven,
+        # with a cover of its own beside the relay the fixture catalogues.
+        rows = (
+            {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"},
+            {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"},
+        )
+        feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(*rows))
+        feed(client, ADMIN_DATA_DEVICES_TOPIC, details(*rows))
+        feed(
+            client,
+            ADMIN_DEVICES_TOPIC,
+            devices({"id": 16, "mac": 0xCB89, "typ_urzadzenia": 24, "wersja_pcb": 11}),
+        )
+        events: list[RecordSweepCompleted] = []
+        client.subscribe(events.append, of=RecordSweepCompleted)
+        assert client.last_sweep is None
+        delivery = asyncio.create_task(
+            _deliver_causally(
+                client,
+                broker,
+                json.dumps({"List": [{"id": 14, "opis_menu": "Hall"}]}),
+                _list(
+                    _device(
+                        0xCB89,
+                        0xCB89,
+                        frame(12, 0, 14, 0, "x"),
+                        functions=caps((ModuleFunction.ROLLER, 1)),
+                        params=roller_params(),
+                    )
+                ),
+            )
+        )
+        try:
+            sweep = await client.resolve_records(timeout=1.0)
+        finally:
+            await delivery
+        assert client.last_sweep is sweep
+        assert client.records[64].location == "Hall"
+        assert client.capabilities[0xCB89] == {ModuleFunction.ROLLER: 1}
+        assert client.cover_parameters[70].open_time_s == 40
+        assert client.cover_parameters[70].calibration_percent == 10
+        assert [e.sweep for e in events] == [sweep]
+        assert 0xCB89 in sweep.answered_macs
     finally:
         await client.disconnect()
 
@@ -570,8 +621,7 @@ async def test_resolve_records_decodes_panel_settings_for_a_proven_board() -> No
             await client.resolve_records(timeout=1.0)
         finally:
             await delivery
-        settings = client.modules[16].panel_settings
-        assert settings is not None
+        settings = client.panel_settings[0xCB89]
         # The field count came from the capability, not from a table here.
         assert len(settings.backlight_active) == 4
         assert settings.touch_field_color == (0, 0, 0, 255)
@@ -582,9 +632,7 @@ async def test_resolve_records_decodes_panel_settings_for_a_proven_board() -> No
         await client.disconnect()
 
 
-async def test_resolve_records_leaves_panel_settings_none_for_an_unproven_board() -> (
-    None
-):
+async def test_resolve_records_leaves_an_unproven_board_out_of_panel_settings() -> None:
 
     client, broker = await _admin_client_with_catalogue()
     try:
@@ -614,8 +662,8 @@ async def test_resolve_records_leaves_panel_settings_none_for_an_unproven_board(
         finally:
             await delivery
         # The capability is there, so only the unproven layout stops it.
-        assert client.modules[16].capabilities == {ModuleFunction.BACKLIGHT_RGBW: 18}
-        assert client.modules[16].panel_settings is None
+        assert client.capabilities[0xCB89] == {ModuleFunction.BACKLIGHT_RGBW: 18}
+        assert 0xCB89 not in client.panel_settings
     finally:
         await client.disconnect()
 
@@ -656,7 +704,15 @@ async def test_resolve_records_joins_by_the_override_mac_the_reply_carries() -> 
     try:
         feed(
             client,
-            ADMIN_DETAILS_TOPIC,
+            ADMIN_PARAMS_DEVICES_TOPIC,
+            params_of(
+                {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"},
+                {"id": 113, "typ_komponentu": "przekaznik", "leafId": "0_1_257_2_0"},
+            ),
+        )
+        feed(
+            client,
+            ADMIN_DATA_DEVICES_TOPIC,
             details(
                 {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"},
                 {"id": 113, "typ_komponentu": "przekaznik", "leafId": "0_1_257_2_0"},
@@ -692,43 +748,7 @@ async def test_resolve_records_joins_by_the_override_mac_the_reply_carries() -> 
         }
         assert result.answered_macs == frozenset({0xCB89, 1})
         assert result.silent_macs == frozenset()
-        assert client.modules[1].record == ModuleRecord()
-    finally:
-        await client.disconnect()
-
-
-async def test_resolve_records_joins_a_leafless_object_through_the_catalogue() -> None:
-    client, broker = await _admin_client_with_catalogue()
-    try:
-        feed(
-            client,
-            ADMIN_DETAILS_TOPIC,
-            details(
-                {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"},
-                {
-                    "id": 65,
-                    "typ_komponentu": "przekaznik",
-                    "id_urzadzenia": 16,
-                    "funkcja": 2,
-                },
-            ),
-        )
-        delivery = asyncio.create_task(
-            _deliver_causally(
-                client,
-                broker,
-                json.dumps({"List": [{"id": 14, "opis_menu": "Potter"}]}),
-                _list(_device(0xCB89, 0xCB89, frame(12, 1, 14, 256, "Second"))),
-            )
-        )
-        try:
-            result = await client.resolve_records(timeout=0.2)
-        finally:
-            await delivery
-        assert result.records == {
-            65: DesignerRecord(location="Potter", matter_device_type=256, desc="Second")
-        }
-        assert client.objects[65].record is not None
+        assert client.module_records[1] == ModuleRecord()
     finally:
         await client.disconnect()
 
@@ -751,7 +771,7 @@ async def test_resolve_records_counts_an_empty_record_as_answered() -> None:
         assert result.records == {}
         assert result.answered_macs == frozenset({0xCB89})
         assert result.silent_macs == frozenset()
-        assert client.objects[64].record is None
+        assert 64 not in client.records
     finally:
         await client.disconnect()
 
@@ -767,17 +787,7 @@ async def test_resolve_records_raises_when_the_list_never_answers() -> None:
                 await client.resolve_records(timeout=0.2)
         finally:
             await delivery
-        assert client.objects[64].record is None
-    finally:
-        await client.disconnect()
-
-
-async def test_resolve_records_raises_on_restricted_tier() -> None:
-    broker = FakeBroker()
-    client = AmpioClient("host", username="u", mqtt_client_factory=broker.factory)
-    await client.connect(timeout=2.0, discovery_timeout=0.01)
-    try:
-        with pytest.raises(RuntimeError, match="admin"):
-            await client.resolve_records(timeout=0.1)
+        assert client.records == {}
+        assert client.last_sweep is None
     finally:
         await client.disconnect()

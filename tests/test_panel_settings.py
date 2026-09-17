@@ -70,12 +70,6 @@ def test_resolve_needs_a_proven_layout_and_a_field_count() -> None:
         3: {},  # advertises no backlight, so no field count
     }
     hardware = {1: (8, 4), 2: (9, 4), 3: (8, 4)}  # (9, 4) is an unproven board
-    resolved = resolve_panel_settings(params, caps, hardware, frozenset())
+    resolved = resolve_panel_settings(params, caps, hardware)
     assert list(resolved) == [1]
     assert resolved[1].dim_after_s == 10
-
-
-def test_resolve_skips_colliding_macs() -> None:
-    params = {1: FOUR_FIELD}
-    caps = {1: {ModuleFunction.BACKLIGHT_RGBW: 4}}
-    assert resolve_panel_settings(params, caps, {1: (8, 4)}, frozenset({1})) == {}

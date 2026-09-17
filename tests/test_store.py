@@ -1,11 +1,11 @@
 """The store applies messages without a client, a broker, or an event loop.
 
-These drive `AmpioStore` directly, which is the point of it being separate:
+These drive the stores directly, which is the point of them being separate:
 protocol behaviour is reachable from a plain function call, and what a message
 changed is a return value rather than something to reconstruct from callbacks.
 Tests speak in wire topics for readability; :func:`_apply` routes them the
-way the client dispatcher does, with the tier-scoping the client applies
-left off - the store is tier-agnostic and each test feeds one tier's wire.
+way the client dispatcher does, with the endpoint scoping the client applies
+left off, so a test may feed a store any wire shape its class handles.
 """
 
 from __future__ import annotations
@@ -13,32 +13,38 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import fields, replace
 
 import pytest
 from conftest import (
+    ADMIN_DATA_DEVICES_TOPIC,
+    ADMIN_PARAMS_DEVICES_TOPIC,
     ADMIN_USER,
     DATA_DEVICES_TOPIC,
-    DETAILS_TOPIC,
     DEVICES_TOPIC,
+    INFO_TOPIC,
     PARAMS_DEVICES_TOPIC,
     STATES_TOPIC,
     USER,
     details,
     devices,
     info,
+    params_of,
     params_table,
     snapshot,
 )
 
-from ampio_mqtt import _protocol
+from ampio_mqtt import ModuleAddress, _protocol
 from ampio_mqtt._protocol import (
+    ADMIN_ENDPOINTS,
+    BASE_ENDPOINTS,
     ENDPOINTS,
     EndpointReply,
     Router,
     decode_envelope,
 )
-from ampio_mqtt._store import AmpioStore, Applied
+from ampio_mqtt._store import AdminStore, AmpioStore, Applied
 from ampio_mqtt.classification import (
     InputKind,
     OutputKind,
@@ -50,17 +56,16 @@ from ampio_mqtt.events import (
     BusEventRaised,
     ModuleRemoved,
     ModuleUpdated,
+    NotConfigured,
     ObjectAdded,
     ObjectRemoved,
     ObjectUpdated,
 )
 from ampio_mqtt.models import (
-    AccessTier,
     AmpioModule,
     AmpioObject,
     CoverParameters,
     DesignerRecord,
-    ModuleFunction,
     ModuleRecord,
     PanelSettings,
     ThermostatState,
@@ -84,8 +89,8 @@ def _mod_removed(applied: Applied) -> list[AmpioModule]:
 
 
 _ROUTERS = {
-    USER: Router(USER, ENDPOINTS),
-    ADMIN_USER: Router(ADMIN_USER, ENDPOINTS),
+    USER: Router(USER, ENDPOINTS, admin=True),
+    ADMIN_USER: Router(ADMIN_USER, ENDPOINTS, admin=True),
 }
 
 
@@ -115,14 +120,24 @@ def _apply(
     return store.apply(msg, retained=retained)
 
 
-def _store() -> AmpioStore:
-    """A store on the admin tier, whose catalogue is `devicesDetails`."""
-    return AmpioStore(AccessTier.ADMIN)
+def _store() -> AdminStore:
+    """A store for the reserved admin login."""
+    return AdminStore()
 
 
 def _app_store() -> AmpioStore:
-    """A store on the app-sync tier, whose catalogue pair is the `data` one."""
-    return AmpioStore(AccessTier.RESTRICTED)
+    """A store for a standard account."""
+    return AmpioStore()
+
+
+def _feed_catalogue(store: AmpioStore, *items: dict, user: str = USER) -> Applied:
+    """One catalogue reply: the params table the rows imply, then the rows.
+
+    The table lands first so every row merges with its config columns in
+    hand, and the returned Applied is the catalogue reply's own.
+    """
+    _apply(store, PARAMS_DEVICES_TOPIC, params_of(*items), user=user)
+    return _apply(store, DATA_DEVICES_TOPIC, details(*items), user=user)
 
 
 def _devices(*macs: int) -> str:
@@ -140,78 +155,118 @@ def _devices(*macs: int) -> str:
     )
 
 
-def _flaga_details(*object_module_pairs: tuple[int, int]) -> str:
-    return details(
-        *(
-            {
-                "id": oid,
-                "id_urzadzenia": dev,
-                "typ_komponentu": "flaga",
-                "interpretacja": 1,
-                "funkcja": 3,
-                "opis_menu": f"flag-{oid}",
-            }
-            for oid, dev in object_module_pairs
-        )
-    )
+def _module_row(mid: int, mac: int) -> dict:
+    """One module-list row, addressed by ``mac`` and identified by ``mid``."""
+    return {"id": mid, "mac": mac, "mac_global": 100 + mid}
 
 
-def _catalogue(**overrides: object) -> str:
-    return details(
+def _flaga_rows(*object_mac_pairs: tuple[int, int]) -> list[dict]:
+    return [
         {
-            "id": 41,
-            "typ_komponentu": "przekaznik",
+            "id": oid,
+            "typ_komponentu": "flaga",
             "interpretacja": 1,
-            "leafId": "0_a_1_0_0",
-            "opis_menu": "Lamp",
-            "params": 1,
-            **overrides,
+            "funkcja": 3,
+            "leafId": f"0_{mac:x}_3_0_2",
+            "opis_menu": f"flag-{oid}",
         }
-    )
+        for oid, mac in object_mac_pairs
+    ]
+
+
+def _catalogue_row(**overrides: object) -> dict:
+    return {
+        "id": 41,
+        "typ_komponentu": "przekaznik",
+        "interpretacja": 1,
+        "leafId": "0_a_1_0_0",
+        "opis_menu": "Lamp",
+        "params": 1,
+        **overrides,
+    }
 
 
 # A module whose mac is 0xCAFE, so its raw topics are `ampio/from/CAFE/...`.
 _PANEL = {"id": 7, "mac": 0xCAFE, "typ_urzadzenia": 11, "nazwa_urzadzenia": "panel"}
 
+# The stored settings of a two-field touch panel, as a sweep reads them.
+_PANEL_SETTINGS = PanelSettings(
+    touch_field_color=(0, 0, 0, 255),
+    status_color=(255, 10, 10),
+    light_signal=(1, 1),
+    beep_time=2,
+    sound_signal=(True, True),
+    backlight_active=(True, True),
+    multitouch_lock=(False, False),
+    multitouch_send_count=False,
+    dim_after_s=10,
+    dim_brightness=50,
+)
 
-def _flaga_row(oid: int, funkcja: int, dev: int = 7) -> dict:
+# The stored travel configuration of one cover channel, as a sweep reads it.
+_COVER_PARAMS = CoverParameters(
+    with_slats=False,
+    open_time_s=40,
+    close_time_s=40,
+    calibration_percent=10,
+    slat_time_ms=1000,
+    reversal_lag_ms=500,
+    start_lag_same_ms=None,
+    start_lag_other_ms=None,
+)
+
+
+def _push(state: str, on: int = 1_700_000_000_000) -> str:
+    """One per-object state push payload."""
+    return json.dumps({"state": state, "on": on})
+
+
+def _flaga_row(oid: int, funkcja: int, mac: int = 0xCAFE) -> dict:
+    """One flag row whose leaf embeds the mac of the module it names."""
     return {
         "id": oid,
-        "id_urzadzenia": dev,
         "typ_komponentu": "flaga",
         "interpretacja": 1,
         "funkcja": funkcja,
+        "leafId": f"0_{mac:x}_3_0_{funkcja - 1}",
         "opis_menu": "Flag",
     }
 
 
 def test_a_catalogue_reply_reports_the_rows_it_changed() -> None:
-    applied = _apply(
-        _store(), f"ampio/fromDB/{USER}/config/devicesDetails", _catalogue()
-    )
+    applied = _feed_catalogue(_store(), _catalogue_row())
     assert [o.id for o in _updated(applied)] == [41]
 
 
 def test_an_unchanged_row_reports_nothing() -> None:
     store = _store()
-    topic = f"ampio/fromDB/{USER}/config/devicesDetails"
-    _apply(store, topic, _catalogue())
-    assert _apply(store, topic, _catalogue()).events == []
+    _feed_catalogue(store, _catalogue_row())
+    assert _feed_catalogue(store, _catalogue_row()).events == []
 
 
 def test_a_changed_row_reports_only_that_row() -> None:
     store = _store()
-    topic = f"ampio/fromDB/{USER}/config/devicesDetails"
-    _apply(store, topic, _catalogue())
-    applied = _apply(store, topic, _catalogue(opis_menu="Renamed"))
-    assert [o.opis_menu for o in _updated(applied)] == ["Renamed"]
+    _feed_catalogue(store, _catalogue_row())
+    applied = _feed_catalogue(store, _catalogue_row(opis_menu="Renamed"))
+    assert [o.name for o in _updated(applied)] == ["Renamed"]
 
 
 def test_an_unreadable_reply_is_refused() -> None:
     """The caller catches this to keep discovery from latching on a bad
     payload, and to report the fault."""
     with pytest.raises(AmpioProtocolError):
-        _apply(_store(), f"ampio/fromDB/{USER}/config/devicesDetails", "null")
+        _apply(_store(), DATA_DEVICES_TOPIC, "null")
+
+
+def test_a_leaf_id_that_is_not_a_string_refuses_the_whole_catalogue_reply() -> None:
+    store = _store()
+    _feed_catalogue(store, _catalogue_row())
+    objects_before = dict(store.objects)
+    not_configured_before = store.not_configured
+    with pytest.raises(AmpioProtocolError, match="neither a string nor null"):
+        _feed_catalogue(store, _catalogue_row(id=42, leafId=123))
+    assert store.objects == objects_before
+    assert store.not_configured == not_configured_before
 
 
 @pytest.mark.parametrize(
@@ -229,7 +284,7 @@ def test_live_messages_dispatch_their_event(
     topic: str, payload: str, event_type: type
 ) -> None:
     store = _store()
-    _apply(store, DETAILS_TOPIC, details({"id": 41}))
+    _feed_catalogue(store, {"id": 41})
     applied = _apply(store, topic, payload)
     assert [e for e in applied.events if isinstance(e, event_type)]
 
@@ -250,24 +305,24 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
     """
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32)))
+    original = _flaga_row(50, 32)
+    _feed_catalogue(store, original)
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
     assert store.objects[50].state == "1"
 
-    # After a module swap the id comes back as a cover, which no raw channel
-    # feeds, so its only updates are the per-object ones.
-    _apply(
+    # The row keeps its leaf and turns into a cover, which no raw channel
+    # feeds, so its only updates become the per-object ones. The leaf stays
+    # the same, so the object address does not change either: leaving the
+    # index is what frees it, not a moved address.
+    _feed_catalogue(
         store,
-        DETAILS_TOPIC,
-        details(
-            {
-                "id": 50,
-                "id_urzadzenia": 7,
-                "typ_komponentu": "roleta_procenty",
-                "interpretacja": 1,
-                "funkcja": 2,
-            }
-        ),
+        {
+            "id": 50,
+            "typ_komponentu": "roleta_procenty",
+            "interpretacja": 1,
+            "funkcja": 2,
+            "leafId": original["leafId"],
+        },
     )
     applied = _apply(
         store, f"ampio/fromDB/{USER}/ob/50/state", '{"state":"55","on":1789000000000}'
@@ -277,13 +332,14 @@ def test_an_object_leaving_the_index_is_freed_from_raw_suppression() -> None:
     assert store.objects[50].state == "55"
 
 
-def _ledww_row(oid: int, funkcja: int, dev: int = 7) -> dict:
+def _ledww_row(oid: int, funkcja: int, mac: int = 0xCAFE) -> dict:
+    """One CCT row whose leaf embeds the mac of the module it names."""
     return {
         "id": oid,
-        "id_urzadzenia": dev,
         "typ_komponentu": "ledww",
         "interpretacja": 1,
         "funkcja": funkcja,
+        "leafId": f"0_{mac:x}_30_0_{funkcja - 1}",
         "opis_menu": "CCT",
     }
 
@@ -295,11 +351,7 @@ def test_a_color_temp_broadcast_feeds_every_channel_it_carries() -> None:
     source."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _apply(
-        store,
-        DETAILS_TOPIC,
-        details(_ledww_row(60, 1), _ledww_row(61, 3)),
-    )
+    _feed_catalogue(store, _ledww_row(60, 1), _ledww_row(61, 3))
     _apply(
         store,
         "ampio/from/CAFE/b/62",
@@ -316,7 +368,7 @@ def test_a_color_temp_broadcast_for_an_unknown_channel_is_dropped() -> None:
     route, exactly as an unmatched raw channel edge is."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _apply(store, DETAILS_TOPIC, details(_ledww_row(60, 1)))
+    _feed_catalogue(store, _ledww_row(60, 1))
     applied = _apply(store, "ampio/from/CAFE/b/63", json.dumps({"d": [254, 99, 1, 2]}))
     assert _updated(applied) == []
     assert store.objects[60].state is None
@@ -384,35 +436,51 @@ def test_a_refused_info_reply_never_wipes_held_identity(
     assert not any("baseline" in r.getMessage() for r in caplog.records)
 
 
-@pytest.mark.parametrize(
-    ("tier", "user_id"),
-    [(AccessTier.ADMIN, 4), (AccessTier.RESTRICTED, -1)],
-)
-def test_an_info_reply_that_contradicts_the_tier_is_refused(
-    tier: AccessTier, user_id: int
-) -> None:
-    """The username decides the tier, and every subscription and request
-    follows from it. The account id in the info reply is the wire's own
-    verdict on the same question, so a disagreement means the whole session
-    is aimed at the wrong surfaces."""
-    store = AmpioStore(tier)
-    topic = f"ampio/fromDB/{USER}/data/info"
-    with pytest.raises(AmpioProtocolError, match="tier"):
-        _apply(store, topic, info(mac=1, userId=user_id))
-    assert store.server_info is None
+def test_the_info_reply_account_id_is_not_checked_against_the_store() -> None:
+    """The account id is a wire fact each store records as it reads it."""
+    base = _app_store()
+    _apply(base, INFO_TOPIC, info(mac=555, userId=-1, serverVersion="1865"))
+    assert base.server_info is not None and base.server_info.user_id == -1
+    admin = _store()
+    _apply(admin, INFO_TOPIC, info(mac=555, userId=4, serverVersion="1865"))
+    assert admin.server_info is not None and admin.server_info.user_id == 4
 
 
-@pytest.mark.parametrize(
-    ("tier", "user_id"),
-    [(AccessTier.ADMIN, -1), (AccessTier.RESTRICTED, 4)],
-)
-def test_an_info_reply_that_confirms_the_tier_is_applied(
-    tier: AccessTier, user_id: int
-) -> None:
-    store = AmpioStore(tier)
-    _apply(store, f"ampio/fromDB/{USER}/data/info", info(mac=1, userId=user_id))
-    assert store.server_info is not None
-    assert store.server_info.access_tier is tier
+def test_the_base_store_applies_no_raw_message() -> None:
+    """The base router routes no raw topic, so one reaching the base store
+    is a broken invariant rather than a message to drop."""
+    store = _app_store()
+    edge = _protocol.RawChannelEdge(mac=0xA, prefix="f", channel=3, state="1")
+    with pytest.raises(RuntimeError, match="RawChannelEdge"):
+        store.apply(edge)
+
+
+def test_a_raw_edge_marks_the_object_raw_owned_in_the_admin_store() -> None:
+    """The raw path owns the object from its first edge, so the slower
+    per-object echo of the same change is dropped."""
+    store = _store()
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    _apply(store, "ampio/from/a/state/f/3", "1")
+    assert 41 in store._raw_owned
+    echoed = _apply(
+        store,
+        f"ampio/fromDB/{USER}/ob/41/state",
+        json.dumps({"state": "0", "on": 1779560000000}),
+    )
+    assert echoed.events == []
+    assert store.objects[41].state == "1"
+
+
+def test_an_object_leaving_the_index_is_released_without_an_event() -> None:
+    """Raw ownership is store bookkeeping, so the release itself changes
+    nothing a consumer can read and the row change is the only news."""
+    store = _store()
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    _apply(store, "ampio/from/a/state/f/3", "1")
+    retyped = {**_flaga_row(41, 3, mac=0xA), "typ_komponentu": "roleta_procenty"}
+    applied = _feed_catalogue(store, retyped)
+    assert 41 not in store._raw_owned
+    assert [obj.id for obj in _updated(applied)] == [41]
 
 
 def test_below_baseline_warning_survives_an_identityless_reply_arriving_first(
@@ -431,22 +499,27 @@ def test_below_baseline_warning_survives_an_identityless_reply_arriving_first(
     assert "100" in warnings[0].getMessage()
 
 
+@pytest.mark.parametrize(
+    ("endpoints", "store_class"),
+    [("BASE_ENDPOINTS", AmpioStore), ("ADMIN_ENDPOINTS", AdminStore)],
+)
 def test_handler_table_misalignment_fails_at_construction(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, endpoints: str, store_class: type[AmpioStore]
 ) -> None:
     """A handler-gated endpoint row without a matching store handler (a
     name typo, a row added without its handler) would surface as a silent
-    discovery hang; construction refuses it instead."""
+    discovery hang; construction refuses it instead. Each store class
+    checks its own endpoint set."""
     rogue = _protocol.Endpoint("rogue", "data", "rogue", "data", "rogue")
-    monkeypatch.setattr(_protocol, "ENDPOINTS", (*ENDPOINTS, rogue))
+    monkeypatch.setattr(_protocol, endpoints, (*getattr(_protocol, endpoints), rogue))
     with pytest.raises(RuntimeError, match="rogue"):
-        AmpioStore(AccessTier.ADMIN)
+        store_class()
 
 
-def _raw_owned_flag(store: AmpioStore, mac: int = 0xCAFE) -> None:
+def _raw_owned_flag(store: AdminStore, mac: int = 0xCAFE) -> None:
     """Discover one flaga (ob/10 on module 1, channel f/3) and land a raw edge."""
     _apply(store, DEVICES_TOPIC, _devices(mac))
-    _apply(store, DETAILS_TOPIC, _flaga_details((10, 1)))
+    _feed_catalogue(store, *_flaga_rows((10, mac)))
     _apply(store, f"ampio/from/{mac:X}/state/f/3", "1")
 
 
@@ -489,7 +562,7 @@ def test_a_snapshot_row_with_no_stamp_is_refused() -> None:
     """The stamp is what orders a seed against a live value, so a blob
     without one seeds nothing. The held value stands."""
     store = _store()
-    _apply(store, DETAILS_TOPIC, details({"id": 10}))
+    _feed_catalogue(store, {"id": 10})
     _apply(
         store, f"ampio/fromDB/{USER}/ob/10/state", '{"state":"live","on":1789000000000}'
     )
@@ -503,7 +576,7 @@ def test_a_newer_snapshot_corrects_a_value_that_changed_during_an_outage() -> No
     topics are not retained), so a dated-newer report must overwrite the
     value a pre-outage live push left behind."""
     store = _store()
-    _apply(store, DETAILS_TOPIC, details({"id": 10}))
+    _feed_catalogue(store, {"id": 10})
     _apply(
         store, f"ampio/fromDB/{USER}/ob/10/state", '{"state":"255","on":1786700100000}'
     )
@@ -515,6 +588,17 @@ def test_a_newer_snapshot_corrects_a_value_that_changed_during_an_outage() -> No
     assert store.objects[10].state == "0"
 
 
+def test_a_moved_leaf_returns_the_object_to_per_object_updates() -> None:
+    store = _store()
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    _apply(store, "ampio/from/a/state/f/3", "1")
+    assert 41 in store._raw_owned
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xB))
+    assert 41 not in store._raw_owned
+    _apply(store, STATES_TOPIC, _snapshot("0", 1779560000000, oid=41))
+    assert store.objects[41].state == "0"
+
+
 def test_begin_refresh_lets_the_snapshot_resync_a_locally_stamped_value() -> None:
     """A raw edge is the one report with no stamp of its own, so its value
     carries this process's clock. A new request cycle proves the next
@@ -523,10 +607,12 @@ def test_begin_refresh_lets_the_snapshot_resync_a_locally_stamped_value() -> Non
     store = _store()
     _raw_owned_flag(store)
     # Retyped to a kind the raw tree does not carry, so the object leaves
-    # the index and goes back to the per-object path.
-    retyped = {"id": 10, "id_urzadzenia": 1, "typ_komponentu": "roleta_procenty"}
-    _apply(store, DETAILS_TOPIC, details(retyped))
-    assert store.objects[10].raw_owned is False
+    # the index and goes back to the per-object path. The leaf stays put,
+    # as a Designer retype leaves it, so this is a pure retype and not
+    # also a leaf move.
+    retyped = {"id": 10, "typ_komponentu": "roleta_procenty", "leafId": "0_cafe_3_0_2"}
+    _feed_catalogue(store, retyped)
+    assert 10 not in store._raw_owned
     far_future = int((time.time() + 3600) * 1000)
     assert _updated(_apply(store, STATES_TOPIC, _snapshot("stale", far_future))) == []
     store.begin_refresh()
@@ -555,15 +641,15 @@ def test_echo_of_an_earlier_edge_does_not_disturb_a_fast_toggle() -> None:
 def test_the_config_catalogue_evicts_what_it_stopped_listing() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, _devices(0xCAFE, 0xBEEF))
-    _apply(store, DETAILS_TOPIC, _flaga_details((10, 1), (11, 2)))
+    _feed_catalogue(store, *_flaga_rows((10, 0xCAFE), (11, 0xBEEF)))
     assert set(store.objects) == {10, 11}
 
-    applied = _apply(store, DETAILS_TOPIC, _flaga_details((10, 1)))
+    applied = _feed_catalogue(store, *_flaga_rows((10, 0xCAFE)))
     assert [o.id for o in _removed(applied)] == [11]
     assert set(store.objects) == {10}
 
     # The unchanged catalogue on the next refresh removes nothing further.
-    again = _apply(store, DETAILS_TOPIC, _flaga_details((10, 1)))
+    again = _feed_catalogue(store, *_flaga_rows((10, 0xCAFE)))
     assert _removed(again) == []
 
 
@@ -578,11 +664,11 @@ def test_the_devices_reply_evicts_missing_modules() -> None:
 def test_an_evicted_objects_raw_channel_no_longer_routes() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, _devices(0xCAFE, 0xBEEF))
-    _apply(store, DETAILS_TOPIC, _flaga_details((10, 1), (11, 2)))
+    _feed_catalogue(store, *_flaga_rows((10, 0xCAFE), (11, 0xBEEF)))
     _apply(store, f"ampio/from/{0xBEEF:X}/state/f/3", "1")
     assert store.objects[11].state == "1"
 
-    _apply(store, DETAILS_TOPIC, _flaga_details((10, 1)))
+    _feed_catalogue(store, *_flaga_rows((10, 0xCAFE)))
     applied = _apply(store, f"ampio/from/{0xBEEF:X}/state/f/3", "0")
     assert _updated(applied) == []
     assert 11 not in store.objects
@@ -590,19 +676,15 @@ def test_an_evicted_objects_raw_channel_no_longer_routes() -> None:
 
 def test_a_tier_scoped_router_leaves_the_other_tiers_surfaces_unroutable() -> None:
     """The store treats every catalogue reply as complete for its account
-    because the client routes only the tier's served endpoints: an admin
-    router never yields the app-sync catalogue (a differently-scoped view
-    that must not evict), and a restricted router never yields config."""
-    admin = Router(
-        ADMIN_USER,
-        tuple(ep for ep in ENDPOINTS if ep.tier in (None, AccessTier.ADMIN)),
-    )
-    restricted = Router(
-        USER,
-        tuple(ep for ep in ENDPOINTS if ep.tier in (None, AccessTier.RESTRICTED)),
-    )
-    assert admin.route(f"ampio/fromDB/{ADMIN_USER}/data/devices", "{}") is None
-    assert restricted.route(DETAILS_TOPIC, "{}") is None
+    because the client routes only the tier's served endpoints. The object
+    catalogue pair answers both routers, and the restricted router never
+    yields the admin-only module list."""
+    admin = Router(ADMIN_USER, ADMIN_ENDPOINTS, admin=True)
+    restricted = Router(USER, BASE_ENDPOINTS, admin=False)
+    assert admin.route(ADMIN_DATA_DEVICES_TOPIC, "{}") is not None
+    assert admin.route(ADMIN_PARAMS_DEVICES_TOPIC, "{}") is not None
+    assert restricted.route(DATA_DEVICES_TOPIC, "{}") is not None
+    assert restricted.route(PARAMS_DEVICES_TOPIC, "{}") is not None
     assert restricted.route(DEVICES_TOPIC, "{}") is None
 
 
@@ -610,9 +692,8 @@ def test_the_app_sync_catalogue_evicts_what_the_grant_revoked() -> None:
     # The grant bounds a restricted store, so the reply is complete for
     # the account and a vanished row is a revocation.
     store = _app_store()
-    data_topic = f"ampio/fromDB/{USER}/data/devices"
-    _apply(store, data_topic, _flaga_details((10, 1), (11, 1)))
-    applied = _apply(store, data_topic, _flaga_details((10, 1)))
+    _feed_catalogue(store, *_flaga_rows((10, 0xCAFE), (11, 0xCAFE)))
+    applied = _feed_catalogue(store, *_flaga_rows((10, 0xCAFE)))
     assert [o.id for o in _removed(applied)] == [11]
     assert set(store.objects) == {10}
 
@@ -623,8 +704,8 @@ def test_an_empty_catalogue_reply_evicts_everything() -> None:
     and evicts like any other, one removal event per object and module."""
     store = _store()
     _apply(store, DEVICES_TOPIC, _devices(0xCAFE))
-    _apply(store, DETAILS_TOPIC, _flaga_details((10, 1)))
-    details_applied = _apply(store, DETAILS_TOPIC, details())
+    _feed_catalogue(store, *_flaga_rows((10, 0xCAFE)))
+    details_applied = _feed_catalogue(store)
     devices_applied = _apply(store, DEVICES_TOPIC, devices())
     assert [o.id for o in _removed(details_applied)] == [10]
     assert [m.id for m in _mod_removed(devices_applied)] == [1]
@@ -634,7 +715,7 @@ def test_an_empty_catalogue_reply_evicts_everything() -> None:
 def test_live_messages_touch_last_seen_snapshots_do_not() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, _devices(0xCAFE))
-    _apply(store, DETAILS_TOPIC, _flaga_details((10, 1)))
+    _feed_catalogue(store, *_flaga_rows((10, 0xCAFE)))
     assert store.modules[1].last_seen is None
 
     _apply(store, STATES_TOPIC, _snapshot("1", 1779560000000))
@@ -652,15 +733,71 @@ def test_a_retained_raw_replay_sets_the_value_but_not_last_seen() -> None:
     is stored state of unknown age, not evidence that the module is alive."""
     store = _store()
     _apply(store, DEVICES_TOPIC, _devices(0xCAFE))
-    _apply(store, DETAILS_TOPIC, _flaga_details((10, 1)))
+    _feed_catalogue(store, *_flaga_rows((10, 0xCAFE)))
 
     _apply(store, f"ampio/from/{0xCAFE:X}/state/f/3", "1", retained=True)
     assert store.objects[10].state == "1"
-    assert store.objects[10].raw_owned is True
+    assert 10 in store._raw_owned
     assert store.modules[1].last_seen is None
 
     _apply(store, f"ampio/from/{0xCAFE:X}/state/f/3", "0")
     assert store.modules[1].last_seen is not None
+
+
+def test_a_raw_edge_routes_to_every_object_sharing_the_leaf() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA))
+    shared = {
+        "typ_komponentu": "flaga",
+        "interpretacja": 1,
+        "funkcja": 3,
+        "leafId": "0_a_3_0_2",
+    }
+    _feed_catalogue(store, {"id": 41, **shared}, {"id": 42, **shared})
+    applied = _apply(store, "ampio/from/a/state/f/3", "1")
+    assert sorted(o.id for o in _updated(applied)) == [41, 42]
+    assert {41, 42} <= store._raw_owned
+
+
+def test_the_routing_index_keys_on_the_leaf_mac_without_the_module_list() -> None:
+    store = _store()
+    _feed_catalogue(
+        store,
+        {
+            "id": 41,
+            "typ_komponentu": "flaga",
+            "interpretacja": 1,
+            "funkcja": 3,
+            "leafId": "0_a_3_0_2",
+        },
+    )
+    applied = _apply(store, "ampio/from/a/state/f/3", "1")
+    assert [o.id for o in _updated(applied)] == [41]
+
+
+def test_a_live_edge_touches_the_module_on_the_leaf_mac() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB))
+    _feed_catalogue(
+        store,
+        {
+            "id": 41,
+            "typ_komponentu": "flaga",
+            "interpretacja": 1,
+            "funkcja": 3,
+            "leafId": "0_b_3_0_2",
+        },
+    )
+    _apply(store, "ampio/from/b/state/f/3", "1")
+    assert store.modules[1].last_seen is None
+    assert store.modules[2].last_seen is not None
+
+
+def test_module_by_mac_reads_none_for_an_unlisted_mac() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB))
+    assert store.module_by_mac(0xA) is not None
+    assert store.module_by_mac(0xC) is None
 
 
 # --- catalogues, state pushes, and snapshots --------------------------------
@@ -668,39 +805,33 @@ def test_a_retained_raw_replay_sets_the_value_but_not_last_seen() -> None:
 
 def test_details_populate_and_classify() -> None:
     store = _store()
-    _apply(
+    _feed_catalogue(
         store,
-        DETAILS_TOPIC,
-        details(
-            {
-                "id": 41,
-                "id_urzadzenia": 3,
-                "typ_komponentu": "temp",
-                "interpretacja": 1,
-                "opis_menu": "Salon",
-            },
-            {
-                "id": 107,
-                "id_urzadzenia": 3,
-                "typ_komponentu": "lin_wej",
-                "interpretacja": 7,
-                "opis_menu": "CO2",
-            },
-            {
-                "id": 1,
-                "id_urzadzenia": 1,
-                "typ_komponentu": "przekaznik",
-                "interpretacja": 1,
-                "opis_menu": "Pump",
-                "type": "266",  # 0x010A On/Off Plug-in Unit
-            },
-        ),
+        {
+            "id": 41,
+            "typ_komponentu": "temp",
+            "interpretacja": 1,
+            "opis_menu": "Salon",
+        },
+        {
+            "id": 107,
+            "typ_komponentu": "lin_wej",
+            "interpretacja": 7,
+            "opis_menu": "CO2",
+        },
+        {
+            "id": 1,
+            "typ_komponentu": "przekaznik",
+            "interpretacja": 1,
+            "opis_menu": "Pump",
+            "type": "266",  # 0x010A On/Off Plug-in Unit
+        },
     )
 
     assert set(store.objects) == {41, 107, 1}
     temp = store.objects[41]
     assert temp.kind is not None and temp.kind.device_class == "temperature"
-    assert temp.opis_menu == "Salon" and temp.id_urzadzenia == 3
+    assert temp.name == "Salon"
     # The raw `interpretacja` selector is retained on the object for consumers,
     # alongside the resolved `kind` the library derives from it.
     assert store.objects[107].interpretacja == 7
@@ -721,28 +852,172 @@ def test_two_catalogue_rows_sharing_one_leaf_id_get_distinct_object_keys() -> No
     exist, `leaf_key` reads the same for both, and `object_key` (built
     from the catalogue `id`) still tells them apart."""
     store = _store()
-    _apply(
+    _feed_catalogue(
         store,
-        DETAILS_TOPIC,
-        details(
-            {
-                "id": 150,
-                "typ_komponentu": "flaga",
-                "leafId": "0_be82_257_2_2",
-                "opis_menu": "Relay",
-            },
-            {
-                "id": 151,
-                "typ_komponentu": "flaga",
-                "leafId": "0_be82_257_2_2",
-                "opis_menu": "Relay",
-            },
-        ),
+        {
+            "id": 150,
+            "typ_komponentu": "flaga",
+            "leafId": "0_be82_257_2_2",
+            "opis_menu": "Relay",
+        },
+        {
+            "id": 151,
+            "typ_komponentu": "flaga",
+            "leafId": "0_be82_257_2_2",
+            "opis_menu": "Relay",
+        },
     )
     assert set(store.objects) == {150, 151}
     first, second = store.objects[150], store.objects[151]
-    assert first.leaf_key == second.leaf_key
+    assert first.leaf_key == second.leaf_key == "leaf_0_be82_257_2_2"
     assert first.object_key != second.object_key
+
+
+# --- the door: one admission path on both tiers -----------------------------
+
+
+def _not_configured(applied: Applied) -> list[NotConfigured]:
+    return [e for e in applied.events if isinstance(e, NotConfigured)]
+
+
+def test_the_door_waits_for_both_replies_of_the_pair() -> None:
+    store = _app_store()
+    first = _apply(store, DATA_DEVICES_TOPIC, details({"id": 41}))
+    assert first.events == []
+    assert store.objects == {}
+    second = _apply(store, PARAMS_DEVICES_TOPIC, params_of({"id": 41}))
+    assert [type(e) for e in second.events] == [ObjectAdded]
+    assert 41 in store.objects
+
+
+def test_the_door_admits_when_the_params_table_lands_first() -> None:
+    store = _store()
+    assert _apply(store, PARAMS_DEVICES_TOPIC, params_of({"id": 41})).events == []
+    applied = _apply(store, DATA_DEVICES_TOPIC, details({"id": 41}))
+    assert [type(e) for e in applied.events] == [ObjectAdded]
+
+
+def test_a_params_push_alone_re_runs_the_door() -> None:
+    store = _store()
+    _feed_catalogue(store, {"id": 41})
+    hidden = _apply(store, PARAMS_DEVICES_TOPIC, params_of({"id": 41, "params": 16}))
+    assert [type(e) for e in hidden.events] == [ObjectRemoved]
+    assert 41 not in store.objects
+    shown = _apply(store, PARAMS_DEVICES_TOPIC, params_of({"id": 41}))
+    assert [type(e) for e in shown.events] == [ObjectAdded]
+
+
+def test_a_params_push_keeps_the_buffered_push_for_the_next_catalogue() -> None:
+    """Only a fresh `data/devices` reply proves an id will never gain a row.
+
+    The params reply of a pair re-runs the door on the held, older
+    catalogue, which does not list an object the pair is about to
+    establish. A push that raced ahead of the pair must survive that run.
+    """
+    store = _store()
+    _feed_catalogue(store, {"id": 41})
+    _apply(store, f"ampio/fromDB/{USER}/ob/70/state", _push("255"))
+    _feed_catalogue(store, {"id": 41}, {"id": 70})
+    assert store.objects[70].state == "255"
+
+    # An id the fresh reply does not list is one nothing will establish.
+    _apply(store, f"ampio/fromDB/{USER}/ob/71/state", _push("1"))
+    _feed_catalogue(store, {"id": 41}, {"id": 70})
+    assert 71 not in store._pending_state
+
+
+def test_a_hidden_row_never_enters_objects_nor_the_rejected_set() -> None:
+    store = _store()
+    applied = _feed_catalogue(store, {"id": 41, "params": 16, "leafId": ""}, {"id": 42})
+    assert [e.object.id for e in applied.events if isinstance(e, ObjectAdded)] == [42]
+    assert 41 not in store.objects
+    assert store.not_configured == ()
+    assert _not_configured(applied) == []
+
+
+def test_an_empty_leaf_is_recorded_and_left_out() -> None:
+    store = _store()
+    applied = _feed_catalogue(
+        store, {"id": 41, "leafId": "", "opis_menu": "Lamp"}, {"id": 42}
+    )
+    assert list(store.objects) == [42]
+    assert store.not_configured == ((41, "Lamp"),)
+    assert [e.objects for e in _not_configured(applied)] == [((41, "Lamp"),)]
+
+
+def test_a_malformed_leaf_refuses_the_reply_whole() -> None:
+    store = _store()
+    _feed_catalogue(store, {"id": 42}, _DET)
+    before = dict(store.objects)
+    with pytest.raises(AmpioProtocolError, match="garbage"):
+        _feed_catalogue(store, {"id": 41, "leafId": "garbage"}, {"id": 43}, _DET)
+    assert store.objects == before
+    assert store.not_configured == ()
+
+
+def test_a_leaf_that_disappears_after_admission_evicts_the_row() -> None:
+    store = _store()
+    _feed_catalogue(store, {"id": 41, "typ_komponentu": "przekaznik"})
+    _sweep(store, {0xCAFE}, records={41: DesignerRecord(location="Hall")})
+    assert 41 in store.records
+    applied = _feed_catalogue(store, {"id": 41, "leafId": ""})
+    assert [type(e) for e in applied.events] == [ObjectRemoved, NotConfigured]
+    assert store.not_configured == ((41, None),)
+    restored = _feed_catalogue(store, {"id": 41, "typ_komponentu": "przekaznik"})
+    assert [type(e) for e in restored.events] == [ObjectAdded]
+    assert store.not_configured == ()
+    assert 41 not in store.records
+
+
+def test_not_configured_reports_a_change_of_the_rejected_set_only() -> None:
+    store = _store()
+    first = _feed_catalogue(store, {"id": 41, "leafId": ""})
+    again = _feed_catalogue(store, {"id": 41, "leafId": ""})
+    assert len(_not_configured(first)) == 1
+    assert _not_configured(again) == []
+
+
+def test_a_refused_catalogue_leaves_the_held_reply_untouched() -> None:
+    store = _store()
+    _feed_catalogue(store, {"id": 41})
+    with pytest.raises(AmpioProtocolError):
+        _apply(
+            store,
+            DATA_DEVICES_TOPIC,
+            details({"id": 41}, {"id": 43, "leafId": "garbage"}),
+        )
+    again = _apply(store, PARAMS_DEVICES_TOPIC, params_of({"id": 41}))
+    assert again.events == []
+    assert list(store.objects) == [41]
+
+
+def test_a_malformed_snapshot_row_refuses_the_snapshot_whole() -> None:
+    store = _store()
+    _feed_catalogue(store, {"id": 41}, {"id": 42})
+    _apply(store, STATES_TOPIC, _snapshot("7", 1779560000000, oid=41))
+    with pytest.raises(AmpioProtocolError):
+        _apply(
+            store,
+            STATES_TOPIC,
+            snapshot(
+                {
+                    "id": 41,
+                    "stan_json": json.dumps({"state": "9", "on": 1779560100000}),
+                },
+                {"id": 42, "stan_json": "not json"},
+            ),
+        )
+    assert store.objects[41].state == "7"
+    assert list(store._stan_by_id) == [41]
+
+
+def test_not_configured_ignores_the_order_of_the_rejected_rows() -> None:
+    store = _store()
+    first = _feed_catalogue(store, {"id": 41, "leafId": ""}, {"id": 42, "leafId": ""})
+    second = _feed_catalogue(store, {"id": 42, "leafId": ""}, {"id": 41, "leafId": ""})
+    assert len(_not_configured(first)) == 1
+    assert _not_configured(second) == []
+    assert store.not_configured == ((41, None), (42, None))
 
 
 def test_devices_populate_modules_with_model_and_versions() -> None:
@@ -789,18 +1064,15 @@ def test_state_updates_module_last_seen_with_local_receive_time() -> None:
         DEVICES_TOPIC,
         devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
     )
-    _apply(
+    _feed_catalogue(
         store,
-        DETAILS_TOPIC,
-        details(
-            {
-                "id": 41,
-                "id_urzadzenia": 17,
-                "typ_komponentu": "temp",
-                "interpretacja": 1,
-                "opis_menu": "T",
-            }
-        ),
+        {
+            "id": 41,
+            "typ_komponentu": "temp",
+            "interpretacja": 1,
+            "opis_menu": "T",
+            "leafId": "0_1_74_0_0",
+        },
     )
     assert store.modules[17].last_seen is None
 
@@ -833,18 +1105,15 @@ def test_states_snapshot_seeds_value_without_touching_last_seen() -> None:
         DEVICES_TOPIC,
         devices({"id": 17, "mac": 1, "typ_urzadzenia": 44, "nazwa_urzadzenia": "m"}),
     )
-    _apply(
+    _feed_catalogue(
         store,
-        DETAILS_TOPIC,
-        details(
-            {
-                "id": 41,
-                "id_urzadzenia": 17,
-                "typ_komponentu": "temp",
-                "interpretacja": 1,
-                "opis_menu": "T",
-            }
-        ),
+        {
+            "id": 41,
+            "typ_komponentu": "temp",
+            "interpretacja": 1,
+            "opis_menu": "T",
+            "leafId": "0_1_74_0_0",
+        },
     )
     assert store.objects[41].state is None
     assert store.modules[17].last_seen is None
@@ -868,12 +1137,9 @@ def test_states_snapshot_seeds_value_without_touching_last_seen() -> None:
 def test_states_snapshot_does_not_overwrite_live_value() -> None:
     """A snapshot does not regress a value already set by a live push."""
     store = _store()
-    _apply(
+    _feed_catalogue(
         store,
-        DETAILS_TOPIC,
-        details(
-            {"id": 41, "typ_komponentu": "temp", "interpretacja": 1, "opis_menu": "T"}
-        ),
+        {"id": 41, "typ_komponentu": "temp", "interpretacja": 1, "opis_menu": "T"},
     )
     _apply(
         store,
@@ -890,64 +1156,12 @@ def test_states_snapshot_does_not_overwrite_live_value() -> None:
     assert store.objects[41].state == "fresh"
 
 
-def test_sibling_module_mac_comes_from_leafed_rows_on_the_same_module() -> None:
-    """A leafless row reads the mac its leafed siblings embed, a row without
-    a leafed sibling reads None, and a leafed row reads its own module's mac."""
-    store = _app_store()
-    _apply(
-        store,
-        DATA_DEVICES_TOPIC,
-        details(
-            {
-                "id": 1,
-                "typ_komponentu": "przekaznik",
-                "id_urzadzenia": 3,
-                "leafId": "0_be82_257_2_1",
-            },
-            {"id": 2, "typ_komponentu": "przekaznik", "id_urzadzenia": 3},
-            {"id": 3, "typ_komponentu": "flaga", "id_urzadzenia": 7},
-        ),
-    )
-    assert store.objects[1].sibling_module_mac == 0xBE82
-    assert store.objects[2].sibling_module_mac == 0xBE82
-    assert store.objects[3].sibling_module_mac is None
-
-
-def test_sibling_module_mac_follows_the_next_catalogue() -> None:
-    store = _store()
-    _apply(
-        store,
-        DETAILS_TOPIC,
-        details({"id": 2, "typ_komponentu": "przekaznik", "id_urzadzenia": 3}),
-    )
-    assert store.objects[2].sibling_module_mac is None
-    applied = _apply(
-        store,
-        DETAILS_TOPIC,
-        details(
-            {
-                "id": 1,
-                "typ_komponentu": "przekaznik",
-                "id_urzadzenia": 3,
-                "leafId": "0_be82_257_2_1",
-            },
-            {"id": 2, "typ_komponentu": "przekaznik", "id_urzadzenia": 3},
-        ),
-    )
-    assert store.objects[2].sibling_module_mac == 0xBE82
-    assert 2 in [o.id for o in _updated(applied)]
-
-
 def test_states_snapshot_creates_nothing_for_unknown_ids() -> None:
     """Only the catalogues decide which objects exist. The snapshot replays
     DB rows, unlisted ids included - creating from it would later evict an
     object no consumer was ever told existed."""
     store = _app_store()
-    _apply(
-        store,
-        DATA_DEVICES_TOPIC,
-        details({"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"}),
-    )
+    _feed_catalogue(store, {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"})
     applied = _apply(
         store,
         STATES_TOPIC,
@@ -983,28 +1197,23 @@ def test_snapshot_before_catalogue_seeds_the_value_at_merge() -> None:
     assert 20 not in store.objects
     assert _updated(applied) == []
 
-    applied = _apply(
-        store,
-        DATA_DEVICES_TOPIC,
-        details({"id": 20, "typ_komponentu": "temp", "opis_menu": "T"}),
+    applied = _feed_catalogue(
+        store, {"id": 20, "typ_komponentu": "temp", "opis_menu": "T"}
     )
     assert [o.id for o in _updated(applied)] == [20]
     assert store.objects[20].state == "7"
     assert store.objects[20].updated_at == 1779560000.0
-    assert store.objects[20].opis_menu == "T"
+    assert store.objects[20].name == "T"
 
 
 def test_eviction_prunes_the_buffered_snapshot_value() -> None:
     """An evicted object's buffered seed must not resurface if a later
     catalogue re-establishes the id."""
     store = _app_store()
-    _apply(
+    _feed_catalogue(
         store,
-        DATA_DEVICES_TOPIC,
-        details(
-            {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"},
-            {"id": 6, "typ_komponentu": "flaga", "opis_menu": "G"},
-        ),
+        {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"},
+        {"id": 6, "typ_komponentu": "flaga", "opis_menu": "G"},
     )
     _apply(
         store,
@@ -1014,20 +1223,15 @@ def test_eviction_prunes_the_buffered_snapshot_value() -> None:
             {"id": 6, "stan_json": '{"state": "1", "on": 1779560000000}'},
         ),
     )
-    applied = _apply(
-        store,
-        DATA_DEVICES_TOPIC,
-        details({"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"}),
+    applied = _feed_catalogue(
+        store, {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"}
     )
     assert [o.id for o in _removed(applied)] == [6]
 
-    _apply(
+    _feed_catalogue(
         store,
-        DATA_DEVICES_TOPIC,
-        details(
-            {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"},
-            {"id": 6, "typ_komponentu": "flaga", "opis_menu": "G"},
-        ),
+        {"id": 5, "typ_komponentu": "flaga", "opis_menu": "F"},
+        {"id": 6, "typ_komponentu": "flaga", "opis_menu": "G"},
     )
     assert store.objects[6].state is None
 
@@ -1098,7 +1302,7 @@ def test_a_push_for_an_uncatalogued_id_waits_for_its_catalogue_row() -> None:
     assert applied.events == []
     assert 93 not in store.objects
 
-    applied = _apply(store, DETAILS_TOPIC, details({"id": 93}))
+    applied = _feed_catalogue(store, {"id": 93})
     obj = store.objects[93]
     assert isinstance(obj.kind, SensorKind)  # no typ_komponentu -> fallback
     assert obj.state == "187.6"
@@ -1112,13 +1316,13 @@ def test_a_buffered_push_loses_to_a_newer_dated_snapshot_seed() -> None:
     state_topic = f"ampio/fromDB/{USER}/ob/93/state"
     _apply(store, state_topic, '{"state":"old","on":1000}')
     _apply(store, STATES_TOPIC, _snapshot("new", 2000, oid=93))
-    _apply(store, DETAILS_TOPIC, details({"id": 93}))
+    _feed_catalogue(store, {"id": 93})
     assert store.objects[93].state == "new"
 
     fresh = _store()
     _apply(fresh, state_topic, '{"state":"newer","on":3000}')
     _apply(fresh, STATES_TOPIC, _snapshot("new", 2000, oid=93))
-    _apply(fresh, DETAILS_TOPIC, details({"id": 93}))
+    _feed_catalogue(fresh, {"id": 93})
     assert fresh.objects[93].state == "newer"
 
 
@@ -1132,49 +1336,39 @@ def test_a_buffered_push_for_an_unlisted_id_is_pruned() -> None:
         f"ampio/fromDB/{USER}/ob/99/state",
         '{"state":"ghost","on":1789000000000}',
     )
-    _apply(store, DETAILS_TOPIC, details({"id": 41}))
-    _apply(store, DETAILS_TOPIC, details({"id": 41}, {"id": 99}))
+    _feed_catalogue(store, {"id": 41})
+    _feed_catalogue(store, {"id": 41}, {"id": 99})
     assert store.objects[99].state is None
 
 
 @pytest.mark.parametrize(
-    ("tier", "topic_suffix"),
+    ("make_store", "topic_suffix"),
     [
-        (AccessTier.ADMIN, "config/devicesDetails"),
-        (AccessTier.ADMIN, "config/devices"),
-        (AccessTier.ADMIN, "data/states"),
-        (AccessTier.RESTRICTED, "data/devices"),
-        (AccessTier.RESTRICTED, "data/params_devices"),
-        (AccessTier.RESTRICTED, "data/states"),
+        (_store, "data/devices"),
+        (_store, "data/params_devices"),
+        (_store, "config/devices"),
+        (_store, "data/states"),
+        (_app_store, "data/devices"),
+        (_app_store, "data/params_devices"),
+        (_app_store, "data/states"),
     ],
 )
 def test_every_handler_refuses_an_unparseable_payload(
-    tier: AccessTier, topic_suffix: str
+    make_store: Callable[[], AmpioStore], topic_suffix: str
 ) -> None:
     """No handler reads a reply it cannot trust. The caller reports the
     refusal and drops the message."""
     with pytest.raises(AmpioProtocolError):
-        _apply(AmpioStore(tier), f"ampio/fromDB/{USER}/{topic_suffix}", "not json")
+        _apply(make_store(), f"ampio/fromDB/{USER}/{topic_suffix}", "not json")
 
 
-@pytest.mark.parametrize(
-    ("tier", "served", "unserved"),
-    [
-        (AccessTier.ADMIN, DETAILS_TOPIC, DATA_DEVICES_TOPIC),
-        (AccessTier.RESTRICTED, DATA_DEVICES_TOPIC, DETAILS_TOPIC),
-    ],
-)
-def test_a_store_applies_only_its_own_tiers_catalogue(
-    tier: AccessTier, served: str, unserved: str
-) -> None:
-    """One catalogue answers per tier, so the store holds that handler
-    alone. The other surface's reply cannot reach this account, and an
-    attempt is a routing fault to report."""
-    store = AmpioStore(tier)
-    _apply(store, served, details({"id": 24}))
-    assert 24 in store.objects
-    with pytest.raises(AmpioProtocolError, match="tier"):
-        _apply(store, unserved, details({"id": 25}))
+def test_the_base_store_refuses_the_admin_only_module_list() -> None:
+    """The module list answers the reserved admin login alone, so the base
+    store's handler table carries no entry for it, and an attempt to apply
+    one is a routing fault to report."""
+    store = _app_store()
+    with pytest.raises(RuntimeError, match="has no handler"):
+        _apply(store, DEVICES_TOPIC, devices({"id": 24}))
 
 
 def test_state_with_unparseable_payload_is_dropped() -> None:
@@ -1187,26 +1381,26 @@ def test_state_with_unparseable_payload_is_dropped() -> None:
 def test_stan_json_with_no_state_field_does_not_overwrite_value() -> None:
     """A stan_json blob without `state` should not clobber an existing value."""
     store = _store()
-    _apply(
+    _feed_catalogue(
         store,
-        DETAILS_TOPIC,
-        details(
-            {
-                "id": 41,
-                "typ_komponentu": "temp",
-                "interpretacja": 1,
-                "opis_menu": "T",
-                "stan_json": '{"on": 1779560000000}',  # no "state"
-            }
-        ),
+        {"id": 41, "typ_komponentu": "temp", "interpretacja": 1, "opis_menu": "T"},
     )
-    assert store.objects[41].state is None
+    _apply(store, STATES_TOPIC, _snapshot("22.5", 1779560000000, oid=41))
+    assert store.objects[41].state == "22.5"
+
+    with pytest.raises(AmpioProtocolError, match="state"):
+        _apply(
+            store,
+            STATES_TOPIC,
+            snapshot({"id": 41, "stan_json": '{"on": 1779560100000}'}),
+        )
+    assert store.objects[41].state == "22.5"
 
 
 def test_numeric_value_none_for_bare_nan_state_push() -> None:
     """A bare NaN literal parses (Python's json accepts it) but reads as None."""
     store = _store()
-    _apply(store, DETAILS_TOPIC, details({"id": 12}))
+    _feed_catalogue(store, {"id": 12})
     _apply(
         store, f"ampio/fromDB/{USER}/ob/12/state", '{"state": NaN, "on": 1789000000000}'
     )
@@ -1218,11 +1412,11 @@ def test_numeric_value_none_for_bare_nan_state_push() -> None:
 # --- raw-channel input bridge ---------------------------------------------
 
 
-def _panel_store() -> AmpioStore:
+def _panel_store() -> AdminStore:
     """Store that knows panel module 7 (mac CAFE) and a flaga at funkcja 32."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32)))
+    _feed_catalogue(store, _flaga_row(50, 32))
     return store
 
 
@@ -1262,19 +1456,6 @@ def test_raw_channel_malformed_topic_is_ignored() -> None:
     assert store.objects[50].state is None
 
 
-def test_index_rebuilds_when_devices_arrive_after_details() -> None:
-    store = _store()
-    # Details first: module mac unknown, so the flag is not yet routable.
-    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32)))
-    _apply(store, "ampio/from/CAFE/state/f/32", "1")
-    assert store.objects[50].state is None  # not routed - no module mac yet
-
-    # Devices arrive -> index rebuilds -> now routable.
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _apply(store, "ampio/from/CAFE/state/f/32", "1")
-    assert store.objects[50].state == "1"
-
-
 def test_mapped_input_without_raw_uses_per_object_fallback() -> None:
     """A mapped input that never produced a raw edge still updates per-object."""
     store = _panel_store()
@@ -1287,52 +1468,21 @@ def test_mapped_input_without_raw_uses_per_object_fallback() -> None:
     assert _updated(applied) == [obj]
 
 
-def test_detekcja_takes_no_digital_input_channel() -> None:
-    """A raw `i/<funkcja>` edge belongs to the physical input on that channel,
-    not to the detection object that shares its module and channel number."""
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    det = {
-        "id": 60,
-        "id_urzadzenia": 7,
-        "typ_komponentu": "detekcja",
-        "interpretacja": 1,
-        "funkcja": 1,
-        "opis_menu": "Detection",
-    }
-    wej = {
-        "id": 62,
-        "id_urzadzenia": 7,
-        "typ_komponentu": "wej",
-        "interpretacja": 1,
-        "funkcja": 1,
-        "opis_menu": "Button",
-    }
-    _apply(store, DETAILS_TOPIC, details(wej, det))
-    assert store.objects[60].kind is not None
-    assert store.objects[60].kind.device_class == "presence"
-    applied = _apply(store, "ampio/from/CAFE/state/i/1", "1")
-    assert store.objects[62].state == "1"
-    assert store.objects[60].state is None
-    assert _updated(applied) == [store.objects[62]]
-
-
 def test_wej_routes_via_digital_input_prefix() -> None:
     """A physical-input object (#117) bridges on `i/<funkcja>`."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
     wej = {
         "id": 62,
-        "id_urzadzenia": 7,
         "typ_komponentu": "wej",
         "interpretacja": 1,
         "funkcja": 1,
         "opis_menu": "Button",
     }
-    _apply(store, DETAILS_TOPIC, details(wej))
+    _feed_catalogue(store, wej)
     obj = store.objects[62]
     assert isinstance(obj.kind, InputKind)
-    assert obj.kind.key == "wej" and obj.kind.device_class is None
+    assert obj.kind.key == "wej"
     _apply(store, "ampio/from/CAFE/state/i/1", "1")
     assert store.objects[62].state == "1" and store.objects[62].is_on is True
 
@@ -1343,135 +1493,58 @@ def test_wej_per_object_edge_reads_255_as_on() -> None:
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
     wej = {
         "id": 63,
-        "id_urzadzenia": 7,
         "typ_komponentu": "wej",
         "interpretacja": 1,
         "funkcja": 2,
         "opis_menu": "Button",
     }
-    _apply(store, DETAILS_TOPIC, details(wej))
+    _feed_catalogue(store, wej)
     _apply(store, f"ampio/fromDB/{USER}/ob/63/state", '{"state": "255", "on": 1700}')
     assert store.objects[63].is_on is True
     _apply(store, f"ampio/fromDB/{USER}/ob/63/state", '{"state": "0", "on": 1701}')
     assert store.objects[63].is_on is False
 
 
-def test_module_record_survives_refresh_and_eviction() -> None:
-    """The catalogue never carries the record entry; the held table
-    re-applies it on every merge, including re-creation after eviction."""
+# --- the two system rows -----------------------------------------------------
+
+_DET = {
+    "id": 60,
+    "typ_komponentu": "detekcja",
+    "interpretacja": 1,
+    "funkcja": 1,
+    "leafId": "",
+    "opis_menu": "Detection",
+}
+_SIM = {
+    "id": 61,
+    "typ_komponentu": "symulacja",
+    "interpretacja": 1,
+    "funkcja": 1,
+    "leafId": "",
+    "opis_menu": "Simulation",
+    "czas": 1,
+}
+
+
+def test_the_system_rows_never_enter_the_catalogue() -> None:
     store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    rec = ModuleRecord(location="Rozdzielnia", desc="Panel")
-    applied = store.apply_module_sweep({0xCAFE: rec}, {}, {})
-    assert store.modules[7].record == rec
-    assert [e.module.record for e in applied.events] == [rec]
-
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # refresh keeps it
-    assert store.modules[7].record == rec
-
-    _apply(store, DEVICES_TOPIC, devices())  # evict
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # re-add re-applies
-    assert store.modules[7].record == rec
+    applied = _feed_catalogue(store, _flaga_row(41, 3), _DET, _SIM)
+    assert store._catalogue is not None
+    assert [meta.id for meta in store._catalogue] == [41]
+    assert list(store.objects) == [41]
+    assert store.not_configured == ()
+    assert store.admission_failure() is None
+    assert [obj.id for obj in _updated(applied)] == [41]
+    assert _not_configured(applied) == []
 
 
-def test_module_record_unswept_mac_is_untouched() -> None:
-    """A sweep that does not cover a module leaves its record standing."""
+def test_a_push_for_a_system_row_is_pruned_by_the_next_catalogue() -> None:
     store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    store.apply_module_sweep({0xCAFE: ModuleRecord(location="Rozdzielnia")}, {}, {})
-    applied = store.apply_module_sweep({}, {}, {})
-    assert store.modules[7].record == ModuleRecord(location="Rozdzielnia")
-    assert applied.events == []
-    # The empty bundle is authoritative: the module answered, unassigned.
-    applied = store.apply_module_sweep({0xCAFE: ModuleRecord()}, {}, {})
-    assert store.modules[7].record == ModuleRecord()
-    assert [e.module.record for e in applied.events] == [ModuleRecord()]
-
-
-def test_module_capabilities_survive_refresh_and_eviction() -> None:
-    """The catalogue never carries capabilities; the held table re-applies
-    them on every merge, including re-creation after eviction."""
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    caps: dict[int, int] = {
-        ModuleFunction.BACKLIGHT_RGBW: 18,
-        ModuleFunction.KEY_LOCK: 1,
-    }
-    applied = store.apply_module_sweep({}, {0xCAFE: caps}, {})
-    assert store.modules[7].capabilities == caps
-    assert [e.module.capabilities for e in applied.events] == [caps]
-
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # refresh keeps them
-    assert store.modules[7].capabilities == caps
-
-    _apply(store, DEVICES_TOPIC, devices())  # evict
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # re-add re-applies
-    assert store.modules[7].capabilities == caps
-
-
-def test_module_capabilities_unswept_mac_is_untouched() -> None:
-    """A sweep that does not cover a module leaves its capabilities standing."""
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    store.apply_module_sweep({}, {0xCAFE: {ModuleFunction.BUZZER: 1}}, {})
-    applied = store.apply_module_sweep({}, {}, {})
-    assert store.modules[7].capabilities == {ModuleFunction.BUZZER: 1}
-    assert applied.events == []
-    # An empty map is authoritative: the module answered, advertising nothing.
-    applied = store.apply_module_sweep({}, {0xCAFE: {}}, {})
-    assert store.modules[7].capabilities == {}
-    assert [e.module.capabilities for e in applied.events] == [{}]
-
-
-def test_panel_settings_survive_refresh_and_eviction() -> None:
-    """The catalogue never carries panel settings; the held table re-applies
-    them on every merge, including re-creation after eviction."""
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    settings = PanelSettings(
-        touch_field_color=(0, 0, 0, 255),
-        status_color=(255, 10, 10),
-        light_signal=(1, 1),
-        beep_time=2,
-        sound_signal=(True, True),
-        backlight_active=(True, True),
-        multitouch_lock=(False, False),
-        multitouch_send_count=False,
-        dim_after_s=10,
-        dim_brightness=50,
-    )
-    applied = store.apply_module_sweep({}, {}, {0xCAFE: settings})
-    assert store.modules[7].panel_settings == settings
-    assert [e.module.panel_settings for e in applied.events] == [settings]
-
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # refresh keeps them
-    assert store.modules[7].panel_settings == settings
-
-    _apply(store, DEVICES_TOPIC, devices())  # evict
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))  # re-add re-applies
-    assert store.modules[7].panel_settings == settings
-
-    # A sweep that does not cover the module leaves the settings standing.
-    applied = store.apply_module_sweep({}, {}, {})
-    assert store.modules[7].panel_settings == settings
-    assert applied.events == []
-
-
-def test_symulacja_classifies_but_is_not_bridged() -> None:
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    sym = {
-        "id": 61,
-        "id_urzadzenia": 7,
-        "typ_komponentu": "symulacja",
-        "interpretacja": 1,
-        "funkcja": 1,
-        "opis_menu": "Sim",
-    }
-    _apply(store, DETAILS_TOPIC, details(sym))
-    assert isinstance(store.objects[61].kind, InputKind)
-    applied = _apply(store, "ampio/from/CAFE/state/f/1", "1")
-    assert store.objects[61].state is None and _updated(applied) == []
+    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push("5"))
+    _apply(store, f"ampio/fromDB/{USER}/ob/61/state", _push("1"))
+    assert set(store._pending_state) == {60, 61}
+    _feed_catalogue(store, _flaga_row(41, 3), _DET, _SIM)
+    assert store._pending_state == {}
 
 
 # --- the app-sync data surface (standard accounts) --------------------------
@@ -1481,7 +1554,6 @@ def _app_row(oid: int, leaf: str, name: str = "Air quality", interp: int = 5) ->
     """One `data/devices` row: the catalogue shape minus the config columns."""
     return {
         "id": oid,
-        "id_urzadzenia": 20,
         "typ_komponentu": "lin_wej",
         "interpretacja": interp,
         "funkcja": 5,
@@ -1492,12 +1564,12 @@ def _app_row(oid: int, leaf: str, name: str = "Air quality", interp: int = 5) ->
 
 def test_data_devices_populate_and_classify() -> None:
     store = _app_store()
-    _apply(store, DATA_DEVICES_TOPIC, details(_app_row(24, "0_cb9b_74_0_1", interp=7)))
+    _feed_catalogue(store, _app_row(24, "0_cb9b_74_0_1", interp=7))
     obj = store.objects[24]
-    assert obj.opis_menu == "Air quality"
+    assert obj.name == "Air quality"
     assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
-    assert obj.id_urzadzenia == 20 and obj.funkcja == 5
-    assert obj.leaf_id == "0_cb9b_74_0_1"
+    assert obj.funkcja == 5
+    assert obj.address == ModuleAddress(mac=0xCB9B, channel=1, sf_id=74, sub_sf_id=0)
 
 
 def test_the_config_table_before_the_catalogue_applies_at_the_merge() -> None:
@@ -1509,7 +1581,8 @@ def test_the_config_table_before_the_catalogue_applies_at_the_merge() -> None:
         store,
         PARAMS_DEVICES_TOPIC,
         params_table(
-            {"id": 24, "params": 17, "czas": 500, "url": "IAQ"}, {"id": 25, "params": 1}
+            {"id": 24, "params": 17},
+            {"id": 25, "params": 1, "czas": 500, "url": "IAQ"},
         ),
     )
     # The table is not grant-filtered; unknown ids create no placeholders.
@@ -1520,13 +1593,14 @@ def test_the_config_table_before_the_catalogue_applies_at_the_merge() -> None:
         DATA_DEVICES_TOPIC,
         details(_app_row(24, "0_cb9b_74_0_1"), _app_row(25, "0_cb9b_74_0_2")),
     )
-    assert store.objects[24].hidden is True and store.objects[24].visible is False
-    assert store.objects[24].czas == 500 and store.objects[24].url == "IAQ"
-    assert store.objects[25].hidden is False and store.objects[25].visible is True
+    # The held table decides the hidden bit too, so row 24 never lands.
+    assert 24 not in store.objects
+    assert store.objects[25].czas == 500 and store.objects[25].url == "IAQ"
 
 
 def test_the_config_table_after_the_catalogue_updates_objects_and_notifies() -> None:
     store = _app_store()
+    _apply(store, PARAMS_DEVICES_TOPIC, params_table({"id": 24, "params": 1}))
     _apply(store, DATA_DEVICES_TOPIC, details(_app_row(24, "0_cb9b_74_0_1")))
     assert store.objects[24].czas == 0 and store.objects[24].url == ""
 
@@ -1534,12 +1608,12 @@ def test_the_config_table_after_the_catalogue_updates_objects_and_notifies() -> 
         store,
         PARAMS_DEVICES_TOPIC,
         params_table(
-            {"id": 24, "params": 17, "czas": 500, "url": "IAQ"},
+            {"id": 24, "params": 1, "czas": 500, "url": "IAQ"},
             {"id": 999, "params": 1},
         ),
     )
     obj = store.objects[24]
-    assert obj.hidden is True and obj.czas == 500 and obj.url == "IAQ"
+    assert obj.czas == 500 and obj.url == "IAQ"
     assert _updated(applied) == [obj]
     assert 999 not in store.objects
 
@@ -1548,13 +1622,13 @@ def test_the_held_config_table_survives_an_eviction() -> None:
     """The catalogue carries no config column on this tier, so the held
     table re-applies on the re-creation after an eviction."""
     store = _app_store()
-    _apply(store, PARAMS_DEVICES_TOPIC, params_table({"id": 24, "params": 17}))
+    _apply(store, PARAMS_DEVICES_TOPIC, params_table({"id": 24, "params": 65}))
     row = _app_row(24, "0_cb9b_74_0_1")
     _apply(store, DATA_DEVICES_TOPIC, details(row))
     _apply(store, DATA_DEVICES_TOPIC, details())  # the grant is revoked
     assert store.objects == {}
     _apply(store, DATA_DEVICES_TOPIC, details(row))  # and granted again
-    assert store.objects[24].hidden is True
+    assert store.objects[24].params == 65 and store.objects[24].read_only is True
 
 
 def test_a_granted_object_the_config_table_misses_is_reported(
@@ -1586,13 +1660,10 @@ def test_a_catalogue_row_with_no_config_row_yet_reports_no_gap() -> None:
 
 def test_details_row_czas_lands_raw_and_pulse_ms_reads_it_by_type() -> None:
     store = _store()
-    _apply(
+    _feed_catalogue(
         store,
-        DETAILS_TOPIC,
-        details(
-            {"id": 41, "typ_komponentu": "przekaznik", "czas": 500},
-            {"id": 42, "typ_komponentu": "roleta_procenty", "czas": 500},
-        ),
+        {"id": 41, "typ_komponentu": "przekaznik", "czas": 500},
+        {"id": 42, "typ_komponentu": "roleta_procenty", "czas": 500},
     )
     assert store.objects[41].czas == 500
     assert store.objects[41].pulse_ms == 5000
@@ -1600,26 +1671,21 @@ def test_details_row_czas_lands_raw_and_pulse_ms_reads_it_by_type() -> None:
     assert store.objects[42].pulse_ms == 0
 
 
-def test_the_admin_catalogue_is_the_one_source_of_the_config_columns() -> None:
-    """Every `devicesDetails` row carries the three inline, so the admin
-    store never reads a config table - it is not served one."""
+def test_the_admin_store_reads_its_config_columns_from_the_params_table() -> None:
+    """The object catalogue carries no Designer config column on either
+    tier, so `data/params_devices` is every account's one source for
+    `params`, `czas` and `url`."""
     store = _store()
-    _apply(
-        store,
-        DETAILS_TOPIC,
-        details({"id": 128, "params": 17, "czas": 500, "url": "IAQ"}),
-    )
+    _feed_catalogue(store, {"id": 128, "params": 65, "czas": 500, "url": "IAQ"})
     obj = store.objects[128]
-    assert obj.params == 17 and obj.czas == 500 and obj.url == "IAQ"
+    assert obj.params == 65 and obj.czas == 500 and obj.url == "IAQ"
     assert store.missing_params_ids == frozenset()
 
 
 def test_details_row_url_and_format_land_on_the_object() -> None:
     store = _store()
-    _apply(
-        store,
-        DETAILS_TOPIC,
-        details({"id": 128, "typ_komponentu": "bit32", "url": "", "format": "%.3f A"}),
+    _feed_catalogue(
+        store, {"id": 128, "typ_komponentu": "bit32", "url": "", "format": "%.3f A"}
     )
     assert store.objects[128].url == ""
     assert store.objects[128].format == "%.3f A"
@@ -1630,10 +1696,8 @@ def test_details_row_url_and_format_land_on_the_object() -> None:
 
 def test_lammel_is_parsed_into_the_object() -> None:
     store = _store()
-    _apply(
-        store,
-        DETAILS_TOPIC,
-        details({"id": 66, "typ_komponentu": "roleta_lamelki", "interpretacja": 1}),
+    _feed_catalogue(
+        store, {"id": 66, "typ_komponentu": "roleta_lamelki", "interpretacja": 1}
     )
     _apply(
         store,
@@ -1649,10 +1713,8 @@ def test_lammel_is_parsed_into_the_object() -> None:
 
 def test_plain_cover_reports_no_tilt() -> None:
     store = _store()
-    _apply(
-        store,
-        DETAILS_TOPIC,
-        details({"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}),
+    _feed_catalogue(
+        store, {"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}
     )
     _apply(
         store,
@@ -1670,10 +1732,8 @@ def test_plain_cover_reports_no_tilt() -> None:
 
 def test_block_is_parsed_into_the_object() -> None:
     store = _store()
-    _apply(
-        store,
-        DETAILS_TOPIC,
-        details({"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}),
+    _feed_catalogue(
+        store, {"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}
     )
     _apply(
         store,
@@ -1688,10 +1748,8 @@ def test_block_is_parsed_into_the_object() -> None:
 
 def test_block_bits_read_per_direction() -> None:
     store = _store()
-    _apply(
-        store,
-        DETAILS_TOPIC,
-        details({"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}),
+    _feed_catalogue(
+        store, {"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}
     )
     for value, closing, opening in (
         (0, False, False),
@@ -1711,7 +1769,7 @@ def test_block_bits_read_per_direction() -> None:
 
 def test_object_without_block_reads_none() -> None:
     store = _store()
-    _apply(store, DETAILS_TOPIC, details({"id": 12, "typ_komponentu": "przekaznik"}))
+    _feed_catalogue(store, {"id": 12, "typ_komponentu": "przekaznik"})
     _apply(
         store,
         f"ampio/fromDB/{USER}/ob/12/state",
@@ -1725,10 +1783,8 @@ def test_object_without_block_reads_none() -> None:
 
 def test_push_without_block_keeps_the_last_value() -> None:
     store = _store()
-    _apply(
-        store,
-        DETAILS_TOPIC,
-        details({"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}),
+    _feed_catalogue(
+        store, {"id": 48, "typ_komponentu": "roleta_procenty", "interpretacja": 1}
     )
     _apply(
         store,
@@ -1745,10 +1801,8 @@ def test_push_without_block_keeps_the_last_value() -> None:
 
 def test_states_snapshot_seeds_block() -> None:
     store = _store()
-    _apply(
-        store,
-        DETAILS_TOPIC,
-        details({"id": 48, "typ_komponentu": "roleta_procenty", "opis_menu": "R"}),
+    _feed_catalogue(
+        store, {"id": 48, "typ_komponentu": "roleta_procenty", "opis_menu": "R"}
     )
     _apply(
         store,
@@ -1765,10 +1819,8 @@ def test_states_snapshot_seeds_block() -> None:
 
 def test_states_snapshot_seeds_lammel() -> None:
     store = _store()
-    _apply(
-        store,
-        DETAILS_TOPIC,
-        details({"id": 66, "typ_komponentu": "roleta_lamelki", "opis_menu": "B"}),
+    _feed_catalogue(
+        store, {"id": 66, "typ_komponentu": "roleta_lamelki", "opis_menu": "B"}
     )
     _apply(
         store,
@@ -1800,7 +1852,7 @@ REG_READBACK = ThermostatState(
 
 def test_reg_push_carries_thermostat_readback() -> None:
     store = _store()
-    _apply(store, DETAILS_TOPIC, details({"id": 138, "typ_komponentu": "reg"}))
+    _feed_catalogue(store, {"id": 138, "typ_komponentu": "reg"})
     _apply(store, f"ampio/fromDB/{USER}/ob/138/state", REG_PAYLOAD)
     obj = store.objects[138]
     assert obj.state == "0"
@@ -1811,7 +1863,7 @@ def test_reg_push_carries_thermostat_readback() -> None:
 def test_plain_push_keeps_last_readback() -> None:
     """A later report without the reg shape keeps the readback, like tilt."""
     store = _store()
-    _apply(store, DETAILS_TOPIC, details({"id": 138, "typ_komponentu": "reg"}))
+    _feed_catalogue(store, {"id": 138, "typ_komponentu": "reg"})
     _apply(store, f"ampio/fromDB/{USER}/ob/138/state", REG_PAYLOAD)
     _apply(
         store,
@@ -1827,7 +1879,7 @@ def test_snapshot_readback_change_alone_dispatches() -> None:
     """A dated snapshot that moves only the readback still reports the
     object changed - a climate consumer must see the temperature tick."""
     store = _store()
-    _apply(store, DETAILS_TOPIC, details({"id": 138, "typ_komponentu": "reg"}))
+    _feed_catalogue(store, {"id": 138, "typ_komponentu": "reg"})
     _apply(store, f"ampio/fromDB/{USER}/ob/138/state", REG_PAYLOAD)
     newer = REG_PAYLOAD.replace('"25.90"', '"26.40"').replace(
         "1787682427583", "1787682600000"
@@ -1840,7 +1892,7 @@ def test_snapshot_readback_change_alone_dispatches() -> None:
 
 def test_states_snapshot_seeds_thermostat() -> None:
     store = _store()
-    _apply(store, DETAILS_TOPIC, details({"id": 138, "typ_komponentu": "reg"}))
+    _feed_catalogue(store, {"id": 138, "typ_komponentu": "reg"})
     _apply(store, STATES_TOPIC, devices({"id": 138, "stan_json": REG_PAYLOAD}))
     assert store.objects[138].thermostat == REG_READBACK
 
@@ -1849,7 +1901,7 @@ def test_pending_reg_push_replays_thermostat() -> None:
     """A reg push racing ahead of its catalogue row keeps its readback."""
     store = _store()
     _apply(store, f"ampio/fromDB/{USER}/ob/138/state", REG_PAYLOAD)
-    _apply(store, DETAILS_TOPIC, details({"id": 138, "typ_komponentu": "reg"}))
+    _feed_catalogue(store, {"id": 138, "typ_komponentu": "reg"})
     obj = store.objects[138]
     assert obj.state == "0"
     assert obj.thermostat == REG_READBACK
@@ -1939,7 +1991,7 @@ def test_object_updated_carries_a_snapshot() -> None:
     the same object must not reach a listener that deferred processing.
     Objects are frozen, so the store publishes a new instance per change."""
     store = _store()
-    _apply(store, DETAILS_TOPIC, details({"id": 5}))
+    _feed_catalogue(store, {"id": 5})
     state_topic = f"ampio/fromDB/{USER}/ob/5/state"
     (event,) = _updated(_apply(store, state_topic, '{"state": "1", "on": 2000}'))
     _apply(store, state_topic, '{"state": "2", "on": 3000}')
@@ -1961,10 +2013,10 @@ def test_a_cleared_name_clears_in_the_store() -> None:
     opis_menu is a normal wire state (unnamed objects), and both discovery
     surfaces agree on names, so a server-side clear must clear here too."""
     store = _store()
-    _apply(store, DETAILS_TOPIC, _catalogue(id=9, opis_menu="Old name"))
-    assert store.objects[9].opis_menu == "Old name"
-    applied = _apply(store, DETAILS_TOPIC, _catalogue(id=9, opis_menu=""))
-    assert store.objects[9].opis_menu is None
+    _feed_catalogue(store, _catalogue_row(id=9, opis_menu="Old name"))
+    assert store.objects[9].name == "Old name"
+    applied = _feed_catalogue(store, _catalogue_row(id=9, opis_menu=""))
+    assert store.objects[9].name is None
     assert [o.id for o in _updated(applied)] == [9]
 
 
@@ -1972,7 +2024,7 @@ def test_updated_at_takes_the_report_date() -> None:
     """Every report stamps the M-SERV's own `on`, and 0 is a value rather
     than an absent stamp."""
     store = _store()
-    _apply(store, DETAILS_TOPIC, details({"id": 9}))
+    _feed_catalogue(store, {"id": 9})
     topic = f"ampio/fromDB/{USER}/ob/9/state"
     _apply(store, topic, '{"state": "1", "on": 0}')
     assert store.objects[9].updated_at == 0.0
@@ -1985,23 +2037,12 @@ def test_raw_owned_tracks_the_bridge_coverage() -> None:
     cleared when the rebuilt index stops covering the object, so it goes
     back to per-object updates."""
     store = _panel_store()
-    assert store.objects[50].raw_owned is False
+    assert 50 not in store._raw_owned
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
-    assert store.objects[50].raw_owned is True
+    assert 50 in store._raw_owned
     retyped = dict(_flaga_row(50, 32), typ_komponentu="roleta_procenty")
-    _apply(store, DETAILS_TOPIC, details(retyped))
-    assert store.objects[50].raw_owned is False
-
-
-def test_clearing_raw_owned_dispatches_the_final_state() -> None:
-    """The flip back to per-object updates is public state; the reply's
-    events must end with a snapshot carrying raw_owned False."""
-    store = _panel_store()
-    _apply(store, "ampio/from/CAFE/state/f/32", "1")
-    retyped = dict(_flaga_row(50, 32), typ_komponentu="roleta_procenty")
-    applied = _apply(store, DETAILS_TOPIC, details(retyped))
-    assert store.objects[50].raw_owned is False
-    assert any(o.id == 50 and o.raw_owned is False for o in _updated(applied))
+    _feed_catalogue(store, retyped)
+    assert 50 not in store._raw_owned
 
 
 # --- the retained replay lands before the catalogue -------------------------
@@ -2020,9 +2061,9 @@ def test_a_retained_edge_before_the_catalogue_applies_at_the_fold() -> None:
     assert store.objects == {}
 
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    applied = _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32)))
+    applied = _feed_catalogue(store, _flaga_row(50, 32))
     obj = store.objects[50]
-    assert obj.state == "1" and obj.raw_owned is True
+    assert obj.state == "1" and 50 in store._raw_owned
     # The reply creates the object and the fold then fills it, so the last
     # event for it carries the replayed value.
     assert [o for o in _updated(applied) if o.id == 50][-1].state == "1"
@@ -2051,7 +2092,7 @@ def test_a_live_frame_for_an_unknown_channel_is_dropped() -> None:
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
     _apply(store, "ampio/from/CAFE/b/4F", _DIAGNOSTICS)
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32)))
+    _feed_catalogue(store, _flaga_row(50, 32))
     assert store.objects[50].state is None
     assert store.modules[7].supply_voltage is None
 
@@ -2062,10 +2103,10 @@ def test_the_held_replay_is_spent_once() -> None:
     store = _store()
     _apply(store, "ampio/from/CAFE/state/f/32", "1", retained=True)
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32)))
+    _feed_catalogue(store, _flaga_row(50, 32))
     _apply(store, "ampio/from/CAFE/state/f/32", "0")
     assert store.objects[50].state == "0"
-    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32)))
+    _feed_catalogue(store, _flaga_row(50, 32))
     assert store.objects[50].state == "0"
 
 
@@ -2089,12 +2130,12 @@ def test_a_held_channel_no_object_exposes_is_discarded() -> None:
     store = _store()
     _apply(store, "ampio/from/CAFE/state/f/99", "1", retained=True)
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32)))
+    _feed_catalogue(store, _flaga_row(50, 32))
     assert store._pending_raw == {}
 
     # The object for that channel appears later and stays on its own path.
-    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32), _flaga_row(52, 99)))
-    assert store.objects[52].state is None and store.objects[52].raw_owned is False
+    _feed_catalogue(store, _flaga_row(50, 32), _flaga_row(52, 99))
+    assert store.objects[52].state is None and 52 not in store._raw_owned
 
 
 def test_a_channel_the_replay_skipped_keeps_the_per_object_path() -> None:
@@ -2104,305 +2145,274 @@ def test_a_channel_the_replay_skipped_keeps_the_per_object_path() -> None:
     store = _store()
     _apply(store, "ampio/from/CAFE/state/f/32", "1", retained=True)
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _apply(store, DETAILS_TOPIC, details(_flaga_row(50, 32), _flaga_row(51, 33)))
-    assert store.objects[50].raw_owned is True and store.objects[50].state == "1"
-    assert store.objects[51].raw_owned is False
+    _feed_catalogue(store, _flaga_row(50, 32), _flaga_row(51, 33))
+    assert 50 in store._raw_owned and store.objects[50].state == "1"
+    assert 51 not in store._raw_owned
 
     _apply(store, f"ampio/fromDB/{USER}/ob/51/state", '{"state":"255","on":1700}')
     assert store.objects[51].state == "255"
 
 
 def test_a_formerly_raw_owned_value_survives_a_skewed_snapshot() -> None:
-    """Clearing raw_owned hands the object back to the per-object path,
-    not to a skewed DB seed: the raw value stamped local time, so a dated
-    snapshot waits for the next request cycle."""
+    """Releasing the object hands it back to the per-object path, not to a
+    skewed DB seed: the raw value stamped local time, so a dated snapshot
+    waits for the next request cycle."""
     store = _panel_store()
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
     retyped = dict(_flaga_row(50, 32), typ_komponentu="roleta_procenty")
-    _apply(store, DETAILS_TOPIC, details(retyped))
-    assert store.objects[50].raw_owned is False
+    _feed_catalogue(store, retyped)
+    assert 50 not in store._raw_owned
     far_future = int((time.time() + 3600) * 1000)
     stan = json.dumps({"state": "0", "on": far_future})
     _apply(store, STATES_TOPIC, json.dumps({"List": [{"id": 50, "stan_json": stan}]}))
     assert store.objects[50].state == "1"
 
 
-def test_colliding_override_macs_warn_once_and_surface(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Raw routing is keyed by mac, so a shared override mac is loud: one
-    warning when the collision appears, silence while it persists, and a
-    cleared set once Designer resolves it."""
+def _collisions(applied: Applied) -> list[NotConfigured]:
+    return [e for e in applied.events if isinstance(e, NotConfigured)]
+
+
+def test_two_module_rows_on_one_mac_are_refused_at_the_door() -> None:
     store = _store()
-    row_a = {"id": 1, "mac": 0xCAFE, "typ_urzadzenia": 4, "nazwa_urzadzenia": "A"}
-    row_b = {"id": 2, "mac": 0xCAFE, "typ_urzadzenia": 4, "nazwa_urzadzenia": "B"}
-    with caplog.at_level("WARNING", logger="ampio_mqtt._store"):
-        _apply(store, DEVICES_TOPIC, devices(row_a, row_b))
-    assert store.colliding_macs == {0xCAFE}
-    assert "share the override mac" in caplog.text
-
-    caplog.clear()
-    renamed = dict(row_b, nazwa_urzadzenia="B2")
-    with caplog.at_level("WARNING", logger="ampio_mqtt._store"):
-        _apply(store, DEVICES_TOPIC, devices(row_a, renamed))
-    assert "share the override mac" not in caplog.text
-
-    resolved = dict(row_b, mac=0xBEEF)
-    _apply(store, DEVICES_TOPIC, devices(row_a, resolved))
-    assert store.colliding_macs == frozenset()
+    applied = _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
+    assert list(store.modules) == [1]
+    assert store.collisions == ((0xB, (2, 3)),)
+    assert [e.collisions for e in _collisions(applied)] == [((0xB, (2, 3)),)]
+    assert store.admission_failure().collisions == ((0xB, (2, 3)),)
+    assert store.module_by_mac(0xB) is None
 
 
-# --- Designer record bundles -------------------------------------------------
+def test_a_collision_found_after_connect_evicts_both_rows() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xC))
+    applied = _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
+    assert [type(e) for e in applied.events] == [
+        ModuleRemoved,
+        ModuleRemoved,
+        NotConfigured,
+    ]
+    assert sorted(
+        e.module.id for e in applied.events if isinstance(e, ModuleRemoved)
+    ) == [
+        2,
+        3,
+    ]
+    assert list(store.modules) == [1]
+    again = _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
+    assert _collisions(again) == []
 
 
-def _seed_catalogue(store: AmpioStore, *rows: dict) -> Applied:
-    """Apply a `devicesDetails` catalogue reply carrying `rows` (or none)."""
-    return _apply(store, DETAILS_TOPIC, details(*rows))
-
-
-def test_apply_designer_records_sets_the_bundle() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
-    _seed_catalogue(
-        store, {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
+def test_a_reordered_collision_reply_emits_nothing_new() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_module_row(2, 0xB), _module_row(3, 0xB)))
+    again = _apply(
+        store, DEVICES_TOPIC, devices(_module_row(3, 0xB), _module_row(2, 0xB))
     )
-    rec = DesignerRecord(location="Potter", matter_device_type=256, desc="Lampa")
-    applied = store.apply_designer_records({64: rec}, {}, {})
-    assert store.objects[64].record == rec
-    assert [e.object.id for e in applied.events] == [64]
-    # Re-applying the identical table is not news.
-    assert store.apply_designer_records({64: rec}, {}, {}).events == []
+    assert store.collisions == ((0xB, (2, 3)),)
+    assert _collisions(again) == []
 
 
-def test_sweep_never_touches_the_catalogue_type_column() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
-    _seed_catalogue(
+def test_a_resolved_collision_re_admits_the_rows() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
+    applied = _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xC))
+    assert sorted(store.modules) == [1, 2, 3]
+    assert store.collisions == ()
+    assert _collisions(applied) == []
+    assert store.admission_failure() is None
+
+
+def test_admission_failure_carries_both_installer_faults() -> None:
+    """One store can hold a leafless object row and a shared module mac,
+    and the failure names each fault in its own sentence."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
+    _feed_catalogue(store, {**_flaga_row(41, 3, mac=0xA), "leafId": ""})
+    failure = store.admission_failure()
+    assert failure.objects == ((41, "Flag"),)
+    assert failure.collisions == ((0xB, (2, 3)),)
+    assert "41 (Flag) carry no leaf" in str(failure)
+    assert "modules 2, 3 share the override mac b" in str(failure)
+
+
+# --- the sweep datasets ------------------------------------------------------
+
+
+def _sweep(store: AdminStore, answered: set[int], **datasets: dict) -> None:
+    """One sweep pass: the macs that answered and what they carried."""
+    store.apply_sweep(
+        frozenset(answered),
+        datasets.get("records", {}),
+        datasets.get("cover_parameters", {}),
+        datasets.get("module_records", {}),
+        datasets.get("capabilities", {}),
+        datasets.get("panel_settings", {}),
+    )
+
+
+def test_a_sweep_holds_the_datasets_by_id_and_by_mac() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA))
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    _sweep(
         store,
-        {
-            "id": 5,
-            "typ_komponentu": "przekaznik",
-            "leafId": "0_cb89_257_2_1",
-            "type": "266",
+        {0xA},
+        records={41: DesignerRecord(location="Hall")},
+        cover_parameters={41: _COVER_PARAMS},
+        module_records={0xA: ModuleRecord(desc="Box")},
+        capabilities={0xA: {5: 4}},
+    )
+    assert store.records[41] == DesignerRecord(location="Hall")
+    assert store.cover_parameters[41] == _COVER_PARAMS
+    assert store.module_records[0xA] == ModuleRecord(desc="Box")
+    assert store.capabilities[0xA] == {5: 4}
+
+
+def test_a_sweep_replaces_every_entry_of_an_answered_mac() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB))
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA), _flaga_row(42, 3, mac=0xB))
+    _sweep(
+        store,
+        {0xA, 0xB},
+        records={
+            41: DesignerRecord(location="Hall"),
+            42: DesignerRecord(location="Bath"),
         },
+        cover_parameters={41: _COVER_PARAMS, 42: _COVER_PARAMS},
+        capabilities={0xA: {5: 4}, 0xB: {}},
+        panel_settings={0xA: _PANEL_SETTINGS, 0xB: _PANEL_SETTINGS},
     )
-    store.apply_designer_records(
-        {5: DesignerRecord(location="Testowe", matter_device_type=256)}, {}, {}
+    _sweep(store, {0xA}, records={}, capabilities={0xA: {}})
+    assert 41 not in store.records
+    assert 41 not in store.cover_parameters
+    assert store.records[42] == DesignerRecord(location="Bath")
+    assert store.cover_parameters[42] == _COVER_PARAMS
+    assert store.capabilities == {0xA: {}, 0xB: {}}
+    assert list(store.panel_settings) == [0xB]
+
+
+def test_a_sweep_emits_nothing() -> None:
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA))
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    assert (
+        store.apply_sweep(
+            frozenset({0xA}), {41: DesignerRecord()}, {}, {}, {0xA: {}}, {}
+        )
+        is None
     )
-    assert store.objects[5].matter_device_type == 266
-    assert store.objects[5].record == DesignerRecord(
-        location="Testowe", matter_device_type=256
-    )
 
 
-def test_record_replaces_wholesale() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
-    row = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
-    _seed_catalogue(store, row)
-    store.apply_designer_records(
-        {64: DesignerRecord(location="Potter", matter_device_type=256, desc="Lampa")},
-        {},
-        {},
-    )
-    applied = store.apply_designer_records(
-        {64: DesignerRecord(location="Salon")}, {}, {}
-    )
-    assert store.objects[64].record == DesignerRecord(location="Salon")
-    assert [e.object.id for e in applied.events] == [64]
-
-
-def test_held_records_accumulate_across_partial_sweeps() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
-    row_a = {"id": 64, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
-    row_b = {"id": 48, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_1"}
-    _seed_catalogue(store, row_a, row_b)
-    store.apply_designer_records({64: DesignerRecord(location="Potter")}, {}, {})
-    store.apply_designer_records({48: DesignerRecord(location="Salon")}, {}, {})
-    _seed_catalogue(store)  # eviction: empty catalogue
-    _seed_catalogue(store, row_a, row_b)  # both return
-    assert store.objects[64].record == DesignerRecord(location="Potter")
-    assert store.objects[48].record == DesignerRecord(location="Salon")
-
-
-def test_record_for_an_unknown_id_waits_for_the_catalogue() -> None:
-    """A resolution racing ahead of the catalogue (or arriving for an
-    object just evicted) creates no placeholder - the held table applies
-    it once the id's own catalogue row lands."""
-    store = AmpioStore(AccessTier.ADMIN)
-    applied = store.apply_designer_records({999: DesignerRecord(location="X")}, {}, {})
-    assert applied.events == []
-    assert store.objects == {}
-    _seed_catalogue(
-        store, {"id": 999, "typ_komponentu": "przekaznik", "leafId": "0_cb89_257_2_0"}
-    )
-    assert store.objects[999].record == DesignerRecord(location="X")
-
-
-def test_apply_designer_records_folds_both_maps_into_one_event() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
-    _seed_catalogue(
+def test_an_eviction_drops_the_object_datasets() -> None:
+    store = _store()
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    _sweep(
         store,
-        {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"},
+        {0xA},
+        records={41: DesignerRecord(location="Hall")},
+        cover_parameters={41: _COVER_PARAMS},
     )
-    rec = DesignerRecord(location="Potter", desc="Roleta")
-    params = CoverParameters(
-        with_slats=False,
-        open_time_s=40,
-        close_time_s=40,
-        calibration_percent=10,
-        slat_time_ms=1000,
-        reversal_lag_ms=500,
-        start_lag_same_ms=None,
-        start_lag_other_ms=None,
-    )
-    applied = store.apply_designer_records({70: rec}, {70: params}, {})
-    assert store.objects[70].record == rec
-    assert store.objects[70].cover_parameters == params
-    assert [e.object.id for e in applied.events] == [70]
-    # Re-applying the identical pair is not news.
-    assert store.apply_designer_records({70: rec}, {70: params}, {}).events == []
+    _feed_catalogue(store)
+    assert 41 not in store.records
+    assert 41 not in store.cover_parameters
 
 
-def test_held_cover_parameters_survive_an_eviction() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
-    row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
-    _seed_catalogue(store, row)
-    params = CoverParameters(
-        with_slats=True,
-        open_time_s=52,
-        close_time_s=52,
-        calibration_percent=10,
-        slat_time_ms=1500,
-        reversal_lag_ms=500,
-        start_lag_same_ms=200,
-        start_lag_other_ms=120,
-    )
-    store.apply_designer_records({}, {70: params}, {})
-    _seed_catalogue(store)  # eviction: empty catalogue
-    _seed_catalogue(store, row)  # the row returns
-    assert store.objects[70].cover_parameters == params
-
-
-def test_a_kind_change_drops_the_held_cover_parameters() -> None:
-    """``cover_parameters`` is None on anything outside the roller class, so
-    a row that leaves the class clears the field and the held entry both. A
-    later return to the class waits for a sweep rather than folding the old
-    value back (#219)."""
-    store = AmpioStore(AccessTier.ADMIN)
-    row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
-    _seed_catalogue(store, row)
-    params = CoverParameters(
-        with_slats=False,
-        open_time_s=40,
-        close_time_s=40,
-        calibration_percent=10,
-        slat_time_ms=1000,
-        reversal_lag_ms=500,
-        start_lag_same_ms=None,
-        start_lag_other_ms=None,
-    )
-    store.apply_designer_records({}, {70: params}, {})
-    _seed_catalogue(store, {**row, "typ_komponentu": "przekaznik"})
-    assert store.objects[70].cover_parameters is None
-    _seed_catalogue(store, row)
-    assert store.objects[70].cover_parameters is None
-
-
-def test_apply_designer_records_folds_the_lock_support() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
-    _seed_catalogue(
+def test_a_moved_leaf_drops_the_object_datasets() -> None:
+    store = _store()
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    _sweep(
         store,
-        {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"},
+        {0xA},
+        records={41: DesignerRecord(location="Hall")},
+        cover_parameters={41: _COVER_PARAMS},
     )
-    applied = store.apply_designer_records({}, {}, {70: True})
-    assert store.objects[70].block_writable is True
-    assert [e.object.id for e in applied.events] == [70]
-    # Re-applying the identical answer is not news.
-    assert store.apply_designer_records({}, {}, {70: True}).events == []
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xB))
+    assert 41 not in store.records
+    assert 41 not in store.cover_parameters
 
 
-def test_held_lock_support_survives_an_eviction() -> None:
-    """False is an answer, so the re-creation after an eviction must keep it
-    rather than read it back as the unresolved None."""
-    store = AmpioStore(AccessTier.ADMIN)
-    row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
-    _seed_catalogue(store, row)
-    store.apply_designer_records({}, {}, {70: False})
-    _seed_catalogue(store)  # eviction: empty catalogue
-    _seed_catalogue(store, row)  # the row returns
-    assert store.objects[70].block_writable is False
-
-
-def test_a_kind_change_drops_the_held_lock_support() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
-    row = {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"}
-    _seed_catalogue(store, row)
-    store.apply_designer_records({}, {}, {70: True})
-    _seed_catalogue(store, {**row, "typ_komponentu": "przekaznik"})
-    assert store.objects[70].block_writable is None
-    _seed_catalogue(store, row)
-    assert store.objects[70].block_writable is None
-
-
-def test_a_locked_cover_keeps_both_facts() -> None:
-    """The lock is a live push and the parameters are a sweep read."""
-    store = AmpioStore(AccessTier.ADMIN)
-    _seed_catalogue(
+def test_a_module_eviction_drops_its_mac_datasets() -> None:
+    """The mac-keyed entries belong to the module row that left, so they
+    leave with it."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA))
+    _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    _sweep(
         store,
-        {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"},
+        {0xA},
+        module_records={0xA: ModuleRecord(desc="Box")},
+        capabilities={0xA: {5: 4}},
+        panel_settings={0xA: _PANEL_SETTINGS},
     )
-    _apply(
-        store,
-        f"ampio/fromDB/{USER}/ob/70/state",
-        '{ "state": "70","block": "3","on": 1789000000000 }',
-    )
-    params = CoverParameters(
-        with_slats=False,
-        open_time_s=40,
-        close_time_s=40,
-        calibration_percent=10,
-        slat_time_ms=1000,
-        reversal_lag_ms=500,
-        start_lag_same_ms=None,
-        start_lag_other_ms=None,
-    )
-    store.apply_designer_records({}, {70: params}, {})
-    assert store.objects[70].cover_parameters == params
-    assert store.objects[70].blocks_opening is True
-    assert store.objects[70].blocks_closing is True
+    _apply(store, DEVICES_TOPIC, devices())
+    assert 0xA not in store.module_records
+    assert 0xA not in store.capabilities
+    assert 0xA not in store.panel_settings
+
+
+def test_a_kind_change_away_from_a_cover_drops_the_parameters() -> None:
+    """Travel parameters belong to a roller channel, so an object that
+    leaves the roller class keeps none, and a change back reads nothing
+    until a sweep answers again."""
+    store = _store()
+    cover = {**_flaga_row(41, 3, mac=0xA), "typ_komponentu": "roleta_procenty"}
+    _feed_catalogue(store, cover)
+    _sweep(store, {0xA}, cover_parameters={41: _COVER_PARAMS})
+    _feed_catalogue(store, {**cover, "typ_komponentu": "przekaznik"})
+    assert 41 not in store.cover_parameters
+    _feed_catalogue(store, cover)
+    assert 41 not in store.cover_parameters
+
+
+def test_the_base_store_holds_no_dataset() -> None:
+    store = _app_store()
+    _feed_catalogue(store, {"id": 41})
+    assert not hasattr(store, "records")
+    _feed_catalogue(store)
+    assert 41 not in store.objects
+
+
+def test_a_sweep_never_touches_the_catalogue_type_column() -> None:
+    store = _store()
+    _feed_catalogue(store, {**_flaga_row(41, 3, mac=0xA), "type": "256"})
+    _sweep(store, {0xA}, records={41: DesignerRecord(matter_device_type=515)})
+    assert store.objects[41].matter_device_type == 256
 
 
 # --- ObjectAdded: an object's first event -----------------------------------
 
 
 def test_new_catalogue_row_dispatches_object_added() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
-    applied = _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
+    store = AdminStore()
+    applied = _feed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
     assert [type(e) for e in applied.events] == [ObjectAdded]
     assert applied.events[0].object.id == 7
     # The same reply again says nothing new.
-    assert _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"}).events == []
+    assert _feed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"}).events == []
 
 
 def test_known_row_change_dispatches_updated_not_added() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
-    _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
-    applied = _seed_catalogue(
+    store = AdminStore()
+    _feed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
+    applied = _feed_catalogue(
         store, {"id": 7, "typ_komponentu": "flaga", "opis_menu": "x"}
     )
     assert [type(e) for e in applied.events] == [ObjectUpdated]
 
 
 def test_recreation_after_eviction_dispatches_added_again() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
-    _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
-    removed = _seed_catalogue(store)  # empty catalogue evicts
+    store = AdminStore()
+    _feed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
+    removed = _feed_catalogue(store)  # empty catalogue evicts
     assert [type(e) for e in removed.events] == [ObjectRemoved]
-    readded = _seed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
+    readded = _feed_catalogue(store, {"id": 7, "typ_komponentu": "flaga"})
     assert [type(e) for e in readded.events] == [ObjectAdded]
 
 
 def test_bare_row_creation_still_dispatches_added() -> None:
-    store = AmpioStore(AccessTier.ADMIN)
-    applied = _seed_catalogue(store, {"id": 9})
+    store = AdminStore()
+    applied = _feed_catalogue(store, {"id": 9})
     assert [type(e) for e in applied.events] == [ObjectAdded]
 
 
@@ -2412,10 +2422,9 @@ def test_bare_row_creation_still_dispatches_added() -> None:
 _RELAY_MODULE = {"id": 8, "mac": 0xB0B0, "typ_urzadzenia": 4, "nazwa_urzadzenia": "r"}
 
 
-def _przekaznik_row(oid: int, funkcja: int, dev: int, leaf: str) -> dict:
+def _przekaznik_row(oid: int, funkcja: int, leaf: str) -> dict:
     return {
         "id": oid,
-        "id_urzadzenia": dev,
         "typ_komponentu": "przekaznik",
         "interpretacja": funkcja,
         "funkcja": funkcja,
@@ -2427,12 +2436,12 @@ def _przekaznik_row(oid: int, funkcja: int, dev: int, leaf: str) -> dict:
 def test_panel_output_o_channel_routes_to_its_object() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _apply(store, DETAILS_TOPIC, details(_przekaznik_row(90, 2, 7, "0_cafe_257_2_1")))
+    _feed_catalogue(store, _przekaznik_row(90, 2, "0_cafe_257_2_1"))
 
     applied = _apply(store, "ampio/from/CAFE/state/o/2", "1")
 
     obj = store.objects[90]
-    assert obj.state == "1" and obj.is_on is True and obj.raw_owned is True
+    assert obj.state == "1" and obj.is_on is True and 90 in store._raw_owned
     assert _updated(applied) == [obj]
 
 
@@ -2441,12 +2450,12 @@ def test_o_channel_of_a_relay_module_is_bridged_too() -> None:
     share the channel shape, so they gain the same raw-first path."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_RELAY_MODULE))
-    _apply(store, DETAILS_TOPIC, details(_przekaznik_row(91, 1, 8, "0_b0b0_257_2_0")))
+    _feed_catalogue(store, _przekaznik_row(91, 1, "0_b0b0_257_2_0"))
 
     applied = _apply(store, "ampio/from/B0B0/state/o/1", "1")
 
     obj = store.objects[91]
-    assert obj.state == "1" and obj.raw_owned is True
+    assert obj.state == "1" and 91 in store._raw_owned
     assert _updated(applied) == [obj]
 
 
@@ -2457,31 +2466,31 @@ def test_a_channel_routes_to_an_open_collector_relay() -> None:
     """A przekaznik on leaf class 67 reports on the `a` prefix, not `o`."""
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_INOC_MODULE))
-    _apply(store, DETAILS_TOPIC, details(_przekaznik_row(93, 8, 9, "0_1a2b_67_0_7")))
+    _feed_catalogue(store, _przekaznik_row(93, 8, "0_1a2b_67_0_7"))
 
     ignored = _apply(store, "ampio/from/1A2B/state/o/8", "1")
     assert _updated(ignored) == []
 
     applied = _apply(store, "ampio/from/1A2B/state/a/8", "255")
     obj = store.objects[93]
-    assert obj.state == "255" and obj.is_on is True and obj.raw_owned is True
+    assert obj.state == "255" and obj.is_on is True and 93 in store._raw_owned
     assert _updated(applied) == [obj]
 
 
 def test_a_channel_does_not_route_a_binary_output_relay() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_RELAY_MODULE))
-    _apply(store, DETAILS_TOPIC, details(_przekaznik_row(91, 1, 8, "0_b0b0_257_2_0")))
+    _feed_catalogue(store, _przekaznik_row(91, 1, "0_b0b0_257_2_0"))
 
     applied = _apply(store, "ampio/from/B0B0/state/a/1", "255")
     assert _updated(applied) == []
-    assert store.objects[91].raw_owned is False
+    assert 91 not in store._raw_owned
 
 
 def test_panel_output_per_object_echo_is_dropped_once_raw_owned() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _apply(store, DETAILS_TOPIC, details(_przekaznik_row(90, 2, 7, "0_cafe_257_2_1")))
+    _feed_catalogue(store, _przekaznik_row(90, 2, "0_cafe_257_2_1"))
     _apply(store, "ampio/from/CAFE/state/o/2", "1")
 
     applied = _apply(

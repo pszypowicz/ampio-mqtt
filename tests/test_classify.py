@@ -96,8 +96,6 @@ def test_bit32_is_generic_measurement() -> None:
         "led",
         "roleta_procenty",
         "flaga",
-        "detekcja",
-        "symulacja",
         "wej",
     ],
 )
@@ -113,19 +111,16 @@ def test_unknown_type_falls_back_to_generic() -> None:
 
 
 @pytest.mark.parametrize(
-    ("typ", "key", "device_class"),
+    ("typ", "key"),
     [
-        ("flaga", "flaga", None),  # generic boolean
-        ("detekcja", "detekcja", "presence"),
-        ("symulacja", "symulacja", None),  # generic boolean
-        ("wej", "wej", None),  # physical input, generic boolean (#117)
+        ("flaga", "flaga"),  # generic boolean
+        ("wej", "wej"),  # physical input, generic boolean (#117)
     ],
 )
-def test_classify_input_types(typ, key, device_class) -> None:
+def test_classify_input_types(typ, key) -> None:
     kind = _input(typ, 1)
     assert kind is not None
     assert kind.key == key
-    assert kind.device_class == device_class
 
 
 @pytest.mark.parametrize(
@@ -133,27 +128,14 @@ def test_classify_input_types(typ, key, device_class) -> None:
     [
         ("flaga", True),
         ("wej", False),
-        ("detekcja", False),
-        ("symulacja", False),
     ],
 )
 def test_input_switchability(typ: str, switchable: bool) -> None:
     """Only `flaga` answers the switch verbs. A `wej` ignores them on both
-    account tiers, and the other two have never been driven."""
+    account tiers."""
     kind = _input(typ, 1)
     assert kind is not None
     assert kind.switchable is switchable
-
-
-@pytest.mark.parametrize(
-    ("typ", "name"),
-    [("detekcja", "Presence detection"), ("symulacja", "Presence simulation")],
-)
-def test_system_inputs_carry_the_feature_names(typ: str, name: str) -> None:
-    """The two system objects are named after the M-SERV feature they carry."""
-    kind = _input(typ, 1)
-    assert kind is not None
-    assert kind.name == name
 
 
 @pytest.mark.parametrize(
@@ -256,8 +238,6 @@ def test_output_pulsability(typ: str, pulsable: bool) -> None:
         ("lin_wej", SensorKind),
         ("bit32", SensorKind),
         ("flaga", InputKind),
-        ("detekcja", InputKind),
-        ("symulacja", InputKind),
         ("wej", InputKind),
         ("przekaznik", OutputKind),
         ("led", OutputKind),
@@ -310,8 +290,6 @@ def test_kind_key_vocabulary_contents() -> None:
         "alarm",
         "alarm_armed",
         "alarm_alarmed",
-        "detekcja",
-        "symulacja",
         "wej",
     } == INPUT_KIND_KEYS
     assert {
@@ -388,14 +366,17 @@ def test_alarm_halves_split_on_the_leaf_sub_function(sub_sf_id: int, key: str) -
     kind = classify("satel_alarm", 1, sub_sf_id)
     assert isinstance(kind, InputKind)
     assert kind.key == key
-    assert kind.device_class is None
 
 
-@pytest.mark.parametrize("sub_sf_id", [None, 1, 2, 9])
-def test_an_unproven_alarm_sub_function_keeps_the_family(sub_sf_id: int | None) -> None:
+@pytest.mark.parametrize("sub_sf_id", [1, 2, 9])
+def test_an_unproven_alarm_sub_function_keeps_the_family(sub_sf_id: int) -> None:
     """typ_komponentu alone decides the family, so an object with no proven
     half stays an alarm input. The leaf only refines the name."""
     kind = classify("satel_alarm", 1, sub_sf_id)
     assert isinstance(kind, InputKind)
     assert (kind.key, kind.name) == ("alarm", "Alarm")
-    assert kind.device_class is None
+
+
+def test_a_sub_function_outside_the_two_halves_is_the_base_alarm() -> None:
+    assert classify("satel_alarm", 0).key == "alarm"
+    assert classify("satel_alarm", 0, 9).key == "alarm"

@@ -8,34 +8,46 @@ import json
 import aiomqtt
 import pytest
 from conftest import (
-    ADMIN_DETAILS_TOPIC,
+    ADMIN_DATA_DEVICES_TOPIC,
     ADMIN_DEVICES_TOPIC,
+    ADMIN_PARAMS_DEVICES_TOPIC,
     ADMIN_USER,
     API_TOPIC,
-    DATA_DEVICES_TOPIC,
     USER,
     FakeBroker,
+    catalogue,
     deliver_later,
     details,
     devices,
     feed,
+    make_admin_client,
+    make_client,
+    params_of,
 )
 
 from ampio_mqtt import (
     HEATING_MODES,
     MAX_PANEL_FIELD,
+    AmpioAdminClient,
     AmpioClient,
     AmpioConnectionError,
+    AmpioNotConfigured,
     AmpioTimeoutError,
+    AmpioUnsupported,
     AmpioValueError,
+    LockRefusal,
+    LockTarget,
     ModuleFunction,
 )
+from ampio_mqtt.client import _LOCK_REFUSALS
 
 
 async def test_command_builds_payload_on_the_account_topic(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 64})
+    broker.published.clear()
     await client.command(64, "setValue", 255)
     assert broker.published == [(API_TOPIC, b"/api/set/64/setValue/255")]
     # Commands publish at QoS 1 so returning means the broker accepted the
@@ -47,6 +59,8 @@ async def test_command_without_args_omits_trailing_slash(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 64})
+    broker.published.clear()
     await client.command(64, "turnOn")
     assert broker.published == [(API_TOPIC, b"/api/set/64/turnOn")]
 
@@ -81,6 +95,8 @@ async def test_helpers_map_to_verified_verbs(
     connected: tuple[AmpioClient, FakeBroker], call, expected: bytes
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 64}, {"id": 111}, {"id": 50}, {"id": 48})
+    broker.published.clear()
     await call(client)
     assert broker.published == [(API_TOPIC, expected)]
 
@@ -115,57 +131,100 @@ async def test_boundary_values_pass_the_range_checks(
     """The range limits themselves are legal commands - an off-by-one in
     the range checks must not silently reject them."""
     client, broker = connected
+    catalogue(client, {"id": 111}, {"id": 50}, {"id": 48})
+    broker.published.clear()
     await call(client)
     assert broker.published == [(API_TOPIC, expected)]
 
 
 @pytest.mark.parametrize(
-    "call",
+    ("call", "match"),
     [
-        lambda c: c.set_value(1, 256),
-        lambda c: c.set_value(1, -1),
-        lambda c: c.set_value(1, 10, pulse_ms=-5),
-        lambda c: c.set_colors(1, 0, 0, 300),
-        lambda c: c.set_roller_pos(1, 101),
-        lambda c: c.set_roller_pos(1, 50, lamella=200),
+        (lambda c: c.set_value(1, 256), "value must be an int in 0..255, got 256"),
+        (lambda c: c.set_value(1, -1), "value must be an int in 0..255, got -1"),
+        (
+            lambda c: c.set_value(1, 10, pulse_ms=-5),
+            "pulse_ms must be an int in 0..655350, got -5",
+        ),
+        (
+            lambda c: c.set_colors(1, 0, 0, 300),
+            "blue must be an int in 0..255, got 300",
+        ),
+        (
+            lambda c: c.set_roller_pos(1, 101),
+            "position must be an int in 0..100, got 101",
+        ),
+        (
+            lambda c: c.set_roller_pos(1, 50, lamella=200),
+            "lamella must be an int in 0..100, got 200",
+        ),
     ],
 )
 async def test_out_of_range_arguments_are_rejected(
-    connected: tuple[AmpioClient, FakeBroker], call
+    connected: tuple[AmpioClient, FakeBroker], call, match: str
 ) -> None:
     client, broker = connected
-    with pytest.raises(AmpioValueError):
+    catalogue(client, {"id": 1, "typ_komponentu": "przekaznik"})
+    broker.published.clear()
+    with pytest.raises(AmpioValueError, match=match):
         await call(client)
     assert broker.published == []
 
 
 @pytest.mark.parametrize(
-    "call",
+    ("call", "match"),
     [
-        lambda c: c.set_value(1, True),
-        lambda c: c.set_value(1, 10, pulse_ms=True),
-        lambda c: c.set_colors(1, True, 0, 0),
-        lambda c: c.set_roller_pos(1, False),
-        lambda c: c.set_roller_lamella(1, True),
-        lambda c: c.set_event(True),
+        (lambda c: c.set_value(1, True), "value must be an int in 0..255, got True"),
+        (
+            lambda c: c.set_value(1, 10, pulse_ms=True),
+            "pulse_ms must be an int in 0..655350, got True",
+        ),
+        (
+            lambda c: c.set_colors(1, True, 0, 0),
+            "red must be an int in 0..255, got True",
+        ),
+        (
+            lambda c: c.set_roller_pos(1, False),
+            "position must be an int in 0..100, got False",
+        ),
+        (
+            lambda c: c.set_roller_lamella(1, True),
+            "lamella must be an int in 0..100, got True",
+        ),
+        (
+            lambda c: c.set_event(True),
+            "event_number must be an int in 1..65535, got True",
+        ),
     ],
 )
 async def test_bool_arguments_are_rejected(
-    connected: tuple[AmpioClient, FakeBroker], call
+    connected: tuple[AmpioClient, FakeBroker], call, match: str
 ) -> None:
     """bool passes isinstance(int) and the type checker, but the wire
     encoding is str(), so it would go out as the literal 'True' - a
     malformed command the M-SERV silently drops."""
     client, broker = connected
-    with pytest.raises(AmpioValueError):
+    catalogue(client, {"id": 1, "typ_komponentu": "przekaznik"})
+    broker.published.clear()
+    with pytest.raises(AmpioValueError, match=match):
         await call(client)
     assert broker.published == []
 
 
 async def test_command_requires_a_connection() -> None:
     client = AmpioClient("host", username=USER)
+    catalogue(client, {"id": 64})
     with pytest.raises(AmpioConnectionError):
         await client.turn_on(64)
+
+
+async def test_a_write_for_an_id_outside_the_catalogue_raises(connected) -> None:
+    client, broker = connected
+    with pytest.raises(AmpioValueError, match="999"):
+        await client.command(999, "turnOn")
+    with pytest.raises(AmpioValueError, match="999"):
+        await client.turn_on(999)
+    assert not broker.published
 
 
 # --- the rgbw switch-verb exception ----------------------------------------
@@ -173,7 +232,7 @@ async def test_command_requires_a_connection() -> None:
 
 def _learn(client: AmpioClient, oid: int, typ: str) -> None:
     """Teach the store one object's type via a catalogue reply."""
-    feed(client, DATA_DEVICES_TOPIC, details({"id": oid, "typ_komponentu": typ}))
+    catalogue(client, {"id": oid, "typ_komponentu": typ})
 
 
 async def test_turn_off_on_rgbw_routes_through_set_colors(
@@ -198,11 +257,11 @@ async def test_turn_on_and_switch_on_rgbw_are_rejected(
     and turning a color light on means choosing a color - the consumer's
     call via `set_colors()`. Rejecting before the wire beats a silent no-op,
     exactly as the range checks do. The kind comes from the catalogue, so
-    this is the install refusing a well-formed call and stays a plain
-    ``ValueError``."""
+    this is the install refusing a well-formed call, not the caller's
+    fault."""
     client, broker = connected
     _learn(client, 50, "rgbw")
-    with pytest.raises(ValueError) as refused:
+    with pytest.raises(AmpioUnsupported) as refused:
         await call(client)
     assert not isinstance(refused.value, AmpioValueError)
     assert broker.published == []
@@ -232,6 +291,8 @@ async def test_set_ww_packs_both_axes(
 ) -> None:
     """One packed argument carries both axes: `power | coldness<<8`."""
     client, broker = connected
+    catalogue(client, {"id": 197})
+    broker.published.clear()
     await client.set_ww(197, 84, 85)
     assert broker.published == [(API_TOPIC, b"/api/set/197/setWW/21844")]
 
@@ -241,6 +302,8 @@ async def test_set_ww_power_drives_the_power_axis_alone(
 ) -> None:
     """`setWWPower` leaves the color temperature where it stands."""
     client, broker = connected
+    catalogue(client, {"id": 197})
+    broker.published.clear()
     await client.set_ww_power(197, 35)
     assert broker.published == [(API_TOPIC, b"/api/set/197/setWWPower/35")]
 
@@ -250,30 +313,46 @@ async def test_set_ww_coldness_drives_the_temperature_axis_alone(
 ) -> None:
     """`setWWColdness` leaves the power where it stands."""
     client, broker = connected
+    catalogue(client, {"id": 197})
+    broker.published.clear()
     await client.set_ww_coldness(197, 150)
     assert broker.published == [(API_TOPIC, b"/api/set/197/setWWColdness/150")]
 
 
 @pytest.mark.parametrize(
-    "call",
+    ("call", "match"),
     [
-        lambda c: c.set_ww(197, 256, 0),
-        lambda c: c.set_ww(197, -1, 0),
-        lambda c: c.set_ww(197, 0, 256),
-        lambda c: c.set_ww(197, 0, -1),
-        lambda c: c.set_ww_power(197, 256),
-        lambda c: c.set_ww_power(197, -1),
-        lambda c: c.set_ww_coldness(197, 256),
-        lambda c: c.set_ww_coldness(197, -1),
+        (lambda c: c.set_ww(197, 256, 0), "power must be an int in 0..255, got 256"),
+        (lambda c: c.set_ww(197, -1, 0), "power must be an int in 0..255, got -1"),
+        (
+            lambda c: c.set_ww(197, 0, 256),
+            "coldness must be an int in 0..255, got 256",
+        ),
+        (lambda c: c.set_ww(197, 0, -1), "coldness must be an int in 0..255, got -1"),
+        (
+            lambda c: c.set_ww_power(197, 256),
+            "power must be an int in 0..255, got 256",
+        ),
+        (lambda c: c.set_ww_power(197, -1), "power must be an int in 0..255, got -1"),
+        (
+            lambda c: c.set_ww_coldness(197, 256),
+            "coldness must be an int in 0..255, got 256",
+        ),
+        (
+            lambda c: c.set_ww_coldness(197, -1),
+            "coldness must be an int in 0..255, got -1",
+        ),
     ],
 )
 async def test_ww_axes_are_range_checked(
-    connected: tuple[AmpioClient, FakeBroker], call
+    connected: tuple[AmpioClient, FakeBroker], call, match: str
 ) -> None:
     """Both axes are single bytes; a value outside 0-255 never reaches the
     wire."""
     client, broker = connected
-    with pytest.raises(AmpioValueError):
+    catalogue(client, {"id": 197})
+    broker.published.clear()
+    with pytest.raises(AmpioValueError, match=match):
         await call(client)
     assert broker.published == []
 
@@ -306,7 +385,7 @@ async def test_turn_on_on_ledww_is_rejected(
     library refuses before the wire and names the verb that works."""
     client, broker = connected
     _learn(client, 197, "ledww")
-    with pytest.raises(ValueError) as refused:
+    with pytest.raises(AmpioUnsupported) as refused:
         await client.turn_on(197)
     assert "set_ww_power" in str(refused.value)
     assert broker.published == []
@@ -319,7 +398,7 @@ async def test_set_value_on_ledww_is_rejected(
     `setWWPower` alone."""
     client, broker = connected
     _learn(client, 197, "ledww")
-    with pytest.raises(ValueError):
+    with pytest.raises(AmpioUnsupported):
         await client.set_value(197, 200)
     assert broker.published == []
 
@@ -333,7 +412,7 @@ async def test_pulse_is_refused_where_nothing_reverts(
     (#248)."""
     client, broker = connected
     _learn(client, 198, typ)
-    with pytest.raises(ValueError) as refused:
+    with pytest.raises(AmpioUnsupported) as refused:
         await client.set_value(198, 100, pulse_ms=500)
     assert "does not pulse" in str(refused.value)
     assert broker.published == []
@@ -349,7 +428,7 @@ async def test_set_value_on_a_cover_is_rejected(
     (#253)."""
     client, broker = connected
     _learn(client, 193, typ)
-    with pytest.raises(ValueError) as refused:
+    with pytest.raises(AmpioUnsupported) as refused:
         await client.set_value(193, 80, pulse_ms=pulse_ms)
     assert "set_roller_pos()" in str(refused.value)
     assert broker.published == []
@@ -375,22 +454,6 @@ async def test_pulse_on_a_relay_still_writes_the_timed_form(
     assert broker.published == [(API_TOPIC, b"/api/set/199/setValue/255/50")]
 
 
-async def test_switch_verbs_pass_through_when_kind_is_unknown(
-    connected: tuple[AmpioClient, FakeBroker],
-) -> None:
-    """Before metadata arrives the library cannot know better than the
-    caller, so the plain verbs go out unfiltered."""
-    client, broker = connected
-    await client.turn_on(99)
-    await client.switch(99)
-    await client.turn_off(99)
-    assert broker.published == [
-        (API_TOPIC, b"/api/set/99/turnOn"),
-        (API_TOPIC, b"/api/set/99/switch"),
-        (API_TOPIC, b"/api/set/99/turnOff"),
-    ]
-
-
 # --- cover tilt ------------------------------------------------------------
 
 
@@ -399,6 +462,8 @@ async def test_position_only_move_leaves_the_slats_alone(
 ) -> None:
     """Both cover types take the sentinel on the axis that must not move."""
     client, broker = connected
+    catalogue(client, {"id": 48}, {"id": 66})
+    broker.published.clear()
     await client.set_roller_pos(48, 55)
     await client.set_roller_pos(66, 95)
     assert broker.published == [
@@ -411,6 +476,8 @@ async def test_tilt_only_move_leaves_the_position_alone(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 66})
+    broker.published.clear()
     await client.set_roller_lamella(66, 50)
     assert broker.published == [(API_TOPIC, b"/api/set/66/setRollerPos/101/50")]
 
@@ -419,6 +486,8 @@ async def test_stop_publishes_the_stop_verb(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 66})
+    broker.published.clear()
     await client.stop(66)
     assert broker.published == [(API_TOPIC, b"/api/set/66/stop")]
 
@@ -427,6 +496,8 @@ async def test_both_axes_move_in_one_command(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 66})
+    broker.published.clear()
     await client.set_roller_pos(66, 95, lamella=20)
     assert broker.published == [(API_TOPIC, b"/api/set/66/setRollerPos/95/20")]
 
@@ -436,7 +507,11 @@ async def test_tilt_range_is_checked(
     connected: tuple[AmpioClient, FakeBroker], lamella: int
 ) -> None:
     client, broker = connected
-    with pytest.raises(ValueError):
+    catalogue(client, {"id": 66})
+    broker.published.clear()
+    with pytest.raises(
+        ValueError, match=f"lamella must be an int in 0..100, got {lamella}"
+    ):
         await client.set_roller_lamella(66, lamella)
     assert broker.published == []
 
@@ -445,6 +520,8 @@ async def test_set_temperature_publishes_the_setpoint(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 138})
+    broker.published.clear()
     await client.set_temperature(138, 21.5)
     await client.set_temperature(138, 19)
     assert broker.published == [
@@ -469,6 +546,8 @@ async def test_set_heating_mode_publishes_the_letter(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, broker = connected
+    catalogue(client, {"id": 138})
+    broker.published.clear()
     for mode in sorted(HEATING_MODES):
         await client.set_heating_mode(138, mode)
     assert broker.published == [
@@ -520,13 +599,10 @@ async def test_confirm_ignores_updates_for_other_objects(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     client, _ = connected
-    feed(
+    catalogue(
         client,
-        DATA_DEVICES_TOPIC,
-        details(
-            {"id": 64, "typ_komponentu": "przekaznik"},
-            {"id": 65, "typ_komponentu": "przekaznik"},
-        ),
+        {"id": 64, "typ_komponentu": "przekaznik"},
+        {"id": 65, "typ_komponentu": "przekaznik"},
     )
     task = asyncio.create_task(client.turn_on(64, confirm=1.0))
     delivery = deliver_later(
@@ -560,6 +636,7 @@ async def test_confirm_defaults_off(
     """Without confirm the call is fire-and-forget: returns None as soon as
     the broker acknowledges, arming nothing."""
     client, _ = connected
+    catalogue(client, {"id": 64})
     assert await client.command(64, "turnOn") is None
     assert client._listeners == []
 
@@ -603,24 +680,6 @@ async def test_wrappers_thread_confirm_through(
     assert obj.id == oid
 
 
-async def test_confirm_survives_the_catalogue_race(
-    connected: tuple[AmpioClient, FakeBroker],
-) -> None:
-    """A command sent before any catalogue establishes the object still
-    confirms: its echo waits in the pending buffer and surfaces with the
-    catalogue row, so a consumer commanding right after connect is not
-    condemned to a spurious timeout."""
-    client, _ = connected
-    task = asyncio.create_task(client.set_value(70, 255, confirm=1.0))
-    await asyncio.sleep(0)  # the waiter arms before the publish
-    feed(client, _ob_state(70), _push("255"))
-    assert not task.done()
-    feed(client, DATA_DEVICES_TOPIC, details({"id": 70, "typ_komponentu": "flaga"}))
-    obj = await task
-    assert obj is not None
-    assert (obj.id, obj.state) == (70, "255")
-
-
 async def test_concurrent_confirms_resolve_on_one_echo(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
@@ -656,9 +715,7 @@ async def test_confirm_on_the_admin_tier_resolves_on_the_raw_edge() -> None:
     primitive, or admin-tier confirms on bridged inputs would always
     time out."""
     broker = FakeBroker()
-    client = AmpioClient(
-        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
-    )
+    client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         feed(
@@ -675,11 +732,23 @@ async def test_confirm_on_the_admin_tier_resolves_on_the_raw_edge() -> None:
         )
         feed(
             client,
-            ADMIN_DETAILS_TOPIC,
+            ADMIN_PARAMS_DEVICES_TOPIC,
+            params_of(
+                {
+                    "id": 10,
+                    "typ_komponentu": "flaga",
+                    "interpretacja": 1,
+                    "funkcja": 3,
+                    "opis_menu": "Flag",
+                }
+            ),
+        )
+        feed(
+            client,
+            ADMIN_DATA_DEVICES_TOPIC,
             details(
                 {
                     "id": 10,
-                    "id_urzadzenia": 7,
                     "typ_komponentu": "flaga",
                     "interpretacja": 1,
                     "funkcja": 3,
@@ -705,12 +774,10 @@ ADMIN_API_TOPIC = f"ampio/control/{ADMIN_USER}/api"
 PANEL_RAW_TOPIC = "ampio/to/cafe/raw"
 
 
-async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
+async def _admin_with_panel_output() -> tuple[AmpioAdminClient, FakeBroker]:
     """Admin client whose catalogue holds a panel LED (90) and a relay (91)."""
     broker = FakeBroker()
-    client = AmpioClient(
-        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
-    )
+    client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     feed(
         client,
@@ -723,11 +790,10 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
     )
     feed(
         client,
-        ADMIN_DETAILS_TOPIC,
-        details(
+        ADMIN_PARAMS_DEVICES_TOPIC,
+        params_of(
             {
                 "id": 90,
-                "id_urzadzenia": 7,
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 2,
                 "funkcja": 2,
@@ -736,7 +802,6 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 91,
-                "id_urzadzenia": 8,
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 1,
                 "funkcja": 1,
@@ -745,7 +810,6 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 93,
-                "id_urzadzenia": 9,
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 8,
                 "funkcja": 8,
@@ -754,7 +818,44 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 94,
-                "id_urzadzenia": 8,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 4,
+                "funkcja": 4,
+                "leafId": "0_b0b0_999_0_3",
+                "opis_menu": "Odd",
+            },
+        ),
+    )
+    feed(
+        client,
+        ADMIN_DATA_DEVICES_TOPIC,
+        details(
+            {
+                "id": 90,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 2,
+                "funkcja": 2,
+                "leafId": "0_cafe_257_2_1",
+                "opis_menu": "LED",
+            },
+            {
+                "id": 91,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 1,
+                "funkcja": 1,
+                "leafId": "0_b0b0_257_2_0",
+                "opis_menu": "Relay",
+            },
+            {
+                "id": 93,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 8,
+                "funkcja": 8,
+                "leafId": "0_1a2b_67_0_7",
+                "opis_menu": "OC",
+            },
+            {
+                "id": 94,
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 4,
                 "funkcja": 4,
@@ -769,7 +870,7 @@ async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
 
 
 async def test_panel_output_switch_verbs_ride_the_raw_frame() -> None:
-    """The frame channel is the 0-based leaf_io_no, one below funkcja."""
+    """The frame channel is the 0-based address.channel, one below funkcja."""
     client, broker = await _admin_with_panel_output()
     try:
         await client.turn_on(90)
@@ -855,7 +956,7 @@ async def test_oc_output_confirm_resolves_on_the_a_edge() -> None:
         feed(client, "ampio/from/1A2B/state/a/8", "255")
         obj = await task
         assert obj is not None
-        assert obj.state == "255" and obj.raw_owned is True
+        assert obj.state == "255" and 93 in client._store._raw_owned
     finally:
         await client.disconnect()
 
@@ -867,11 +968,24 @@ async def test_server_owned_output_keeps_the_api_path() -> None:
     try:
         feed(
             client,
-            ADMIN_DETAILS_TOPIC,
+            ADMIN_PARAMS_DEVICES_TOPIC,
+            params_of(
+                {
+                    "id": 92,
+                    "typ_komponentu": "przekaznik",
+                    "interpretacja": 1,
+                    "funkcja": 1,
+                    "leafId": "0_1_257_2_0",
+                    "opis_menu": "Virtual",
+                }
+            ),
+        )
+        feed(
+            client,
+            ADMIN_DATA_DEVICES_TOPIC,
             details(
                 {
                     "id": 92,
-                    "id_urzadzenia": 1,
                     "typ_komponentu": "przekaznik",
                     "interpretacja": 1,
                     "funkcja": 1,
@@ -894,23 +1008,48 @@ async def test_restricted_tier_keeps_the_api_path_for_panel_objects(
     the /api form - which the M-SERV drops for a panel output, surfaced
     by confirm=. Documented as an Ampio limitation in panel-writes.md."""
     client, broker = connected
-    feed(
+    catalogue(
         client,
-        DATA_DEVICES_TOPIC,
-        details(
-            {
-                "id": 90,
-                "id_urzadzenia": 7,
-                "typ_komponentu": "przekaznik",
-                "interpretacja": 2,
-                "funkcja": 2,
-                "leafId": "0_cafe_257_2_1",
-                "opis_menu": "LED",
-            }
-        ),
+        {
+            "id": 90,
+            "typ_komponentu": "przekaznik",
+            "interpretacja": 2,
+            "funkcja": 2,
+            "leafId": "0_cafe_257_2_1",
+            "opis_menu": "LED",
+        },
     )
+    broker.published.clear()
     await client.turn_on(90)
     assert broker.published == [(API_TOPIC, b"/api/set/90/turnOn")]
+
+
+async def test_a_binary_output_rides_the_raw_frame_on_the_admin_client_only() -> None:
+    """The same catalogue row takes the `/api` path on the base client and
+    the raw CAN write topic on the admin client: the class decides."""
+    row = {
+        "id": 5,
+        "typ_komponentu": "przekaznik",
+        "interpretacja": 0,
+        "leafId": "0_be82_257_0_1",
+    }
+    broker = FakeBroker()
+    client = make_client(broker)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    catalogue(client, row)
+    broker.published.clear()
+    await client.turn_on(5)
+    assert broker.published == [(f"ampio/control/{USER}/api", b"/api/set/5/turnOn")]
+    await client.disconnect()
+
+    broker = FakeBroker()
+    admin = make_admin_client(broker)
+    await admin.connect(timeout=2.0, discovery_timeout=0.01)
+    catalogue(admin, row)
+    broker.published.clear()
+    await admin.turn_on(5)
+    assert [t for t, _ in broker.published] == ["ampio/to/be82/raw"]
+    await admin.disconnect()
 
 
 async def test_panel_output_confirm_resolves_on_the_raw_edge() -> None:
@@ -951,11 +1090,22 @@ async def test_flag_switch_verbs_ride_api_on_the_admin_tier() -> None:
     try:
         feed(
             client,
-            ADMIN_DETAILS_TOPIC,
+            ADMIN_PARAMS_DEVICES_TOPIC,
+            params_of(
+                {
+                    "id": 93,
+                    "typ_komponentu": "flaga",
+                    "leafId": "0_cafe_3_0_23",
+                    "opis_menu": "Flag",
+                }
+            ),
+        )
+        feed(
+            client,
+            ADMIN_DATA_DEVICES_TOPIC,
             details(
                 {
                     "id": 93,
-                    "id_urzadzenia": 7,
                     "typ_komponentu": "flaga",
                     "leafId": "0_cafe_3_0_23",
                     "opis_menu": "Flag",
@@ -993,12 +1143,10 @@ async def test_flag_switch_verbs_ride_api_on_the_restricted_tier(
 # --- panel buzzer (the raw CAN write path) ----------------------------------
 
 
-async def _admin_with_panel_module() -> tuple[AmpioClient, FakeBroker]:
+async def _admin_with_panel_module() -> tuple[AmpioAdminClient, FakeBroker]:
     """Admin client whose module catalogue holds one M-DOT panel (id 7)."""
     broker = FakeBroker()
-    client = AmpioClient(
-        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
-    )
+    client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     feed(
         client,
@@ -1081,8 +1229,13 @@ async def test_the_panel_mask_is_one_width_whatever_the_module_reports() -> None
     client, broker = await _admin_with_panel_module()
     try:
         await client.set_panel_backlight(7, 0, 255, 0)
-        client._store.apply_module_sweep(
-            {}, {0xCAFE: {ModuleFunction.BACKLIGHT_RGBW: 4}}, {}
+        client._store.apply_sweep(
+            frozenset({0xCAFE}),
+            {},
+            {},
+            {},
+            {0xCAFE: {ModuleFunction.BACKLIGHT_RGBW: 4}},
+            {},
         )
         await client.set_panel_backlight(7, 0, 255, 0)
         assert broker.published == [
@@ -1106,17 +1259,15 @@ async def test_a_field_beyond_the_frame_is_refused() -> None:
         await client.disconnect()
 
 
-async def test_a_bad_field_and_an_unknown_module_raise_apart() -> None:
-    """A consumer validates against ``MAX_PANEL_FIELD`` before it publishes,
-    and the two rejections no longer look alike: the argument fault is an
-    ``AmpioValueError``, the install-state one is not (#220)."""
+async def test_a_bad_field_and_an_unknown_module_both_raise_ampio_value_error() -> None:
+    """A bad field and an unknown module id are both the caller's own
+    fault, before any publish (#220)."""
     client, _broker = await _admin_with_panel_module()
     try:
         with pytest.raises(AmpioValueError):
             await client.set_panel_status_light(7, 0, 255, 0, fields=[0])
-        with pytest.raises(ValueError) as unknown:
+        with pytest.raises(AmpioValueError):
             await client.set_panel_status_light(9, 0, 255, 0, fields=[1])
-        assert not isinstance(unknown.value, AmpioValueError)
     finally:
         await client.disconnect()
 
@@ -1159,7 +1310,7 @@ async def test_panel_writes_reject_bad_arguments_without_a_publish() -> None:
             await client.lock_panel(7, seconds=0)
         with pytest.raises(ValueError):
             await client.lock_panel(7, seconds=655.36)
-        with pytest.raises(ValueError):
+        with pytest.raises(AmpioValueError):
             await client.lock_panel(8, seconds=10)
         with pytest.raises(ValueError):
             await client.set_panel_backlight(7, 256, 0, 0)
@@ -1171,7 +1322,7 @@ async def test_panel_writes_reject_bad_arguments_without_a_publish() -> None:
             await client.set_panel_backlight(7, 0, 0, 0, fields=[25])
         with pytest.raises(ValueError):
             await client.set_panel_status_light(7, 0, 0, 300)
-        with pytest.raises(ValueError):
+        with pytest.raises(AmpioValueError):
             await client.set_panel_status_light(8, 0, 0, 0)
         assert broker.published == []
     finally:
@@ -1192,7 +1343,7 @@ async def test_buzz_rejects_bad_arguments_without_a_publish() -> None:
             await client.buzz_pattern(7, tone=6, seconds=1.0, cycles=255)
         with pytest.raises(ValueError):
             await client.buzz_pattern(7, tone=32, seconds=1.0)
-        with pytest.raises(ValueError):
+        with pytest.raises(AmpioValueError):
             await client.buzz(8)
         with pytest.raises(ValueError):
             await client.buzz(7, tone=True)
@@ -1201,16 +1352,6 @@ async def test_buzz_rejects_bad_arguments_without_a_publish() -> None:
         assert broker.published == []
     finally:
         await client.disconnect()
-
-
-async def test_buzz_needs_the_admin_tier(
-    connected: tuple[AmpioClient, FakeBroker],
-) -> None:
-    """The CAN write tree answers the admin login only."""
-    client, broker = connected
-    with pytest.raises(RuntimeError):
-        await client.buzz(7)
-    assert broker.published == []
 
 
 # --- module identify (the raw CAN write path) ------------------------------
@@ -1240,41 +1381,13 @@ async def test_identify_stop_sends_the_stop_frame() -> None:
 async def test_identify_rejects_an_unknown_module_without_a_publish() -> None:
     client, broker = await _admin_with_panel_module()
     try:
-        with pytest.raises(ValueError):
+        with pytest.raises(AmpioValueError):
             await client.identify(8)
-        with pytest.raises(ValueError):
+        with pytest.raises(AmpioValueError):
             await client.identify_stop(8)
         assert broker.published == []
     finally:
         await client.disconnect()
-
-
-async def test_identify_needs_the_admin_tier(
-    connected: tuple[AmpioClient, FakeBroker],
-) -> None:
-    """The CAN write tree answers the admin login only."""
-    client, broker = connected
-    with pytest.raises(RuntimeError):
-        await client.identify(7)
-    with pytest.raises(RuntimeError):
-        await client.identify_stop(7)
-    assert broker.published == []
-
-
-async def test_panel_writes_need_the_admin_tier(
-    connected: tuple[AmpioClient, FakeBroker],
-) -> None:
-    """Every panel action rides the CAN write tree, admin only."""
-    client, broker = connected
-    with pytest.raises(RuntimeError):
-        await client.set_panel_backlight(7, 0, 255, 0)
-    with pytest.raises(RuntimeError):
-        await client.set_panel_status_light(7, 0, 255, 0)
-    with pytest.raises(RuntimeError):
-        await client.lock_panel(7, seconds=10)
-    with pytest.raises(RuntimeError):
-        await client.unlock_panel(7)
-    assert broker.published == []
 
 
 @pytest.mark.parametrize(
@@ -1326,15 +1439,21 @@ async def test_send_notification_rejects_an_ambiguous_message(
 ROLLER_RAW_TOPIC = "ampio/to/be82/raw"
 
 
-async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
+async def _admin_with_covers(
+    *, swept: bool = True, roller_count: int | None = 4
+) -> tuple[AmpioAdminClient, FakeBroker]:
     """Admin client holding two covers and one relay on a module that
     advertises four roller channels, and a cover on a module that
     advertises none. The relay shares channel index 0 with the first
-    cover."""
+    cover.
+
+    ``swept`` False leaves the covers' module unanswered by any sweep.
+    ``roller_count`` None seeds an answered module that advertises no
+    roller count; otherwise it is the roller count the module
+    advertises.
+    """
     broker = FakeBroker()
-    client = AmpioClient(
-        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
-    )
+    client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     feed(
         client,
@@ -1346,11 +1465,10 @@ async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
     )
     feed(
         client,
-        ADMIN_DETAILS_TOPIC,
-        details(
+        ADMIN_PARAMS_DEVICES_TOPIC,
+        params_of(
             {
                 "id": 193,
-                "id_urzadzenia": 3,
                 "typ_komponentu": "roleta_procenty",
                 "interpretacja": 1,
                 "funkcja": 1,
@@ -1359,7 +1477,6 @@ async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 194,
-                "id_urzadzenia": 3,
                 "typ_komponentu": "roleta_lamelki",
                 "interpretacja": 2,
                 "funkcja": 2,
@@ -1368,7 +1485,6 @@ async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 48,
-                "id_urzadzenia": 15,
                 "typ_komponentu": "roleta_procenty",
                 "interpretacja": 2,
                 "funkcja": 2,
@@ -1377,7 +1493,44 @@ async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
             },
             {
                 "id": 195,
-                "id_urzadzenia": 3,
+                "typ_komponentu": "przekaznik",
+                "interpretacja": 0,
+                "funkcja": 1,
+                "leafId": "0_be82_257_0_0",
+                "opis_menu": "Relay",
+            },
+        ),
+    )
+    feed(
+        client,
+        ADMIN_DATA_DEVICES_TOPIC,
+        details(
+            {
+                "id": 193,
+                "typ_komponentu": "roleta_procenty",
+                "interpretacja": 1,
+                "funkcja": 1,
+                "leafId": "0_be82_5_0_0",
+                "opis_menu": "First",
+            },
+            {
+                "id": 194,
+                "typ_komponentu": "roleta_lamelki",
+                "interpretacja": 2,
+                "funkcja": 2,
+                "leafId": "0_be82_5_0_1",
+                "opis_menu": "Second",
+            },
+            {
+                "id": 48,
+                "typ_komponentu": "roleta_procenty",
+                "interpretacja": 2,
+                "funkcja": 2,
+                "leafId": "0_cb86_5_0_1",
+                "opis_menu": "Old",
+            },
+            {
+                "id": 195,
                 "typ_komponentu": "przekaznik",
                 "interpretacja": 0,
                 "funkcja": 1,
@@ -1388,10 +1541,108 @@ async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
     )
     # The newer module advertises its four roller channels; the older one
     # advertises none, which is what tells the two generations apart.
-    client._store.apply_module_sweep({}, {0xBE82: {ModuleFunction.ROLLER: 4}}, {})
+    if swept:
+        capabilities = (
+            {0xBE82: {}}
+            if roller_count is None
+            else {0xBE82: {ModuleFunction.ROLLER: roller_count}}
+        )
+        client._store.apply_sweep(frozenset({0xBE82}), {}, {}, {}, capabilities, {})
     broker.published.clear()
     broker.published_qos.clear()
     return client, broker
+
+
+def test_every_lock_refusal_carries_a_message() -> None:
+    """`NOT_SWEPT` raises with its own message, and each of the other
+    members has one in `_LOCK_REFUSALS`. A member added later must not
+    reach that lookup as a bare `KeyError`."""
+    assert set(_LOCK_REFUSALS) | {LockRefusal.NOT_SWEPT} == set(LockRefusal)
+
+
+async def test_lock_target_answers_a_cover_a_non_cover_and_an_unknown_id() -> None:
+    client, _broker = await _admin_with_covers()
+    try:
+        cover, relay = 193, 195
+        assert client.lock_target(cover) == LockTarget(
+            mac=0xBE82, channel=0, channels=4
+        )
+        assert client.lock_target(relay) is LockRefusal.NOT_A_COVER
+        with pytest.raises(AmpioValueError, match="999"):
+            client.lock_target(999)
+    finally:
+        await client.disconnect()
+
+
+async def test_lock_target_reads_not_swept_before_any_sweep() -> None:
+    client, _broker = await _admin_with_covers(swept=False)
+    try:
+        assert client.lock_target(193) is LockRefusal.NOT_SWEPT
+        with pytest.raises(AmpioValueError, match="resolve_records"):
+            await client.block_opening(193)
+    finally:
+        await client.disconnect()
+
+
+async def test_lock_target_refuses_a_mac_no_admitted_module_carries() -> None:
+    """A second module row on the cover's mac makes the door admit
+    neither, so no frame can name the module it would reach."""
+    client, broker = await _admin_with_covers()
+    try:
+        feed(
+            client,
+            ADMIN_DEVICES_TOPIC,
+            devices(
+                {
+                    "id": 3,
+                    "mac": 0xBE82,
+                    "typ_urzadzenia": 4,
+                    "nazwa_urzadzenia": "new",
+                },
+                {
+                    "id": 4,
+                    "mac": 0xBE82,
+                    "typ_urzadzenia": 4,
+                    "nazwa_urzadzenia": "twin",
+                },
+                {
+                    "id": 15,
+                    "mac": 0xCB86,
+                    "typ_urzadzenia": 3,
+                    "nazwa_urzadzenia": "old",
+                },
+            ),
+        )
+        with pytest.raises(AmpioNotConfigured, match="be82"):
+            client.lock_target(193)
+        with pytest.raises(AmpioNotConfigured):
+            await client.block_opening(193)
+        assert broker.published == []
+        # The raise reaches the caller through all four lock methods, so the
+        # docstring the other three reference names the class as well.
+        assert "AmpioNotConfigured" in AmpioAdminClient.block_opening.__doc__
+    finally:
+        await client.disconnect()
+
+
+async def test_lock_target_refuses_a_module_without_a_roller_count() -> None:
+    client, _broker = await _admin_with_covers(roller_count=None)
+    try:
+        assert client.lock_target(193) is LockRefusal.NO_ROLLER_COUNT
+        with pytest.raises(AmpioUnsupported):
+            await client.block_closing(193)
+    finally:
+        await client.disconnect()
+
+
+async def test_lock_target_refuses_a_channel_past_the_count() -> None:
+    client, _broker = await _admin_with_covers(roller_count=0)
+    try:
+        assert client.lock_target(193) is LockRefusal.PAST_LAST_CHANNEL
+        with pytest.raises(AmpioUnsupported):
+            await client.unblock_opening(193)
+    finally:
+        await client.disconnect()
 
 
 @pytest.mark.parametrize(
@@ -1420,7 +1671,9 @@ async def test_roller_lock_mask_is_as_wide_as_the_channel_count_needs() -> None:
     width as a four-channel module: both round up to one byte."""
     client, broker = await _admin_with_covers()
     try:
-        client._store.apply_module_sweep({}, {0xBE82: {ModuleFunction.ROLLER: 1}}, {})
+        client._store.apply_sweep(
+            frozenset({0xBE82}), {}, {}, {}, {0xBE82: {ModuleFunction.ROLLER: 1}}, {}
+        )
         await client.block_opening(193)
         assert broker.published == [(ROLLER_RAW_TOPIC, b"0c0703f0050a0100000000")]
     finally:
@@ -1432,8 +1685,10 @@ async def test_roller_lock_refuses_a_channel_past_the_advertised_count() -> None
     mask would silently land on a channel that does not exist."""
     client, broker = await _admin_with_covers()
     try:
-        client._store.apply_module_sweep({}, {0xBE82: {ModuleFunction.ROLLER: 1}}, {})
-        with pytest.raises(AmpioValueError, match="past the 1"):
+        client._store.apply_sweep(
+            frozenset({0xBE82}), {}, {}, {}, {0xBE82: {ModuleFunction.ROLLER: 1}}, {}
+        )
+        with pytest.raises(AmpioUnsupported, match="past the roller count"):
             await client.block_opening(194)
         assert broker.published == []
     finally:
@@ -1446,7 +1701,11 @@ async def test_roller_lock_refuses_a_module_without_a_roller_count() -> None:
     publish that vanishes."""
     client, broker = await _admin_with_covers()
     try:
-        with pytest.raises(AmpioValueError, match="roller channel count"):
+        # Object 48 sits on mac 0xCB86; seed it as an answered module that
+        # advertises no roller count, so the resolver reads that refusal
+        # rather than "no sweep has answered yet".
+        client._store.apply_sweep(frozenset({0xCB86}), {}, {}, {}, {0xCB86: {}}, {})
+        with pytest.raises(AmpioUnsupported, match="advertises no roller"):
             await client.block_opening(48)
         assert broker.published == []
     finally:
@@ -1458,7 +1717,7 @@ async def test_roller_lock_refuses_an_object_that_is_not_a_cover() -> None:
     the frame it would take is that cover's lock."""
     client, broker = await _admin_with_covers()
     try:
-        with pytest.raises(AmpioValueError, match="not a cover"):
+        with pytest.raises(AmpioUnsupported, match="not a cover"):
             await client.block_opening(195)
         assert broker.published == []
     finally:
@@ -1484,35 +1743,39 @@ async def test_roller_lock_refuses_an_unknown_object(call) -> None:
         await client.disconnect()
 
 
-async def test_roller_lock_needs_the_admin_tier(
-    connected: tuple[AmpioClient, FakeBroker],
-) -> None:
-    """The lock rides the CAN write tree, admin only."""
-    client, broker = connected
-    for call in (
-        client.block_opening,
-        client.unblock_opening,
-        client.block_closing,
-        client.unblock_closing,
-    ):
-        with pytest.raises(RuntimeError):
-            await call(193)
-    assert broker.published == []
-
-
 ADMIN_API_TOPIC = f"ampio/control/{ADMIN_USER}/api"
 
 
-async def _admin_with_flags() -> tuple[AmpioClient, FakeBroker]:
+async def _admin_with_flags() -> tuple[AmpioAdminClient, FakeBroker]:
     """Admin client holding the u8 and the signed i16 analog flags."""
     broker = FakeBroker()
-    client = AmpioClient(
-        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
-    )
+    client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     feed(
         client,
-        ADMIN_DETAILS_TOPIC,
+        ADMIN_PARAMS_DEVICES_TOPIC,
+        params_of(
+            {
+                "id": 199,
+                "typ_komponentu": "flaga_liniowa",
+                "interpretacja": 1,
+                "funkcja": 1,
+                "leafId": "0_1_4_0_0",
+                "opis_menu": "u8",
+            },
+            {
+                "id": 200,
+                "typ_komponentu": "flaga_liniowa16",
+                "interpretacja": 1,
+                "funkcja": 1,
+                "leafId": "0_1_18_0_0",
+                "opis_menu": "i16",
+            },
+        ),
+    )
+    feed(
+        client,
+        ADMIN_DATA_DEVICES_TOPIC,
         details(
             {
                 "id": 199,

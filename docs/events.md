@@ -35,24 +35,26 @@ applies only to the classes that carry `.object` (`ObjectUpdated`, its
 
 ## What arrives
 
-| Event                 | Announces                                                                                                                                                                                                                                | Tiers      | Terminal |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------- |
-| `ObjectUpdated`       | An object's state or metadata changed (live push, raw edge, snapshot correction, changed catalogue row, or a `resolve_records()` sweep that changed its `record`).                                                                       | both       | no       |
-| `ObjectAdded`         | An object's first event: initial discovery, a later catalogue addition, or re-creation after eviction. It subclasses `ObjectUpdated`, so `of=ObjectUpdated` subscriptions receive it too. `of=ObjectAdded` narrows to appearances alone. | both       | no       |
-| `ObjectRemoved`       | The account's authoritative catalogue stopped listing an object.                                                                                                                                                                         | both       | no       |
-| `ModuleUpdated`       | A module's catalogue row changed, its diagnostics broadcast arrived, or a `resolve_records()` sweep changed its `record`.                                                                                                                | admin only | no       |
-| `ModuleRemoved`       | The module catalogue stopped listing a module.                                                                                                                                                                                           | admin only | no       |
-| `BusEventRaised`      | Ampio logic raised a bus event (1-65535).                                                                                                                                                                                                | admin only | no       |
-| `AvailabilityChanged` | The broker connection came up or went down (never for a `disconnect()`). `AmpioClient.available` holds the current value.                                                                                                                | both       | no       |
-| `AuthFailed`          | The broker rejected the credentials after `connect()`. The signal to run a reauthentication flow.                                                                                                                                        | both       | yes      |
-| `ConnectionDied`      | The connection loop crashed. Only a fresh `connect()` recovers.                                                                                                                                                                          | both       | yes      |
+| Event                  | Announces                                                                                                                                                                                                                                | Tiers      | Terminal |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------- |
+| `ObjectUpdated`        | An object's state or metadata changed (live push, raw edge, snapshot correction, or a changed catalogue row).                                                                                                                            | both       | no       |
+| `ObjectAdded`          | An object's first event: initial discovery, a later catalogue addition, or re-creation after eviction. It subclasses `ObjectUpdated`, so `of=ObjectUpdated` subscriptions receive it too. `of=ObjectAdded` narrows to appearances alone. | both       | no       |
+| `ObjectRemoved`        | The catalogue stopped listing an object, or the door stopped admitting it: the hidden bit set, or the leaf cleared.                                                                                                                      | both       | no       |
+| `NotConfigured`        | The catalogue lists rows without a leaf, or the module list holds two rows on one mac. Carries the `(id, name)` pairs and the `(mac, ids)` pairs. Only an admin session can report a collision, because the module list is admin-only.   | both       | no       |
+| `ModuleUpdated`        | A module's catalogue row changed, or its diagnostics broadcast arrived.                                                                                                                                                                  | admin only | no       |
+| `ModuleRemoved`        | The module catalogue stopped listing a module.                                                                                                                                                                                           | admin only | no       |
+| `RecordSweepCompleted` | A `resolve_records()` pass finished. Carries the `RecordSweep` it returned.                                                                                                                                                              | admin only | no       |
+| `BusEventRaised`       | Ampio logic raised a bus event (1-65535).                                                                                                                                                                                                | admin only | no       |
+| `AvailabilityChanged`  | The broker connection came up or went down (never for a `disconnect()`). `AmpioClient.available` holds the current value.                                                                                                                | both       | no       |
+| `AuthFailed`           | The broker rejected the credentials after `connect()`. The signal to run a reauthentication flow.                                                                                                                                        | both       | yes      |
+| `ConnectionDied`       | The connection loop crashed. Only a fresh `connect()` recovers.                                                                                                                                                                          | both       | yes      |
 
 `ObjectAdded` subclasses `ObjectUpdated`. A `match` statement that destructures
 the stream must put its `case ObjectAdded():` arm before
 `case ObjectUpdated():`. In the reverse order, every `ObjectAdded` matches the
 `ObjectUpdated` arm first, and the `ObjectAdded` arm never runs.
 
-"Admin only" reflects what the M-SERV serves each account tier - see
+"Admin only" marks the events `AmpioAdminClient` alone receives - see
 [`account-tiers.md`](account-tiers.md). A standard account can still _raise_ bus
 events (`set_event`), but it never receives them.
 

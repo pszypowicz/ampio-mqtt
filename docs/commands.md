@@ -31,11 +31,11 @@ The marker and its consumer contract are in [`visibility.md`](visibility.md).
 **The state echo is the only confirmation.** The library's `confirm=` option on
 `command()` and the typed wrappers arms a waiter before the publish. The waiter
 resolves on the next `ObjectUpdated` for the object. That is the per-object echo
-on both tiers, or the earlier raw edge on the admin tier. The raw edge's arrival
-suppresses the per-object copy. The echo is an observation and nothing stronger.
-A concurrent change from another source satisfies it. A timeout is how every
-silent drop shows. The drops are an ignored verb, an out-of-grant object, a
-read-only object, or a command that changed nothing and thus pushed nothing.
+on both tiers, or the earlier raw edge on `AmpioAdminClient`. The raw edge's
+arrival suppresses the per-object copy. The echo is an observation and nothing
+stronger. A concurrent change from another source satisfies it. A timeout is how
+every silent drop shows. The drops are an ignored verb, an out-of-grant object,
+a read-only object, or a command that changed nothing and thus pushed nothing.
 Latency bounds the timeout choice. Most verbs echo in under ~200 ms on the
 per-object path, and `arm`/`disarm` take ~1 s, so `confirm=2.0` covers the
 measured surface. Scene commands and `setEvent` fan out beyond a single object
@@ -124,7 +124,7 @@ are available only as device-side `fadeTime` configuration.
 
 **Flags answer the switch verbs. Physical inputs do not.** The switch family
 reaches more than outputs. A `flaga` object answers `turnOn`, `turnOff`, and
-`switch` over `/api`. This works on the admin tier and on the standard tier. A
+`switch` over `/api`. This works on `AmpioAdminClient` and on `AmpioClient`. A
 consumer can therefore model a writable flag as a switch entity. The library
 reports this as `InputKind.switchable`.
 
@@ -154,8 +154,8 @@ itself. Scene commands are grant-scoped like any other. A scene that touches
 objects outside a standard account's grant does nothing.
 
 A `roleta_lamelki` object carries its lamella angle in a `lammel` field next to
-`state` in its state payload. No other type emits it, so its presence is a
-second, runtime signal that an object has slats.
+`state` in its state payload. No other type emits the field, so it is a second,
+runtime signal that an object has slats.
 
 Covers stream intermediate positions in 5% steps during travel, so a consumer
 sees the movement rather than one jump to the target. See the Cover parameters
@@ -243,15 +243,13 @@ therefore leave a cover blocked for a long time.
 
 No `/api` verb sets or clears the flag. The CAN write tree does, through the
 same three actions, so `block_opening()`, `unblock_opening()`, `block_closing()`
-and `unblock_closing()` write it on the administrator tier. Only one module
+and `unblock_closing()` write it on `AmpioAdminClient`. Only one module
 generation implements those actions, and the wire form and the gate are in the
 "Cover roller lock" section of [`panel-writes.md`](panel-writes.md).
 
-`AmpioObject.block_writable` says whether a lock write reaches one cover's
-module. `True` means the four methods work on that cover, and `False` means they
-raise. `None` means that no sweep covered the module yet, so the answer is not
-known. A consumer that builds a lock control must read the field first and must
-not treat `None` as `False`. The field needs `resolve_records()` to have run.
+`AmpioAdminClient.lock_target()` gives the result for one cover, with the four
+refusals and the three errors in the "What a consumer reads" part of
+[`panel-writes.md`](panel-writes.md).
 
 The same Designer menu offers eight more roller actions, and none of them
 touches the lock. Two carry names that suggest an override. "Close permanently"

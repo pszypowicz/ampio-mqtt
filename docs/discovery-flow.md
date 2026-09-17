@@ -3,7 +3,7 @@
 `AmpioClient.connect()` runs the bring-up sequence: connect, subscribe, publish
 the auto-discovery keywords, wait for the responses, return. When `connect()`
 returns, `client.objects` and `client.server_info` are populated and ready to
-consult, unless the `discovery_timeout` elapsed first. On the admin tier
+consult, unless the `discovery_timeout` elapsed first. On `AmpioAdminClient`,
 `client.modules` is populated too (see below). Live state arrives via push from
 that point on.
 
@@ -40,22 +40,21 @@ the `connect()` / `disconnect()` lifecycle that joins them.
    below), the global raw-channel wildcards, and the `device_api/from/list`
    reply topic. Every filter asks for QoS 1 except the four raw state wildcards,
    which ask for QoS 0. The retained replay then arrives whole (see
-   [`raw-channel-bridge.md`](raw-channel-bridge.md)). The set is decided at
-   construction from the authenticated username (see
-   [`account-tiers.md`](account-tiers.md)), so every filter must be granted. A
-   SUBACK rejection lands in `stats.subscribe_failures` and warns, because it
-   means a broken broker or ACL. See [`protocol.md`](protocol.md) and
+   [`raw-channel-bridge.md`](raw-channel-bridge.md)). The client class decides
+   the set (see [`account-tiers.md`](account-tiers.md)), so every filter must be
+   granted. A SUBACK rejection lands in `stats.subscribe_failures` and warns,
+   because it means a broken broker or ACL. See [`protocol.md`](protocol.md) and
    [`raw-channel-bridge.md`](raw-channel-bridge.md) for the topics.
 3. **Publish the tier's auto-discovery keywords** on the matching control
-   surfaces - four requests either way:
-   - admin: `devicesDetails` and `devices` on `config` (object and module
-     catalogues), plus `states` and `info`.
-   - standard: `devices` and `params_devices` on `data` (grant-filtered app-sync
-     catalogue and the full `params` table), plus `states` and `info`.
+   surfaces:
+   - admin: `devices` and `params_devices` on `data`, `devices` on `config`,
+     plus `states` and `info`, five requests.
+   - standard: `devices` and `params_devices` on `data`, plus `states` and
+     `info`, four requests.
 
 4. **Await** completion or the `discovery_timeout` deadline, whichever comes
    first. This step is `wait_for_initial_discovery()`, which `connect()` calls
-   with `timeout=discovery_timeout`: one wait on the four replies of step 3.
+   with `timeout=discovery_timeout`: one wait on the tier's replies of step 3.
    Each dispatched message bumps `stats.last_message_at`. The signals latch, so
    a later `wait_for_initial_discovery()` call returns immediately once its set
    fired (and stays correct across reconnects).
@@ -79,27 +78,25 @@ and it evicts like any other.
 A Designer save rewrites the account tables on the M-SERV. A few seconds later
 the M-SERV publishes three messages into every account namespace, the admin one
 included. No account requested them: `data/devices`, `md5/devices`, and
-`data/params_devices`. Each tier learns of the save from a different one of
-them. Designer triggers the push with a `refresh` keyword on its `data` surface.
+`data/params_devices`. Designer triggers the push with a `refresh` keyword on
+its `data` surface.
 
-- **Standard user.** The client subscribes to the two pushed tables as its
-  catalogue pair, so it parses each push like a reply. The save shows at once as
-  `ObjectAdded`, `ObjectUpdated`, or `ObjectRemoved`.
-- **Administrator.** The M-SERV never pushes the `config` catalogues. The client
-  subscribes to the retained `md5/devices` and `md5/params_devices` digests
-  instead. The broker replays each retained digest after every subscribe, and
-  that replay seeds the comparison, because the on-connect refresh already
-  fetched the catalogues. A later digest that differs from the seed makes the
-  client re-request `devicesDetails` and `devices`. The reply's diff then fires
-  the same object events, and the module events with them. The re-request opens
-  no snapshot cycle, so a value pushed since the last request keeps outranking
-  the held snapshot seed.
+Both tiers subscribe to the two pushed tables as their catalogue pair. Each push
+is parsed like a reply, and the save shows at once as `ObjectAdded`,
+`ObjectUpdated`, or `ObjectRemoved`.
+
+The M-SERV never pushes the module list. The admin client also subscribes to the
+retained `md5/devices` and `md5/params_devices` digests, and a digest that
+differs from its seed re-requests `config/devices`. The broker replays each
+retained digest after every subscribe, and that replay seeds the comparison,
+because the on-connect refresh already fetched the module list. The reply's diff
+then fires the module events. The re-request opens no snapshot cycle, so a value
+pushed since the last request keeps outranking the held snapshot seed.
 
 The `md5/params_devices` digest covers the `params` table, which carries the
-hidden bit. The admin catalogue carries that bit inline, so a rewrite of either
-digest re-requests the same pair. A digest change that arrives while the
-connection is down costs nothing extra: the reconnect refreshes the catalogues,
-and the replay seeds again.
+hidden bit. A rewrite of either digest re-requests the module list. A digest
+change that arrives while the connection is down costs nothing extra: the
+reconnect refreshes the catalogues, and the replay seeds again.
 
 ### Keeping the catalogue current without a reconnect: `refresh_interval`
 
@@ -122,6 +119,43 @@ resync is the broker's retained raw state tree, not the DB snapshot. Each cycle
 re-fetches the full catalogue, so `refresh_interval` is sized in minutes, not
 seconds.
 
+## The door
+
+The store admits a catalogue through one door, on both tiers. The door waits for
+both replies of the pair, `data/devices` and `data/params_devices`, because the
+hidden bit rides the second. Then it decides in one order. A row with the hidden
+bit drops. Every remaining row must carry a leaf that parses into
+`AmpioObject.address`. A row the M-SERV creates itself, `detekcja` or
+`symulacja`, drops by its type before the door reads any leaf.
+
+A row with an empty leaf stays out of `objects`. The store records it, and
+`wait_for_initial_discovery()` raises `AmpioNotConfigured` with the `(id, name)`
+pairs. The other rows are served and the connection stays up. After connect, the
+same condition arrives as the `NotConfigured` event, and the row leaves through
+`ObjectRemoved`. The next catalogue push that restores the leaf produces
+`ObjectAdded`. `diagnostics_snapshot()` lists the rows under `not_configured`.
+
+On `AmpioAdminClient`, the module list has its own door. The door admits neither
+of two module rows on one override mac. The raw tree keys on that mac and cannot
+attribute a frame to either row. The store records the shared mac and the module
+ids, and `wait_for_initial_discovery()` raises `AmpioNotConfigured` with the
+pairs in `collisions`. After connect, the same condition arrives as the
+`NotConfigured` event, and each row leaves through `ModuleRemoved`. The next
+module list that gives each module its own mac reports `ModuleUpdated`. The
+default mac `1` is not unique (see [`identity.md`](identity.md)), so two rows
+left on it fail the door. The installer gives each module its own mac in
+Designer. `diagnostics_snapshot()` lists the pairs under `mac_collisions`.
+
+A hidden row drops before the door reads its leaf, so a leaf on a row nothing
+drives never refuses a reply. A leaf of another shape is a server fault. The
+store refuses the reply whole as `AmpioProtocolError`, before any field changes.
+The apply is atomic, so no half-merged state is ever observable. `data/devices`
+carries the leaf, so `protocol_violations` names that topic whichever reply of
+the pair ran the door.
+
+A push of `data/params_devices` alone re-runs the door on the held catalogue. A
+hidden bit that changes evicts or admits its row.
+
 ## Errors
 
 Every error the library raises subclasses `AmpioError`. `connect()` raises
@@ -133,12 +167,16 @@ publish while the broker is disconnected raises `AmpioConnectionError` too.
 `AmpioTimeoutError` subclasses `AmpioConnectionError`, so a handler that treats
 every connection problem alike keeps working. A rejection after a successful
 `connect()` arrives as the `AuthFailed` event instead (see
-[`events.md`](events.md)). A bad argument raises `AmpioValueError`, which
-subclasses `ValueError`. What the install refuses raises a plain `ValueError`
-instead: a module id no catalogue carries, or an output whose kind does not
-answer the verb. A consumer that catches `AmpioValueError` first tells its own
-fault from the install's state. An admin-only call on a standard account raises
-`RuntimeError`.
+[`events.md`](events.md)).
+
+Four classes separate whose fault a refusal is:
+
+| Error                | Whose fault   | Raised for                                                                                                                                                                              |
+| -------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AmpioValueError`    | the developer | A bad argument, a value beyond the frame's range, or an id the catalogue does not list. It also covers a call that needs a sweep that did not run. It subclasses `ValueError`.          |
+| `AmpioNotConfigured` | the installer | A drivable row carries no leaf, or two module rows share one override mac. A lock write can also name a mac no admitted module row carries. The installer fixes each in Designer.       |
+| `AmpioUnsupported`   | nobody        | The install cannot do it. Examples are an output whose kind does not answer the verb, a kind no timed write pulses, and a module without the roller lock. A consumer omits the control. |
+| `AmpioProtocolError` | the server    | A reply lacks what its surface always serves.                                                                                                                                           |
 
 ## What runs on demand, not automatically
 
@@ -151,13 +189,14 @@ when - and whether - to call them:
 - **`fetch_scenes()`** - the scene catalogue (`AmpioScene` rows), driven with
   `run_scene()` / `off_scene()` / `undo_scene()`. Same rationale: a consumer
   that exposes no scenes never pays for the fetch.
-- **`fetch_locations()`** - the Designer location name table, admin tier only.
-  `resolve_records()` fetches it itself, so a consumer that runs the sweep never
-  calls it directly.
+- **`fetch_locations()`** - the Designer location name table, `AmpioAdminClient`
+  only. `resolve_records()` fetches it itself, so a consumer that runs the sweep
+  never calls it directly.
 - **`resolve_records()`** - reads every module's description record in one
-  `device_api` list reply, admin tier only. What it folds into
-  `AmpioObject.record` and `AmpioModule.record`, and what the returned
-  `RecordSweep` reports, are in
+  `device_api` list reply, `AmpioAdminClient` only. One pass fills `records`,
+  `cover_parameters`, `module_records`, `capabilities` and `panel_settings`, and
+  returns a `RecordSweep` that reports which modules answered. The rule that
+  reads the five datasets is in
   [`description-records.md`](description-records.md). A consumer that does not
   expose records never pays for the read.
 
@@ -177,10 +216,12 @@ credentials are known, confirm identity with `check_connection()`.
 ## Liveness counters
 
 `client.diagnostics_snapshot()` returns the one credential-free dict a
-diagnostics platform emits as-is. It holds the tier, the availability flag, the
+diagnostics platform emits as-is. It holds the availability flag, the
 auth-failure reason, and the safe server-info subset. It also holds the
-connection counters, the SUBACK rejections, the mac collisions, and each
-endpoint's last reply summary.
+connection counters, the SUBACK rejections, and each endpoint's last reply
+summary. On `AmpioAdminClient` it also holds the mac collisions and the module
+list. The `params_gap` entry names objects the params table skips. The
+`not_configured` entry names the rows the door left out.
 
 Table replies retain a JSON string with only `row_count` in `last_payloads`.
 Names, URLs, state descriptions, nested data, and unknown fields are omitted.

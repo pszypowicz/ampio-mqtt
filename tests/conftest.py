@@ -20,7 +20,7 @@ from paho.mqtt.client import topic_matches_sub
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.reasoncodes import ReasonCode
 
-from ampio_mqtt import AmpioClient
+from ampio_mqtt import AmpioAdminClient, AmpioClient
 
 USER = "u"
 ADMIN_USER = "admin"
@@ -34,14 +34,14 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-ADMIN_DETAILS_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/devicesDetails"
 ADMIN_DEVICES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/config/devices"
 ADMIN_STATES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/data/states"
 ADMIN_INFO_TOPIC = f"ampio/fromDB/{ADMIN_USER}/data/info"
 ADMIN_MD5_DEVICES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/md5/devices"
 ADMIN_MD5_PARAMS_DEVICES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/md5/params_devices"
+ADMIN_DATA_DEVICES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/data/devices"
+ADMIN_PARAMS_DEVICES_TOPIC = f"ampio/fromDB/{ADMIN_USER}/data/params_devices"
 
-DETAILS_TOPIC = f"ampio/fromDB/{USER}/config/devicesDetails"
 DEVICES_TOPIC = f"ampio/fromDB/{USER}/config/devices"
 STATES_TOPIC = f"ampio/fromDB/{USER}/data/states"
 INFO_TOPIC = f"ampio/fromDB/{USER}/data/info"
@@ -200,6 +200,11 @@ def make_client(broker: FakeBroker, **kwargs: object) -> AmpioClient:
     return AmpioClient("h", mqtt_client_factory=broker.factory, **kwargs)  # type: ignore[arg-type]
 
 
+def make_admin_client(broker: FakeBroker, **kwargs: object) -> AmpioAdminClient:
+    """An admin client wired to `broker`; the class carries the login."""
+    return AmpioAdminClient("h", mqtt_client_factory=broker.factory, **kwargs)  # type: ignore[arg-type]
+
+
 def deliver_later(
     client: AmpioClient, *messages: tuple[str, str]
 ) -> asyncio.Task[None]:
@@ -240,14 +245,13 @@ def rows(*items: dict) -> str:
 # overrides only what it is about, and a test that deletes a column is
 # making a point about the missing column.
 _CATALOGUE_ROW = {
-    "id_urzadzenia": 1,
     # Empty: a test that cares about the kind names its own component type,
     # and one that does not gets the generic value sensor an unknown type
     # classifies as.
     "typ_komponentu": "",
     "interpretacja": 0,
     "funkcja": 1,
-    "leafId": "",
+    "leafId": "0_cafe_257_0_0",
     "opis_menu": "",
     "type": None,
     "format": "",
@@ -268,12 +272,10 @@ _SNAPSHOT_ROW = {"stan_json": json.dumps({"state": "0"})}
 
 
 def details(*items: dict) -> str:
-    """An object-catalogue payload, serving either tier's topic.
-
-    Carries the admin `devicesDetails` column set. The app-sync parse reads
-    the shared columns alone, so the same builder feeds `data/devices`.
-    """
-    return json.dumps({"Status": 0, "List": [{**_CATALOGUE_ROW, **i} for i in items]})
+    """An object-catalogue payload for `data/devices`. Extra keys are ignored
+    by the parse, so a row may carry `params`, `czas` and `url` for
+    `params_of()`."""
+    return json.dumps({"List": [{**_CATALOGUE_ROW, **i} for i in items]})
 
 
 def devices(*items: dict) -> str:
@@ -286,6 +288,37 @@ def params_table(*items: dict) -> str:
     return rows(*({**_PARAMS_ROW, **i} for i in items))
 
 
+def params_of(*items: dict) -> str:
+    """The `data/params_devices` rows the given catalogue rows imply.
+
+    A test names `params`, `czas` or `url` directly on a catalogue row for
+    readability. The wire carries the three on the params table on both
+    tiers, so this builds that table from the rows.
+    """
+    return params_table(
+        *(
+            {
+                "id": item["id"],
+                "params": item.get("params", 0),
+                "czas": item.get("czas", 0),
+                "url": item.get("url", ""),
+            }
+            for item in items
+        )
+    )
+
+
+def catalogue(client: AmpioClient, *items: dict) -> None:
+    """Feed a client one catalogue reply on its own tier, in wire order.
+
+    The params table lands first so every row merges with its config
+    columns in hand, and the door admits the rows on the second feed.
+    """
+    user = client._username
+    feed(client, f"ampio/fromDB/{user}/data/params_devices", params_of(*items))
+    feed(client, f"ampio/fromDB/{user}/data/devices", details(*items))
+
+
 def snapshot(*items: dict) -> str:
     """A `data/states` snapshot payload."""
     return rows(*({**_SNAPSHOT_ROW, **i} for i in items))
@@ -294,8 +327,7 @@ def snapshot(*items: dict) -> str:
 def info(**fields: object) -> str:
     """A server-info payload.
 
-    Every reply names the asking account, and the library refuses one whose
-    account id contradicts the session's tier, so this defaults to the
-    administrator pseudo-id. A standard-account test passes its own.
+    Every reply names the asking account. This defaults to the administrator
+    pseudo-id; a standard-account test passes its own.
     """
     return json.dumps({"Results": {"mac": 1, "userId": -1, **fields}})

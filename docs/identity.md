@@ -11,7 +11,7 @@ The rest of this area is on its own pages.
 
 | Page                                               | Subject                                                                                                                    |
 | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| [`visibility.md`](visibility.md)                   | The `visible` predicate, the `params` bit enum, the read-only and bell markers, and deletion on the wire.                  |
+| [`visibility.md`](visibility.md)                   | Hidden rows and the door, the `params` bit enum, the read-only and bell markers, and deletion on the wire.                 |
 | [`description-records.md`](description-records.md) | The description record in each module: the Matter tag, the location pointer, the list reply, the join rule, and the sweep. |
 
 ## Modules
@@ -36,13 +36,13 @@ only. The HA device topology must never branch on them.
 
 ## Objects
 
-| Field                     | Stable across module replacement?                                                                                                                                                                                                        | Notes                                                                                |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `id`                      | **Yes**. An object delete is soft on the `config` catalogue. The row stays, with the `params` hidden bit set, so the autoincrement never renumbers. Unchanged across years of configuration uploads, module replacements, and deletions. | The per-object unique id, exposed as `AmpioObject.object_key`.                       |
-| `id_urzadzenia`           | **No** - it mirrors the module row, which is reassigned in `mac_global` order when a module is replaced.                                                                                                                                 | Cross-referencing an object to its module _within a single discovery snapshot_ only. |
+| Field                     | Stable across module replacement?                                                                                                                                                                                                        | Notes                                                          |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `id`                      | **Yes**. An object delete is soft on the `config` catalogue. The row stays, with the `params` hidden bit set, so the autoincrement never renumbers. Unchanged across years of configuration uploads, module replacements, and deletions. | The per-object unique id, exposed as `AmpioObject.object_key`. |
 | `funkcja` (channel index) | **Yes** - part of the reloaded Designer config. Not unique: if the same physical signal is exposed as several Designer objects, they share one `funkcja`.                                                                                |
 | `typ_komponentu`          | **Yes** - the type vocabulary (`temp`, `lin_wej`, `flaga`, ...).                                                                                                                                                                         |
-| `leaf_id`                 | **Yes**, when set. The physical-output key source and the parse source for `module_mac`. Empty for system objects and after a Matter uncheck - see below.                                                                                |
+| `address`                 | **Yes**. `ModuleAddress(mac, channel, sf_id, sub_sf_id)`, parsed from the leaf. `mac` is the module's override mac.                                                                                                                      | The module key on every tier, and the raw routing key.         |
+| `leaf_key`                | **Yes**. `leaf_<leafId>`, the physical output the object drives. Several views of one output share it.                                                                                                                                   | Grouping the views of one output.                              |
 
 ## Unique id: the object id (`AmpioObject.object_key`)
 
@@ -59,10 +59,8 @@ is guaranteed present once `wait_for_initial_discovery()` returns True.
 
 Three properties make the object id the right source:
 
-- **Unique, always.** One id belongs to one catalogue row. No filter and no
-  fallback are needed, so leafless rows and hidden rows key exactly like every
-  other object. `visible` remains the discovery filter, and this uniqueness does
-  not depend on it.
+- **Unique, always.** One id belongs to one catalogue row. The door already
+  admits only unhidden, leafed rows, so no filter and no fallback are needed.
 - **Available on both account tiers.** The id is the key of every catalogue
   surface. A standard account and an administrator account agree on it.
 - **Stable.** Designer soft-deletes. The `params` hidden bit marks a removed
@@ -70,9 +68,13 @@ Three properties make the object id the right source:
   Every id stayed unchanged across years of configuration uploads, module
   replacements, and deletions.
 
-## Physical-output key: `leaf_id` (`AmpioObject.leaf_key`)
+## The leaf
 
-`AmpioObject.leaf_key` (`leaf_<leaf_id>`) names the physical output an object
+A new object carries a leaf. Designer clears it when the Matter box is checked
+and then unchecked. A re-check writes it back. The library does not admit a row
+without one, and [`discovery-flow.md`](discovery-flow.md) describes the door.
+
+`AmpioObject.leaf_key` (`leaf_<leafId>`) names the physical output an object
 drives. It is not an identity for the object row, and it must not be used as
 one.
 
@@ -86,72 +88,43 @@ objects and loses all but one of them.
 
 - **Which entities drive one output.** Two objects with equal `leaf_key` share a
   relay, a dimmer, or a roller.
-- **The parse source.** `module_mac` and `leaf_io_no` are read out of it.
-- **The join anchor.** The description-record join matches on `module_mac` and
-  `leaf_io_no`.
+- **The parse source.** `address` is read out of it.
+- **The join anchor.** The description-record join matches on `address.mac` and
+  `address.channel`.
 
-`leafId` is empty for system objects, and Designer clears it on any object whose
-Matter box is unchecked, so `leaf_key` reads None for both. An empty `leafId`
-says nothing about visibility, which [`visibility.md`](visibility.md) covers.
+## Module identity on every tier: `AmpioObject.address.mac`
 
-One further collision exists and is unrelated to the Designer views above. A
-hidden phantom stub can share its labeled twin's `leaf_id` on M-SENS analog
-channels. The `hidden` flag removes exactly that stub, so filter on `visible`
-before grouping by output.
+The leaf embeds the owning module's override mac. `address.mac` equals
+`AmpioModule.mac`, the M-SERV's override `1` included. A consumer therefore
+groups entities by physical module even on the standard tier, which never
+receives the module catalogue. An entry created with a standard account and
+later switched to an administrator keeps its entity-to-device mapping and only
+gains metadata.
 
-## Module identity on every tier: `AmpioObject.module_mac`
+Three helpers close the loop for a consumer that builds devices on
+`address.mac`. `AmpioObject.is_server_owned` reads `address.mac` and marks the
+objects that belong to the M-SERV itself. They anchor to the hub device
+identically on both tiers. `AmpioAdminClient.mserv` returns the M-SERV's own
+module row - name, model, versions. It is the row whose `mac_global` or `mac` is
+the server's self-reported mac, and nothing else in the list stands in for it.
+The override arm covers a replaced unit, whose factory id changes while the
+re-stamped override does not.
 
-`leafId` embeds the owning module's override mac as its second segment
-(`0_<macHex>_...`), exposed as `AmpioObject.module_mac`. The embedded value
-equals `AmpioModule.mac`, the M-SERV included, whose override (`1`) diverges
-from its factory id. A consumer can thus group entities by physical module even
-on the standard tier, which never receives the module catalogue. An entry
-created with a standard account and later switched to an administrator keeps its
-entity-to-device mapping and only gains metadata. The parse is strict: any shape
-other than `0_<macHex>_<sfId>_<subSfId>_<ioNo>` reads as None, exactly like an
-empty `leafId`.
+`AmpioAdminClient.module_for(obj)` is one lookup on `address.mac`. It reads None
+when the list carries no row on that mac, or when two rows share it.
 
-Three helpers close the loop for a consumer that builds devices on `module_mac`.
-`AmpioObject.is_server_owned` marks the objects that belong to the M-SERV itself
-(their `leafId` embeds its override mac). They anchor to the hub device
-identically on both tiers. `AmpioClient.mserv` returns the M-SERV's own module
-row - name, model, versions - on the admin tier that has the catalogue. It is
-the row whose `mac_global` or `mac` is the server's self-reported mac, and
-nothing else in the list stands in for it. The override arm covers a replaced
-unit, whose factory id changes while the re-stamped override does not.
+Both are members of `AmpioAdminClient`.
 
-`AmpioClient.module_for(obj)` resolves any object to its catalogue row. It joins
-on `id_urzadzenia` and gates on mac agreement, so the volatile DB join can never
-pair an object with a replaced module's stale row. The join keys the lookup
-rather than the mac, because override macs can collide across rows. The mac then
-gates what the join found. A leafless object has no mac to gate on, so its join
-stands as is. On the reference install the join fails for the soft-deleted rows
-alone: their `id_urzadzenia` points at a module the list no longer carries.
-
-Both answer on the admin tier only, and raise on a standard account.
-
-`AmpioObject.sibling_module_mac` is the module lookup that works on both tiers.
-Every leafed object on the same `id_urzadzenia` embeds the module's override mac
-in its leaf. The store reads that mac out of each catalogue reply for every row
-that shares the module id. A leafless object thus names its module whenever one
-leafed sibling is in the catalogue this tier holds. The field is separate from
-`module_mac` on purpose. `module_mac` is the leaf-parsed fact, identical on both
-tiers. `sibling_module_mac` depends on the grant, so the two can disagree
-between tiers when the grant lacks a leafed sibling. The consumer picks which
-one drives its topology. On the baseline install every module id maps to one
-leaf mac, with no conflict on either tier.
-
-## The leaf-id segments (`0_<macHex>_<sfId>_<subSfId>_<ioNo>`)
+## The address fields (`0_<macHex>_<sfId>_<subSfId>_<ioNo>`)
 
 The Designer names all five segments. Its bundle builds the token, and it parses
 the token back into `macGroup`, `mac`, `sfId`, `subSfId`, and `ioNo`. Earlier
 revisions of this page called the last three `F2`, `F3`, and `F4`.
 
-The library parses the mac, the `sfId`, the `subSfId`, and the trailing `ioNo`.
-`AmpioObject.leaf_io_no` reads the last segment. It covers inputs as well as
-outputs. `AmpioObject.sf_id` and `AmpioObject.sub_sf_id` read the third and
-fourth segments, next to `module_mac` and `leaf_io_no`. A `subSfId` has meaning
-only inside its `sfId`. Both read None when `leaf_id` is empty or malformed.
+The library parses the mac, the `sfId`, the `subSfId`, and the trailing `ioNo`
+into `AmpioObject.address`. `address.channel` reads the last segment. It covers
+inputs as well as outputs. `address.sf_id` and `address.sub_sf_id` read the
+third and fourth segments. A `subSfId` has meaning only inside its `sfId`.
 
 **`sfId` is a per-leaf special-function id, not the module type.** No module
 showed `sfId` equal to its `typ_urzadzenia`. Virtual cover objects hosted on a
@@ -191,9 +164,9 @@ above show the same pattern.
 app-sync catalogue the standard tier receives), but it cannot replace the module
 type code. Both tables are coverage, not a specification, so an unlisted code
 proves nothing. The library keeps its classification on `typ_komponentu` alone.
-`sf_id` does not enter `kind`. The raw bridge reads it for `przekaznik` objects
-only. A leaf of class 67 reports on the `a` prefix and takes the write byte
-`0x32`. A leaf of class 257 reports on `o` and takes `0x30`. Any other class
-reports on `o` and writes through `/api`. See
+`address.sf_id` does not enter `kind`. The raw bridge reads `address.sf_id` for
+`przekaznik` objects only. A leaf of class 67 reports on the `a` prefix and
+takes the write byte `0x32`. A leaf of class 257 reports on `o` and takes
+`0x30`. Any other class reports on `o` and writes through `/api`. See
 [`raw-channel-bridge.md`](raw-channel-bridge.md) and
 [`panel-writes.md`](panel-writes.md).

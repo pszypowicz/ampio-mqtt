@@ -22,6 +22,8 @@ import contextlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+from .errors import AmpioValueError
+
 try:
     from zeroconf import AddressResolverIPv4, IPVersion
     from zeroconf.asyncio import AsyncZeroconf
@@ -64,7 +66,7 @@ async def discover(
     instance is created for the call and closed before returning.
     """
     if timeout <= 0:
-        raise ValueError("timeout must be positive")
+        raise AmpioValueError("timeout must be positive")
     address = await _resolve_mdns(hostname, timeout * 0.7, zeroconf)
     if address is None:
         return None

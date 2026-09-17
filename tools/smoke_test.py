@@ -20,11 +20,12 @@ import os
 from collections.abc import Callable
 
 import aiomqtt
+from _session import make_client
 
 from ampio_mqtt import (
-    AccessTier,
-    AmpioClient,
+    AmpioAdminClient,
     AmpioConnectionError,
+    AmpioNotConfigured,
     AmpioObject,
     ObjectUpdated,
     SensorKind,
@@ -64,12 +65,12 @@ async def run(
     client_factory: Callable[[], aiomqtt.Client] | None = None,
 ) -> int:
     """Drive the run; ``client_factory`` is the test seam for the session."""
-    client = AmpioClient(
+    client = make_client(
         args.host,
         args.username,
         args.password,
         port=args.port,
-        mqtt_client_factory=client_factory,
+        client_factory=client_factory,
     )
 
     def on_object(obj: AmpioObject) -> None:
@@ -81,37 +82,45 @@ async def run(
     print(f"Connecting to {args.host}:{args.port} ...")
     try:
         await client.connect(timeout=15)
+        print("Connected. Listening for discovery + retained state...\n")
+
+        await asyncio.sleep(args.duration)
+
+        objs = client.objects
+        types: dict[str, int] = {}
+        for o in objs.values():
+            types[o.typ_komponentu] = types.get(o.typ_komponentu, 0) + 1
+        sensors = [o for o in objs.values() if isinstance(o.kind, SensorKind)]
+        print(f"\n=== Client: {type(client).__name__} ===")
+        # The module catalogue answers the admin login alone, so only the
+        # admin client holds one.
+        modules = len(client.modules) if isinstance(client, AmpioAdminClient) else 0
+        print(
+            f"=== Objects: {len(objs)} (sensors: {len(sensors)}), "
+            f"modules: {modules} ==="
+        )
+        print("  by typ_komponentu:", types)
+
+        print("\n=== Sensors (auto-discovered) ===")
+        for o in sorted(sensors, key=lambda o: o.id):
+            kind = o.kind
+            if not isinstance(kind, SensorKind):
+                continue
+            unit = kind.unit or ""
+            dc = kind.device_class or "-"
+            print(f"  ob/{o.id:<5} {dc:<18} {o.name!s:<26} = {o.state} {unit}")
+        return 0
     except AmpioConnectionError as err:
         print(f"FAILED to connect: {err}")
         return 1
-    print("Connected. Listening for discovery + retained state...\n")
-
-    await asyncio.sleep(args.duration)
-
-    objs = client.objects
-    types: dict[str, int] = {}
-    for o in objs.values():
-        types[o.typ_komponentu] = types.get(o.typ_komponentu, 0) + 1
-    sensors = [o for o in objs.values() if isinstance(o.kind, SensorKind)]
-    print(f"\n=== Access tier: {client.access_tier.value} ===")
-    # The module catalogue answers the admin login alone, and reading it on
-    # any other account raises.
-    admin = client.access_tier is AccessTier.ADMIN
-    modules = len(client.modules) if admin else 0
-    print(f"=== Objects: {len(objs)} (sensors: {len(sensors)}), modules: {modules} ===")
-    print("  by typ_komponentu:", types)
-
-    print("\n=== Sensors (auto-discovered) ===")
-    for o in sorted(sensors, key=lambda o: o.id):
-        kind = o.kind
-        if not isinstance(kind, SensorKind):
-            continue
-        unit = kind.unit or ""
-        dc = kind.device_class or "-"
-        print(f"  ob/{o.id:<5} {dc:<18} {o.opis_menu!s:<26} = {o.state} {unit}")
-
-    await client.disconnect()
-    return 0
+    except AmpioNotConfigured as err:
+        for oid, name in err.objects:
+            print(f"not configured: ob/{oid} {name or ''}")
+        for mac, ids in err.collisions:
+            print(f"mac collision: {mac:x} on modules {', '.join(map(str, ids))}")
+        return 1
+    finally:
+        await client.disconnect()
 
 
 def main() -> int:

@@ -18,17 +18,16 @@ publishes the raw value before it re-encodes the per-object record). For an
 input platform that wants minimum latency on a button-press or flag toggle, the
 raw form is the right source.
 
-Once an object produced a raw message, it is **raw-owned**
-(`AmpioObject.raw_owned`). The store then ignores the slower per-object echo
-whole, and the bulk `states` snapshot skips the object. Its resync is the
-retained raw state tree itself. Every reconnect's subscribe re-delivers that
-tree whole, and the index that persists across sessions routes it. The library
-subscribes to the four state wildcards at QoS 0 for that reason. The broker
-replays retained values into a QoS 1 subscription through a queue of 1000
-messages per client. The `f` prefix alone holds more values than that on the
-baseline install. A QoS 0 subscription takes no queue slot, so its replay is
-complete. A raw edge lost on a socket drop returns with the next replay, because
-every channel is retained.
+Once an object produced a raw message, the admin store marks it **raw-owned**.
+It then ignores the slower per-object echo whole, and the bulk `states` snapshot
+skips the object. Its resync is the retained raw state tree itself. Every
+reconnect's subscribe re-delivers that tree whole, and the index that persists
+across sessions routes it. The library subscribes to the four state wildcards at
+QoS 0 for that reason. The broker replays retained values into a QoS 1
+subscription through a queue of 1000 messages per client. The `f` prefix alone
+holds more values than that on the baseline install. A QoS 0 subscription takes
+no queue slot, so its replay is complete. A raw edge lost on a socket drop
+returns with the next replay, because every channel is retained.
 
 The replay arrives before the catalogues can build that index. The broker sends
 it within a second of the subscribe, and a catalogue reply is later. So the
@@ -171,9 +170,10 @@ A module that sends no frame keeps `supply_voltage` and `temperature` at None.
 Its `last_seen` moves on object traffic alone: a state push or a raw edge for
 one of its objects. After a connect, an empty `last_seen` is expected on a
 roller module until one of its covers moves. On the M-SERV it stays empty until
-one of its own objects pushes. A diagnostics reader must not take that empty
-value as a dead module. A module that sends the frame shows liveness through it
-even with no objects of its own.
+one of its own objects pushes. A push for a system row is not object traffic,
+because the M-SERV's two system rows are not objects. A diagnostics reader must
+not take that empty value as a dead module. A module that sends the frame shows
+liveness through it even with no objects of its own.
 
 ### Timing
 
@@ -188,13 +188,13 @@ minutes.
 
 ## What the library does not bridge
 
-| Prefix                           | Why excluded                                                                                                                                                                                                                                                                                    |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `a` (other than class-67 relays) | Subscribed, but indexed for `przekaznik` objects on an open-collector leaf alone. Every other analog channel already arrives on the per-object topic with full precision and the right state-class metadata, so it drops at the lookup.                                                         |
-| `t` (temperature)                | Same reasoning - the per-object form is sufficient.                                                                                                                                                                                                                                             |
-| `rgbw` (RGBW output)             | Output side. Latency is not the win it is for inputs, and the per-object form carries the user-friendly desc.                                                                                                                                                                                   |
-| `o` (non-przekaznik)             | Subscribed, but indexed for `przekaznik` objects alone (see above). Channels of other output classes drop at the lookup.                                                                                                                                                                        |
-| the two system objects           | Not bridged. `detekcja` and `symulacja` sit on the M-SERV's own module row with a fixed channel number, and the M-SERV publishes its own digital inputs under that mac, so a route delivers the wrong channel. Both update through the per-object topic (see [`visibility.md`](visibility.md)). |
+| Prefix                           | Why excluded                                                                                                                                                                                                                            |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `a` (other than class-67 relays) | Subscribed, but indexed for `przekaznik` objects on an open-collector leaf alone. Every other analog channel already arrives on the per-object topic with full precision and the right state-class metadata, so it drops at the lookup. |
+| `t` (temperature)                | Same reasoning - the per-object form is sufficient.                                                                                                                                                                                     |
+| `rgbw` (RGBW output)             | Output side. Latency is not the win it is for inputs, and the per-object form carries the user-friendly desc.                                                                                                                           |
+| `o` (non-przekaznik)             | Subscribed, but indexed for `przekaznik` objects alone (see above). Channels of other output classes drop at the lookup.                                                                                                                |
+| the M-SERV's two system rows     | Not objects, so never indexed. The library drops both by their type as it reads the catalogue (see [`untapped-surfaces.md`](untapped-surfaces.md)).                                                                                     |
 
 ## The full retained prefix inventory
 
@@ -228,7 +228,12 @@ inventory exists so that classification work starts from the real set.
 ## Routing key
 
 Raw tree topics carry the module's effective MAC, not the user namespace. The
-dispatcher's lookup table is keyed on `(module.mac, prefix, channel)`,
+dispatcher's lookup table is keyed on `(address.mac, prefix, funkcja)`, the mac
+the leaf embeds and the raw topics carry, with no module-list lookup. `funkcja`
+is the 1-based state channel the raw topic carries, so a reader does not confuse
+it with `address.channel`, the leaf's own 0-based channel field. The table is
 precomputed from the catalogue rather than resolved per message, and rebuilt on
-every catalogue apply. `mac` is the Designer override, which a replacement
-module re-uses (see [`identity.md`](identity.md)).
+every catalogue apply. `address.mac` is the Designer override, which a
+replacement module re-uses (see [`identity.md`](identity.md)). One channel
+routes to every object that shares the leaf, because two Designer views of one
+output share one leaf.

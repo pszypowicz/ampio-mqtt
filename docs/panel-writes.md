@@ -27,22 +27,22 @@ for a binary output (leaf class 257, relays and panel LEDs) and `0x32` for an
 open-collector output (class 67, the M-INOC). A module drops `0x30` on a
 class-67 leaf: the write returns, nothing moves, and no frame follows on the
 bus. `0xF9` is the set-u8 command. `channel` is the 0-based output index -
-`AmpioObject.leaf_io_no`, one below the 1-based raw state channel. The topic is
-admin-only like the rest of the `ampio/to` tree. A binary output echoes on
-`state/o/<ch+1>` in ~30-50 ms and on its object topic in ~150 ms. An
+`AmpioObject.address.channel`, one below the 1-based raw state channel. The
+topic is admin-only like the rest of the `ampio/to` tree. A binary output echoes
+on `state/o/<ch+1>` in ~30-50 ms and on its object topic in ~150 ms. An
 open-collector output echoes on `state/a/<ch+1>` as a u8 value and never on its
 object topic, on any write path. The library therefore bridges `a` for those
 objects. `confirm=` resolves on either edge.
 
-On the admin tier, a `przekaznik` on a CAN module rides this frame when its leaf
-class has a proven function byte. The frame is addressed by the object's own
-leaf alone (mac, 0-based channel, and class). A class outside that table, and a
-leafless object, stay on `/api`. There is no module-type table to maintain. Two
-more writes stay on `/api`: the M-SERV's own virtual outputs, and every
-`pulse_ms` write. The virtual outputs live in the server's DB, not on the CAN
-bus. The raw frame has no timed form, so a panel output cannot pulse, and
-`confirm=` is what shows that. The standard tier always publishes the `/api`
-form, which a panel output ignores.
+On `AmpioAdminClient`, a `przekaznik` on a CAN module rides this frame when its
+leaf class has a proven function byte. The frame is addressed by the object's
+own leaf alone (mac, 0-based channel, and class). A class outside that table
+stays on `/api`. There is no module-type table to maintain. Two more writes stay
+on `/api`: the M-SERV's own virtual outputs, and every `pulse_ms` write. The
+virtual outputs live in the server's DB, not on the CAN bus. The raw frame has
+no timed form, so a panel output cannot pulse, and `confirm=` is what shows
+that. `AmpioClient` always publishes the `/api` form, which a panel output
+ignores.
 
 A module condition bound to the LED overrides such writes eventually, not
 preventively. A write to a condition-bound LED takes effect, and the panel
@@ -92,17 +92,17 @@ within 100 ms. `buzz_stop()` sends that silent sequence and then the simple OFF.
 When OFF cut a long single-tone sequence short, the panel emitted a 150 ms blip
 at the sequence's scheduled end.
 
-`buzz()`, `buzz_pattern()`, and `buzz_stop()` publish these frames on the admin
-tier, addressed by `AmpioModule.id`. Any catalogued module is a valid address,
-and the M-DOT panels are the proven targets. The touch-press beep length and its
-per-field mask are stored settings, readable as `AmpioModule.panel_settings` and
-written only by the Designer.
+`buzz()`, `buzz_pattern()`, and `buzz_stop()` are `AmpioAdminClient` methods,
+addressed by `AmpioModule.id`. Any catalogued module is a valid address, and the
+M-DOT panels are the proven targets. The touch-press beep length and its
+per-field mask are stored settings, readable as
+`AmpioAdminClient.panel_settings` and written only by the Designer.
 
 ## Panel colours
 
 The M-DOT panels light each touch field's icon, and show a separate status
 indicator beside it. Both colours are stored settings, read back as
-`AmpioModule.panel_settings` (see
+`AmpioAdminClient.panel_settings` (see
 [`description-records.md`](description-records.md)). Two raw frames override
 them at runtime:
 
@@ -183,7 +183,7 @@ backlight does not cycle, and the Designer's own button behaves the same, so a
 wall-mounted panel gives no visible sign of identify.
 
 No readback exists. The module confirms nothing on any topic, so `identify()`
-and `identify_stop()` take no `confirm=`. Both publish on the admin tier,
+and `identify_stop()` take no `confirm=`. Both are `AmpioAdminClient` methods,
 addressed by `AmpioModule.id`, and any catalogued module is a valid address.
 
 ## Cover roller lock
@@ -246,25 +246,27 @@ reaches the module. The lock sub-functions are absent from that firmware.
 
 #### What a consumer reads
 
-`AmpioObject.block_writable` carries the answer for one cover:
+`AmpioAdminClient.lock_target(object_id)` resolves one cover's lock write. It
+raises `AmpioValueError` for an id the catalogue does not list. The table covers
+every other answer: the `LockTarget`, the four `LockRefusal` members, and the
+raise for a mac no admitted module row carries.
 
-| Value   | Meaning                                                      |
-| ------- | ------------------------------------------------------------ |
-| `True`  | A lock write for this cover reaches its module.              |
-| `False` | The module answered the sweep and cannot hold the lock.      |
-| `None`  | No sweep covered the module yet, so the answer is not known. |
-
-A consumer that builds a lock control must leave it out on `False`. Before the
-sweep every cover reads `None`, so a consumer must wait for the sweep rather
-than treat `None` as `False`.
+| Result               | Meaning                                                                                                              |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `LockTarget`         | A lock write reaches this cover. Carries the module mac, the cover's channel, and the module's roller channel count. |
+| `NOT_A_COVER`        | The object is not a cover, and its channel index can belong to a cover on the same module.                           |
+| `NOT_SWEPT`          | No sweep has answered the module, so the answer is not known.                                                        |
+| `NO_ROLLER_COUNT`    | The module advertises no roller channel count and drops the lock frame.                                              |
+| `PAST_LAST_CHANNEL`  | The cover's channel lies past the roller count the module advertises.                                                |
+| `AmpioNotConfigured` | No admitted module row carries the cover's mac, so the frame has no module to reach. The installer fixes the list.   |
 
 `block_opening()`, `unblock_opening()`, `block_closing()` and
-`unblock_closing()` raise `AmpioValueError` for a module that advertises no
-count, rather than publish a frame that vanishes. They raise the same for an
-object that is not a cover. A relay's channel index can belong to a cover on the
-same module, and a lock frame for it locks that cover. The four methods and the
-field all need `resolve_records()` to have run, because that is what fills the
-capability map.
+`unblock_closing()` call `lock_target()` and raise on a refusal. `NOT_SWEPT`
+raises `AmpioValueError`, because `resolve_records()` fixes it. The other three
+raise `AmpioUnsupported`, because the install cannot do the write. A raise from
+`lock_target()` reaches the caller through all four. A consumer that builds a
+lock control calls `lock_target()` after the sweep, and leaves the control out
+on a refusal.
 
 ### A stored rule beats a runtime write
 
