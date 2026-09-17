@@ -5,8 +5,16 @@ import json
 import pytest
 from conftest import details, devices, feed, params_table, rows, snapshot
 
-from ampio_mqtt import AmpioClient
+from ampio_mqtt import AmpioAdminClient, AmpioClient
 from ampio_mqtt._protocol import REDACTED
+
+
+def _client_for(username: str) -> AmpioClient:
+    """The client class the account gets, as a consumer would pick it."""
+    if username == "admin":
+        return AmpioAdminClient("host")
+    return AmpioClient("host", username=username)
+
 
 _URL = "https://example.invalid/private-url-token"
 
@@ -110,7 +118,7 @@ _URL = "https://example.invalid/private-url-token"
 def test_retained_reply_omits_private_keys_and_values(
     endpoint: str, surface: str, username: str, payload: str
 ) -> None:
-    client = AmpioClient("host", username=username)
+    client = _client_for(username)
     feed(client, f"ampio/fromDB/{username}/{surface}", payload)
     report = client.diagnostics_snapshot()
     # A refused row reaches no store, which would let the privacy assertion
@@ -148,7 +156,7 @@ def test_retained_summary_distinguishes_empty_reply_from_missing_reply() -> None
 
 
 def test_summary_preserves_module_diagnostics_and_live_names() -> None:
-    client = AmpioClient("host", username="admin")
+    client = AmpioAdminClient("host")
     feed(
         client,
         "ampio/fromDB/admin/config/devices",

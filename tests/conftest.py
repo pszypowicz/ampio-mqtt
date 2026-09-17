@@ -20,7 +20,7 @@ from paho.mqtt.client import topic_matches_sub
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.reasoncodes import ReasonCode
 
-from ampio_mqtt import AmpioClient
+from ampio_mqtt import AmpioAdminClient, AmpioClient
 
 USER = "u"
 ADMIN_USER = "admin"
@@ -198,6 +198,11 @@ def make_client(broker: FakeBroker, **kwargs: object) -> AmpioClient:
     """A client wired to `broker`; username defaults to the restricted USER."""
     kwargs.setdefault("username", USER)
     return AmpioClient("h", mqtt_client_factory=broker.factory, **kwargs)  # type: ignore[arg-type]
+
+
+def make_admin_client(broker: FakeBroker, **kwargs: object) -> AmpioAdminClient:
+    """An admin client wired to `broker`; the class carries the login."""
+    return AmpioAdminClient("h", mqtt_client_factory=broker.factory, **kwargs)  # type: ignore[arg-type]
 
 
 def deliver_later(

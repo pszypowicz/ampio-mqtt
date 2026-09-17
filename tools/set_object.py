@@ -23,6 +23,7 @@ import os
 from collections.abc import Callable
 
 import aiomqtt
+from _session import make_client
 
 from ampio_mqtt import (
     AmpioClient,
@@ -124,12 +125,12 @@ async def run(
     client_factory: Callable[[], aiomqtt.Client] | None = None,
 ) -> int:
     """Drive the run; ``client_factory`` is the test seam for the session."""
-    client = AmpioClient(
+    client = make_client(
         a.host,
         a.username,
         a.password,
         port=a.port,
-        mqtt_client_factory=client_factory,
+        client_factory=client_factory,
     )
 
     def on_object(obj: AmpioObject) -> None:
@@ -139,7 +140,7 @@ async def run(
     client.subscribe(lambda e: on_object(e.object), of=ObjectUpdated)
     try:
         await client.connect()
-        print(f"Connected as {a.username!r} (tier: {client.access_tier.value})")
+        print(f"Connected as {a.username!r} ({type(client).__name__})")
 
         obj = client.objects.get(a.object_id)
         print(

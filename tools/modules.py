@@ -18,8 +18,9 @@ import sys
 from collections.abc import Callable
 
 import aiomqtt
+from _session import ADMIN_USERNAME
 
-from ampio_mqtt import AccessTier, AmpioClient, AmpioNotConfigured, ModuleFunction
+from ampio_mqtt import AmpioAdminClient, AmpioNotConfigured, ModuleFunction
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -102,7 +103,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-async def watch_readings(client: AmpioClient, seconds: float) -> None:
+async def watch_readings(client: AmpioAdminClient, seconds: float) -> None:
     """Count the modules reporting a reading, as the frames arrive."""
     marks = [t for t in (5.0, 15.0, 30.0, 60.0, 120.0) if t < seconds]
     marks.append(seconds)
@@ -125,19 +126,18 @@ async def run(
 
     ``client_factory`` is the test seam for the session.
     """
-    client = AmpioClient(
-        a.host,
-        a.username,
-        a.password,
-        port=a.port,
-        mqtt_client_factory=client_factory,
-    )
-    if client.access_tier is not AccessTier.ADMIN:
+    if a.username != ADMIN_USERNAME:
         print(
             f"{a.username!r} is not the admin account. "
             "The device_api tree answers no other account."
         )
         return 2
+    client = AmpioAdminClient(
+        a.host,
+        a.password,
+        port=a.port,
+        mqtt_client_factory=client_factory,
+    )
     try:
         await client.connect()
         sweep = await client.resolve_records(timeout=a.timeout)

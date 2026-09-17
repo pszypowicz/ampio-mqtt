@@ -20,12 +20,15 @@ from conftest import (
     details,
     devices,
     feed,
+    make_admin_client,
+    make_client,
     params_of,
 )
 
 from ampio_mqtt import (
     HEATING_MODES,
     MAX_PANEL_FIELD,
+    AmpioAdminClient,
     AmpioClient,
     AmpioConnectionError,
     AmpioTimeoutError,
@@ -707,9 +710,7 @@ async def test_confirm_on_the_admin_tier_resolves_on_the_raw_edge() -> None:
     primitive, or admin-tier confirms on bridged inputs would always
     time out."""
     broker = FakeBroker()
-    client = AmpioClient(
-        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
-    )
+    client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         feed(
@@ -768,12 +769,10 @@ ADMIN_API_TOPIC = f"ampio/control/{ADMIN_USER}/api"
 PANEL_RAW_TOPIC = "ampio/to/cafe/raw"
 
 
-async def _admin_with_panel_output() -> tuple[AmpioClient, FakeBroker]:
+async def _admin_with_panel_output() -> tuple[AmpioAdminClient, FakeBroker]:
     """Admin client whose catalogue holds a panel LED (90) and a relay (91)."""
     broker = FakeBroker()
-    client = AmpioClient(
-        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
-    )
+    client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     feed(
         client,
@@ -1020,6 +1019,34 @@ async def test_restricted_tier_keeps_the_api_path_for_panel_objects(
     assert broker.published == [(API_TOPIC, b"/api/set/90/turnOn")]
 
 
+async def test_a_binary_output_rides_the_raw_frame_on_the_admin_client_only() -> None:
+    """The same catalogue row takes the `/api` path on the base client and
+    the raw CAN write topic on the admin client: the class decides."""
+    row = {
+        "id": 5,
+        "typ_komponentu": "przekaznik",
+        "interpretacja": 0,
+        "leafId": "0_be82_257_0_1",
+    }
+    broker = FakeBroker()
+    client = make_client(broker)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    catalogue(client, row)
+    broker.published.clear()
+    await client.turn_on(5)
+    assert broker.published == [(f"ampio/control/{USER}/api", b"/api/set/5/turnOn")]
+    await client.disconnect()
+
+    broker = FakeBroker()
+    admin = make_admin_client(broker)
+    await admin.connect(timeout=2.0, discovery_timeout=0.01)
+    catalogue(admin, row)
+    broker.published.clear()
+    await admin.turn_on(5)
+    assert [t for t, _ in broker.published] == ["ampio/to/be82/raw"]
+    await admin.disconnect()
+
+
 async def test_panel_output_confirm_resolves_on_the_raw_edge() -> None:
     client, _broker = await _admin_with_panel_output()
     try:
@@ -1111,12 +1138,10 @@ async def test_flag_switch_verbs_ride_api_on_the_restricted_tier(
 # --- panel buzzer (the raw CAN write path) ----------------------------------
 
 
-async def _admin_with_panel_module() -> tuple[AmpioClient, FakeBroker]:
+async def _admin_with_panel_module() -> tuple[AmpioAdminClient, FakeBroker]:
     """Admin client whose module catalogue holds one M-DOT panel (id 7)."""
     broker = FakeBroker()
-    client = AmpioClient(
-        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
-    )
+    client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     feed(
         client,
@@ -1321,16 +1346,6 @@ async def test_buzz_rejects_bad_arguments_without_a_publish() -> None:
         await client.disconnect()
 
 
-async def test_buzz_needs_the_admin_tier(
-    connected: tuple[AmpioClient, FakeBroker],
-) -> None:
-    """The CAN write tree answers the admin login only."""
-    client, broker = connected
-    with pytest.raises(RuntimeError):
-        await client.buzz(7)
-    assert broker.published == []
-
-
 # --- module identify (the raw CAN write path) ------------------------------
 
 
@@ -1365,34 +1380,6 @@ async def test_identify_rejects_an_unknown_module_without_a_publish() -> None:
         assert broker.published == []
     finally:
         await client.disconnect()
-
-
-async def test_identify_needs_the_admin_tier(
-    connected: tuple[AmpioClient, FakeBroker],
-) -> None:
-    """The CAN write tree answers the admin login only."""
-    client, broker = connected
-    with pytest.raises(RuntimeError):
-        await client.identify(7)
-    with pytest.raises(RuntimeError):
-        await client.identify_stop(7)
-    assert broker.published == []
-
-
-async def test_panel_writes_need_the_admin_tier(
-    connected: tuple[AmpioClient, FakeBroker],
-) -> None:
-    """Every panel action rides the CAN write tree, admin only."""
-    client, broker = connected
-    with pytest.raises(RuntimeError):
-        await client.set_panel_backlight(7, 0, 255, 0)
-    with pytest.raises(RuntimeError):
-        await client.set_panel_status_light(7, 0, 255, 0)
-    with pytest.raises(RuntimeError):
-        await client.lock_panel(7, seconds=10)
-    with pytest.raises(RuntimeError):
-        await client.unlock_panel(7)
-    assert broker.published == []
 
 
 @pytest.mark.parametrize(
@@ -1444,15 +1431,13 @@ async def test_send_notification_rejects_an_ambiguous_message(
 ROLLER_RAW_TOPIC = "ampio/to/be82/raw"
 
 
-async def _admin_with_covers() -> tuple[AmpioClient, FakeBroker]:
+async def _admin_with_covers() -> tuple[AmpioAdminClient, FakeBroker]:
     """Admin client holding two covers and one relay on a module that
     advertises four roller channels, and a cover on a module that
     advertises none. The relay shares channel index 0 with the first
     cover."""
     broker = FakeBroker()
-    client = AmpioClient(
-        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
-    )
+    client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     feed(
         client,
@@ -1636,31 +1621,13 @@ async def test_roller_lock_refuses_an_unknown_object(call) -> None:
         await client.disconnect()
 
 
-async def test_roller_lock_needs_the_admin_tier(
-    connected: tuple[AmpioClient, FakeBroker],
-) -> None:
-    """The lock rides the CAN write tree, admin only."""
-    client, broker = connected
-    for call in (
-        client.block_opening,
-        client.unblock_opening,
-        client.block_closing,
-        client.unblock_closing,
-    ):
-        with pytest.raises(RuntimeError):
-            await call(193)
-    assert broker.published == []
-
-
 ADMIN_API_TOPIC = f"ampio/control/{ADMIN_USER}/api"
 
 
-async def _admin_with_flags() -> tuple[AmpioClient, FakeBroker]:
+async def _admin_with_flags() -> tuple[AmpioAdminClient, FakeBroker]:
     """Admin client holding the u8 and the signed i16 analog flags."""
     broker = FakeBroker()
-    client = AmpioClient(
-        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
-    )
+    client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     feed(
         client,

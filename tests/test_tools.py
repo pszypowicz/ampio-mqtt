@@ -326,8 +326,23 @@ async def test_smoke_test_prints_the_discovery_summary(
     assert await smoke_test.run(a, client_factory=broker.factory) == 0
     printed = capsys.readouterr().out
     assert "  state  ob/41" in printed and "= 22.5" in printed
+    assert "=== Client: AmpioClient ===" in printed
     assert "=== Objects: 1 (sensors: 1), modules: 0 ===" in printed
     assert "Salon" in printed
+
+
+async def test_smoke_test_on_the_admin_account_counts_the_modules(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The reserved login gets the admin client, so the summary reports a
+    module catalogue the same run on any other account cannot read."""
+    broker = FakeBroker()
+    broker.scripted_messages = _admin_discovery(PANEL)
+    a = _parse(monkeypatch, smoke_test, "--duration", "0.01", user=ADMIN_USER)
+    assert await smoke_test.run(a, client_factory=broker.factory) == 0
+    printed = capsys.readouterr().out
+    assert "=== Client: AmpioAdminClient ===" in printed
+    assert "modules: 1 ===" in printed
 
 
 async def test_smoke_test_reports_a_failed_connect(

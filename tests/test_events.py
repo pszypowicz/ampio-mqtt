@@ -9,6 +9,7 @@ import pytest
 from conftest import API_TOPIC, USER, FakeBroker, catalogue, feed
 
 from ampio_mqtt import (
+    AmpioAdminClient,
     AmpioClient,
     AmpioConnectionError,
     BusEventRaised,
@@ -21,7 +22,7 @@ from ampio_mqtt.events import ClientEvent, StoreEvent
 
 def test_received_event_reaches_listeners() -> None:
     """The originator mac is the sending module's, hex-parsed off the topic."""
-    client = AmpioClient("host", username="admin")
+    client = AmpioAdminClient("host")
     seen: list[BusEventRaised] = []
     client.subscribe(seen.append, of=BusEventRaised)
 

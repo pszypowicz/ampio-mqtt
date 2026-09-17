@@ -26,7 +26,7 @@ class ObjectUpdated:
 
     Fires on live pushes, raw-channel edges, snapshot corrections,
     catalogue rows that actually changed something, and a
-    :meth:`AmpioClient.resolve_records` pass that changed the object's
+    :meth:`AmpioAdminClient.resolve_records` pass that changed the object's
     ``record`` - a re-requested catalogue that says nothing new
     dispatches nothing. A catalogue row
     establishing an id the store did not already hold dispatches the
@@ -100,7 +100,7 @@ class ModuleUpdated:
     """A module's catalogue row, its diagnostics broadcast, or its record changed.
 
     Fires for a module the list adds or changes, for each diagnostics
-    broadcast, and for a :meth:`AmpioClient.resolve_records` pass that
+    broadcast, and for a :meth:`AmpioAdminClient.resolve_records` pass that
     changed its ``record``. All three sources are administrator-only, so it
     never fires on a standard account.
     """

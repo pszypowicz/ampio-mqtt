@@ -20,10 +20,10 @@ import os
 from collections.abc import Callable
 
 import aiomqtt
+from _session import make_client
 
 from ampio_mqtt import (
-    AccessTier,
-    AmpioClient,
+    AmpioAdminClient,
     AmpioConnectionError,
     AmpioNotConfigured,
     AmpioObject,
@@ -65,12 +65,12 @@ async def run(
     client_factory: Callable[[], aiomqtt.Client] | None = None,
 ) -> int:
     """Drive the run; ``client_factory`` is the test seam for the session."""
-    client = AmpioClient(
+    client = make_client(
         args.host,
         args.username,
         args.password,
         port=args.port,
-        mqtt_client_factory=client_factory,
+        client_factory=client_factory,
     )
 
     def on_object(obj: AmpioObject) -> None:
@@ -98,11 +98,10 @@ async def run(
     for o in objs.values():
         types[o.typ_komponentu] = types.get(o.typ_komponentu, 0) + 1
     sensors = [o for o in objs.values() if isinstance(o.kind, SensorKind)]
-    print(f"\n=== Access tier: {client.access_tier.value} ===")
-    # The module catalogue answers the admin login alone, and reading it on
-    # any other account raises.
-    admin = client.access_tier is AccessTier.ADMIN
-    modules = len(client.modules) if admin else 0
+    print(f"\n=== Client: {type(client).__name__} ===")
+    # The module catalogue answers the admin login alone, so only the admin
+    # client holds one.
+    modules = len(client.modules) if isinstance(client, AmpioAdminClient) else 0
     print(f"=== Objects: {len(objs)} (sensors: {len(sensors)}), modules: {modules} ===")
     print("  by typ_komponentu:", types)
 

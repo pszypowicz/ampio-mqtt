@@ -13,7 +13,7 @@ import logging
 import pytest
 from conftest import USER, FakeBroker, catalogue, devices, feed, make_client
 
-from ampio_mqtt import AmpioClient, ConnectionDied, ObjectUpdated
+from ampio_mqtt import AmpioAdminClient, AmpioClient, ConnectionDied, ObjectUpdated
 
 
 def _client() -> AmpioClient:
@@ -105,7 +105,7 @@ def test_a_refused_reply_is_reported_in_the_diagnostics() -> None:
     [b'{"d":[254,79,null,0]}', b'{"d":[254,79,"x",0]}', b'{"d":"nope"}', b"null"],
 )
 def test_malformed_diagnostics_frames_are_ignored(payload: bytes) -> None:
-    client = AmpioClient("host", username="admin")
+    client = AmpioAdminClient("host")
     feed(client, "ampio/fromDB/admin/config/devices", devices({"id": 7, "mac": 0xCAFE}))
     feed(client, "ampio/from/CAFE/b/4F", payload)  # must not raise
     assert client.modules[7].supply_voltage is None

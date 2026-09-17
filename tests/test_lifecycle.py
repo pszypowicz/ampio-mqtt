@@ -43,6 +43,7 @@ from conftest import (
     devices,
     feed,
     info,
+    make_admin_client,
     make_client,
     params_of,
     params_table,
@@ -235,7 +236,7 @@ async def test_an_admin_client_requests_the_module_list_and_the_data_pair() -> N
     catalogue pair. Neither reaches the client without a request at
     connect time. Every refresh must re-request both."""
     broker = FakeBroker()
-    client = make_client(broker, username=ADMIN_USER, reconnect_interval=0.001)
+    client = make_admin_client(broker, reconnect_interval=0.001)
     await client.connect(timeout=2.0, discovery_timeout=0.05)
     try:
         broker.published.clear()
@@ -260,7 +261,7 @@ def test_initial_endpoints_follow_the_endpoint_tables_order() -> None:
     in the endpoint table's order, and a standard account's is the four it
     is served, in the same order."""
     broker = FakeBroker()
-    admin = make_client(broker, username=ADMIN_USER)
+    admin = make_admin_client(broker)
     client = make_client(broker)
     assert admin._initial_endpoints == (
         "devices",
@@ -458,7 +459,7 @@ async def test_connect_drives_full_discovery_through_mocked_broker() -> None:
             json.dumps({"Results": {"mac": 99, "userId": "-1"}}).encode(),
         ),
     ]
-    client = make_client(broker, username=ADMIN_USER, reconnect_interval=0.001)
+    client = make_admin_client(broker, reconnect_interval=0.001)
     completed = await client.connect(timeout=2.0, discovery_timeout=1.0)
     try:
         assert completed is True
@@ -518,11 +519,10 @@ async def test_wait_for_initial_discovery_returns_true_when_all_arrive() -> None
             json.dumps({"Results": {"mac": 99, "userId": "-1"}}).encode(),
         ),
     ]
-    client = make_client(broker, username=ADMIN_USER, reconnect_interval=0.001)
+    client = make_admin_client(broker, reconnect_interval=0.001)
     await client.connect(timeout=2.0, discovery_timeout=1.0)
     try:
         assert await client.wait_for_initial_discovery(timeout=1.0) is True
-        assert client.access_tier is AccessTier.ADMIN
         assert 17 in client.modules
         assert 41 in client.objects
         assert client.server_info is not None and client.server_info.mac == 99
@@ -614,7 +614,6 @@ async def test_restricted_account_completes_via_data_surface_fallback() -> None:
     await client.connect(timeout=2.0, discovery_timeout=1.0)
     try:
         assert await client.wait_for_initial_discovery(timeout=1.0) is True
-        assert client.access_tier is AccessTier.RESTRICTED
         obj = client.objects[24]
         assert obj.opis_menu == "CO2"
         assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
@@ -877,12 +876,7 @@ async def test_a_rejected_raw_filter_warns_on_the_admin_client(
     denied = "ampio/from/+/state/f/+"
     broker = FakeBroker()
     broker.suback_codes = {denied: 0x87}
-    client = AmpioClient(
-        "h",
-        username=ADMIN_USER,
-        reconnect_interval=0.0015,
-        mqtt_client_factory=broker.factory,
-    )
+    client = make_admin_client(broker, reconnect_interval=0.0015)
     with caplog.at_level(logging.WARNING, logger="ampio_mqtt._connection"):
         await client.connect(timeout=2.0, discovery_timeout=0.05)
         try:
@@ -956,7 +950,7 @@ async def test_the_raw_state_replay_survives_the_broker_queue_cap() -> None:
         ),
     ]
     broker.retained = {f"ampio/from/CAFE/state/f/{n}": b"1" for n in range(1, 7)}
-    client = make_client(broker, username=ADMIN_USER)
+    client = make_admin_client(broker)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         async with asyncio.timeout(1.0):
@@ -1014,7 +1008,7 @@ async def test_a_retained_replay_never_stamps_last_seen() -> None:
         "ampio/from/CAFE/b/4F": b'{"d":[254,79,63,142],"m":51966}',
         "ampio/from/CAFE/state/f/3": b"1",
     }
-    client = make_client(broker, username=ADMIN_USER)
+    client = make_admin_client(broker)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
 
@@ -1118,7 +1112,7 @@ async def test_listeners_run_on_the_connect_loop_in_the_main_thread() -> None:
             b'{"state":"1","on":1789000000000}',
         ),
     ]
-    client = make_client(broker, username=ADMIN_USER, reconnect_interval=0.001)
+    client = make_admin_client(broker, reconnect_interval=0.001)
     contexts: list[tuple[asyncio.AbstractEventLoop, threading.Thread]] = []
     got_object = asyncio.Event()
 
@@ -1225,7 +1219,7 @@ async def test_only_the_admin_client_subscribes_to_the_md5_digests() -> None:
     namespace, so that tier needs no digest. The admin catalogues are never
     pushed, so the digest is what tells an admin session to re-ask."""
     admin_broker, broker = FakeBroker(), FakeBroker()
-    admin = make_client(admin_broker, username=ADMIN_USER)
+    admin = make_admin_client(admin_broker)
     client = make_client(broker)
     await admin.connect(timeout=2.0, discovery_timeout=0.01)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
@@ -1253,7 +1247,7 @@ async def test_a_changed_digest_re_requests_the_module_list(topic: str) -> None:
     """The first digest per table seeds and a repeat says nothing. A change
     re-requests the module list and nothing else."""
     broker = FakeBroker()
-    client = make_client(broker, username=ADMIN_USER)
+    client = make_admin_client(broker)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         broker.published.clear()
@@ -1283,7 +1277,7 @@ async def test_a_digest_trigger_keeps_the_live_value_guard() -> None:
     longer needs to route on the object's own leaf mac.
     """
     broker = FakeBroker()
-    client = make_client(broker, username=ADMIN_USER)
+    client = make_admin_client(broker)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         feed(client, ADMIN_DEVICES_TOPIC, devices({"id": 1, "mac": 0xCAFE}))
@@ -1330,7 +1324,7 @@ async def test_the_retained_replay_seeds_again_after_a_reconnect() -> None:
     saw, so a save made during an outage costs one fetch, not two."""
     broker = FakeBroker()
     broker.scripted_messages = [Message(ADMIN_MD5_DEVICES_TOPIC, b"a" * 32)]
-    client = make_client(broker, username=ADMIN_USER, reconnect_interval=0.001)
+    client = make_admin_client(broker, reconnect_interval=0.001)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         await asyncio.sleep(0.01)  # the first session consumed its replay
@@ -1356,7 +1350,7 @@ async def test_a_digest_trigger_survives_a_publish_error(
     task runs outside the connection loop, so the session is never
     recycled and nothing surfaces as an unretrieved task exception."""
     broker = FakeBroker()
-    client = make_client(broker, username=ADMIN_USER)
+    client = make_admin_client(broker)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         broker.publish_errors = [aiomqtt.MqttError("broken pipe")]
@@ -1376,7 +1370,7 @@ async def test_disconnect_cancels_a_pending_digest_trigger() -> None:
     """A trigger still waiting on its PUBACK goes down with the session
     rather than publishing into a connection the consumer closed."""
     broker = FakeBroker()
-    client = make_client(broker, username=ADMIN_USER)
+    client = make_admin_client(broker)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     broker.published.clear()
     broker.publish_delay = 0.05
@@ -1394,7 +1388,7 @@ async def test_a_designer_save_surfaces_as_object_added_on_the_admin_tier() -> N
     Designer save as ObjectAdded on an admin session, with no reconnect,
     no refresh() call, and no re-request."""
     broker = FakeBroker()
-    client = make_client(broker, username=ADMIN_USER)
+    client = make_admin_client(broker)
     events: list[ClientEvent] = []
     client.subscribe(events.append, of=ObjectAdded)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
@@ -1408,3 +1402,12 @@ async def test_a_designer_save_surfaces_as_object_added_on_the_admin_tier() -> N
         assert [e.object.id for e in events] == [11]  # type: ignore[attr-defined]
     finally:
         await client.disconnect()
+
+
+def test_diagnostics_keys_follow_the_client_class() -> None:
+    """The snapshot reports what the class holds: the module catalogue and
+    the mac collisions it implies are the admin client's alone."""
+    base = set(make_client(FakeBroker()).diagnostics_snapshot())
+    admin = set(make_admin_client(FakeBroker()).diagnostics_snapshot())
+    assert "access_tier" not in base and "access_tier" not in admin
+    assert admin - base == {"mac_collisions", "modules"}

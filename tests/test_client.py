@@ -26,7 +26,7 @@ from conftest import (
     devices,
     feed,
     info,
-    make_client,
+    make_admin_client,
     params_of,
     params_table,
     rows,
@@ -34,7 +34,7 @@ from conftest import (
 )
 
 from ampio_mqtt import (
-    AccessTier,
+    AmpioAdminClient,
     AmpioClient,
     AmpioConnectionError,
     AmpioValueError,
@@ -62,15 +62,15 @@ def _client() -> AmpioClient:
     return AmpioClient("host", username=USER)
 
 
-def _admin_client() -> AmpioClient:
-    """For the module-catalogue machinery, which only the admin tier is served."""
-    return AmpioClient("host", username=ADMIN_USER)
+def _admin_client() -> AmpioAdminClient:
+    """For the module-catalogue machinery, which the admin client alone holds."""
+    return AmpioAdminClient("host")
 
 
 @pytest.fixture
-def admin_client() -> Iterator[tuple[AmpioClient, FakeBroker]]:
+def admin_client() -> Iterator[tuple[AmpioAdminClient, FakeBroker]]:
     broker = FakeBroker()
-    client = make_client(broker, username=ADMIN_USER)
+    client = make_admin_client(broker)
     yield client, broker
 
 
@@ -123,20 +123,6 @@ def test_mserv_reads_none_until_both_replies_land() -> None:
     assert client.mserv is None
     feed(client, f"ampio/fromDB/{ADMIN_USER}/data/info", info(mac="12345"))
     assert client.mserv is not None and client.mserv.id == 5
-
-
-def test_the_module_catalogue_refuses_a_standard_account() -> None:
-    """The M-SERV serves the module list to the admin login alone, so a
-    standard account reading it is a consumer fault, not an empty install.
-    Tier-independent grouping reads `AmpioObject.address.mac`."""
-    client = _client()
-    catalogue(client, _object_row(10, "cafe"))
-    with pytest.raises(RuntimeError, match="admin"):
-        _ = client.modules
-    with pytest.raises(RuntimeError, match="admin"):
-        _ = client.mserv
-    with pytest.raises(RuntimeError, match="admin"):
-        client.module_for(client.objects[10])
 
 
 # --- module_for: the leaf-mac join -------------------------------------------
@@ -490,14 +476,14 @@ def test_a_table_reply_is_decoded_once(
         return real(payload)
 
     monkeypatch.setattr(_protocol.json, "loads", counting)
-    client = AmpioClient("host", username="admin")
+    client = AmpioAdminClient("host")
     feed(client, f"ampio/fromDB/admin/{topic}", payload_of())
     assert calls == 1
 
 
 def test_last_payloads_retained_for_each_handler() -> None:
     """Each served endpoint retains a summary of its last reply."""
-    admin = AmpioClient("host", username="admin")
+    admin = AmpioAdminClient("host")
     devices_payload = devices({"id": 1, "mac": 1, "typ_urzadzenia": 10})
     admin_details_payload = details(
         {"id": 5, "typ_komponentu": "temp", "interpretacja": 1}
@@ -593,11 +579,61 @@ def test_snapshot_withholds_unparseable_info_bytes() -> None:
     assert client.diagnostics_snapshot()["last_payloads"]["info"] == REDACTED
 
 
-def test_access_tier_is_the_authenticated_username() -> None:
-    """The broker authenticates the login at CONNACK and only the reserved
-    `admin` name is the administrator, so the tier is a constructor fact."""
-    assert _client().access_tier is AccessTier.RESTRICTED
-    assert AmpioClient("host", username="admin").access_tier is AccessTier.ADMIN
+ADMIN_ONLY = {
+    "modules",
+    "mserv",
+    "module_for",
+    "fetch_locations",
+    "resolve_records",
+    "block_opening",
+    "unblock_opening",
+    "block_closing",
+    "unblock_closing",
+    "buzz",
+    "buzz_pattern",
+    "buzz_stop",
+    "identify",
+    "identify_stop",
+    "set_panel_backlight",
+    "set_panel_status_light",
+    "lock_panel",
+    "unlock_panel",
+}
+
+
+def test_the_base_client_has_no_admin_member() -> None:
+    """The base class carries what every account is served and nothing
+    more, so an admin-only call on it fails at import or attribute
+    lookup rather than at runtime on the wire."""
+    client = AmpioClient("host", username="admin")
+    assert not any(hasattr(client, name) for name in ADMIN_ONLY | {"access_tier"})
+
+
+def test_the_admin_client_has_every_admin_member() -> None:
+    """The admin class carries the whole admin surface."""
+    client = AmpioAdminClient("host")
+    assert all(hasattr(client, name) for name in ADMIN_ONLY)
+
+
+def test_the_base_client_never_inspects_the_username() -> None:
+    """The reserved login through the base class gets the standard view:
+    a valid least-privilege choice, not an admin session."""
+    filters = {
+        topic for topic, _ in AmpioClient("host", username="admin")._subscriptions()
+    }
+    assert not any(
+        t.startswith("ampio/from/") or "/config/" in t or "/md5/" in t for t in filters
+    )
+
+
+def test_the_admin_client_subscribes_to_the_raw_tree_and_the_digests() -> None:
+    """The admin class widens the base filter set with the shapes the
+    M-SERV serves the reserved login alone."""
+    filters = {topic for topic, _ in AmpioAdminClient("host")._subscriptions()}
+    assert "ampio/from/+/state/f/+" in filters
+    assert "ampio/fromDB/admin/config/devices" in filters
+    assert "ampio/fromDB/admin/md5/devices" in filters
+    assert "device_api/from/list" in filters
 
 
 def test_dispatch_updates_last_message_at() -> None:
@@ -699,10 +735,9 @@ async def test_fetch_rejects_a_store_gated_endpoint() -> None:
 def test_diagnostics_snapshot_is_credential_free_and_complete() -> None:
     """The one dict a consumer diagnostics platform emits as-is: every
     documented key present, no trace of host or password."""
-    client = AmpioClient(
+    client = AmpioAdminClient(
         "secret-host.local",
-        username=ADMIN_USER,
-        password="s3cr3t-pw",  # betterleaks:allow
+        "s3cr3t-pw",  # betterleaks:allow
     )
     feed(client, ADMIN_DEVICES, devices(_module_row(7, 0xCAFE)))
     feed(
@@ -711,7 +746,6 @@ def test_diagnostics_snapshot_is_credential_free_and_complete() -> None:
         info(mac="555", userId=-1, serverVersion="1865"),
     )
     snap = client.diagnostics_snapshot()
-    assert snap["access_tier"] == "admin"
     assert snap["available"] is False
     assert snap["auth_failure"] is None
     assert snap["server_info"]["mac"] == 555

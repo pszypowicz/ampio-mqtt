@@ -22,7 +22,7 @@ from .classification import (
     SensorKind,
     ThermostatKind,
 )
-from .client import HEATING_MODES, MAX_PANEL_FIELD, AmpioClient
+from .client import HEATING_MODES, MAX_PANEL_FIELD, AmpioAdminClient, AmpioClient
 from .errors import (
     AmpioAuthError,
     AmpioConnectionError,
@@ -74,6 +74,7 @@ __all__ = [
     "SENSOR_KIND_KEY_PREFIXES",
     "THERMOSTAT_KIND_KEYS",
     "AccessTier",
+    "AmpioAdminClient",
     "AmpioAuthError",
     "AmpioClient",
     "AmpioConnectionError",

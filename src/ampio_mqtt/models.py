@@ -189,7 +189,7 @@ class ThermostatState:
 class DesignerRecord:
     """One object's entry of its module's CAN description record.
 
-    Admin-guarded: only :meth:`AmpioClient.resolve_records` fills it, and
+    Admin-guarded: only :meth:`AmpioAdminClient.resolve_records` fills it, and
     only the admin tier can run that sweep, so ``AmpioObject.record`` is
     None on the restricted tier and before a sweep covers the object. A
     None field inside means the entry carries no value: an unassigned
@@ -205,7 +205,7 @@ class DesignerRecord:
 
 @dataclass(slots=True, frozen=True)
 class RecordSweep:
-    """What one :meth:`AmpioClient.resolve_records` pass covered.
+    """What one :meth:`AmpioAdminClient.resolve_records` pass covered.
 
     ``records`` is the join result. The two mac sets separate the case a
     bare record map cannot: a module in ``answered_macs`` whose object

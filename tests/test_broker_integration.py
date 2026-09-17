@@ -15,6 +15,7 @@ import pytest
 from conftest import details, devices, info, params_table, snapshot
 
 from ampio_mqtt import (
+    AmpioAdminClient,
     AmpioAuthError,
     AmpioClient,
     AuthFailed,
@@ -103,6 +104,11 @@ class Broker:
         )
 
     def client(self, username: str = "u", password: str = _PASSWORD) -> AmpioClient:
+        """The client class the account gets, as a consumer would pick it."""
+        if username == "admin":
+            return AmpioAdminClient(
+                _HOST, password, port=self.port, reconnect_interval=0.1
+            )
         return AmpioClient(
             _HOST,
             username,

@@ -20,6 +20,7 @@ from conftest import (
 )
 
 from ampio_mqtt import (
+    AmpioAdminClient,
     AmpioClient,
     AmpioTimeoutError,
     DesignerRecord,
@@ -413,11 +414,9 @@ def test_resolve_module_capabilities_keys_by_mac_and_skips_collisions() -> None:
     }
 
 
-async def _admin_client_with_catalogue() -> tuple[AmpioClient, FakeBroker]:
+async def _admin_client_with_catalogue() -> tuple[AmpioAdminClient, FakeBroker]:
     broker = FakeBroker()
-    client = AmpioClient(
-        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
-    )
+    client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     feed(
         client,
@@ -461,9 +460,7 @@ async def _deliver_causally(
 
 async def test_admin_subscribes_the_device_api_list_topic() -> None:
     broker = FakeBroker()
-    client = AmpioClient(
-        "host", username=ADMIN_USER, mqtt_client_factory=broker.factory
-    )
+    client = AmpioAdminClient("host", mqtt_client_factory=broker.factory)
     await client.connect(timeout=2.0, discovery_timeout=0.01)
     try:
         assert DEVICE_API_LIST_TOPIC in broker.subscribed
@@ -746,16 +743,5 @@ async def test_resolve_records_raises_when_the_list_never_answers() -> None:
         finally:
             await delivery
         assert client.objects[64].record is None
-    finally:
-        await client.disconnect()
-
-
-async def test_resolve_records_raises_on_restricted_tier() -> None:
-    broker = FakeBroker()
-    client = AmpioClient("host", username="u", mqtt_client_factory=broker.factory)
-    await client.connect(timeout=2.0, discovery_timeout=0.01)
-    try:
-        with pytest.raises(RuntimeError, match="admin"):
-            await client.resolve_records(timeout=0.1)
     finally:
         await client.disconnect()
