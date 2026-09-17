@@ -17,13 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import (
-    AmpioModule,
-    AmpioObject,
-    PresenceDetection,
-    PresenceSimulation,
-    RecordSweep,
-)
+from .models import AmpioModule, AmpioObject, RecordSweep
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,21 +81,6 @@ class NotConfigured:
 
     objects: tuple[tuple[int, str | None], ...] = ()
     collisions: tuple[tuple[int, tuple[int, ...]], ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class PresenceChanged:
-    """The presence-detection or the presence-simulation row changed.
-
-    Carries both rows as they read after the change, and None for a row
-    the catalogue does not list or hides. Fires when a row appears or
-    leaves, when its name or its switch changes, and when the detection
-    code moves. The two rows are not objects, so :class:`ObjectUpdated`
-    never carries them.
-    """
-
-    detection: PresenceDetection | None
-    simulation: PresenceSimulation | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,7 +190,6 @@ StoreEvent = (
     | ObjectUpdated
     | ObjectRemoved
     | NotConfigured
-    | PresenceChanged
     | ModuleUpdated
     | ModuleRemoved
     | BusEventRaised

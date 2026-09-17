@@ -45,7 +45,6 @@ from .events import (
     ObjectAdded,
     ObjectRemoved,
     ObjectUpdated,
-    PresenceChanged,
     RecordSweepCompleted,
 )
 from .models import (
@@ -63,8 +62,6 @@ from .models import (
     ModuleRecord,
     PanelLightSignal,
     PanelSettings,
-    PresenceDetection,
-    PresenceSimulation,
     RecordSweep,
     ThermostatState,
 )
@@ -116,9 +113,6 @@ __all__ = [
     "OutputKind",
     "PanelLightSignal",
     "PanelSettings",
-    "PresenceChanged",
-    "PresenceDetection",
-    "PresenceSimulation",
     "RecordSweep",
     "RecordSweepCompleted",
     "SensorKind",

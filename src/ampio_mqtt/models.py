@@ -122,35 +122,6 @@ MSERV_MAC = 1
 
 
 @dataclass(slots=True, frozen=True)
-class PresenceDetection:
-    """The M-SERV's presence-detection row.
-
-    ``home_status`` is the M-SERV's own code, pushed on the row's
-    per-object topic. 5 is "home empty" in the Ampio app. None until the
-    M-SERV computes one. The row is not an :class:`AmpioObject`: it has no
-    module, no leaf and no verb. docs/presence.md.
-    """
-
-    id: int
-    name: str | None
-    home_status: int | None
-
-
-@dataclass(slots=True, frozen=True)
-class PresenceSimulation:
-    """The M-SERV's presence-simulation row and its switch.
-
-    ``active`` is the row's ``czas`` column, 1 for on. The app flips it,
-    and the M-SERV pushes the change on the params table. The row carries
-    no state and is not an :class:`AmpioObject`. docs/presence.md.
-    """
-
-    id: int
-    name: str | None
-    active: bool
-
-
-@dataclass(slots=True, frozen=True)
 class ModuleAddress:
     """Where an object sits on the CAN bus, parsed from its Designer leaf.
 

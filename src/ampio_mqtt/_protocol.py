@@ -75,8 +75,8 @@ class ObjectMetadata:
     format: str
 
 
-# The two rows the M-SERV creates itself. Neither is a module output, so
-# the store routes them to their own types instead of the object catalogue.
+# The two rows the M-SERV creates itself. Neither is a module output and
+# neither carries a leaf, so the store drops both as it parses the catalogue.
 DETECTION_TYPE = "detekcja"
 SIMULATION_TYPE = "symulacja"
 PRESENCE_TYPES = frozenset((DETECTION_TYPE, SIMULATION_TYPE))
@@ -332,10 +332,11 @@ def parse_app_sync_devices(data: Mapping[str, Any]) -> list[ObjectMetadata]:
     """Every row of a `data/devices` reply, the object catalogue.
 
     The rows are the connecting account's app-sync view: every object in a
-    room plus the two presence rows on the reserved admin login, and the
-    account's own grants otherwise. The surface serves no `params`, `czas`,
-    or `url` column, so nothing here reads one - `data/params_devices`
-    carries the three on every tier.
+    room on the reserved admin login, and the account's own grants
+    otherwise. The admin reply also carries the two system rows, which the
+    store drops. The surface serves no `params`, `czas`, or `url` column,
+    so nothing here reads one - `data/params_devices` carries the three on
+    every tier.
     """
     return [_shared_columns(row) for row in require_rows(data, _CATALOGUE)]
 
@@ -1273,7 +1274,7 @@ ENDPOINTS: tuple[Endpoint, ...] = (
     ),
     # The object catalogue, served to every account: the objects in the
     # account's app-sync view, which on the reserved admin login is every
-    # object in a room plus the two presence rows.
+    # object in a room plus the two system rows the store drops.
     Endpoint(
         "data_devices",
         "data",

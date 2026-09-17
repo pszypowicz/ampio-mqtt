@@ -91,8 +91,6 @@ from .models import (
     ModuleFunction,
     ModuleRecord,
     PanelSettings,
-    PresenceDetection,
-    PresenceSimulation,
     RecordSweep,
 )
 
@@ -181,11 +179,11 @@ class _ReplyChannel:
 class AmpioClient:
     """The client every Ampio account gets: the account's own namespace.
 
-    Holds the object catalogue, the presence rows, the server info, the
-    event stream and the `/api` writes. :class:`AmpioAdminClient` extends
-    it with what the M-SERV serves the reserved login alone. The class
-    never inspects the username: the reserved login through this class
-    gets the standard view, a valid least-privilege choice.
+    Holds the object catalogue, the server info, the event stream and the
+    `/api` writes. :class:`AmpioAdminClient` extends it with what the
+    M-SERV serves the reserved login alone. The class never inspects the
+    username: the reserved login through this class gets the standard
+    view, a valid least-privilege choice.
     """
 
     # The three choices the admin subclass widens: the endpoints the
@@ -415,26 +413,6 @@ class AmpioClient:
         can be mutated from consumer code.
         """
         return MappingProxyType(self._store.objects)
-
-    @property
-    def presence_detection(self) -> PresenceDetection | None:
-        """The M-SERV's presence-detection row, or None.
-
-        None until the catalogue lists the row, and while the row carries
-        the hidden bit. Both account tiers receive it. ``home_status`` is
-        the M-SERV's code, and :class:`PresenceChanged` reports every
-        change. docs/presence.md.
-        """
-        return self._store.presence_detection
-
-    @property
-    def presence_simulation(self) -> PresenceSimulation | None:
-        """The M-SERV's presence-simulation row, or None.
-
-        None until the catalogue lists the row, and while the row carries
-        the hidden bit. ``active`` is the app's switch. docs/presence.md.
-        """
-        return self._store.presence_simulation
 
     @property
     def server_info(self) -> AmpioServerInfo | None:

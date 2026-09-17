@@ -316,13 +316,6 @@ def test_kind_key_vocabulary_contents() -> None:
     } == SENSOR_KIND_KEYS
 
 
-def test_the_presence_rows_are_not_kinds() -> None:
-    """The two rows never reach an AmpioObject, so their type names
-    classify like any type the table does not know."""
-    assert classify("detekcja", 1).key == "value"
-    assert classify("symulacja", 1).key == "value"
-
-
 def test_classify_never_leaves_the_exported_vocabulary() -> None:
     """Every key classify() can mint is either exported or in an exported
     open family - the invariant a consumer's exhaustiveness check rests on."""

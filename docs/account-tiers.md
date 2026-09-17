@@ -32,7 +32,6 @@ module row on either class: `AmpioObject.address.mac` carries the key (see
 | `connect()`, `disconnect()`, `wait_for_initial_discovery()`, `refresh()`  | the account's `control` and `fromDB` namespace       |
 | `check_connection()`, `available`, `diagnostics_snapshot()`               | the session                                          |
 | `objects`                                                                 | `data/devices`, `data/params_devices`, `data/states` |
-| `presence_detection`, `presence_simulation`                               | the two system rows in the same replies              |
 | `server_info`                                                             | `data/info`                                          |
 | `subscribe()`                                                             | the event stream                                     |
 | `fetch_rooms()`, `fetch_scenes()`                                         | `data/groups`, `data/group_devices`, `data/scenes`   |

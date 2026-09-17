@@ -35,13 +35,7 @@ from conftest import (
     snapshot,
 )
 
-from ampio_mqtt import (
-    ModuleAddress,
-    PresenceChanged,
-    PresenceDetection,
-    PresenceSimulation,
-    _protocol,
-)
+from ampio_mqtt import ModuleAddress, _protocol
 from ampio_mqtt._protocol import (
     ADMIN_ENDPOINTS,
     BASE_ENDPOINTS,
@@ -220,6 +214,11 @@ _COVER_PARAMS = CoverParameters(
     start_lag_same_ms=None,
     start_lag_other_ms=None,
 )
+
+
+def _push(oid: int, state: str, on: int = 1_700_000_000_000) -> str:
+    """One per-object state push payload."""
+    return json.dumps({"state": state, "on": on})
 
 
 def _flaga_row(oid: int, funkcja: int, mac: int = 0xCAFE) -> dict:
@@ -950,14 +949,10 @@ def test_a_malformed_leaf_refuses_the_reply_whole() -> None:
     store = _store()
     _feed_catalogue(store, {"id": 42}, _DET)
     before = dict(store.objects)
-    detection = store.presence_detection
-    assert detection is not None
     with pytest.raises(AmpioProtocolError, match="garbage"):
         _feed_catalogue(store, {"id": 41, "leafId": "garbage"}, {"id": 43}, _DET)
     assert store.objects == before
     assert store.not_configured == ()
-    assert store.presence_detection == detection
-    assert store.presence_simulation is None
 
 
 def test_a_leaf_that_disappears_after_admission_evicts_the_row() -> None:
@@ -1510,7 +1505,7 @@ def test_wej_per_object_edge_reads_255_as_on() -> None:
     assert store.objects[63].is_on is False
 
 
-# --- the two presence rows ---------------------------------------------------
+# --- the two system rows -----------------------------------------------------
 
 _DET = {
     "id": 60,
@@ -1527,333 +1522,25 @@ _SIM = {
     "opis_menu": "Simulation",
     "czas": 1,
 }
-_WEJ = {
-    "id": 62,
-    "typ_komponentu": "wej",
-    "interpretacja": 1,
-    "funkcja": 1,
-    "opis_menu": "Button",
-}
-_FLAG = {
-    "id": 63,
-    "typ_komponentu": "flaga",
-    "interpretacja": 1,
-    "funkcja": 1,
-    "opis_menu": "Flag",
-}
 
 
-def _presence_events(applied: Applied) -> list[PresenceChanged]:
-    return [e for e in applied.events if isinstance(e, PresenceChanged)]
-
-
-def test_presence_rows_leave_the_object_catalogue_on_the_admin_tier() -> None:
+def test_the_system_rows_never_enter_the_catalogue() -> None:
     store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    applied = _feed_catalogue(store, _WEJ, _DET, _SIM)
-    assert set(store.objects) == {62}
-    assert store.presence_detection == PresenceDetection(
-        id=60, name="Detection", home_status=None
-    )
-    assert store.presence_simulation == PresenceSimulation(
-        id=61, name="Simulation", active=True
-    )
-    assert _presence_events(applied) == [
-        PresenceChanged(
-            detection=store.presence_detection,
-            simulation=store.presence_simulation,
-        )
-    ]
+    _feed_catalogue(store, _flaga_row(41, 3), _DET, _SIM)
+    assert store._catalogue is not None
+    assert [meta.id for meta in store._catalogue] == [41]
+    assert list(store.objects) == [41]
+    assert store.not_configured == ()
+    assert store.admission_failure() is None
 
 
-def test_presence_rows_leave_the_object_catalogue_on_the_app_sync_tier() -> None:
-    store = _app_store()
-    applied_params = _apply(
-        store,
-        PARAMS_DEVICES_TOPIC,
-        params_table(
-            {"id": 60, "params": 1, "czas": 0},
-            {"id": 61, "params": 1, "czas": 0},
-            {"id": 62, "params": 0, "czas": 0},
-        ),
-    )
-    applied_catalogue = _apply(store, DATA_DEVICES_TOPIC, details(_WEJ, _DET, _SIM))
-    assert set(store.objects) == {62}
-    assert store.presence_detection is not None
-    assert store.presence_detection.id == 60
-    assert store.presence_simulation == PresenceSimulation(
-        id=61, name="Simulation", active=False
-    )
-    # The table alone establishes nothing: the door waits for the reply
-    # that lists the rows.
-    assert _presence_events(applied_params) == []
-    # The catalogue reply settles both rows and reports one event.
-    assert _presence_events(applied_catalogue) == [
-        PresenceChanged(
-            detection=store.presence_detection,
-            simulation=store.presence_simulation,
-        )
-    ]
-
-
-def test_hidden_presence_row_reads_none() -> None:
+def test_a_push_for_a_system_row_is_pruned_by_the_next_catalogue() -> None:
     store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, _DET, {**_SIM, "params": 16})
-    assert store.presence_detection is not None
-    assert store.presence_simulation is None
-
-
-def test_raw_input_edge_never_reaches_the_presence_detection_row() -> None:
-    """The detection row shares the M-SERV's module and channel 1 with a
-    physical input, and the raw edge belongs to the input alone."""
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, _WEJ, _DET)
-    applied = _apply(store, "ampio/from/CAFE/state/i/1", "1")
-    assert store.objects[62].state == "1"
-    assert store.presence_detection is not None
-    assert store.presence_detection.home_status is None
-    assert _presence_events(applied) == []
-
-
-def test_repeated_catalogue_emits_no_presence_change() -> None:
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, _DET, _SIM)
-    applied = _feed_catalogue(store, _DET, _SIM)
-    assert _presence_events(applied) == []
-
-
-def test_presence_rows_evict_when_the_catalogue_stops_listing_them() -> None:
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, _DET, _SIM)
-    applied = _feed_catalogue(store, _WEJ)
-    assert store.presence_detection is None
-    assert store.presence_simulation is None
-    assert _presence_events(applied) == [
-        PresenceChanged(detection=None, simulation=None)
-    ]
-
-
-def test_presence_rows_never_enter_the_raw_index() -> None:
-    """A `flaga` row shares the M-SERV's module and channel 1 with both
-    presence rows, and a raw `f/1` edge belongs to the flag alone."""
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, _FLAG, _DET, _SIM)
-    applied = _apply(store, "ampio/from/CAFE/state/f/1", "1")
-    assert store.objects[63].state == "1"
-    assert _updated(applied) == [store.objects[63]]
-    assert _presence_events(applied) == []
-    assert store.presence_detection == PresenceDetection(
-        id=60, name="Detection", home_status=None
-    )
-    assert store.presence_simulation == PresenceSimulation(
-        id=61, name="Simulation", active=True
-    )
-
-
-def _app_with_presence() -> AmpioStore:
-    store = _app_store()
-    _apply(store, DATA_DEVICES_TOPIC, details(_DET, _SIM))
-    _apply(
-        store,
-        PARAMS_DEVICES_TOPIC,
-        params_table(
-            {"id": 60, "params": 1, "czas": 0}, {"id": 61, "params": 1, "czas": 0}
-        ),
-    )
-    return store
-
-
-def test_params_push_flips_the_simulation_switch_and_reports_presence() -> None:
-    store = _app_with_presence()
-    applied = _apply(
-        store,
-        PARAMS_DEVICES_TOPIC,
-        params_table(
-            {"id": 60, "params": 1, "czas": 0}, {"id": 61, "params": 1, "czas": 1}
-        ),
-    )
-    assert store.presence_simulation == PresenceSimulation(
-        id=61, name="Simulation", active=True
-    )
-    assert _presence_events(applied) == [
-        PresenceChanged(
-            detection=store.presence_detection, simulation=store.presence_simulation
-        )
-    ]
-
-
-def test_params_push_that_hides_the_simulation_row_reads_none_and_reports_presence() -> (
-    None
-):
-    store = _app_with_presence()
-    applied = _apply(
-        store,
-        PARAMS_DEVICES_TOPIC,
-        params_table(
-            {"id": 60, "params": 1, "czas": 0}, {"id": 61, "params": 17, "czas": 0}
-        ),
-    )
-    assert store.presence_simulation is None
-    assert len(_presence_events(applied)) == 1
-
-
-def test_repeated_params_push_emits_no_presence_change() -> None:
-    store = _app_with_presence()
-    applied = _apply(
-        store,
-        PARAMS_DEVICES_TOPIC,
-        params_table(
-            {"id": 60, "params": 1, "czas": 0}, {"id": 61, "params": 1, "czas": 0}
-        ),
-    )
-    assert _presence_events(applied) == []
-
-
-def _push(oid: int, state: str, on: int = 1_700_000_000_000) -> str:
-    return json.dumps({"state": state, "on": on})
-
-
-def test_detection_push_sets_the_home_status() -> None:
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, _DET, _SIM)
-    applied = _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "5"))
-    assert store.presence_detection is not None
-    assert store.presence_detection.home_status == 5
-    assert _presence_events(applied) == [
-        PresenceChanged(
-            detection=store.presence_detection,
-            simulation=store.presence_simulation,
-        )
-    ]
-    _feed_catalogue(store, _DET, _SIM)
-    assert store.presence_detection.home_status == 5
-
-
-def test_snapshot_seeds_the_home_status_once() -> None:
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, _DET)
-    _apply(store, STATES_TOPIC, snapshot({"id": 60, "stan_json": _push(60, "5")}))
-    assert store.presence_detection is not None
-    assert store.presence_detection.home_status == 5
-    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "7"))
-    _apply(store, STATES_TOPIC, snapshot({"id": 60, "stan_json": _push(60, "5")}))
-    assert store.presence_detection.home_status == 7
-
-
-def test_snapshot_before_the_catalogue_seeds_the_detection_code() -> None:
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _apply(store, STATES_TOPIC, snapshot({"id": 60, "stan_json": _push(60, "5")}))
-    _feed_catalogue(store, _DET)
-    assert store.presence_detection is not None
-    assert store.presence_detection.home_status == 5
-
-
-def test_detection_push_before_the_catalogue_is_replayed_at_the_merge() -> None:
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
     _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "5"))
-    _feed_catalogue(store, _DET)
-    assert store.presence_detection is not None
-    assert store.presence_detection.home_status == 5
-
-
-def test_detection_code_that_is_not_an_integer_is_a_protocol_fault() -> None:
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, _DET)
-    with pytest.raises(AmpioProtocolError, match="home-status"):
-        _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "home"))
-
-
-def test_simulation_push_changes_nothing() -> None:
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, _SIM)
-    before = store.presence_simulation
-    applied = _apply(store, f"ampio/fromDB/{USER}/ob/61/state", _push(61, "1"))
-    assert store.presence_simulation == before
-    assert applied.events == []
-
-
-def test_malformed_buffered_detection_code_leaves_the_catalogue_unapplied() -> None:
-    store = _store()
-    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "home"))
-    with pytest.raises(AmpioProtocolError):
-        _feed_catalogue(store, _WEJ, _DET)
-    assert store.objects == {}
-    assert store.presence_detection is None
-
-
-def test_snapshot_after_a_refresh_corrects_the_detection_code() -> None:
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, _DET)
-    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "5"))
-    store.begin_refresh()
-    _apply(store, STATES_TOPIC, snapshot({"id": 60, "stan_json": _push(60, "7")}))
-    assert store.presence_detection is not None
-    assert store.presence_detection.home_status == 7
-
-
-def test_snapshot_after_a_refresh_loses_to_a_push_in_the_same_cycle() -> None:
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, _DET)
-    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "5"))
-    store.begin_refresh()
-    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "8"))
-    _apply(store, STATES_TOPIC, snapshot({"id": 60, "stan_json": _push(60, "7")}))
-    assert store.presence_detection is not None
-    assert store.presence_detection.home_status == 8
-
-
-def test_a_buffered_push_beats_the_snapshot_of_the_same_cycle() -> None:
-    """The push raced ahead of the catalogue row, so the merge folds it in.
-    It is still the newest code the cycle carries, and the snapshot of that
-    cycle does not replace it."""
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    store.begin_refresh()
-    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "5"))
-    _feed_catalogue(store, _DET)
-    _apply(store, STATES_TOPIC, snapshot({"id": 60, "stan_json": _push(60, "1")}))
-    assert store.presence_detection is not None
-    assert store.presence_detection.home_status == 5
-
-
-def test_hidden_detection_row_keeps_its_live_code() -> None:
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, {**_DET, "params": 16})
-    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "7"))
-    # The params table is what un-hides the row; feeding it alone isolates
-    # the one presence event that reply causes.
-    applied = _apply(store, PARAMS_DEVICES_TOPIC, params_of(_DET))
-    assert store.presence_detection is not None
-    assert store.presence_detection.home_status == 7
-    assert len(_presence_events(applied)) == 1
-
-
-def test_removed_detection_row_returns_without_its_old_code() -> None:
-    store = _store()
-    _apply(store, DEVICES_TOPIC, devices(_PANEL))
-    _feed_catalogue(store, _DET)
-    _apply(store, STATES_TOPIC, snapshot({"id": 60, "stan_json": _push(60, "5")}))
-    assert store.presence_detection is not None
-    assert store.presence_detection.home_status == 5
-    _feed_catalogue(store, _WEJ)
-    assert store.presence_detection is None
-    _feed_catalogue(store, _DET)
-    assert store.presence_detection is not None
-    assert store.presence_detection.home_status is None
+    _apply(store, f"ampio/fromDB/{USER}/ob/61/state", _push(61, "1"))
+    assert set(store._pending_state) == {60, 61}
+    _feed_catalogue(store, _flaga_row(41, 3), _DET, _SIM)
+    assert store._pending_state == {}
 
 
 # --- the app-sync data surface (standard accounts) --------------------------

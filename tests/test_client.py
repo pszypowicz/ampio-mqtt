@@ -12,8 +12,6 @@ from collections.abc import Iterator
 import aiomqtt
 import pytest
 from conftest import (
-    ADMIN_DATA_DEVICES_TOPIC,
-    ADMIN_DEVICES_TOPIC,
     ADMIN_PARAMS_DEVICES_TOPIC,
     ADMIN_USER,
     INFO_TOPIC,
@@ -37,13 +35,11 @@ from ampio_mqtt import (
     AmpioAdminClient,
     AmpioClient,
     AmpioConnectionError,
-    AmpioValueError,
     AvailabilityChanged,
     ModuleFunction,
     ModuleRemoved,
     ObjectRemoved,
     ObjectUpdated,
-    PresenceChanged,
     _protocol,
 )
 from ampio_mqtt._protocol import REDACTED
@@ -802,71 +798,3 @@ def test_diagnostics_snapshot_module_rows_mirror_liveness() -> None:
         "supply_voltage": module.supply_voltage,
         "temperature": module.temperature,
     }
-
-
-def test_presence_rows_read_none_before_the_catalogue(admin_client) -> None:
-    client, _broker = admin_client
-    assert client.presence_detection is None
-    assert client.presence_simulation is None
-
-
-def test_presence_rows_are_client_attributes_not_objects(admin_client) -> None:
-    client, _broker = admin_client
-    presence: list[PresenceChanged] = []
-    objects: list[ObjectUpdated] = []
-    client.subscribe(presence.append, of=PresenceChanged)
-    client.subscribe(objects.append, of=ObjectUpdated)
-    feed(client, ADMIN_DEVICES_TOPIC, devices({"id": 7, "mac": 0xCAFE}))
-    feed(
-        client,
-        ADMIN_PARAMS_DEVICES_TOPIC,
-        params_of(
-            {
-                "id": 60,
-                "typ_komponentu": "detekcja",
-                "funkcja": 1,
-                "opis_menu": "Detection",
-            },
-            {
-                "id": 61,
-                "typ_komponentu": "symulacja",
-                "funkcja": 1,
-                "opis_menu": "Simulation",
-                "czas": 1,
-            },
-        ),
-    )
-    feed(
-        client,
-        ADMIN_DATA_DEVICES_TOPIC,
-        details(
-            {
-                "id": 60,
-                "typ_komponentu": "detekcja",
-                "funkcja": 1,
-                "opis_menu": "Detection",
-            },
-            {
-                "id": 61,
-                "typ_komponentu": "symulacja",
-                "funkcja": 1,
-                "opis_menu": "Simulation",
-                "czas": 1,
-            },
-        ),
-    )
-    assert client.presence_detection is not None and client.presence_detection.id == 60
-    assert (
-        client.presence_simulation is not None
-        and client.presence_simulation.id == 61
-        and client.presence_simulation.active is True
-    )
-    assert 60 not in client.objects and 61 not in client.objects
-    assert len(presence) == 1
-    assert [e.object.id for e in objects] == []
-
-
-def test_presence_changed_takes_no_object_id_filter(admin_client) -> None:
-    client, _broker = admin_client
-    with pytest.raises(AmpioValueError):
-        client.subscribe(lambda e: None, of=PresenceChanged, object_id=60)
