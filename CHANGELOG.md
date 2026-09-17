@@ -87,11 +87,10 @@ explicit beta posture above and is no longer the supported upgrade path.
   leave the object. `AmpioModule.record`, `capabilities` and `panel_settings`
   leave the module. The plain `ValueError` on an install refusal leaves the
   error set. The module mac collision warning leaves the log.
-- The two system rows the M-SERV creates, `detekcja` and `symulacja`, with
-  `PresenceDetection`, `PresenceSimulation` and `PresenceChanged`. The library
-  drops both rows as it reads the catalogue. A consumer on 0.70.x saw both as
-  ordinary objects, so a consumer that listed every object sees two fewer
-  (#265). `INPUT_KIND_KEYS` loses `detekcja` and `symulacja`.
+- The two system rows the M-SERV creates, `detekcja` and `symulacja`. The
+  library drops both rows as it reads the catalogue. A consumer on 0.70.x saw
+  both as ordinary objects, so a consumer that listed every object sees two
+  fewer (#265). `INPUT_KIND_KEYS` loses `detekcja` and `symulacja`.
 - `InputKind.device_class` and the `BinarySensorDeviceClass` literal. After the
   system rows left, no kind assigned the one value the literal allowed.
 

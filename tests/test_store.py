@@ -216,7 +216,7 @@ _COVER_PARAMS = CoverParameters(
 )
 
 
-def _push(oid: int, state: str, on: int = 1_700_000_000_000) -> str:
+def _push(state: str, on: int = 1_700_000_000_000) -> str:
     """One per-object state push payload."""
     return json.dumps({"state": state, "on": on})
 
@@ -916,12 +916,12 @@ def test_a_params_push_keeps_the_buffered_push_for_the_next_catalogue() -> None:
     """
     store = _store()
     _feed_catalogue(store, {"id": 41})
-    _apply(store, f"ampio/fromDB/{USER}/ob/70/state", _push(70, "255"))
+    _apply(store, f"ampio/fromDB/{USER}/ob/70/state", _push("255"))
     _feed_catalogue(store, {"id": 41}, {"id": 70})
     assert store.objects[70].state == "255"
 
     # An id the fresh reply does not list is one nothing will establish.
-    _apply(store, f"ampio/fromDB/{USER}/ob/71/state", _push(71, "1"))
+    _apply(store, f"ampio/fromDB/{USER}/ob/71/state", _push("1"))
     _feed_catalogue(store, {"id": 41}, {"id": 70})
     assert 71 not in store._pending_state
 
@@ -1512,6 +1512,7 @@ _DET = {
     "typ_komponentu": "detekcja",
     "interpretacja": 1,
     "funkcja": 1,
+    "leafId": "",
     "opis_menu": "Detection",
 }
 _SIM = {
@@ -1519,6 +1520,7 @@ _SIM = {
     "typ_komponentu": "symulacja",
     "interpretacja": 1,
     "funkcja": 1,
+    "leafId": "",
     "opis_menu": "Simulation",
     "czas": 1,
 }
@@ -1526,18 +1528,20 @@ _SIM = {
 
 def test_the_system_rows_never_enter_the_catalogue() -> None:
     store = _store()
-    _feed_catalogue(store, _flaga_row(41, 3), _DET, _SIM)
+    applied = _feed_catalogue(store, _flaga_row(41, 3), _DET, _SIM)
     assert store._catalogue is not None
     assert [meta.id for meta in store._catalogue] == [41]
     assert list(store.objects) == [41]
     assert store.not_configured == ()
     assert store.admission_failure() is None
+    assert [obj.id for obj in _updated(applied)] == [41]
+    assert _not_configured(applied) == []
 
 
 def test_a_push_for_a_system_row_is_pruned_by_the_next_catalogue() -> None:
     store = _store()
-    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push(60, "5"))
-    _apply(store, f"ampio/fromDB/{USER}/ob/61/state", _push(61, "1"))
+    _apply(store, f"ampio/fromDB/{USER}/ob/60/state", _push("5"))
+    _apply(store, f"ampio/fromDB/{USER}/ob/61/state", _push("1"))
     assert set(store._pending_state) == {60, 61}
     _feed_catalogue(store, _flaga_row(41, 3), _DET, _SIM)
     assert store._pending_state == {}

@@ -27,8 +27,8 @@ control topic. The device lists ride the `simulation` and `detection` topics of
 the account's `control` namespace. The wire facts are in
 [`visibility.md`](visibility.md). The detection engine stays unverified. Its
 state is a home-status code, code 5 is "home empty", and no single sensor pulse
-moved it in forty minutes. The simulation replay is unverified too. Tracker:
-[issue 270](https://github.com/pszypowicz/ampio-mqtt/issues/270).
+moved it in forty minutes. The simulation replay is unverified too. Scope notes:
+[tracker](https://github.com/pszypowicz/ampio-mqtt/issues/270).
 
 **CAN write tree device classes.** The raw write frames for binary outputs, the
 panel buzzer, module identify and the cover roller lock are documented in

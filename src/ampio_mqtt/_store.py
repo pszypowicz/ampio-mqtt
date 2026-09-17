@@ -207,8 +207,8 @@ class AmpioStore:
         """Apply a `data/devices` reply through the door, then hold it.
 
         The reply carries two rows the M-SERV creates itself, and no module
-        drives either one. The parse drops them by type, so the held reply,
-        the door and the buffered-push prune never see one.
+        drives either one. The handler drops them by type, so the held
+        reply, the door and the buffered-push prune never see one.
 
         The door runs once the params table is in hand, and a reply the
         door refuses leaves every held field as it was. A reply that
@@ -218,7 +218,7 @@ class AmpioStore:
         served = [
             meta
             for meta in _protocol.parse_app_sync_devices(data)
-            if meta.typ_komponentu not in _protocol.PRESENCE_TYPES
+            if meta.typ_komponentu not in _protocol.SYSTEM_ROW_TYPES
         ]
         if self._params_received:
             self._apply_catalogue(
