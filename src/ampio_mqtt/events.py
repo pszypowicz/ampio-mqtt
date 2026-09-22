@@ -71,11 +71,17 @@ class NotConfigured:
     door fills it: ``objects`` holds the ``(id, name)`` pairs of every
     object row without a leaf, and ``collisions`` the ``(mac, module
     ids)`` pairs of every override mac two or more module rows share, so
-    every ids tuple here names two rows or more. Each side is reported when
-    a reply changes its set to a non-empty one. Not terminal. The rows
-    stay out of ``objects``/``modules`` until a later reply lists them
-    addressably, which produces :class:`ObjectAdded` or
-    :class:`ModuleUpdated`. At connect time the same conditions raise from
+    every ids tuple here names two rows or more.
+
+    A reply that changes either set reports both, so an event with two
+    empty sides means the door refuses nothing now. That is the signal to
+    take down whatever the fault raised. A standard account is served no
+    module list, so ``collisions`` is always empty there.
+
+    Not terminal. The rows stay out of ``objects``/``modules`` until a
+    later reply lists them addressably, which produces
+    :class:`ObjectAdded` or :class:`ModuleUpdated`. At connect time a
+    non-empty side raises from
     :meth:`AmpioClient.wait_for_initial_discovery`.
     """
 

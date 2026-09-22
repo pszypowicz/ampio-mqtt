@@ -12,6 +12,34 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.72.0
+
+This release makes a recovery at the admission door observable, and blesses the
+seam a consumer's fixtures build a catalogue through.
+
+### Changed
+
+- `NotConfigured` reports every change of the door's refused rows, a change to
+  empty included, and each event carries both sides (#276). An event with an
+  empty `objects` and an empty `collisions` means the door refuses nothing now.
+  Before, the event fired only when a set became non-empty, so the reply that
+  cleared the last refused row dispatched nothing at all. That reply admits no
+  new object either, so a consumer holding a notice for the fault had no signal
+  to take it down. A standard account is served no module events, so nothing
+  else prompted one. Any consumer that treats the event as a fault alone must
+  read both sides now.
+
+### Added
+
+- `ampio_mqtt.testing`, the seam for a consumer's test fixtures (#277).
+  `build_store(client_class)` returns the store that client class builds, and
+  `apply_reply(store, endpoint, payload)` applies one decoded table reply
+  through the real admission door and returns the events it produced. A fixture
+  built this way carries what the door admits and nothing else.
+- `parse_module_address` and `StoreEvent` join the package root.
+  `parse_module_address` derives the `ModuleAddress` of a `leafId` token, so a
+  fixture no longer builds an address its own leaf does not parse to.
+
 ## 0.71.0
 
 This release makes the account tier the client's type. `AmpioClient` serves any

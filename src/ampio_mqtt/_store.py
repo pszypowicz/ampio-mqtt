@@ -277,8 +277,8 @@ class AmpioStore:
         drops before its leaf is read because nothing drives it, and every
         remaining row must carry a leaf that parses. A row with an empty
         leaf is recorded on ``not_configured`` and left out, and
-        :class:`NotConfigured` reports the set when it changes to a
-        non-empty one. A leaf that does not parse is a server fault, raised
+        :class:`NotConfigured` reports every change of the set, a change
+        to empty included. A leaf that does not parse is a server fault, raised
         here before any store field changes, so the reply is refused whole.
         `data/devices` carries the leaf, and the raise names that surface
         whichever reply of the pair ran the door.
@@ -309,7 +309,7 @@ class AmpioStore:
     def _set_not_configured(
         self, rejected: tuple[tuple[int, str | None], ...], applied: Applied
     ) -> None:
-        """Record the rows the door left out and report a change to a non-empty set.
+        """Record the rows the door left out and report any change of the set.
 
         ``rejected`` is sorted by id, so the order the reply listed the
         rows in never reads as a change.
@@ -317,14 +317,24 @@ class AmpioStore:
         if rejected == self.not_configured:
             return
         self.not_configured = rejected
-        if rejected:
-            applied.events.append(NotConfigured(objects=rejected))
+        applied.events.append(self._admission())
+
+    def _admission(self) -> NotConfigured:
+        """Everything the door refuses now, both sides.
+
+        The event and the error read this one answer, so a consumer that
+        listens and a consumer that polls are never told different things.
+        The base store fills the object side alone, because a standard
+        account is served no module list.
+        """
+        return NotConfigured(objects=self.not_configured)
 
     def admission_failure(self) -> AmpioNotConfigured | None:
         """The installer fault the last replies left, or None."""
-        if self.not_configured:
-            return AmpioNotConfigured(objects=self.not_configured)
-        return None
+        state = self._admission()
+        if not state.objects and not state.collisions:
+            return None
+        return AmpioNotConfigured(objects=state.objects, collisions=state.collisions)
 
     def _drop_sweep_entries(self, oid: int) -> None:
         """Forget what a sweep proved for one object. The base holds no sweep."""
@@ -764,7 +774,7 @@ class AdminStore(AmpioStore):
         A mac two rows share admits neither: the raw tree keys on that
         mac and cannot attribute a frame to either row. Those rows are
         recorded on ``collisions``, and :class:`NotConfigured` reports
-        the set when it changes to a non-empty one.
+        every change of the set, a change to empty included.
         """
         modules = _protocol.parse_devices(data)
         rows_by_mac: dict[int, list[AmpioModule]] = {}
@@ -808,7 +818,7 @@ class AdminStore(AmpioStore):
     def _set_collisions(
         self, collisions: tuple[tuple[int, tuple[int, ...]], ...], applied: Applied
     ) -> None:
-        """Record the macs the door refused and report a change to a non-empty set.
+        """Record the macs the door refused and report any change of the set.
 
         Both the macs and the ids on each are sorted, so the order the
         reply listed the rows in never reads as a change.
@@ -816,8 +826,7 @@ class AdminStore(AmpioStore):
         if collisions == self.collisions:
             return
         self.collisions = collisions
-        if collisions:
-            applied.events.append(NotConfigured(collisions=collisions))
+        applied.events.append(self._admission())
 
     # --- live state -------------------------------------------------------
 
@@ -871,12 +880,9 @@ class AdminStore(AmpioStore):
 
     # --- helpers ----------------------------------------------------------
 
-    def admission_failure(self) -> AmpioNotConfigured | None:
-        if self.not_configured or self.collisions:
-            return AmpioNotConfigured(
-                objects=self.not_configured, collisions=self.collisions
-            )
-        return None
+    def _admission(self) -> NotConfigured:
+        """Both sides: the admin session is served the module list too."""
+        return NotConfigured(objects=self.not_configured, collisions=self.collisions)
 
     def module_by_mac(self, mac: int) -> AmpioModule | None:
         """The module row on ``mac``, or None when the list has none."""

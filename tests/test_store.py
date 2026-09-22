@@ -964,7 +964,7 @@ def test_a_leaf_that_disappears_after_admission_evicts_the_row() -> None:
     assert [type(e) for e in applied.events] == [ObjectRemoved, NotConfigured]
     assert store.not_configured == ((41, None),)
     restored = _feed_catalogue(store, {"id": 41, "typ_komponentu": "przekaznik"})
-    assert [type(e) for e in restored.events] == [ObjectAdded]
+    assert [type(e) for e in restored.events] == [ObjectAdded, NotConfigured]
     assert store.not_configured == ()
     assert 41 not in store.records
 
@@ -975,6 +975,20 @@ def test_not_configured_reports_a_change_of_the_rejected_set_only() -> None:
     again = _feed_catalogue(store, {"id": 41, "leafId": ""})
     assert len(_not_configured(first)) == 1
     assert _not_configured(again) == []
+
+
+def test_the_rejected_set_reports_itself_when_it_empties() -> None:
+    """A consumer that raised on the fault needs the signal to take it down.
+
+    Deleting the last refused row in Designer removes nothing admitted,
+    so no other event follows the catalogue reply that drops it.
+    """
+    store = _store()
+    _feed_catalogue(store, {"id": 41, "leafId": ""})
+    applied = _feed_catalogue(store)
+    assert [e.objects for e in _not_configured(applied)] == [()]
+    assert store.not_configured == ()
+    assert store.admission_failure() is None
 
 
 def test_a_refused_catalogue_leaves_the_held_reply_untouched() -> None:
@@ -2218,8 +2232,21 @@ def test_a_resolved_collision_re_admits_the_rows() -> None:
     applied = _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xC))
     assert sorted(store.modules) == [1, 2, 3]
     assert store.collisions == ()
-    assert _collisions(applied) == []
+    assert [e.collisions for e in _collisions(applied)] == [()]
     assert store.admission_failure() is None
+
+
+def test_an_admission_event_carries_the_side_that_still_stands() -> None:
+    """Each door reports the whole state, so an empty event is never
+    read as a clearance the other door did not give."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
+    _feed_catalogue(store, {**_flaga_row(41, 3, mac=0xA), "leafId": ""})
+    applied = _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    (event,) = _not_configured(applied)
+    assert event.objects == ()
+    assert event.collisions == ((0xB, (2, 3)),)
+    assert store.admission_failure().collisions == ((0xB, (2, 3)),)
 
 
 def test_admission_failure_carries_both_installer_faults() -> None:

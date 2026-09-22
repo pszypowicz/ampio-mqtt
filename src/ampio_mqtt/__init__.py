@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     # runtime import stays inside `__getattr__`.
     from .discovery import DiscoveryResult, discover
 
+from ._protocol import parse_module_address
 from .classification import (
     INPUT_KIND_KEYS,
     OUTPUT_KIND_KEYS,
@@ -46,6 +47,7 @@ from .events import (
     ObjectRemoved,
     ObjectUpdated,
     RecordSweepCompleted,
+    StoreEvent,
 )
 from .models import (
     AccessTier,
@@ -116,12 +118,14 @@ __all__ = [
     "RecordSweep",
     "RecordSweepCompleted",
     "SensorKind",
+    "StoreEvent",
     "ThermostatKind",
     "ThermostatState",
     "discover",
+    "parse_module_address",
 ]
 
-__version__ = "0.71.0"
+__version__ = "0.72.0"
 
 
 def __getattr__(name: str) -> object:
