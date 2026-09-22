@@ -3,7 +3,16 @@
 import json
 
 import pytest
-from conftest import details, devices, feed, params_table, rows, snapshot
+from conftest import (
+    ADMIN_INFO_TOPIC,
+    details,
+    devices,
+    feed,
+    info,
+    params_table,
+    rows,
+    snapshot,
+)
 
 from ampio_mqtt import AmpioAdminClient, AmpioClient
 from ampio_mqtt._protocol import REDACTED
@@ -167,3 +176,24 @@ def test_summary_preserves_module_diagnostics_and_live_names() -> None:
     assert snapshot["modules"][0]["id"] == 1
     assert snapshot["modules"][0]["typ_urzadzenia"] == 44
     assert "private-module-name" not in json.dumps(snapshot)
+
+
+def test_the_report_writes_every_module_mac_as_an_address() -> None:
+    """Both module entries carry the hex form a reader meets elsewhere."""
+    client = AmpioAdminClient("host")
+    feed(client, ADMIN_INFO_TOPIC, info(mac=47846, userId=-1))
+    feed(
+        client,
+        "ampio/fromDB/admin/config/devices",
+        devices(
+            {"id": 1, "mac": 0xCB8F},
+            {"id": 2, "mac": 0xBE82},
+            {"id": 3, "mac": 0xBE82},
+        ),
+    )
+    report = client.diagnostics_snapshot()
+    assert report["modules"][0]["mac"] == "0xCB8F"
+    assert report["mac_collisions"] == [["0xBE82", [2, 3]]]
+    # The server's own row is the decimal `server_key` a consumer holds as
+    # its registry id, and this block is the dataclass as it stands.
+    assert report["server_info"]["mac"] == 47846

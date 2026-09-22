@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .models import format_mac
+
 
 class AmpioError(Exception):
     """Base error."""
@@ -63,12 +65,14 @@ class AmpioNotConfigured(AmpioError):
             if ids:
                 parts.append(
                     f"Ampio modules {', '.join(map(str, ids))} share the override "
-                    f"mac {mac:x}. Give each module its own mac in Designer and save"
+                    f"mac {format_mac(mac)}. Give each module its own mac in "
+                    "Designer and save"
                 )
             else:
                 parts.append(
-                    f"No Ampio module row carries the override mac {mac:x}. Add the "
-                    "module in Designer, or remove the objects that name it, and save"
+                    f"No Ampio module row carries the override mac {format_mac(mac)}. "
+                    "Add the module in Designer, or remove the objects that name it, "
+                    "and save"
                 )
         super().__init__(". ".join(parts))
 

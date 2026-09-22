@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 
 import pytest
 from conftest import (
@@ -668,7 +669,9 @@ async def test_resolve_records_leaves_an_unproven_board_out_of_panel_settings() 
         await client.disconnect()
 
 
-async def test_resolve_records_reports_catalogue_modules_absent_from_the_list() -> None:
+async def test_resolve_records_reports_catalogue_modules_absent_from_the_list(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     client, broker = await _admin_client_with_catalogue()
     try:
         feed(
@@ -685,7 +688,8 @@ async def test_resolve_records_reports_catalogue_modules_absent_from_the_list() 
             )
         )
         try:
-            result = await client.resolve_records(timeout=0.2)
+            with caplog.at_level(logging.WARNING):
+                result = await client.resolve_records(timeout=0.2)
         finally:
             await delivery
         assert result.records == {
@@ -693,6 +697,8 @@ async def test_resolve_records_reports_catalogue_modules_absent_from_the_list() 
         }
         assert result.answered_macs == frozenset({0xCB89})
         assert result.silent_macs == frozenset({0xBEEF})
+        # The warning names the module to a person, so it writes an address.
+        assert "Ampio modules 0xBEEF are missing" in caplog.text
     finally:
         await client.disconnect()
 

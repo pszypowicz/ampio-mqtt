@@ -1613,7 +1613,7 @@ async def test_lock_target_refuses_a_mac_no_admitted_module_carries() -> None:
                 },
             ),
         )
-        with pytest.raises(AmpioNotConfigured, match="be82"):
+        with pytest.raises(AmpioNotConfigured, match="0xBE82"):
             client.lock_target(193)
         with pytest.raises(AmpioNotConfigured):
             await client.block_opening(193)

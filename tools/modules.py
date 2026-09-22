@@ -20,7 +20,12 @@ from collections.abc import Callable
 import aiomqtt
 from _session import ADMIN_USERNAME
 
-from ampio_mqtt import AmpioAdminClient, AmpioNotConfigured, ModuleFunction
+from ampio_mqtt import (
+    AmpioAdminClient,
+    AmpioNotConfigured,
+    ModuleFunction,
+    format_mac,
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -196,7 +201,10 @@ async def run(
         for oid, obj_name in err.objects:
             print(f"not configured: ob/{oid} {obj_name or ''}")
         for mac, ids in err.collisions:
-            print(f"mac collision: {mac:x} on modules {', '.join(map(str, ids))}")
+            print(
+                f"mac collision: {format_mac(mac)} on modules "
+                f"{', '.join(map(str, ids))}"
+            )
         return 1
     finally:
         await client.disconnect()

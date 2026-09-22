@@ -25,6 +25,14 @@ The rest of this area is on its own pages.
 The M-SERV's default `mac` is `1`, which is not unique. Treat `mac` as unique
 _within a single install_ (the user assigns the overrides), not globally.
 
+A mac is a bus address, and Designer shows the field in hex. Every text this
+library writes for a person therefore spells a mac in hex. `format_mac()`
+returns that one form, for example `0xCB8F`. The diagnostics report, the
+admission failure message, and the command-line tools all call it. A consumer
+that composes its own text must call it too, so one install reads one way. The
+model fields keep the integer, and `AmpioServerInfo.server_key` keeps its
+decimal form.
+
 `typ_urzadzenia` also derives two decoration fields on `AmpioModule`. `model` is
 the product name from the vendored catalogue. `mounting` is the curated
 form-factor class: `cabinet` (DIN rail), `wall` (panels, sensors, outdoor field

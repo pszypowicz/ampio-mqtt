@@ -12,6 +12,39 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.73.0
+
+This release writes every mac the library shows a person in one form. The
+diagnostics report spelled a module address in decimal, and Designer, the leaf
+token and a consumer's own diagnostics block all spell it in hex.
+
+### Added
+
+- **`format_mac(mac)`** returns the one written form of a mac: `0x` and
+  upper-case hex digits, so `52111` reads `0xCB8F` (#281). Every place this
+  library writes a mac for a person calls it. A consumer that composes its own
+  text can import it instead of keeping a copy, so one install reads one way
+  throughout.
+
+### Changed
+
+- **`diagnostics_snapshot()` writes a module mac as an address**, the string
+  `"0xCB8F"` (#281). Both admin entries carry it. The `mac` of every `modules`
+  row and the mac of every `mac_collisions` pair write the string. Before, the
+  report wrote the decimal `52111`. Designer shows that field in hex, and the
+  leaf token spells it in hex. A consumer's own diagnostics block writes
+  `0xCB8F` in the same file, so one download carried two bases for one address.
+  A consumer that reads `modules[].mac` as a number must read a string now.
+  `AmpioModule.mac` keeps the integer. The mac in `server_info` keeps it too.
+  That entry is the `AmpioServerInfo` dataclass as it stands, and the decimal
+  form of that number is the `server_key` a consumer holds as its registry id.
+- **Three other texts a person reads take the same form** (#281). The
+  `AmpioNotConfigured` message writes `mac 0xBE82` where it wrote `mac be82`.
+  The three `tools/` scripts write `mac collision: 0xBE82` where they wrote
+  `mac collision: be82`. The warning for a catalogue module absent from the
+  device list writes `Ampio modules 0xBEEF` where it wrote
+  `Ampio modules [48879]`.
+
 ## 0.72.0
 
 This release makes a recovery at the admission door observable, and blesses the
