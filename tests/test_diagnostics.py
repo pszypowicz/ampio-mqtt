@@ -185,11 +185,15 @@ def test_the_report_writes_every_module_mac_as_an_address() -> None:
     feed(
         client,
         "ampio/fromDB/admin/config/devices",
-        devices({"id": 1, "mac": 0xCB8F}, {"id": 2, "mac": 7}, {"id": 3, "mac": 7}),
+        devices(
+            {"id": 1, "mac": 0xCB8F},
+            {"id": 2, "mac": 0xBE82},
+            {"id": 3, "mac": 0xBE82},
+        ),
     )
     report = client.diagnostics_snapshot()
     assert report["modules"][0]["mac"] == "0xCB8F"
-    assert report["mac_collisions"] == [["0x7", [2, 3]]]
+    assert report["mac_collisions"] == [["0xBE82", [2, 3]]]
     # The server's own row is the decimal `server_key` a consumer holds as
     # its registry id, and this block is the dataclass as it stands.
     assert report["server_info"]["mac"] == 47846

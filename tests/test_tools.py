@@ -365,6 +365,20 @@ async def test_smoke_test_reports_a_leafless_row(
     assert "not configured: ob/10 Lamp" in capsys.readouterr().out
 
 
+async def test_smoke_test_reports_a_mac_collision(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only the reserved login reads the module catalogue, so only that run
+    can meet the door that refuses two rows on one mac."""
+    broker = FakeBroker()
+    broker.scripted_messages = _admin_discovery(
+        {"id": 4, "mac": 0xBE82}, {"id": 5, "mac": 0xBE82}
+    )
+    a = _parse(monkeypatch, smoke_test, "--duration", "0.01", user=ADMIN_USER)
+    assert await smoke_test.run(a, client_factory=broker.factory) == 1
+    assert "mac collision: 0xBE82 on modules 4, 5" in capsys.readouterr().out
+
+
 # --- modules.py -------------------------------------------------------------
 
 PANEL = {

@@ -29,19 +29,21 @@ token and a consumer's own diagnostics block all spell it in hex.
 ### Changed
 
 - **`diagnostics_snapshot()` writes a module mac as an address**, the string
-  `"0xCB8F"` (#281). Both admin entries carry it: the `mac` of every `modules`
-  row, and the mac of every `mac_collisions` pair. Before, the report wrote the
-  decimal `52111` for a value Designer shows in hex, the leaf token spells in
-  hex, and a consumer's own diagnostics block writes as `0xCB8F` in the same
-  file, so one download carried two bases for one address. A consumer that reads
-  `modules[].mac` as a number must read a string now. `AmpioModule.mac` keeps
-  the integer, and so does the mac in `server_info`: that entry is the
-  `AmpioServerInfo` dataclass as it stands, and the decimal form of that number
-  is the `server_key` a consumer holds as its registry id.
-- **The other two places a mac reaches a person take the same form** (#281). The
-  `AmpioNotConfigured` message and the collision line `tools/modules.py`,
-  `tools/smoke_test.py`, and `tools/set_object.py` print now write `mac 0xBE82`
-  where they wrote `mac be82`.
+  `"0xCB8F"` (#281). Both admin entries carry it. The `mac` of every `modules`
+  row and the mac of every `mac_collisions` pair write the string. Before, the
+  report wrote the decimal `52111`. Designer shows that field in hex, and the
+  leaf token spells it in hex. A consumer's own diagnostics block writes
+  `0xCB8F` in the same file, so one download carried two bases for one address.
+  A consumer that reads `modules[].mac` as a number must read a string now.
+  `AmpioModule.mac` keeps the integer. The mac in `server_info` keeps it too.
+  That entry is the `AmpioServerInfo` dataclass as it stands, and the decimal
+  form of that number is the `server_key` a consumer holds as its registry id.
+- **Three other texts a person reads take the same form** (#281). The
+  `AmpioNotConfigured` message writes `mac 0xBE82` where it wrote `mac be82`.
+  The three `tools/` scripts write `mac collision: 0xBE82` where they wrote
+  `mac collision: be82`. The warning for a catalogue module absent from the
+  device list writes `Ampio modules 0xBEEF` where it wrote
+  `Ampio modules [48879]`.
 
 ## 0.72.0
 

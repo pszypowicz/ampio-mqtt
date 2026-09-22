@@ -1759,7 +1759,7 @@ class AmpioAdminClient(AmpioClient):
             _LOGGER.warning(
                 "Ampio modules %s are missing from the device list; their "
                 "objects keep whatever record an earlier pass resolved",
-                sorted(silent),
+                ", ".join(format_mac(mac) for mac in sorted(silent)),
             )
         resolved = _protocol.resolve_designer(self._store.objects, by_mac, names)
         params_by_mac = {device.mac: device.params for device in devices}

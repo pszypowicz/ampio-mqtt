@@ -226,9 +226,9 @@ list. The `params_gap` entry names objects the params table skips. The
 The module list and the collision pairs write each mac as the string `0xCB8F`,
 which is what `format_mac()` returns. The report is read by a person, and
 [`identity.md`](identity.md) gives the rule. The mac in the server-info entry
-stays a number: that entry is the `AmpioServerInfo` dataclass as it stands, and
-the decimal form of that number is the `server_key` a consumer scopes its
-registry on.
+stays a number. That entry is the `AmpioServerInfo` dataclass as it stands. The
+decimal form of that number is the `server_key` a consumer scopes its registry
+on.
 
 Table replies retain a JSON string with only `row_count` in `last_payloads`.
 Names, URLs, state descriptions, nested data, and unknown fields are omitted.
