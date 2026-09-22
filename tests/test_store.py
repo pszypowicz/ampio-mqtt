@@ -964,7 +964,7 @@ def test_a_leaf_that_disappears_after_admission_evicts_the_row() -> None:
     assert [type(e) for e in applied.events] == [ObjectRemoved, NotConfigured]
     assert store.not_configured == ((41, None),)
     restored = _feed_catalogue(store, {"id": 41, "typ_komponentu": "przekaznik"})
-    assert [type(e) for e in restored.events] == [ObjectAdded]
+    assert [type(e) for e in restored.events] == [ObjectAdded, NotConfigured]
     assert store.not_configured == ()
     assert 41 not in store.records
 
@@ -975,6 +975,48 @@ def test_not_configured_reports_a_change_of_the_rejected_set_only() -> None:
     again = _feed_catalogue(store, {"id": 41, "leafId": ""})
     assert len(_not_configured(first)) == 1
     assert _not_configured(again) == []
+
+
+def test_the_rejected_set_reports_itself_when_it_empties() -> None:
+    """A consumer that raised on the fault needs the signal to take it down.
+
+    Deleting the last refused row in Designer removes nothing admitted,
+    so no other event follows the catalogue reply that drops it.
+    """
+    store = _store()
+    _feed_catalogue(store, {"id": 41, "leafId": ""})
+    applied = _feed_catalogue(store)
+    assert [type(e) for e in applied.events] == [NotConfigured]
+    assert [e.objects for e in _not_configured(applied)] == [()]
+    assert store.not_configured == ()
+    assert store.admission_failure() is None
+
+
+def test_a_standard_account_is_told_of_the_clearance_too() -> None:
+    store = _app_store()
+    _feed_catalogue(store, {"id": 41, "leafId": ""})
+    applied = _feed_catalogue(store)
+    assert _not_configured(applied) == [NotConfigured()]
+    assert store.admission_failure() is None
+
+
+def test_an_unchanged_empty_set_stays_silent() -> None:
+    store = _store()
+    assert _not_configured(_feed_catalogue(store, {"id": 41})) == []
+    assert _not_configured(_feed_catalogue(store, {"id": 41})) == []
+
+
+def test_a_params_push_that_hides_the_refused_row_clears_the_set() -> None:
+    """The door reads the held catalogue again on a params reply alone.
+
+    A hidden row drops before its leaf is read, so hiding the refused row
+    empties the set without any `data/devices` reply.
+    """
+    store = _store()
+    _feed_catalogue(store, {"id": 41, "leafId": ""})
+    applied = _apply(store, PARAMS_DEVICES_TOPIC, params_of({"id": 41, "params": 16}))
+    assert _not_configured(applied) == [NotConfigured()]
+    assert store.not_configured == ()
 
 
 def test_a_refused_catalogue_leaves_the_held_reply_untouched() -> None:
@@ -2071,6 +2113,33 @@ def test_a_retained_edge_before_the_catalogue_applies_at_the_fold() -> None:
     assert store.modules[7].last_seen is None
 
 
+def test_a_folded_retained_value_lands_after_the_removals() -> None:
+    """The fold needs the index the eviction leaves, so its update trails
+    the removals of that batch.
+
+    A folded value never names a removed id: the fresh index drops an
+    evicted object, and the fold skips a channel the index does not cover.
+    """
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _feed_catalogue(store, _flaga_row(50, 32), {**_flaga_row(51, 33), "leafId": ""})
+    # A replay for the channel only the refused row will expose waits.
+    _apply(store, "ampio/from/CAFE/state/f/33", "1", retained=True)
+
+    applied = _feed_catalogue(store, _flaga_row(51, 33))
+    assert [type(e) for e in applied.events] == [
+        ObjectAdded,
+        ObjectRemoved,
+        ObjectUpdated,
+        NotConfigured,
+    ]
+    removed = [e.object.id for e in applied.events if isinstance(e, ObjectRemoved)]
+    folded = [e.object.id for e in applied.events if type(e) is ObjectUpdated]
+    assert removed == [50]
+    assert folded == [51]
+    assert store.objects[51].state == "1"
+
+
 def test_a_retained_diagnostics_frame_before_the_module_list_applies_at_the_fold() -> (
     None
 ):
@@ -2218,8 +2287,34 @@ def test_a_resolved_collision_re_admits_the_rows() -> None:
     applied = _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xC))
     assert sorted(store.modules) == [1, 2, 3]
     assert store.collisions == ()
-    assert _collisions(applied) == []
+    assert [e.collisions for e in _collisions(applied)] == [()]
     assert store.admission_failure() is None
+
+
+def test_an_admission_event_carries_the_side_that_still_stands() -> None:
+    """Each door reports the whole state, so an empty event is never
+    read as a clearance the other door did not give."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
+    _feed_catalogue(store, {**_flaga_row(41, 3, mac=0xA), "leafId": ""})
+    applied = _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
+    (event,) = _not_configured(applied)
+    assert event.objects == ()
+    assert event.collisions == ((0xB, (2, 3)),)
+    assert store.admission_failure().collisions == ((0xB, (2, 3)),)
+
+
+def test_a_cleared_collision_still_names_the_refused_object_rows() -> None:
+    """The mac door reports the object side too, so the reverse order of
+    the two fixes reads the same."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
+    _feed_catalogue(store, {**_flaga_row(41, 3, mac=0xA), "leafId": ""})
+    applied = _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xC))
+    (event,) = _collisions(applied)
+    assert event.collisions == ()
+    assert event.objects == ((41, "Flag"),)
+    assert store.admission_failure().objects == ((41, "Flag"),)
 
 
 def test_admission_failure_carries_both_installer_faults() -> None:

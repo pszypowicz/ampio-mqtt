@@ -2,10 +2,13 @@
 
 One stream carries everything the library learns: object and module news
 from the store, bus events, and connection-state transitions, in the order
-they were produced. Two cross-class orderings are guaranteed: removals
-follow the updates of the catalogue reply that caused them, and
+they were produced. Two cross-class orderings are guaranteed: a removal
+follows the updates the same catalogue reply produced, and
 ``AvailabilityChanged(False)`` precedes a terminal ``AuthFailed`` /
-``ConnectionDied``. Every class is a frozen dataclass, so a ``match``
+``ConnectionDied``. A held retained value that the reply makes routable is
+not one of those updates. It carries an earlier message's value, and it
+lands after the removals of its batch, never for a removed id.
+Every class is a frozen dataclass, so a ``match``
 statement destructures them positionally and instances compare by value.
 Update and removal events carry a snapshot taken as the change was
 applied - a listener that defers processing still sees the state the
@@ -71,11 +74,17 @@ class NotConfigured:
     door fills it: ``objects`` holds the ``(id, name)`` pairs of every
     object row without a leaf, and ``collisions`` the ``(mac, module
     ids)`` pairs of every override mac two or more module rows share, so
-    every ids tuple here names two rows or more. Each side is reported when
-    a reply changes its set to a non-empty one. Not terminal. The rows
-    stay out of ``objects``/``modules`` until a later reply lists them
-    addressably, which produces :class:`ObjectAdded` or
-    :class:`ModuleUpdated`. At connect time the same conditions raise from
+    every ids tuple here names two rows or more.
+
+    A reply that changes either set reports both, so an event with two
+    empty sides means the door refuses nothing now. That is the signal to
+    take down whatever the fault raised. A standard account is served no
+    module list, so ``collisions`` is always empty there.
+
+    Not terminal. The rows stay out of ``objects``/``modules`` until a
+    later reply lists them addressably, which produces
+    :class:`ObjectAdded` or :class:`ModuleUpdated`. At connect time a
+    non-empty side raises from
     :meth:`AmpioClient.wait_for_initial_discovery`.
     """
 

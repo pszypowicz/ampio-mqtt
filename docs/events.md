@@ -40,7 +40,7 @@ applies only to the classes that carry `.object` (`ObjectUpdated`, its
 | `ObjectUpdated`        | An object's state or metadata changed (live push, raw edge, snapshot correction, or a changed catalogue row).                                                                                                                            | both       | no       |
 | `ObjectAdded`          | An object's first event: initial discovery, a later catalogue addition, or re-creation after eviction. It subclasses `ObjectUpdated`, so `of=ObjectUpdated` subscriptions receive it too. `of=ObjectAdded` narrows to appearances alone. | both       | no       |
 | `ObjectRemoved`        | The catalogue stopped listing an object, or the door stopped admitting it: the hidden bit set, or the leaf cleared.                                                                                                                      | both       | no       |
-| `NotConfigured`        | The catalogue lists rows without a leaf, or the module list holds two rows on one mac. Carries the `(id, name)` pairs and the `(mac, ids)` pairs. Only an admin session can report a collision, because the module list is admin-only.   | both       | no       |
+| `NotConfigured`        | The set of rows the admission door refuses changed. Carries the `(id, name)` pairs of the leafless object rows and the `(mac, ids)` pairs of the shared override macs. Two empty sides mean the door refuses nothing now.                | both       | no       |
 | `ModuleUpdated`        | A module's catalogue row changed, or its diagnostics broadcast arrived.                                                                                                                                                                  | admin only | no       |
 | `ModuleRemoved`        | The module catalogue stopped listing a module.                                                                                                                                                                                           | admin only | no       |
 | `RecordSweepCompleted` | A `resolve_records()` pass finished. Carries the `RecordSweep` it returned.                                                                                                                                                              | admin only | no       |
@@ -58,13 +58,29 @@ the stream must put its `case ObjectAdded():` arm before
 [`account-tiers.md`](account-tiers.md). A standard account can still _raise_ bus
 events (`set_event`), but it never receives them.
 
+`NotConfigured` reports the whole state of the admission door on every change of
+either side. A first refusal reports it, and so does the reply that clears the
+last refused row. A consumer that raises a notice on the fault must take it down
+when both sides arrive empty, because the clearance is the only signal that
+covers every fix. A Designer row that gains a leaf also fires `ObjectAdded`. A
+Designer row that the installer deletes fires nothing else, because the door
+never admitted it. Only an admin session ever sees a non-empty `collisions`,
+because the module list is admin-only.
+
 ## Ordering and the terminal events
 
 The contract lives on the `ampio_mqtt.events` module docstring and the event
-classes themselves. In short: removals follow the updates of the catalogue reply
-that caused them. `AvailabilityChanged(False)` precedes a terminal `AuthFailed`
-or `ConnectionDied`. After a terminal event, only a fresh `connect()` continues,
+classes themselves. In short: a removal follows the updates the same catalogue
+reply produced. `AvailabilityChanged(False)` precedes a terminal `AuthFailed` or
+`ConnectionDied`. After a terminal event, only a fresh `connect()` continues,
 and a genuinely changed password means a new client.
+
+A catalogue reply can also make a held retained value routable, and that value
+lands after the removals of its batch. One reply can therefore dispatch
+`ObjectAdded`, then `ObjectRemoved`, then `ObjectUpdated`. The trailing update
+carries an earlier raw message that only the fresh routing table could place, so
+it is not an update the reply produced. It never names an id the same batch
+removed, because the routing table drops an evicted object first.
 
 An evicted object that later reappears follows the same first-event rule as
 initial discovery. The eviction dispatches `ObjectRemoved`. The catalogue reply

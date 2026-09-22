@@ -94,6 +94,28 @@ both tiers. Any account can raise any event number, and the logic behind an
 event runs with full authority. [`docs/account-tiers.md`](docs/account-tiers.md)
 has the capability table and the measured latency difference.
 
+## Testing a consumer against the library
+
+A fixture that builds model instances by hand can hold a row the M-SERV cannot
+produce. `ampio_mqtt.testing` drives a decoded reply through the store the
+client itself builds, so a fixture carries what the admission door admits and
+nothing else.
+
+```python
+from ampio_mqtt import AmpioAdminClient
+from ampio_mqtt.testing import apply_reply, build_store
+
+store = build_store(AmpioAdminClient)
+apply_reply(store, "params_devices", params_payload)
+events = apply_reply(store, "data_devices", catalogue_payload)
+assert store.objects.keys() == {193}
+```
+
+`build_store` takes the client class, because the class is the account tier.
+`apply_reply` names the reply the way the endpoint table does and returns the
+events the reply produced. Use `parse_module_address` to derive the
+`ModuleAddress` of a `leafId` token rather than to build one by hand.
+
 ## Supported M-SERV versions
 
 The library is developed and live-tested against an M-SERV self-reporting
