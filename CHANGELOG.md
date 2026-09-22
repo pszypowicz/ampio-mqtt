@@ -12,6 +12,37 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## 0.73.0
+
+This release writes every mac the library shows a person in one form. The
+diagnostics report spelled a module address in decimal, and Designer, the leaf
+token and a consumer's own diagnostics block all spell it in hex.
+
+### Added
+
+- **`format_mac(mac)`** returns the one written form of a mac: `0x` and
+  upper-case hex digits, so `52111` reads `0xCB8F` (#281). Every place this
+  library writes a mac for a person calls it. A consumer that composes its own
+  text can import it instead of keeping a copy, so one install reads one way
+  throughout.
+
+### Changed
+
+- **`diagnostics_snapshot()` writes a module mac as an address**, the string
+  `"0xCB8F"` (#281). Both admin entries carry it: the `mac` of every `modules`
+  row, and the mac of every `mac_collisions` pair. Before, the report wrote the
+  decimal `52111` for a value Designer shows in hex, the leaf token spells in
+  hex, and a consumer's own diagnostics block writes as `0xCB8F` in the same
+  file, so one download carried two bases for one address. A consumer that reads
+  `modules[].mac` as a number must read a string now. `AmpioModule.mac` keeps
+  the integer, and so does the mac in `server_info`: that entry is the
+  `AmpioServerInfo` dataclass as it stands, and the decimal form of that number
+  is the `server_key` a consumer holds as its registry id.
+- **The other two places a mac reaches a person take the same form** (#281). The
+  `AmpioNotConfigured` message and the collision line `tools/modules.py`,
+  `tools/smoke_test.py`, and `tools/set_object.py` print now write `mac 0xBE82`
+  where they wrote `mac be82`.
+
 ## 0.72.0
 
 This release makes a recovery at the admission door observable, and blesses the

@@ -791,7 +791,7 @@ def test_diagnostics_snapshot_module_rows_mirror_liveness() -> None:
     assert module.supply_voltage is not None
     assert client.diagnostics_snapshot()["modules"][0] == {
         "id": 7,
-        "mac": 0xCAFE,
+        "mac": "0xCAFE",
         "typ_urzadzenia": 4,
         "model": module.model,
         "last_seen": module.last_seen,

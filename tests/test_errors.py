@@ -16,14 +16,14 @@ def test_not_configured_names_every_row_for_the_installer() -> None:
 def test_not_configured_names_a_shared_mac() -> None:
     err = AmpioNotConfigured(collisions=((0xBE82, (1, 2)),))
     assert err.objects == ()
-    assert "be82" in str(err) and "1, 2" in str(err)
+    assert "0xBE82" in str(err) and "1, 2" in str(err)
 
 
 def test_not_configured_names_a_mac_no_module_row_carries() -> None:
     err = AmpioNotConfigured(collisions=((0xBE82, ()),))
     message = str(err)
     assert err.collisions == ((0xBE82, ()),)
-    assert "No Ampio module row carries the override mac be82" in message
+    assert "No Ampio module row carries the override mac 0xBE82" in message
     assert "share" not in message
     assert "  " not in message
 

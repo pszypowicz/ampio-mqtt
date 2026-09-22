@@ -580,7 +580,7 @@ async def test_wait_for_initial_discovery_raises_on_a_mac_collision() -> None:
         with pytest.raises(AmpioNotConfigured) as caught:
             await client.wait_for_initial_discovery(timeout=1.0)
         assert caught.value.collisions == ((7, (1, 2)),)
-        assert client.diagnostics_snapshot()["mac_collisions"] == [[7, [1, 2]]]
+        assert client.diagnostics_snapshot()["mac_collisions"] == [["0x7", [1, 2]]]
     finally:
         await client.disconnect()
 

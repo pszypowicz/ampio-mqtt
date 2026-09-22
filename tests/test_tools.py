@@ -484,7 +484,7 @@ async def test_modules_reports_a_mac_collision(
     )
     a = _parse(monkeypatch, modules, user=ADMIN_USER)
     assert await modules.run(a, client_factory=broker.factory) == 1
-    assert "mac collision: be82 on modules 4, 5" in capsys.readouterr().out
+    assert "mac collision: 0xBE82 on modules 4, 5" in capsys.readouterr().out
 
 
 async def test_modules_prints_a_row_per_module(

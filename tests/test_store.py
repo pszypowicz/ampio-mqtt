@@ -2327,7 +2327,7 @@ def test_admission_failure_carries_both_installer_faults() -> None:
     assert failure.objects == ((41, "Flag"),)
     assert failure.collisions == ((0xB, (2, 3)),)
     assert "41 (Flag) carry no leaf" in str(failure)
-    assert "modules 2, 3 share the override mac b" in str(failure)
+    assert "modules 2, 3 share the override mac 0xB" in str(failure)
 
 
 # --- the sweep datasets ------------------------------------------------------

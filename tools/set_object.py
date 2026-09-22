@@ -31,6 +31,7 @@ from ampio_mqtt import (
     AmpioObject,
     AmpioValueError,
     ObjectUpdated,
+    format_mac,
 )
 
 
@@ -166,7 +167,10 @@ async def run(
         for oid, name in err.objects:
             print(f"not configured: ob/{oid} {name or ''}")
         for mac, ids in err.collisions:
-            print(f"mac collision: {mac:x} on modules {', '.join(map(str, ids))}")
+            print(
+                f"mac collision: {format_mac(mac)} on modules "
+                f"{', '.join(map(str, ids))}"
+            )
         return 1
     finally:
         await client.disconnect()
