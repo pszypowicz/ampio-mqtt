@@ -92,6 +92,7 @@ from .models import (
     ModuleRecord,
     PanelSettings,
     RecordSweep,
+    format_mac,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -1656,15 +1657,23 @@ class AmpioAdminClient(AmpioClient):
           :class:`AmpioModule` fields ``id``, ``mac``, ``typ_urzadzenia``,
           ``model``, ``last_seen``, ``supply_voltage``, and
           ``temperature``. The user-given module name stays out.
+
+        Both entries write the mac through :func:`format_mac`, as the
+        string ``"0xCB8F"``, because the report is read by a person and a
+        mac is a bus address. :attr:`AmpioModule.mac` keeps the integer.
+        The mac in ``server_info`` keeps it too: that entry is the
+        :class:`AmpioServerInfo` dataclass as it stands, and the decimal
+        form of that number is the ``server_key`` a consumer holds as its
+        registry id.
         """
         snapshot = super().diagnostics_snapshot()
         snapshot["mac_collisions"] = [
-            [mac, list(ids)] for mac, ids in self._store.collisions
+            [format_mac(mac), list(ids)] for mac, ids in self._store.collisions
         ]
         snapshot["modules"] = [
             {
                 "id": module.id,
-                "mac": module.mac,
+                "mac": format_mac(module.mac),
                 "typ_urzadzenia": module.typ_urzadzenia,
                 "model": module.model,
                 "last_seen": module.last_seen,
@@ -1750,7 +1759,7 @@ class AmpioAdminClient(AmpioClient):
             _LOGGER.warning(
                 "Ampio modules %s are missing from the device list; their "
                 "objects keep whatever record an earlier pass resolved",
-                sorted(silent),
+                ", ".join(format_mac(mac) for mac in sorted(silent)),
             )
         resolved = _protocol.resolve_designer(self._store.objects, by_mac, names)
         params_by_mac = {device.mac: device.params for device in devices}

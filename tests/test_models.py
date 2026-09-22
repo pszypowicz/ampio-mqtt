@@ -6,7 +6,13 @@ from dataclasses import fields, replace
 
 import pytest
 
-from ampio_mqtt import AmpioModule, AmpioObject, AmpioServerInfo, ModuleAddress
+from ampio_mqtt import (
+    AmpioModule,
+    AmpioObject,
+    AmpioServerInfo,
+    ModuleAddress,
+    format_mac,
+)
 from ampio_mqtt.classification import ThermostatKind, classify
 from ampio_mqtt.device_types import module_model
 from ampio_mqtt.models import MSERV_MAC, DesignerRecord, ModuleRecord
@@ -254,6 +260,15 @@ def test_is_server_owned_reads_the_address_mac() -> None:
 def test_server_key_is_the_decimal_mac(mac: int, expected: str) -> None:
     """The canonical registry-scoping string; its format is a promise."""
     assert AmpioServerInfo(mac=mac, user_id=-1).server_key == expected
+
+
+@pytest.mark.parametrize(
+    ("mac", "expected"),
+    [(0xCB8F, "0xCB8F"), (0xBE82, "0xBE82"), (1, "0x1"), (0, "0x0")],
+)
+def test_format_mac_writes_the_prefixed_upper_case_hex(mac: int, expected: str) -> None:
+    """The one written form of a bus address, for a person to read."""
+    assert format_mac(mac) == expected
 
 
 def _colored(value: str | None) -> AmpioObject:

@@ -126,6 +126,23 @@ def _last_conversion(fmt: str) -> re.Match[str] | None:
 MSERV_MAC = 1
 
 
+def format_mac(mac: int) -> str:
+    """The one written form of a mac, for a person to read.
+
+    A mac is a bus address. Ampio Designer shows the field in hex, and the
+    leaf token spells it in hex too, so a decimal mac is the only form
+    nobody types. Every place this library writes a mac for a person uses
+    this function: the diagnostics report, the admission failure message,
+    and the command-line tools. A consumer that composes its own text must
+    call it as well, so one install reads one way throughout.
+
+    This is display only. Every model field, every payload key the wire
+    owns, and ``AmpioServerInfo.server_key`` keep the integer or the
+    decimal form they have.
+    """
+    return f"0x{mac:X}"
+
+
 @dataclass(slots=True, frozen=True)
 class ModuleAddress:
     """Where an object sits on the CAN bus, parsed from its Designer leaf.

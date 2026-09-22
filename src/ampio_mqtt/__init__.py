@@ -66,6 +66,7 @@ from .models import (
     PanelSettings,
     RecordSweep,
     ThermostatState,
+    format_mac,
 )
 
 __all__ = [
@@ -122,10 +123,11 @@ __all__ = [
     "ThermostatKind",
     "ThermostatState",
     "discover",
+    "format_mac",
     "parse_module_address",
 ]
 
-__version__ = "0.72.0"
+__version__ = "0.73.0"
 
 
 def __getattr__(name: str) -> object:
