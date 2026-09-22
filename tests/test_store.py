@@ -2113,6 +2113,33 @@ def test_a_retained_edge_before_the_catalogue_applies_at_the_fold() -> None:
     assert store.modules[7].last_seen is None
 
 
+def test_a_folded_retained_value_lands_after_the_removals() -> None:
+    """The fold needs the index the eviction leaves, so its update trails
+    the removals of that batch.
+
+    A folded value never names a removed id: the fresh index drops an
+    evicted object, and the fold skips a channel the index does not cover.
+    """
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _feed_catalogue(store, _flaga_row(50, 32), {**_flaga_row(51, 33), "leafId": ""})
+    # A replay for the channel only the refused row will expose waits.
+    _apply(store, "ampio/from/CAFE/state/f/33", "1", retained=True)
+
+    applied = _feed_catalogue(store, _flaga_row(51, 33))
+    assert [type(e) for e in applied.events] == [
+        ObjectAdded,
+        ObjectRemoved,
+        ObjectUpdated,
+        NotConfigured,
+    ]
+    removed = [e.object.id for e in applied.events if isinstance(e, ObjectRemoved)]
+    folded = [e.object.id for e in applied.events if type(e) is ObjectUpdated]
+    assert removed == [50]
+    assert folded == [51]
+    assert store.objects[51].state == "1"
+
+
 def test_a_retained_diagnostics_frame_before_the_module_list_applies_at_the_fold() -> (
     None
 ):

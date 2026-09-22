@@ -70,10 +70,17 @@ because the module list is admin-only.
 ## Ordering and the terminal events
 
 The contract lives on the `ampio_mqtt.events` module docstring and the event
-classes themselves. In short: removals follow the updates of the catalogue reply
-that caused them. `AvailabilityChanged(False)` precedes a terminal `AuthFailed`
-or `ConnectionDied`. After a terminal event, only a fresh `connect()` continues,
+classes themselves. In short: a removal follows the updates the same catalogue
+reply produced. `AvailabilityChanged(False)` precedes a terminal `AuthFailed` or
+`ConnectionDied`. After a terminal event, only a fresh `connect()` continues,
 and a genuinely changed password means a new client.
+
+A catalogue reply can also make a held retained value routable, and that value
+lands after the removals of its batch. One reply can therefore dispatch
+`ObjectAdded`, then `ObjectRemoved`, then `ObjectUpdated`. The trailing update
+carries an earlier raw message that only the fresh routing table could place, so
+it is not an update the reply produced. It never names an id the same batch
+removed, because the routing table drops an evicted object first.
 
 An evicted object that later reappears follows the same first-event rule as
 initial discovery. The eviction dispatches `ObjectRemoved`. The catalogue reply

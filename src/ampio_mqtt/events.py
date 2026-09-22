@@ -2,10 +2,13 @@
 
 One stream carries everything the library learns: object and module news
 from the store, bus events, and connection-state transitions, in the order
-they were produced. Two cross-class orderings are guaranteed: removals
-follow the updates of the catalogue reply that caused them, and
+they were produced. Two cross-class orderings are guaranteed: a removal
+follows the updates the same catalogue reply produced, and
 ``AvailabilityChanged(False)`` precedes a terminal ``AuthFailed`` /
-``ConnectionDied``. Every class is a frozen dataclass, so a ``match``
+``ConnectionDied``. A held retained value that the reply makes routable is
+not one of those updates. It carries an earlier message's value, and it
+lands after the removals of its batch, never for a removed id.
+Every class is a frozen dataclass, so a ``match``
 statement destructures them positionally and instances compare by value.
 Update and removal events carry a snapshot taken as the change was
 applied - a listener that defers processing still sees the state the

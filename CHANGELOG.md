@@ -29,6 +29,10 @@ seam a consumer's fixtures build a catalogue through.
   look at the door, so a notice raised on the fault stood until an unrelated
   catalogue change. Any consumer that treats the event as a fault alone must
   read both sides now.
+- The event-ordering guarantee says which updates it covers (#279). A removal
+  follows the updates the same catalogue reply produced. A held retained value
+  that the reply makes routable is not one of those, and it lands after the
+  removals of its batch, never for a removed id. No dispatch order changed.
 
 ### Added
 
