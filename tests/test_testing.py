@@ -59,6 +59,16 @@ def test_apply_reply_names_an_endpoint_the_library_does_not_serve() -> None:
         apply_reply(build_store(AmpioClient), "no_such_endpoint", {})
 
 
+def test_apply_reply_names_an_endpoint_this_store_applies_no_reply_for() -> None:
+    """Two boundaries, two errors: an unknown name and a known one the
+    store holds no handler for."""
+    store = build_store(AmpioClient)
+    with pytest.raises(RuntimeError, match="devices"):
+        apply_reply(store, "devices", {})
+    with pytest.raises(RuntimeError, match="groups"):
+        apply_reply(store, "groups", {})
+
+
 def test_parse_module_address_reads_a_leaf_token() -> None:
     assert parse_module_address("0_cb8f_76_0_3") == ModuleAddress(
         mac=0xCB8F, channel=3, sf_id=76, sub_sf_id=0

@@ -22,11 +22,12 @@ seam a consumer's fixtures build a catalogue through.
 - `NotConfigured` reports every change of the door's refused rows, a change to
   empty included, and each event carries both sides (#276). An event with an
   empty `objects` and an empty `collisions` means the door refuses nothing now.
-  Before, the event fired only when a set became non-empty, so the reply that
-  cleared the last refused row dispatched nothing at all. That reply admits no
-  new object either, so a consumer holding a notice for the fault had no signal
-  to take it down. A standard account is served no module events, so nothing
-  else prompted one. Any consumer that treats the event as a fault alone must
+  Before, the event fired only when a set became non-empty. A row that gains a
+  leaf recovered through its own `ObjectAdded`, but a row the installer deletes
+  dispatched nothing at all: the door never admitted it, so no removal follows
+  it either. A standard account is served no module events that prompt another
+  look at the door, so a notice raised on the fault stood until an unrelated
+  catalogue change. Any consumer that treats the event as a fault alone must
   read both sides now.
 
 ### Added

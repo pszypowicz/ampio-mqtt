@@ -60,11 +60,12 @@ events (`set_event`), but it never receives them.
 
 `NotConfigured` reports the whole state of the admission door on every change of
 either side. A first refusal reports it, and so does the reply that clears the
-last refused row. The fix in Ampio Designer removes nothing the library
-admitted, so no other event follows that reply. A consumer that raises a notice
-on the fault must take it down when both sides arrive empty. Only an admin
-session ever sees a non-empty `collisions`, because the module list is
-admin-only.
+last refused row. A consumer that raises a notice on the fault must take it down
+when both sides arrive empty, because the clearance is the only signal that
+covers every fix. A Designer row that gains a leaf also fires `ObjectAdded`. A
+Designer row that the installer deletes fires nothing else, because the door
+never admitted it. Only an admin session ever sees a non-empty `collisions`,
+because the module list is admin-only.
 
 ## Ordering and the terminal events
 
