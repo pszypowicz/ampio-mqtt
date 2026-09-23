@@ -131,9 +131,10 @@ Designer has a per-object "read only" checkbox. The checkbox sets `params` bit 6
 and nothing else. The marker has these effects:
 
 - The M-SERV enforces the marker itself, on both account tiers. An `/api` write
-  to a read-only object produces no echo and no error. The M-SERV sends no CAN
-  frame for a read-only object. The same write to a writable flag sends the
-  normal frame set. Reads are unaffected on every surface.
+  to a read-only object produces no echo and no error. During an `/api` write,
+  the M-SERV sends no CAN frame for a read-only object. The same write to a
+  writable flag sends the normal frame set. Reads are unaffected on every
+  surface.
 - The marker never reaches the module. The description record is identical for a
   read-only flag and a writable one, so only the catalogue `params` field
   announces it.

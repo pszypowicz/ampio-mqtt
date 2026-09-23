@@ -52,9 +52,10 @@ at QoS 1 and is not retained. On the baseline install, two modules emit one. The
 M-SERV sends a three-byte frame every 5 s, of the family that Designer names
 `mqtt`. The M-CON-s on firmware 908 sends one every 10 s. Designer feeds the
 leaf to its CAN packet monitor and decodes only a module's IPv4 report and MLED
-events. The library does not subscribe. A subscription adds about 0.3 messages
-per second, and it gives `last_seen` to the M-SERV row and to that one module.
-Probe notes: [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/188).
+events. The library does not subscribe. If the library subscribes to this topic
+and routes it, the traffic grows by about 0.3 messages per second. The M-SERV
+row and that one module then get `last_seen`. Probe notes:
+[tracker](https://github.com/pszypowicz/ampio-mqtt/issues/188).
 
 **The rest of the `params` blob.** Every module's stored settings ride a base64
 `params` field in the `device_api` list reply. The library decodes the touch

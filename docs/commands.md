@@ -37,9 +37,9 @@ stronger. A concurrent change from another source satisfies it. A timeout is how
 every silent drop shows. The drops are an ignored verb, an out-of-grant object,
 a read-only object, or a command that changed nothing and thus pushed nothing.
 Latency bounds the timeout choice. Most verbs echo in under ~200 ms on the
-per-object path, and `arm`/`disarm` take ~1 s, so `confirm=2.0` covers both
-latencies. Scene commands and `setEvent` fan out beyond a single object and
-offer no per-object echo.
+per-object path, and `arm`/`disarm` take ~1 s, so `confirm=2.0` covers the
+measured surface. Scene commands and `setEvent` fan out beyond a single object
+and offer no per-object echo.
 
 The `ampio/to/<mac>/...` CAN tree is the other write path, documented in Ampio's
 own MQTT API note. It has per-channel `cmd` topics and a `raw` hex channel that

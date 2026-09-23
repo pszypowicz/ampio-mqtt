@@ -37,8 +37,8 @@ for 48573. A legacy 8-bit event is one whose high byte is zero.
 
 Does logic bound to an 8-bit event also fire for a 16-bit event that shares one
 of its bytes? No. Logic bound to an event matches the full 16-bit value. A rule
-bound to event 189 (`0x00BD`) does not fire for `0xBDBD` or `0xBD00`. Proven on
-M-DOT firmware.
+bound to event 189 (`0x00BD`) does not fire for `0xBDBD` or `0xBD00`. This holds
+on the M-DOT firmware. Other firmware is unverified.
 
 **The M-SERV raises event 254 from its own MAC whenever a client asks for a
 discovery refresh**, so `connect()` normally produces one. It is not periodic. A
