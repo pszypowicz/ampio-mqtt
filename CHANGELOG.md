@@ -12,7 +12,12 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## Unreleased
+## 0.75.0
+
+This release finishes two rules that 0.74.0 started. A plain `setValue` now goes
+out only to a kind that takes a value write, and the diagnostics report keeps
+text from the install out. A retype in a refresh cycle also takes the new
+snapshot in either reply order.
 
 ### Changed
 
