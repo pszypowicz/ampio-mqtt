@@ -225,13 +225,16 @@ based on the hostname alone. When credentials are known, confirm identity with
 
 ## Liveness counters
 
-`client.diagnostics_snapshot()` returns the one credential-free dict a
-diagnostics platform emits as-is. It holds the availability flag, the
-auth-failure reason, and the safe server-info subset. It also holds the
-connection counters, the SUBACK rejections, and each endpoint's last reply
-summary. On `AmpioAdminClient` it also holds the mac collisions and the module
-list. The `params_gap` entry names objects the params table skips. The
-`not_configured` entry names the rows the door left out.
+`client.diagnostics_snapshot()` returns one report for a diagnostics platform or
+a bug report. The library puts no password into it. It masks the account in
+topics, the broker host in `last_error`, and the host identifiers of the server
+info. Text that the broker or the M-SERV sends, such as a refused value or an
+object name, passes through. It holds the availability flag, the auth-failure
+reason, and the safe server-info subset. It also holds the connection counters,
+the SUBACK rejections, and each endpoint's last reply summary. On
+`AmpioAdminClient` it also holds the mac collisions and the module list. The
+`params_gap` entry names objects the params table skips. The `not_configured`
+entry names the rows the door left out.
 
 The `modules` list holds one row per known module, sorted by id. Each row
 carries the module's `id`, `mac`, `typ_urzadzenia`, `model`, `last_seen`,

@@ -448,10 +448,14 @@ class AmpioClient:
         return self._connection.available
 
     def diagnostics_snapshot(self) -> dict[str, Any]:
-        """One credential-free report of the client's health.
+        """One report of the client's health, for a bug report or a
+        consumer diagnostics platform.
 
-        The dict a bug report or a consumer diagnostics platform can emit
-        as-is: it carries no host, username, or password. Keys:
+        The library puts no password into it. It masks the account in
+        topics, the broker host in ``last_error``, and the host
+        identifiers of ``server_info``. Text that the broker or the M-SERV
+        sends, such as a refused value or an object name, passes through.
+        Keys:
 
         - ``available``: whether the broker connection is up.
         - ``auth_failure``: the broker's rejection reason once the
@@ -495,7 +499,7 @@ class AmpioClient:
                 "last_message_at": self._stats.last_message_at,
                 "last_error": None
                 if last_error is None
-                else account_free_text(last_error, self._host),
+                else account_free_text(last_error, self._username, self._host),
                 "subscribe_failures": dict(self._stats.subscribe_failures),
                 "protocol_violations": dict(self._stats.protocol_violations),
             },

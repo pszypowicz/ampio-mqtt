@@ -842,3 +842,78 @@ def test_diagnostics_snapshot_module_rows_mirror_liveness() -> None:
         "supply_voltage": module.supply_voltage,
         "temperature": module.temperature,
     }
+
+
+@pytest.mark.parametrize(
+    ("username", "host", "text", "expected"),
+    [
+        # Two topics in one message: each account segment masks on its own.
+        (
+            "alice",
+            "broker.lan",
+            "ampio/control/alice/config,ampio/fromDB/alice/data/info",
+            (
+                f"ampio/control/{ACCOUNT_PLACEHOLDER}/config,"
+                f"ampio/fromDB/{ACCOUNT_PLACEHOLDER}/data/info"
+            ),
+        ),
+        # Punctuation after a topic stays.
+        (
+            "alice",
+            "broker.lan",
+            "(ampio/control/alice)",
+            f"(ampio/control/{ACCOUNT_PLACEHOLDER})",
+        ),
+        # A username with a quote or a space masks whole.
+        (
+            "'al ice'",
+            "broker.lan",
+            "publish to ampio/control/'al ice'/states timed out",
+            f"publish to ampio/control/{ACCOUNT_PLACEHOLDER}/states timed out",
+        ),
+        # A host at the end of a sentence, and in another letter case.
+        (
+            "alice",
+            "broker.lan",
+            "Cannot connect to broker.lan.",
+            f"Cannot connect to {REDACTED}.",
+        ),
+        (
+            "alice",
+            "broker.lan",
+            "Cannot connect to BROKER.LAN",
+            f"Cannot connect to {REDACTED}",
+        ),
+        # A host with a port.
+        ("alice", "broker.lan", "broker.lan:1883 refused", f"{REDACTED}:1883 refused"),
+        # An IPv6 host leaves a longer address alone.
+        ("alice", "2001:db8::1", "reached 2001:db8::1:2", "reached 2001:db8::1:2"),
+        (
+            "alice",
+            "2001:db8::1",
+            "reached 2001:db8::1 once",
+            f"reached {REDACTED} once",
+        ),
+        # A host that equals a topic word leaves the topic and the placeholder alone.
+        (
+            "alice",
+            "control",
+            "publish to ampio/control/alice/config timed out",
+            f"publish to ampio/control/{ACCOUNT_PLACEHOLDER}/config timed out",
+        ),
+        (
+            "alice",
+            "account",
+            "ampio/control/alice/x",
+            f"ampio/control/{ACCOUNT_PLACEHOLDER}/x",
+        ),
+    ],
+)
+def test_the_last_error_mask_keeps_the_rest_of_the_text(
+    username: str, host: str, text: str, expected: str
+) -> None:
+    """The mask covers each account segment and each whole host token, and
+    nothing else (#289)."""
+    client = AmpioClient(host, username=username)
+    client._stats.last_error = text
+    assert client.diagnostics_snapshot()["connection"]["last_error"] == expected

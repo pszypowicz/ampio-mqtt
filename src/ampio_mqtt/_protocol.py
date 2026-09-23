@@ -1565,21 +1565,29 @@ def account_free_topic(topic: str) -> str:
     return topic
 
 
-_TOPIC_IN_TEXT = re.compile(r"ampio/[^\s'\"]+")
-
-
-def account_free_text(text: str, host: str) -> str:
-    """`text` with each topic's account segment and the broker host masked.
+def account_free_text(text: str, username: str, host: str) -> str:
+    """`text` with the account and the broker host masked.
 
     An error message can name the account's own topic or the host it
-    failed to reach. The account segment reads as the topic placeholder,
-    and the host reads as the redaction marker where it stands as a whole
-    token.
+    failed to reach. Each account segment after `ampio/control/` or
+    `ampio/fromDB/` reads as the topic placeholder. The host reads as the
+    redaction marker where it stands as a whole token, in any letter case,
+    outside a topic and a placeholder.
     """
-    text = _TOPIC_IN_TEXT.sub(lambda match: account_free_topic(match[0]), text)
-    if host:
-        text = re.sub(rf"(?<![\w.-]){re.escape(host)}(?![\w.-])", REDACTED, text)
-    return text
+    trees = "|".join(map(re.escape, _ACCOUNT_TREES))
+    text = re.sub(
+        rf"(ampio/(?:{trees})/){re.escape(username)}(?![\w-])",
+        lambda match: match[1] + ACCOUNT_PLACEHOLDER,
+        text,
+    )
+    if not host:
+        return text
+    # A colon ends a host name before its port, but it continues an IPv6
+    # address, so an IPv6 host must not match the start of a longer one.
+    ipv6 = ":" in host
+    before = r"(?<![\w.\-/<:])" if ipv6 else r"(?<![\w.\-/<])"
+    after = r"(?![\w-]|\.[\w-]|:[0-9a-fA-F])" if ipv6 else r"(?![\w-]|\.[\w-])"
+    return re.sub(before + re.escape(host) + after, REDACTED, text, flags=re.IGNORECASE)
 
 
 # The raw `ampio/from/<MAC>/...` tree: global (not user-namespaced), retained,

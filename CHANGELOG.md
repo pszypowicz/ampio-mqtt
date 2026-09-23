@@ -16,13 +16,14 @@ explicit beta posture above and is no longer the supported upgrade path.
 
 ### Fixed
 
-- **`diagnostics_snapshot()` keeps its promise of no host, username or
-  password** (#289). `connection.last_error` masks the account segment of any
-  topic it names, and a publish timeout named the account's own control topic.
-  It also masks the broker host. The `server_info` entry masks `local_ip` and
-  `device_id`, the two fields that identify the host the M-SERV runs on. `mac`
-  stays, because `server_key` is built from it. `AmpioClient.server_info` and
-  the debug log keep the full values.
+- **`diagnostics_snapshot()` no longer carries the account name, the broker host
+  or the host identifiers of the M-SERV** (#289). A publish timeout named the
+  account's own control topic in `connection.last_error`. That field now masks
+  the account segment of each topic it names, and it masks the broker host. The
+  `server_info` entry masks `local_ip` and `device_id`, the two fields that
+  identify the host the M-SERV runs on. `mac` stays, because `server_key` is
+  built from it. `AmpioClient.server_info` keeps the full values, and the debug
+  log keeps the full error text.
 
 ## 0.73.0
 
