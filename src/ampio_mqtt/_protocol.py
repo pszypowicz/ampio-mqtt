@@ -933,36 +933,39 @@ def parse_server_info(data: Mapping[str, Any]) -> AmpioServerInfo:
 # redacted snapshot reads uniformly in a bug report.
 REDACTED = "**REDACTED**"
 
-# The info-reply keys whose values survive into the diagnostics copy. The
-# retained payload is one string a consumer's key-based redactor cannot
-# reach into, so every other value - the known private fields and any a
-# future firmware adds - is masked at the source (#137).
-_INFO_SAFE_KEYS = frozenset(
-    {"Status", "mac", "userId", "serverVersion", "serverRevision", "mqttVersion"}
-)
+# The info-reply version fields that survive into the diagnostics copy, in
+# the dotted-number form `server_below_baseline` reads. Every other value -
+# the known private fields and any a future firmware adds - is left out at
+# the source, because the retained payload is one string a consumer's
+# key-based redactor cannot reach into (#137, #308).
+_INFO_VERSION_KEYS = ("serverVersion", "serverRevision", "mqttVersion")
+_VERSION_FORM = re.compile(r"[0-9]+(\.[0-9]+)*")
 
 
 def redact_info_reply(data: Mapping[str, Any]) -> str:
-    """The server-info reply with only its safelisted scalar values.
+    """The server-info reply reduced to the values the parser accepts.
 
-    Every other key is left out, and a safelisted key whose value is not a
-    string, a number or null reads the redaction marker. A reply without a
-    ``Results`` object is withheld outright.
+    The copy holds the parsed ``mac`` and ``userId`` under ``Results``, and
+    each version field whose value is in the dotted-number form. A version
+    field in any other form reads the redaction marker. A reply that
+    :func:`parse_server_info` refuses is withheld outright.
     """
-    results = data.get("Results")
-    if not isinstance(results, dict):
+    try:
+        info = parse_server_info(data)
+    except AmpioProtocolError:
         return REDACTED
-
-    def _safe(fields: Mapping[str, Any]) -> dict[str, Any]:
-        return {
-            key: value if _is_scalar(value) else REDACTED
-            for key, value in fields.items()
-            if key in _INFO_SAFE_KEYS
-        }
-
-    masked = _safe(data)
-    masked["Results"] = _safe(results)
-    return json.dumps(masked)
+    results = data["Results"]
+    masked: dict[str, Any] = {"mac": info.mac, "userId": info.user_id}
+    for key in _INFO_VERSION_KEYS:
+        if key in results:
+            value = results[key]
+            in_form = (
+                isinstance(value, str | int)
+                and not isinstance(value, bool)
+                and _VERSION_FORM.fullmatch(str(value)) is not None
+            )
+            masked[key] = str(value) if in_form else REDACTED
+    return json.dumps({"Results": masked})
 
 
 def _is_scalar(value: object) -> bool:

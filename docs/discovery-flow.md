@@ -230,14 +230,14 @@ a bug report. The library puts no password into it. It masks the account in
 topics, the broker host in `last_error`, and the host identifiers of the server
 info. The auth-failure reason names the reason code alone. A refused reply names
 its column, and a refused `leafId` also names its row, without the value. The
-retained info reply keeps its safe scalar values and leaves every other key out.
-The error text of the MQTT stack in `last_error` is the one value that passes
-through, with the account and the host masked. It holds the availability flag,
-the auth-failure reason, and the safe server-info subset. It also holds the
-connection counters, the SUBACK rejections, and each endpoint's last reply
-summary. On `AmpioAdminClient` it also holds the mac collisions and the module
-list. The `params_gap` entry names objects the params table skips. The
-`not_configured` entry lists the ids of the rows the door left out. Their
+retained info reply keeps the values that the parser accepts and leaves every
+other key out. The error text of the MQTT stack in `last_error` is the one value
+that passes through, with the account and the host masked. It holds the
+availability flag, the auth-failure reason, and the safe server-info subset. It
+also holds the connection counters, the SUBACK rejections, and each endpoint's
+last reply summary. On `AmpioAdminClient` it also holds the mac collisions and
+the module list. The `params_gap` entry names objects the params table skips.
+The `not_configured` entry lists the ids of the rows the door left out. Their
 Designer names stay out of the report, and the `NotConfigured` event carries
 them.
 
@@ -264,9 +264,11 @@ Malformed JSON or table envelopes retain `**REDACTED**`. A valid table envelope
 retains its row count even if the endpoint parser refuses its rows. Discovery
 and fetch methods still receive the full reply.
 
-The `info` entry retains its allowed values and masks other values. An info
-reply that is not a JSON object with a `Results` object retains `**REDACTED**`.
-A `Results` object that the parser refuses stays, with the same mask.
+The `info` entry retains the parsed `mac` and `userId` under `Results`. It also
+retains each version field in the dotted-number form, for example `1865` or
+`3.4.5`. A version field in any other form reads `**REDACTED**`. Every other key
+is left out, `Status` included. If the parser refuses the reply, the entry
+retains `**REDACTED**`.
 
 The `connection` entry carries six keys. `started_at` and `reconnect_count`
 cover the current `connect()` run, so a deliberate restart never reads as a
