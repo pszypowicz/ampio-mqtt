@@ -38,7 +38,9 @@ from ampio_mqtt._protocol import (
     decode_envelope,
     md5_topic,
     parse_app_sync_devices,
+    parse_color_temp_frame,
     parse_devices,
+    parse_diagnostics,
     parse_module_address,
     parse_params_devices,
     parse_scenes,
@@ -982,3 +984,22 @@ def test_a_leaf_token_parses_into_its_four_address_fields() -> None:
 def test_a_leaf_token_of_another_shape_is_a_server_fault(token: str) -> None:
     with pytest.raises(AmpioProtocolError, match=repr(token)):
         parse_module_address(token)
+
+
+def test_a_diagnostics_byte_out_of_range_reads_as_unreadable() -> None:
+    """A frame byte holds 0-255. A voltage outside that refuses the frame, and
+    a temperature outside that reads as no reading (#291)."""
+    assert parse_diagnostics(json.dumps({"d": [254, 79, 10**400, 120]})) is None
+    assert parse_diagnostics(json.dumps({"d": [254, 79, 256, 120]})) is None
+    parsed = parse_diagnostics(json.dumps({"d": [254, 79, 63, 10**400]}))
+    assert parsed is not None
+    assert parsed.supply_voltage == 12.6 and parsed.temperature is None
+
+
+def test_a_color_temperature_byte_out_of_range_refuses_the_frame() -> None:
+    """A power or coldness value outside 0-255 would pack into a wrong state,
+    so the frame reads as unreadable (#291)."""
+    assert (
+        parse_color_temp_frame(json.dumps({"d": [254, 98, 300, 10]}), 1, "62") is None
+    )
+    assert parse_color_temp_frame(json.dumps({"d": [254, 98, 10, -1]}), 1, "62") is None

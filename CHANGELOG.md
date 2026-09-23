@@ -20,7 +20,9 @@ explicit beta posture above and is no longer the supported upgrade path.
   `json.loads` reads `Infinity` as a float, and a number with hundreds of digits
   does not fit a float. Either one raised `OverflowError` in the parser, which
   dropped the whole message, for example a thermostat push, instead of the one
-  field.
+  field. A module diagnostics frame or a color-temperature frame now also reads
+  a byte outside 0-255 as unreadable, instead of raising or packing a wrong
+  state.
 - **An object that the params table drops reads every config flag as unset**
   (#290). It kept the `params`, `czas` and `url` of the last table, so a dropped
   row could leave a stale `read_only` flag in place. It now reads the defaults,
