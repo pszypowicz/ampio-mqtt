@@ -136,11 +136,11 @@ into `AmpioObject.address`. `address.channel` reads the last segment. It covers
 inputs as well as outputs. `address.sf_id` and `address.sub_sf_id` read the
 third and fourth segments. A `subSfId` has meaning only inside its `sfId`.
 
-**`sfId` is a per-leaf special-function id, not the module type.** No module
-showed `sfId` equal to its `typ_urzadzenia`. Virtual cover objects hosted on a
-relay module carry the roller code, so the code follows the configured leaf
-class, not the host product. The low codes match the Designer bundle's IO type
-enum exactly where both are known:
+**`sfId` is a per-leaf special-function id, not the module type.** `sfId` never
+equals the module's `typ_urzadzenia` on the baseline install. Virtual cover
+objects hosted on a relay module carry the roller code, so the code follows the
+configured leaf class, not the host product. The low codes match the Designer
+bundle's IO type enum exactly where both are known:
 
 | `sfId` | Leaf class                                                      |
 | ------ | --------------------------------------------------------------- |

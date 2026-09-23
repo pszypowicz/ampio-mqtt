@@ -57,10 +57,10 @@ command surface - the `/api/set` strings in the bundle are only the embedded
 OpenAPI spec. It works on:
 
 - Config reads and saves: `ampio/control/admin/config/...`, with replies on
-  `ampio/fromDB/admin/config/#`. This includes the `save/leaves` table that maps
-  a binary output leaf (class 257) to command function 48 = `0x30`, and an
-  open-collector leaf (class 67) to `0x32` - the frames documented under Panel
-  outputs in [`panel-writes.md`](panel-writes.md).
+  `ampio/fromDB/admin/config/#`. This includes the `save/leaves` table. The
+  table maps a binary output leaf (class 257) to command function 48 = `0x30`,
+  and an open-collector leaf (class 67) to `0x32`. These are the frames
+  documented under Panel outputs in [`panel-writes.md`](panel-writes.md).
 - The `device_api` tree: `get_data`, `name_wr`, `descriptions_wr`,
   `firmware_wr`, `mac_user_wr`, `ow_search`, plus the broadcast helpers (`list`,
   `discover`, `version`, `alive`, `devices_log`).
@@ -70,11 +70,12 @@ OpenAPI spec. It works on:
   `config_get`/`config_set`/`config_reload`, `sf_get`, and `params_set`, with
   `devices_status` notifications.
 - Raw CAN writes: `ampio/to/<machex>/raw` and `rawf`, hex-encoded frames. The
-  live-control vocabulary: the generic output write
+  live-control vocabulary is the generic output write
   `[0x30, 0xF9, value, channel]`, DALI set `[57, 0xF9, ch, val]`, and the module
-  identify pair `[0x7E, 1|0]` behind the Devices tab's "Identify device" button
-  (Module identify in [`panel-writes.md`](panel-writes.md)). MLED-capable panels
-  add an MLED family `[54, 0xDF, 1|2|3, ...]`, and flash config transfer is
+  identify pair `[0x7E, 1|0]`. The identify pair is behind the Devices tab's
+  "Identify device" button (Module identify in
+  [`panel-writes.md`](panel-writes.md)). MLED-capable panels add an MLED family
+  `[54, 0xDF, 1|2|3, ...]`, and flash config transfer is
   `[dst, 0xFB|0xFC, blockLo, blockHi, ...]`. The Designer also sends raw CAN
   frames to `hw/out` (first byte the send-with-id opcode, then `0x80|len`, a
   32-bit CAN id, and the data).

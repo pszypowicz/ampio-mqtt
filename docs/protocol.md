@@ -7,11 +7,11 @@ The M-SERV speaks two parallel topic trees on the same MQTT broker:
   the control surfaces, and the matching `fromDB` topic gets a JSON response.
   Per-object live state arrives on `.../ob/<id>/state`.
 - **Raw tree** - `ampio/from/#`. Global, not user-scoped, keyed by the module's
-  effective bus MAC, and served to administrator accounts only. Its branches are
-  the retained decoded-CAN per-channel state under `state/<prefix>/<ch>`, the
-  broadcasts under `b/<type>` (diagnostics on `b/4F`, CCT state on `b/62` and
-  `b/63`), and the bus events under `event`. The retained state branch is the
-  library's low-latency bridge - see
+  effective bus MAC, and served to administrator accounts only. It has three
+  branches. The retained decoded-CAN per-channel state is under
+  `state/<prefix>/<ch>`. The broadcasts are under `b/<type>`, with diagnostics
+  on `b/4F` and CCT state on `b/62` and `b/63`. The bus events are under
+  `event`. The retained state branch is the library's low-latency bridge - see
   [`raw-channel-bridge.md`](raw-channel-bridge.md).
 
 The rest of this area is on its own pages.
@@ -56,8 +56,8 @@ for every account.
 A surface serves the same columns on every row of every reply. The library
 depends on that. A reply that drops one of them raises `AmpioProtocolError`, and
 the client reports the refusal through `diagnostics_snapshot()` and drops the
-message. To read a dropped column as "not configured" would turn a server fault
-into wrong values on an object.
+message. A dropped column read as "not configured" turns a server fault into
+wrong values on an object.
 
 | Surface               | Columns every row carries                                                                     |
 | --------------------- | --------------------------------------------------------------------------------------------- |
@@ -86,10 +86,10 @@ first resolves a per-output pointer, the second becomes a consumer's area. A
 stamp, because the stamp is what orders one report against another.
 
 The per-object push is the one live message in the table, and the rest are
-replies. Its stamp makes every object's value comparable on one clock, which is
-why the library refuses a push without one rather than reaching for its own
-clock. The raw channel tree is the exception: its payloads carry no stamp at
-all, so a raw edge is stamped locally, and the ordering rules in
+replies. Its stamp makes every object's value comparable on one clock. For that
+reason, the library refuses a push without one rather than reaching for its own
+clock. The raw channel tree is the exception. Its payloads carry no stamp at
+all, so a raw edge is stamped locally. The ordering rules in
 [`discovery-flow.md`](discovery-flow.md) exist for exactly those values.
 
 A scene row carries more than the table lists. `Actions` holds the wire command

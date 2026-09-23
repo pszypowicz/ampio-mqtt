@@ -1,29 +1,29 @@
 # Account tiers
 
 Every Ampio account reaches the same broker, but the M-SERV serves two different
-surfaces. The reserved **`admin` login is the administrator**. Every app-created
-user is a standard account. The app offers no administrator toggle for its
-users, and it refuses to create a user named `admin`. Per-user app permissions
-do not move an account between tiers. A standard account granted every
-permission in the app is still a standard account.
+surfaces. The reserved **`admin` login is the admin account**. Every app-created
+user is a standard account. The app offers no toggle that makes one of its users
+an admin account, and it refuses to create a user named `admin`. Per-user app
+permissions do not move an account between tiers. A standard account granted
+every permission in the app is still a standard account.
 
 The tier is a type. `AmpioClient` is the client every account gets, and
-`AmpioAdminClient` extends it with what the M-SERV serves the reserved login
+`AmpioAdminClient` extends it with what the M-SERV serves the admin account
 alone. The admin class carries its username, so no caller passes one. The base
-class never inspects the username. The reserved login through the base class
-gets the standard view, which is a valid least-privilege choice.
+class never inspects the username. The admin account through the base class gets
+the standard view, which is a valid least-privilege choice.
 
 ```python
 client = AmpioClient(host, username, password)  # any account
-admin = AmpioAdminClient(host, password)  # the reserved login
+admin = AmpioAdminClient(host, password)  # the admin account
 ```
 
 Neither class checks the account id the `info` reply reports.
 `AmpioServerInfo.user_id` carries that id, and `AmpioServerInfo.access_tier`
 reports the tier it implies. `check_connection()` reports that tier at
 validation time. A config flow reads it to pick the class before any client
-exists. The tier is an `AccessTier` member. `AccessTier.ADMIN` is the reserved
-login and maps to `AmpioAdminClient`. `AccessTier.RESTRICTED` is the standard
+exists. The tier is an `AccessTier` member. `AccessTier.ADMIN` is the admin
+account and maps to `AmpioAdminClient`. `AccessTier.RESTRICTED` is the standard
 account and maps to `AmpioClient`. Grouping entities by module needs no module
 row on either class: `AmpioObject.address.mac` carries the key (see
 [`identity.md`](identity.md)).
@@ -88,14 +88,15 @@ not ask for the raw tree.
 ### A standard account sees its own namespace and nothing else
 
 The denial is not limited to the raw tree. A standard account subscribed to `#`
-receives messages on two kinds of topic only: its own `ampio/fromDB/<user>/`
-namespace, and the echo of its own publish on `ampio/control/<user>/api`.
+receives messages on two kinds of topic only. The first is its own
+`ampio/fromDB/<user>/` namespace. The second is the echo of its own publish on
+`ampio/control/<user>/api`.
 
-An administrator subscribed to `#` at the same moment receives every other
-account's `ampio/fromDB/<name>/` namespace as well, plus the raw tree, the
-decoded CAN topics, the server heartbeat, the module status notifications and
-the server log feed. The M-SERV fans the same object state into one namespace
-per account.
+The admin account subscribed to `#` at the same moment receives every other
+account's `ampio/fromDB/<name>/` namespace as well. It also receives the raw
+tree, the decoded CAN topics, the server heartbeat, the module status
+notifications and the server log feed. The M-SERV fans the same object state
+into one namespace per account.
 
 So any surface published outside `ampio/fromDB/<user>/` is unreachable from a
 standard account. Check that before you plan a consumer for one.
@@ -149,8 +150,8 @@ later runs as a standard account, that carry is the consumer's own choice.
 ## The latency difference is on reads only
 
 The M-SERV publishes every input twice, and the raw form lands first (see
-[`raw-channel-bridge.md`](raw-channel-bridge.md)). Only administrators receive
-it.
+[`raw-channel-bridge.md`](raw-channel-bridge.md)). Only the admin account
+receives it.
 
 Measured on one flag object, from the command to the module's own raw report,
 and to the same change on the per-object topic:
@@ -169,9 +170,9 @@ arrive on the per-object path.
 in a median 40 ms. The one CAN route that carries a flag frame, `hw/out`, needs
 six frames and echoes in a median 68 ms. See the flag entry in
 [`designer-surfaces.md`](designer-surfaces.md). The library keeps `/api` for
-flags on both tiers. On writes an admin account gains reach (the panel LEDs, the
-panel colors, the touch lock, the buzzer, and the cover roller lock) and no
-speed.
+flags on both tiers. On writes, the admin account gains reach and no speed. The
+added reach is the panel LEDs, the panel colors, the touch lock, the buzzer, and
+the cover roller lock.
 
 ## Choosing a tier
 
@@ -183,22 +184,22 @@ Prefer `AmpioAdminClient` when the install needs:
 
 - **Sub-50 ms input reaction** - HA-side double-click, long-press, or
   hold-to-dim timing, where an extra ~130 ms is felt. Presses the M-SERV itself
-  classifies arrive as ordinary objects and need no admin.
+  classifies arrive as ordinary objects and need no admin account.
 - **Module metadata** - per-module names, models, firmware versions, and `mserv`
   for a `via_device` hierarchy.
 - **Bus events** - panel presses and other Ampio logic signals only arrive on
-  the admin tier. A standard account can still raise events (see the exception
-  above), so automation _into_ Ampio works on either tier. Only reactions _to_
-  Ampio's own events need admin.
+  the admin account. A standard account can still raise events (see the
+  exception above), so automation _into_ Ampio works on either tier. Only
+  reactions _to_ Ampio's own events need the admin account.
 - **Module health** - most modules broadcast their CAN supply voltage, and those
   with a temperature sensor their temperature, as `AmpioModule.supply_voltage` /
   `temperature`. This is useful to find a sagging bus or a hot module before it
   misbehaves. The modules that send the frame are listed in
   [`raw-channel-bridge.md`](raw-channel-bridge.md).
 - **Panel outputs, the panel buzzer, module identify, and the CAN vocabulary** -
-  the raw write frames for panel status LEDs, the panel colors, the touch lock,
-  the buzzer, the identify LED, and the cover roller lock. Also the device
-  classes `/api` cannot express (DALI, display text). See
+  the raw write frames. They control the panel status LEDs, the panel colors,
+  the touch lock, the buzzer, the identify LED, and the cover roller lock. Also
+  the device classes `/api` cannot express (DALI, display text). See
   [`panel-writes.md`](panel-writes.md) and
   [`untapped-surfaces.md`](untapped-surfaces.md).
 - **The record sweep** for area assignment and module facts -

@@ -164,8 +164,8 @@ mask width M of `ceil(N / 8)` bytes:
 
 | Offset     | Size | Setting                                             |
 | ---------- | ---- | --------------------------------------------------- |
-| 0          | 4    | Touch field colour, red, green, blue, white         |
-| 4          | 3    | Status colour, red, green, blue                     |
+| 0          | 4    | Touch field color, red, green, blue, white          |
+| 4          | 3    | Status color, red, green, blue                      |
 | 7          | N    | Light signal, one byte per field                    |
 | 7 + N      | 1    | Beep time                                           |
 | 8 + N      | M    | Sound signal, one bit per field                     |
@@ -175,21 +175,21 @@ mask width M of `ceil(N / 8)` bytes:
 | 9 + N + 3M | 2    | Seconds before dimming, then the dimmed brightness  |
 
 Every mask reads least significant bit first, so bit 0 is field 1. Backlight
-activity decides whether a field's icon is backlit at all. With the bit clear
-the icon stays dark, while the status indicator still reacts to a touch and the
-buzzer still sounds, because those ride their own masks. `PanelLightSignal`
-names the light signal values.
+activity decides whether a field's icon is backlit at all. If the bit is clear,
+the icon stays dark. The status indicator still reacts to a touch and the buzzer
+still sounds, because those ride their own masks. `PanelLightSignal` names the
+light signal values.
 
 The Designer labels the beep column milliseconds, but the panel's own buzzer
 frames count 10 ms ticks, so the unit is not proven. The library passes the
 stored value through verbatim.
 
 Only a board whose layout is live-proven resolves. The Designer keys the layout
-by `(typ_urzadzenia, wersja_pcb)`, and other boards differ: an older revision
-puts the touch field colour at offset 1 as three bytes with no white channel,
-and shifts the masks. Reading one of those with this layout would produce
-confident wrong values, so an unlisted board gets no entry. The proven boards
-are the M-DOT-2, M-DOT-4, M-DOT-9, and M-DOT-18.
+by `(typ_urzadzenia, wersja_pcb)`, and other boards differ. An older revision
+puts the touch field color at offset 1 as three bytes with no white channel, and
+it shifts the masks. Reading one of those with this layout produces confident
+wrong values, so an unlisted board gets no entry. The proven boards are the
+M-DOT-2, M-DOT-4, M-DOT-9, and M-DOT-18.
 
 ### Cover parameters (`AmpioAdminClient.cover_parameters`)
 

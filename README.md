@@ -71,7 +71,7 @@ the API detail.
 - Commands for relays, dimmers, RGBW and color-temperature lights, covers with
   stop and tilt, the regulator setpoint, scenes, and bus events. A push
   notification to the install's mobile app rides the same surface. The roller
-  lock, the M-DOT panel buzzer, its touch field colours and touch lock, and the
+  lock, the M-DOT panel buzzer, its touch field colors and touch lock, and the
   module identify LED are admin-only. The `command()` escape hatch sends any
   other `/api` verb ([`docs/commands.md`](docs/commands.md)).
 - A low-latency input bridge from the raw per-channel topics on
@@ -89,12 +89,12 @@ the API detail.
 A dedicated standard account is the recommended shape for Home Assistant. It
 sees exactly the objects granted in the Ampio app and can command only those.
 `AmpioAdminClient` adds the module catalogue, the low-latency raw tree, the
-module diagnostics, the description-record sweep, and the CAN write surfaces
-(panel LEDs and colours, the buzzer, the touch lock, the identify LED, and the
-cover roller lock). Bus events are the exception on both tiers. Any account can
-raise any event number, and the logic behind an event runs with full authority.
-[`docs/account-tiers.md`](docs/account-tiers.md) has the capability table and
-the measured latency difference.
+module diagnostics, the description-record sweep, and the CAN write surfaces.
+The CAN write surfaces are the panel LEDs and colors, the buzzer, the touch
+lock, the identify LED, and the cover roller lock. Bus events are the exception
+on both tiers. Any account can raise any event number, and the logic behind an
+event runs with full authority. [`docs/account-tiers.md`](docs/account-tiers.md)
+has the capability table and the measured latency difference.
 
 ## Testing a consumer against the library
 

@@ -66,8 +66,8 @@ events (`set_event`), but it never receives them.
 
 `NotConfigured` reports the whole state of the admission door on every change of
 either side. A first refusal reports it, and so does the reply that clears the
-last refused row. A consumer that raises a notice on the fault must take it down
-when both sides arrive empty, because the clearance is the only signal that
+last refused row. If a consumer raises a notice on the fault, it must take the
+notice down when both sides arrive empty. The clearance is the only signal that
 covers every fix. A Designer row that gains a leaf also fires `ObjectAdded`. A
 Designer row that the installer deletes fires nothing else, because the door
 never admitted it. Only an admin session ever sees a non-empty `collisions`,
@@ -84,7 +84,7 @@ and a genuinely changed password means a new client.
 A catalogue reply can also make a held retained value routable, and that value
 lands after the removals of its batch. One reply can therefore dispatch
 `ObjectAdded`, then `ObjectRemoved`, then `ObjectUpdated`. The trailing update
-carries an earlier raw message that only the fresh routing table could place, so
+carries an earlier raw message that only the fresh routing table can place, so
 it is not an update the reply produced. It never names an id the same batch
 removed, because the routing table drops an evicted object first.
 

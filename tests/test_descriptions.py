@@ -85,7 +85,7 @@ def panel_params(fields: int) -> str:
     """A params blob for a `fields`-field panel, the live baseline values."""
     mask_len = -(-fields // 8)
     every_field = ((1 << fields) - 1).to_bytes(mask_len, "little")
-    blob = bytes([0, 0, 0, 255, 255, 10, 10])  # colours
+    blob = bytes([0, 0, 0, 255, 255, 10, 10])  # colors
     blob += bytes([1] * fields) + bytes([2])  # light signal, beep time
     blob += every_field * 2  # sound, backlight
     blob += bytes(mask_len) + bytes([0])  # multitouch mask, send mode
