@@ -95,7 +95,13 @@ async def test_helpers_map_to_verified_verbs(
     connected: tuple[AmpioClient, FakeBroker], call, expected: bytes
 ) -> None:
     client, broker = connected
-    catalogue(client, {"id": 64}, {"id": 111}, {"id": 50}, {"id": 48})
+    catalogue(
+        client,
+        {"id": 64, "typ_komponentu": "przekaznik"},
+        {"id": 111, "typ_komponentu": "przekaznik"},
+        {"id": 50},
+        {"id": 48},
+    )
     broker.published.clear()
     await call(client)
     assert broker.published == [(API_TOPIC, expected)]
@@ -131,7 +137,9 @@ async def test_boundary_values_pass_the_range_checks(
     """The range limits themselves are legal commands - an off-by-one in
     the range checks must not silently reject them."""
     client, broker = connected
-    catalogue(client, {"id": 111}, {"id": 50}, {"id": 48})
+    catalogue(
+        client, {"id": 111, "typ_komponentu": "przekaznik"}, {"id": 50}, {"id": 48}
+    )
     broker.published.clear()
     await call(client)
     assert broker.published == [(API_TOPIC, expected)]
@@ -213,7 +221,7 @@ async def test_bool_arguments_are_rejected(
 
 async def test_command_requires_a_connection() -> None:
     client = AmpioClient("host", username=USER)
-    catalogue(client, {"id": 64})
+    catalogue(client, {"id": 64, "typ_komponentu": "przekaznik"})
     with pytest.raises(AmpioConnectionError):
         await client.turn_on(64)
 
@@ -430,7 +438,8 @@ async def test_set_value_on_a_cover_is_rejected(
     _learn(client, 193, typ)
     with pytest.raises(AmpioUnsupported) as refused:
         await client.set_value(193, 80, pulse_ms=pulse_ms)
-    assert "set_roller_pos()" in str(refused.value)
+    hint = "open() or close()" if typ == "roleta" else "set_roller_pos()"
+    assert hint in str(refused.value)
     assert broker.published == []
 
 
@@ -1838,3 +1847,65 @@ async def test_set_value_refuses_a_value_past_the_flag_width(
         assert broker.published == []
     finally:
         await client.disconnect()
+
+
+# A switch verb or a pulse goes out only when the object's kind says it
+# answers (#286). Every other kind, an unclassified type included, is
+# refused before any publish.
+_SWITCH_CALLS = {
+    "turn_on": lambda client, oid: client.turn_on(oid),
+    "turn_off": lambda client, oid: client.turn_off(oid),
+    "switch": lambda client, oid: client.switch(oid),
+}
+
+
+@pytest.mark.parametrize("verb", list(_SWITCH_CALLS))
+@pytest.mark.parametrize(
+    "typ", ["wej", "flaga_liniowa", "flaga_liniowa16", "temp", "reg", "not_a_type"]
+)
+async def test_a_switch_verb_is_refused_for_a_kind_that_does_not_answer(
+    connected: tuple[AmpioClient, FakeBroker], verb: str, typ: str
+) -> None:
+    """A read-only input, an analog flag, a sensor, a thermostat and an
+    unclassified type get no switch verb (#286)."""
+    client, broker = connected
+    _learn(client, 60, typ)
+    with pytest.raises(AmpioUnsupported):
+        await _SWITCH_CALLS[verb](client, 60)
+    assert broker.published == []
+
+
+@pytest.mark.parametrize("verb", list(_SWITCH_CALLS))
+@pytest.mark.parametrize("typ", ["flaga", "przekaznik", "led"])
+async def test_a_switch_verb_reaches_a_kind_that_answers(
+    connected: tuple[AmpioClient, FakeBroker], verb: str, typ: str
+) -> None:
+    """A binary flag, a relay and a dimmer take all three switch verbs."""
+    client, broker = connected
+    _learn(client, 61, typ)
+    await _SWITCH_CALLS[verb](client, 61)
+    assert len(broker.published) == 1
+
+
+@pytest.mark.parametrize("typ", ["temp", "reg", "not_a_type", "wej", "rgbw"])
+async def test_a_pulse_is_refused_for_a_kind_that_does_not_pulse(
+    connected: tuple[AmpioClient, FakeBroker], typ: str
+) -> None:
+    """A sensor, a thermostat, an unclassified type, a read-only input and
+    an RGBW light get no timed `setValue` (#286)."""
+    client, broker = connected
+    _learn(client, 62, typ)
+    with pytest.raises(AmpioUnsupported):
+        await client.set_value(62, 100, pulse_ms=500)
+    assert broker.published == []
+
+
+@pytest.mark.parametrize("typ", ["flaga", "przekaznik", "led"])
+async def test_a_pulse_reaches_a_kind_that_pulses(
+    connected: tuple[AmpioClient, FakeBroker], typ: str
+) -> None:
+    """The relay, the flag and the dimmer take the timed form."""
+    client, broker = connected
+    _learn(client, 63, typ)
+    await client.set_value(63, 100, pulse_ms=500)
+    assert broker.published == [(API_TOPIC, b"/api/set/63/setValue/100/50")]

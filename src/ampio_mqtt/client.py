@@ -992,8 +992,11 @@ class AmpioClient:
         lets a consumer model a writable flag as a switch entity
         (:attr:`InputKind.switchable`). A `wej` is read-only.
 
-        Raises ``AmpioUnsupported`` for an output whose kind says this verb
-        does not apply. Turning an ``rgbw`` light on means choosing a
+        Raises ``AmpioUnsupported`` for an object whose kind does not answer
+        this verb: a ``wej``, an analog flag, a sensor, a thermostat, an
+        unclassified type, and the two light kinds below. An id the
+        catalogue does not list raises as :meth:`command` does. Turning an
+        ``rgbw`` light on means choosing a
         color - the consumer's call, via :meth:`set_colors` (the rgbw
         replay pattern in docs/commands.md). A ``ledww`` light refuses for
         the matching reason: the power it had before is the consumer's to
@@ -1014,14 +1017,17 @@ class AmpioClient:
         A color output that does not answer the switch verbs (``rgbw``) is
         turned off with ``setColors 0/0/0/0`` instead. A color-temperature
         output (``ledww``) is turned off with ``setWWPower 0``, which also
-        holds its color temperature for the next turn-on. ``confirm``
-        awaits the state echo exactly as :meth:`command` documents.
+        holds its color temperature for the next turn-on. Every other kind
+        that :meth:`turn_on` refuses raises ``AmpioUnsupported`` here too.
+        ``confirm`` awaits the state echo exactly as :meth:`command`
+        documents.
         """
         kind = self._output_kind(object_id)
         if kind is not None and not kind.switchable and kind.color:
             return await self.set_colors(object_id, 0, 0, 0, 0, confirm=confirm)
         if kind is not None and not kind.switchable and kind.color_temp:
             return await self.set_ww_power(object_id, 0, confirm=confirm)
+        self._check_switchable(object_id, "turnOff")
         return await self.command(object_id, "turnOff", confirm=confirm)
 
     async def switch(
@@ -1032,8 +1038,8 @@ class AmpioClient:
         Outputs and flags are both valid targets, exactly as
         :meth:`turn_on` documents.
 
-        Raises ``AmpioUnsupported`` for an output whose kind says the switch
-        verbs do not apply (``rgbw``), exactly as :meth:`turn_on` does.
+        Raises ``AmpioUnsupported`` for every kind that :meth:`turn_on`
+        refuses, except a ``ledww``, which answers this verb.
         ``confirm`` awaits the state echo exactly as :meth:`command`
         documents.
         """
@@ -1055,32 +1061,51 @@ class AmpioClient:
         return 0, 255
 
     def _check_switchable(self, object_id: int, verb: str) -> None:
-        """Reject a switch-family verb for an output known not to answer it -
-        the M-SERV would drop it with no effect and no reply. `switch` is
-        gated separately from `turnOn`/`turnOff`, because a `ledww` answers
-        it and ignores the other two."""
-        kind = self._output_kind(object_id)
-        if kind is None:
+        """Reject a switch-family verb unless the object's kind answers it.
+
+        An output answers by its own flags. `switch` is gated separately
+        from `turnOn`/`turnOff`, because a `ledww` answers it and ignores
+        the other two. An input answers when it is switchable, which is
+        the binary `flaga` alone. Every other kind, an unclassified type
+        included, is refused. An id the catalogue does not list passes, so
+        :meth:`command` raises its own error.
+        """
+        obj = self._store.objects.get(object_id)
+        if obj is None:
             return
-        answers = kind.toggleable if verb == "switch" else kind.switchable
-        if not answers:
+        kind = obj.kind
+        if isinstance(kind, OutputKind):
+            if kind.toggleable if verb == "switch" else kind.switchable:
+                return
+            replacement = "set_ww_power()" if kind.color_temp else "set_colors()"
             raise AmpioUnsupported(
                 f"object {object_id} ({kind.key}) does not answer {verb}; "
-                f"drive it with {'set_ww_power()' if kind.color_temp else 'set_colors()'}"
+                f"drive it with {replacement}"
             )
+        if isinstance(kind, InputKind) and kind.switchable:
+            return
+        label = kind.key if kind is not None else obj.typ_komponentu
+        raise AmpioUnsupported(f"object {object_id} ({label}) does not answer {verb}")
 
     def _check_pulsable(self, object_id: int) -> None:
-        """Reject a `pulse_ms` for a kind no timed write pulses. An analog
-        flag is the case that bites: it takes the timed form, sets the
-        value and never reverts, so the caller would get a permanent write
-        where it asked for a press. `AmpioObject.pulse_ms` reads 0 for
-        every kind this refuses."""
+        """Reject a `pulse_ms` unless the object's kind pulses.
+
+        The relay, the flag and the dimmer pulse. An analog flag is the
+        case that bites: it takes the timed form, sets the value and never
+        reverts, so the caller would get a permanent write where it asked
+        for a press. `AmpioObject.pulse_ms` reads 0 for every kind this
+        refuses. An id the catalogue does not list passes, so
+        :meth:`command` raises its own error.
+        """
         obj = self._store.objects.get(object_id)
-        kind = obj.kind if obj is not None else None
-        if not isinstance(kind, InputKind | OutputKind) or kind.pulsable:
+        if obj is None:
             return
+        kind = obj.kind
+        if isinstance(kind, InputKind | OutputKind) and kind.pulsable:
+            return
+        label = kind.key if kind is not None else obj.typ_komponentu
         raise AmpioUnsupported(
-            f"object {object_id} ({kind.key}) does not pulse; "
+            f"object {object_id} ({label}) does not pulse; "
             f"the setValue time argument does not revert it"
         )
 
@@ -1108,17 +1133,19 @@ class AmpioClient:
 
         Raises ``AmpioUnsupported`` for an output whose level this verb
         cannot reach: ``rgbw`` (drive it with :meth:`set_colors`), ``ledww``,
-        whose power axis moves through :meth:`set_ww_power` alone, and
+        whose power axis moves through :meth:`set_ww_power` or
+        :meth:`set_ww`, and
         every cover, which moves through :meth:`open`, :meth:`close` and,
         with a position axis, :meth:`set_roller_pos`.
 
         ``pulse_ms`` reaches the relay, the flag and the dimmer alone,
-        and it raises for every other established kind. The two analog
+        and it raises for every other kind, an unclassified type included.
+        The two analog
         flags are the ones that would surprise a caller: they take the
         timed form, set the value and latch, so a pulse would land as a
         permanent write. :pyattr:`AmpioObject.pulse_ms` reads 0 for every
-        kind this refuses, so a consumer that honors that field never
-        trips the check.
+        kind this refuses, so a consumer that passes
+        ``pulse_ms=obj.pulse_ms or None`` never trips the check.
 
         Raises ``AmpioValueError`` for a value outside the range or a
         ``pulse_ms`` outside 0-655350.
@@ -1127,7 +1154,9 @@ class AmpioClient:
         kind = self._output_kind(object_id)
         if kind is not None and (kind.color or kind.color_temp or kind.cover):
             if kind.cover:
-                replacement = "set_roller_pos()"
+                replacement = (
+                    "set_roller_pos()" if kind.position else "open() or close()"
+                )
             elif kind.color_temp:
                 replacement = "set_ww_power()"
             else:
