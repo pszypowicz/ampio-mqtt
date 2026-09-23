@@ -256,7 +256,8 @@ which is what `format_mac()` returns. The report is read by a person, and
 stays a number. The decimal form of that number is the `server_key` a consumer
 scopes its registry on. The entry is the `AmpioServerInfo` dataclass, with
 `local_ip` and `device_id` masked as `**REDACTED**`. Those two fields identify
-the host the M-SERV runs on.
+the host the M-SERV runs on. The parser keeps a version field only in the
+dotted-number form. A version field in any other form reads as `None`.
 
 Table replies retain a JSON string with only `row_count` in `last_payloads`.
 Names, URLs, state descriptions, nested data, and unknown fields are omitted.
