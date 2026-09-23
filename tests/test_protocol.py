@@ -68,6 +68,9 @@ _route = Router("u", ENDPOINTS, admin=True).route
         (None, None),
         ("not-a-number", None),
         ("", None),
+        # `json.loads` reads `Infinity` and `NaN` as floats (#291).
+        (float("inf"), None),
+        (float("nan"), None),
     ],
 )
 def test_to_int(value: object, expected: int | None) -> None:
@@ -687,6 +690,16 @@ def test_parse_stan_json_reg_shape_carries_thermostat() -> None:
                 cooling=True,
             ),
             id="cooling-true-unparseable-temps",
+        ),
+        pytest.param(
+            {"measureTemp": 10**400, "setTemperature": "21.00"},
+            ThermostatState(
+                measure_temp=None,
+                set_temperature=21.0,
+                mode=None,
+                cooling=None,
+            ),
+            id="integer-too-large-for-a-float",
         ),
     ],
 )

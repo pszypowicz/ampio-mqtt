@@ -12,6 +12,16 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Fixed
+
+- **An infinite or oversized number from the wire reads as None** (#291).
+  `json.loads` reads `Infinity` as a float, and a number with hundreds of digits
+  does not fit a float. Either one raised `OverflowError` in the parser, which
+  dropped the whole message, for example a thermostat push, instead of the one
+  field.
+
 ## 0.74.0
 
 This release refuses the commands that the M-SERV drops with no reply. It also

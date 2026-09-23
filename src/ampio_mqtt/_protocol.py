@@ -189,7 +189,7 @@ def to_int(value: Any) -> int | None:
     """Int coercion, None on bad input."""
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -990,7 +990,7 @@ def _finite_float(raw: object) -> float | None:
         return None
     try:
         parsed = float(raw)
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
     return parsed if math.isfinite(parsed) else None
 
