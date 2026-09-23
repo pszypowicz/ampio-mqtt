@@ -595,6 +595,22 @@ def test_snapshot_masks_the_host_identifiers_of_server_info() -> None:
     assert client.server_info.local_ip == "192.168.1.10"
 
 
+def test_snapshot_keeps_a_free_text_version_out() -> None:
+    """A version field outside the dotted-number form appears nowhere in the
+    snapshot (#311)."""
+    client = _client()
+    marker = "private-host.example.invalid"
+    payload = info(
+        mac=12345,
+        userId=4,
+        serverVersion=marker,
+        serverRevision=marker,
+        mqttVersion=marker,
+    )
+    feed(client, f"ampio/fromDB/{USER}/data/info", payload)
+    assert marker not in json.dumps(client.diagnostics_snapshot())
+
+
 def test_snapshot_masks_the_account_in_the_last_error() -> None:
     """A publish timeout names the account's control topic. The snapshot
     masks the account segment and keeps the rest of the text (#289)."""

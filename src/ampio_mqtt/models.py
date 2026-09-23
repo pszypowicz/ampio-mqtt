@@ -731,6 +731,8 @@ class AmpioServerInfo:
     # users-table row id for an app-created user. Every reply carries it,
     # so a reply without one does not parse. See `access_tier`.
     user_id: int
+    # The three version fields hold only the dotted-number form ("1865",
+    # "5.133.11"). A value in any other form reads as None.
     server_version: str | None = None  # the M-SERV server application's version
     server_revision: str | None = None
     mqtt_version: str | None = None  # broker version

@@ -905,6 +905,18 @@ def _to_str(value: Any) -> str | None:
     return str(value)
 
 
+# The dotted-number form `server_below_baseline` reads.
+_VERSION_FORM = re.compile(r"[0-9]+(\.[0-9]+)*")
+
+
+def _version_str(value: object) -> str | None:
+    """A version value as text, or None outside the dotted-number form."""
+    if not isinstance(value, str | int) or isinstance(value, bool):
+        return None
+    text = str(value)
+    return text if _VERSION_FORM.fullmatch(text) else None
+
+
 def parse_server_info(data: Mapping[str, Any]) -> AmpioServerInfo:
     """Parse a server-info reply, keeping only the safe fields.
 
@@ -913,7 +925,8 @@ def parse_server_info(data: Mapping[str, Any]) -> AmpioServerInfo:
     registry by, and ``userId``, the asking account. A reply missing any
     of the three is refused, so every :class:`AmpioServerInfo` carries a
     populated :pyattr:`AmpioServerInfo.server_key` and a readable
-    :pyattr:`AmpioServerInfo.access_tier`.
+    :pyattr:`AmpioServerInfo.access_tier`. A version field outside the
+    dotted-number form reads as None.
     """
     results = data.get("Results")
     if not isinstance(results, dict):
@@ -921,9 +934,9 @@ def parse_server_info(data: Mapping[str, Any]) -> AmpioServerInfo:
     return AmpioServerInfo(
         mac=_int_column(results, "mac", _INFO),
         user_id=_int_column(results, "userId", _INFO),
-        server_version=_to_str(results.get("serverVersion")),
-        server_revision=_to_str(results.get("serverRevision")),
-        mqtt_version=_to_str(results.get("mqttVersion")),
+        server_version=_version_str(results.get("serverVersion")),
+        server_revision=_version_str(results.get("serverRevision")),
+        mqtt_version=_version_str(results.get("mqttVersion")),
         local_ip=_to_str(results.get("local_ip")),
         device_id=_to_str(results.get("device_id")),
     )
@@ -933,13 +946,11 @@ def parse_server_info(data: Mapping[str, Any]) -> AmpioServerInfo:
 # redacted snapshot reads uniformly in a bug report.
 REDACTED = "**REDACTED**"
 
-# The info-reply version fields that survive into the diagnostics copy, in
-# the dotted-number form `server_below_baseline` reads. Every other value -
-# the known private fields and any a future firmware adds - is left out at
-# the source, because the retained payload is one string a consumer's
-# key-based redactor cannot reach into (#137, #308).
+# The info-reply version fields that survive into the diagnostics copy.
+# Every other value - the known private fields and any a future firmware
+# adds - is left out at the source, because the retained payload is one
+# string a consumer's key-based redactor cannot reach into (#137, #308).
 _INFO_VERSION_KEYS = ("serverVersion", "serverRevision", "mqttVersion")
-_VERSION_FORM = re.compile(r"[0-9]+(\.[0-9]+)*")
 
 
 def redact_info_reply(data: Mapping[str, Any]) -> str:
@@ -955,16 +966,11 @@ def redact_info_reply(data: Mapping[str, Any]) -> str:
     except AmpioProtocolError:
         return REDACTED
     results = data["Results"]
+    versions = (info.server_version, info.server_revision, info.mqtt_version)
     masked: dict[str, Any] = {"mac": info.mac, "userId": info.user_id}
-    for key in _INFO_VERSION_KEYS:
+    for key, version in zip(_INFO_VERSION_KEYS, versions, strict=True):
         if key in results:
-            value = results[key]
-            in_form = (
-                isinstance(value, str | int)
-                and not isinstance(value, bool)
-                and _VERSION_FORM.fullmatch(str(value)) is not None
-            )
-            masked[key] = str(value) if in_form else REDACTED
+            masked[key] = REDACTED if version is None else version
     return json.dumps({"Results": masked})
 
 

@@ -512,6 +512,41 @@ def test_redact_info_reply_keeps_a_version_only_in_the_dotted_number_form(
         assert data["Results"][key] == kept
 
 
+@pytest.mark.parametrize(
+    ("value", "parsed"),
+    [
+        ("1865", "1865"),
+        (1865, "1865"),
+        ("3.4.5", "3.4.5"),
+        ("broker.example.invalid", None),
+        ("1865-beta", None),
+        ("", None),
+        (5.1, None),
+        (True, None),
+        (None, None),
+        ({"host": "x"}, None),
+    ],
+)
+def test_parse_server_info_keeps_a_version_only_in_the_dotted_number_form(
+    value: object, parsed: str | None
+) -> None:
+    """A version field outside the dotted-number form reads as None (#311)."""
+    info = parse_server_info(
+        {
+            "Results": {
+                "mac": 1,
+                "userId": -1,
+                "serverVersion": value,
+                "serverRevision": value,
+                "mqttVersion": value,
+            }
+        }
+    )
+    assert info.server_version == parsed
+    assert info.server_revision == parsed
+    assert info.mqtt_version == parsed
+
+
 def test_redact_info_reply_leaves_out_an_absent_version() -> None:
     data = json.loads(redact_info_reply({"Results": {"mac": 1, "userId": -1}}))
     assert "serverVersion" not in data["Results"]

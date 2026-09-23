@@ -12,6 +12,18 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Fixed
+
+- **`server_info` keeps a version field only in the dotted-number form** (#311).
+  `parse_server_info` accepted any scalar text in `serverVersion`,
+  `serverRevision` and `mqttVersion`. A host name in one of these fields then
+  reached `server_info` in the diagnostics report, but the retained info reply
+  masked it. A version field in any other form now reads as None on
+  `AmpioServerInfo`. The retained info reply takes its version fields from the
+  parser, so the two forms agree.
+
 ## 0.76.0
 
 This release closes a gap in the diagnostics report. The retained info reply now
