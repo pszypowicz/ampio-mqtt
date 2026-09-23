@@ -1565,6 +1565,31 @@ def account_free_topic(topic: str) -> str:
     return topic
 
 
+def account_free_text(text: str, username: str, host: str) -> str:
+    """`text` with the account and the broker host masked.
+
+    An error message can name the account's own topic or the host it
+    failed to reach. Each account segment after `ampio/control/` or
+    `ampio/fromDB/` reads as the topic placeholder. The host reads as the
+    redaction marker where it stands as a whole token, in any letter case,
+    outside a topic and a placeholder.
+    """
+    trees = "|".join(map(re.escape, _ACCOUNT_TREES))
+    text = re.sub(
+        rf"(ampio/(?:{trees})/){re.escape(username)}(?![\w-])",
+        lambda match: match[1] + ACCOUNT_PLACEHOLDER,
+        text,
+    )
+    if not host:
+        return text
+    # A colon ends a host name before its port, but it continues an IPv6
+    # address, so an IPv6 host must not match the start of a longer one.
+    ipv6 = ":" in host
+    before = r"(?<![\w.\-/<:])" if ipv6 else r"(?<![\w.\-/<])"
+    after = r"(?![\w-]|\.[\w-]|:[0-9a-fA-F])" if ipv6 else r"(?![\w-]|\.[\w-])"
+    return re.sub(before + re.escape(host) + after, REDACTED, text, flags=re.IGNORECASE)
+
+
 # The raw `ampio/from/<MAC>/...` tree: global (not user-namespaced), retained,
 # admin-only. docs/raw-channel-bridge.md is the home for which prefixes are
 # subscribed and bridged, and which stay on the per-object topic.

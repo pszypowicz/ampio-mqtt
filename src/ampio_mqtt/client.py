@@ -38,6 +38,7 @@ from ._protocol import (
     ROLLER_BLOCK_OPENING,
     Endpoint,
     LeafFault,
+    account_free_text,
     account_free_topic,
     command_payload,
     command_topic,
@@ -138,6 +139,20 @@ _ObjEventT2 = TypeVar("_ObjEventT2", bound=ObjectUpdated | ObjectRemoved)
 _ListenerEntry = tuple[Callable[[Any], None], tuple[type[ClientEvent], ...] | None]
 
 
+# The server-info fields that identify the host the M-SERV runs on.
+_HOST_IDENTIFIERS: Final = ("local_ip", "device_id")
+
+
+def _masked_server_info(fields: dict[str, Any]) -> dict[str, Any]:
+    """The server-info dict with each host identifier it carries masked."""
+    return {
+        key: _protocol.REDACTED
+        if key in _HOST_IDENTIFIERS and value is not None
+        else value
+        for key, value in fields.items()
+    }
+
+
 def _retained(endpoint: _protocol.Endpoint, data: Mapping[str, Any]) -> str:
     """Retain an endpoint's safe copy or a summary of its rows."""
     redacts = endpoint.redacts or _protocol.summarize_rows
@@ -234,6 +249,7 @@ class AmpioClient:
         self._refresh_interval = refresh_interval
         self._refresh_task: asyncio.Task[None] | None = None
         self._username = username
+        self._host = host
         self._initial_endpoints = tuple(ep.name for ep in self._endpoints if ep.initial)
         self._router = _protocol.Router(
             username, self._endpoints, admin=self._routes_admin_shapes
@@ -432,21 +448,28 @@ class AmpioClient:
         return self._connection.available
 
     def diagnostics_snapshot(self) -> dict[str, Any]:
-        """One credential-free report of the client's health.
+        """One report of the client's health, for a bug report or a
+        consumer diagnostics platform.
 
-        The dict a bug report or a consumer diagnostics platform can emit
-        as-is: it carries no host, username, or password. Keys:
+        The library puts no password into it. It masks the account in
+        topics, the broker host in ``last_error``, and the host
+        identifiers of ``server_info``. Text that the broker or the M-SERV
+        sends, such as a refused value or an object name, passes through.
+        Keys:
 
         - ``available``: whether the broker connection is up.
         - ``auth_failure``: the broker's rejection reason once the
           connection loop has stopped for auth, else None.
         - ``server_info``: the safe self-report subset as a dict
           (:class:`AmpioServerInfo` excludes the private fields by
-          construction), or None before discovery.
+          construction), with ``local_ip`` and ``device_id`` masked, or
+          None before discovery.
         - ``connection``: the run's liveness counters. ``started_at`` and
           ``reconnect_count`` cover the current ``connect()`` run, so a
           deliberate restart never reads as a flapping connection;
-          ``last_error`` and ``last_message_at`` roll across runs.
+          ``last_error`` and ``last_message_at`` roll across runs, and
+          ``last_error`` masks the account segment of any topic it names
+          and the broker host.
           ``subscribe_failures`` maps each topic the broker rejected in
           the latest SUBACK to its reason code.
           ``protocol_violations`` maps each topic whose reply the library
@@ -463,15 +486,20 @@ class AmpioClient:
           (docs/discovery-flow.md).
         """
         server_info = self._store.server_info
+        last_error = self._stats.last_error
         return {
             "available": self.available,
             "auth_failure": self._connection.auth_failure,
-            "server_info": None if server_info is None else asdict(server_info),
+            "server_info": None
+            if server_info is None
+            else _masked_server_info(asdict(server_info)),
             "connection": {
                 "started_at": self._stats.started_at,
                 "reconnect_count": self._stats.reconnect_count,
                 "last_message_at": self._stats.last_message_at,
-                "last_error": self._stats.last_error,
+                "last_error": None
+                if last_error is None
+                else account_free_text(last_error, self._username, self._host),
                 "subscribe_failures": dict(self._stats.subscribe_failures),
                 "protocol_violations": dict(self._stats.protocol_violations),
             },

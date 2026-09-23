@@ -225,13 +225,16 @@ based on the hostname alone. When credentials are known, confirm identity with
 
 ## Liveness counters
 
-`client.diagnostics_snapshot()` returns the one credential-free dict a
-diagnostics platform emits as-is. It holds the availability flag, the
-auth-failure reason, and the safe server-info subset. It also holds the
-connection counters, the SUBACK rejections, and each endpoint's last reply
-summary. On `AmpioAdminClient` it also holds the mac collisions and the module
-list. The `params_gap` entry names objects the params table skips. The
-`not_configured` entry names the rows the door left out.
+`client.diagnostics_snapshot()` returns one report for a diagnostics platform or
+a bug report. The library puts no password into it. It masks the account in
+topics, the broker host in `last_error`, and the host identifiers of the server
+info. Text that the broker or the M-SERV sends, such as a refused value or an
+object name, passes through. It holds the availability flag, the auth-failure
+reason, and the safe server-info subset. It also holds the connection counters,
+the SUBACK rejections, and each endpoint's last reply summary. On
+`AmpioAdminClient` it also holds the mac collisions and the module list. The
+`params_gap` entry names objects the params table skips. The `not_configured`
+entry names the rows the door left out.
 
 The `modules` list holds one row per known module, sorted by id. Each row
 carries the module's `id`, `mac`, `typ_urzadzenia`, `model`, `last_seen`,
@@ -245,9 +248,10 @@ from one of its objects. The modules that send the frame are listed in
 The module list and the collision pairs write each mac as the string `0xCB8F`,
 which is what `format_mac()` returns. The report is read by a person, and
 [`identity.md`](identity.md) gives the rule. The mac in the server-info entry
-stays a number. That entry is the `AmpioServerInfo` dataclass as it stands. The
-decimal form of that number is the `server_key` a consumer scopes its registry
-on.
+stays a number. The decimal form of that number is the `server_key` a consumer
+scopes its registry on. The entry is the `AmpioServerInfo` dataclass, with
+`local_ip` and `device_id` masked as `**REDACTED**`. Those two fields identify
+the host the M-SERV runs on.
 
 Table replies retain a JSON string with only `row_count` in `last_payloads`.
 Names, URLs, state descriptions, nested data, and unknown fields are omitted.
@@ -261,14 +265,16 @@ A `Results` object that the parser refuses stays, with the same mask.
 
 The `connection` entry carries six keys. `started_at` and `reconnect_count`
 cover the current `connect()` run, so a deliberate restart never reads as a
-flapping connection. `last_error` and `last_message_at` roll across runs, and
-`subscribe_failures` maps each topic the latest SUBACK rejected to its reason
-code. `protocol_violations` maps each topic whose reply the library refused to
-the reason, and rolls across runs too. Both maps mask the account segment of the
-key, as in `ampio/fromDB/<account>/ob/+/state`. The account names the surface no
-better than the rest of the topic does. Also, a key-based redactor cannot reach
-a credential that is itself a key. The global `ampio/from` tree carries no
-account and keeps its whole topic.
+flapping connection. `last_error` and `last_message_at` roll across runs.
+`last_error` masks the account segment of any topic it names, and it masks the
+broker host as `**REDACTED**`. The `subscribe_failures` key maps each topic the
+latest SUBACK rejected to its reason code. `protocol_violations` maps each topic
+whose reply the library refused to the reason, and rolls across runs too. Both
+maps mask the account segment of the key, as in
+`ampio/fromDB/<account>/ob/+/state`. The account names the surface no better
+than the rest of the topic does. Also, a key-based redactor cannot reach a
+credential that is itself a key. The global `ampio/from` tree carries no account
+and keeps its whole topic.
 
 ## A reply the library refuses
 
