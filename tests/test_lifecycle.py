@@ -761,7 +761,7 @@ async def test_loop_crash_dispatches_connection_died_and_stops() -> None:
 
 async def test_crash_during_connect_raises_connection_error() -> None:
     """A loop crash before the first connect surfaces from connect() itself,
-    promptly, and dispatches nothing - mirroring the auth path."""
+    promptly, and dispatches nothing."""
     broker = FakeBroker()
     broker.enter_errors = [RuntimeError("boom at connect")]
     client = make_client(broker, reconnect_interval=0.0015)

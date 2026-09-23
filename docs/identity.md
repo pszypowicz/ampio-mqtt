@@ -44,13 +44,13 @@ only. The HA device topology must never branch on them.
 
 ## Objects
 
-| Field                     | Stable across module replacement?                                                                                                                                                                                                        | Notes                                                                                                 |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `id`                      | **Yes**. An object delete is soft on the `config` catalogue. The row stays, with the `params` hidden bit set, so the autoincrement never renumbers. Unchanged across years of configuration uploads, module replacements, and deletions. | The per-object unique id, exposed as `AmpioObject.object_key`.                                        |
-| `funkcja` (channel index) | **Yes** - part of the reloaded Designer config. Not unique: if the same physical signal is exposed as several Designer objects, they share one `funkcja`.                                                                                | On the admin tier, the raw report index keys on it together with `address.mac` and the report prefix. |
-| `typ_komponentu`          | **Yes** - the type vocabulary (`temp`, `lin_wej`, `flaga`, ...).                                                                                                                                                                         |
-| `address`                 | **Yes**. `ModuleAddress(mac, channel, sf_id, sub_sf_id)`, parsed from the leaf. `mac` is the module's override mac.                                                                                                                      | The module key on every tier, and the raw write address (mac, channel, and class).                    |
-| `leaf_key`                | **Yes**. `leaf_<leafId>`, the physical output the object drives. Several views of one output share it.                                                                                                                                   | Grouping the views of one output.                                                                     |
+| Field                     | Stable across module replacement?                                                                                                                         | Notes                                                                                                 |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `id`                      | **Yes**                                                                                                                                                   | The per-object unique id, exposed as `AmpioObject.object_key`.                                        |
+| `funkcja` (channel index) | **Yes** - part of the reloaded Designer config. Not unique: if the same physical signal is exposed as several Designer objects, they share one `funkcja`. | On the admin tier, the raw report index keys on it together with `address.mac` and the report prefix. |
+| `typ_komponentu`          | **Yes** - the type vocabulary (`temp`, `lin_wej`, `flaga`, ...).                                                                                          |
+| `address`                 | **Yes**. `ModuleAddress(mac, channel, sf_id, sub_sf_id)`, parsed from the leaf. `mac` is the module's override mac.                                       | The module key on every tier, and the raw write address (mac, channel, and class).                    |
+| `leaf_key`                | **Yes**. `leaf_<leafId>`, the physical output the object drives. Several views of one output share it.                                                    | Grouping the views of one output.                                                                     |
 
 ## Unique id: the object id (`AmpioObject.object_key`)
 
@@ -71,10 +71,10 @@ Three properties make the object id the right source:
   admits only unhidden, leafed rows, so no filter and no fallback are needed.
 - **Available on both account tiers.** The id is the key of every catalogue
   surface. A standard account and an administrator account agree on it.
-- **Stable.** Designer soft-deletes. The `params` hidden bit marks a removed
-  object, and the row stays. The autoincrement therefore never has to renumber.
-  Every id stayed unchanged across years of configuration uploads, module
-  replacements, and deletions.
+- **Stable.** Designer soft-deletes on the `config` catalogue. The `params`
+  hidden bit marks a removed object, and the row stays. The autoincrement
+  therefore never has to renumber. Every id stayed unchanged across years of
+  configuration uploads, module replacements, and deletions.
 
 ## The leaf
 
@@ -86,11 +86,10 @@ without one, and [`discovery-flow.md`](discovery-flow.md) describes the door.
 drives. It is not an identity for the object row, and it must not be used as
 one.
 
-Several Designer objects can drive one output, and the Designer supports this
-today. One view can act as a plain relay. Another view of the same output can
-carry the bell marker and a pulse time. Every such view carries the same
-`leafId`. A consumer keyed on `leaf_key` therefore sees one key for several
-objects and loses all but one of them.
+Several Designer objects can drive one output. One view can act as a plain
+relay. Another view of the same output can carry the bell marker and a pulse
+time. Every such view carries the same `leafId`. A consumer keyed on `leaf_key`
+therefore sees one key for several objects and loses all but one of them.
 
 `leaf_key` answers three questions:
 
@@ -126,8 +125,7 @@ Both are members of `AmpioAdminClient`.
 ## The address fields (`0_<macHex>_<sfId>_<subSfId>_<ioNo>`)
 
 The Designer names all five segments. Its bundle builds the token, and it parses
-the token back into `macGroup`, `mac`, `sfId`, `subSfId`, and `ioNo`. Earlier
-revisions of this page called the last three `F2`, `F3`, and `F4`.
+the token back into `macGroup`, `mac`, `sfId`, `subSfId`, and `ioNo`.
 
 `parse_module_address()` is the public form of the leaf parse. It returns a
 `ModuleAddress`. It raises `AmpioProtocolError` for a token that does not have

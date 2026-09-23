@@ -43,8 +43,7 @@ def build_store(client: type[AmpioClient]) -> AmpioStore: ...
 def build_store(client: type[AmpioClient]) -> AmpioStore:
     """The store that client class builds.
 
-    The client class is the account tier, so a fixture names the class it
-    uses in production and is served exactly what that session holds.
+    Pass the client class the consumer uses in production.
     """
     return client._store_class()
 

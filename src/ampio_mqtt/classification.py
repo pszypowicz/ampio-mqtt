@@ -195,9 +195,7 @@ class TypeProfile:
     One row per known component type; a type absent from the table is
     unknown metadata and classifies as the generic value sensor. ``kind``
     is the one kind the type is - a fixed instance, or a `_Selector` for
-    the families keyed by ``interpretacja`` or the leaf sub-function - so
-    a profile carrying two kinds is unrepresentable, exactly as the
-    `ObjectKind` contract demands.
+    the families keyed by ``interpretacja`` or the leaf sub-function.
     """
 
     kind: ObjectKind | _Selector
@@ -215,11 +213,7 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
         OutputKind("rgbw", "RGBW light", color=True, switchable=False, toggleable=False)
     ),
     "led": TypeProfile(OutputKind("dimmer", "Dimmer", dimmable=True, pulsable=True)),
-    # Warm/cold white. `switch` is the one verb of the family it answers,
-    # and the plain `setValue` is dead on it, so the power axis moves
-    # through `setWWPower` alone. The timed `setValue` is not dead: it
-    # sets the power and zeroes the coldness, which is why `pulsable` is
-    # False rather than moot.
+    # Warm/cold white.
     "ledww": TypeProfile(
         OutputKind(
             "cct", "CCT light", color_temp=True, switchable=False, toggleable=True
@@ -243,8 +237,7 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
         channel_prefix="f",
     ),
     # The analog flags, the module's own u8 and signed-i16 variables. Both
-    # answer `setValue` and both wrap silently past their field width, so
-    # the range is a contract rather than a hint.
+    # answer `setValue` and both wrap silently past their field width.
     "flaga_liniowa": TypeProfile(
         InputKind("flaga_liniowa", "Analog flag", value_range=(0, 255)),
         channel_prefix="afu8",

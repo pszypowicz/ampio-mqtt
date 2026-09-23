@@ -1,9 +1,6 @@
 # Bus events
 
-This page continues [`protocol.md`](protocol.md) with the logical signals that
-Ampio's own logic raises and reacts to.
-
-## Bus events
+This page continues [`protocol.md`](protocol.md).
 
 Events are logical signals numbered 1-65535 that Ampio's own logic raises and
 reacts to. A wall-panel press can raise one, and a scenario can be bound to one.
@@ -38,12 +35,11 @@ On the CAN side an event is frame type `0x2B` with a 16-bit little-endian
 number, low byte first. The frame is `FE 2B BD 00` for 189 and `FE 2B BD BD`
 for 48573. A legacy 8-bit event is one whose high byte is zero.
 
-That layout invites a suspicion worth a rule-out. Does logic bound to an 8-bit
-event also fire for a 16-bit event that shares one of its bytes? This was tested
-against a module rule bound to event 189 (`0x00BD`). Neither `0xBDBD` nor
-`0xBD00` moved it, 189 itself toggled reliably, and an unrelated event did
-nothing. The match is on the full 16-bit value, at least on the M-DOT firmware
-this ran against.
+Does logic bound to an 8-bit event also fire for a 16-bit event that shares one
+of its bytes? This was tested against a module rule bound to event 189
+(`0x00BD`). Neither `0xBDBD` nor `0xBD00` moved it, 189 itself toggled reliably,
+and an unrelated event did nothing. The match is on the full 16-bit value, at
+least on the M-DOT firmware this ran against.
 
 **The M-SERV raises event 254 from its own MAC whenever a client asks for a
 discovery refresh**, so `connect()` normally produces one. It is not periodic. A

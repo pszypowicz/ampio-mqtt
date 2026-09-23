@@ -84,11 +84,7 @@ SYSTEM_ROW_TYPES = frozenset(("detekcja", "symulacja"))
 
 @dataclass(slots=True)
 class SnapshotEntry:
-    """One object's entry in a bulk `data/states` snapshot.
-
-    The snapshot lists the objects that hold a value, so every row carries
-    its `stan_json`. An object with no value is absent from the reply.
-    """
+    """One object's entry in a bulk `data/states` snapshot."""
 
     id: int
     stan_json: str
@@ -100,8 +96,7 @@ class StateUpdate:
 
     id: int
     state: str
-    # The M-SERV stamp the value was reported at, in ms. Every push carries
-    # one, so nothing here is stamped with this process's clock.
+    # The M-SERV stamp the value was reported at, in ms.
     on_ms: int | float
     lammel: int | None  # Percent, present only for tilt-capable covers
     # Roller lock bits, present only on cover pushes.
@@ -120,11 +115,7 @@ class ModuleDiagnostics:
 
 @dataclass(slots=True)
 class StanJsonSeed:
-    """Initial `state` value and server timestamp extracted from `stan_json`.
-
-    Both are always there: the snapshot lists the objects that hold a value,
-    and the stamp is what orders the seed against a live value.
-    """
+    """Initial `state` value and server timestamp extracted from `stan_json`."""
 
     state: str
     on_ms: int | float
@@ -139,7 +130,7 @@ def server_below_baseline(version: str | None) -> bool:
     """Whether a self-reported ``serverVersion`` is below the tested baseline.
 
     Missing or unparseable versions count as below - every baseline server
-    reports one. Handles the observed plain build-number form (``"1865"``)
+    reports one. Handles the plain build-number form (``"1865"``)
     and dotted forms, compared numerically part by part.
     """
     if not version:
@@ -168,9 +159,7 @@ def warn_if_below_baseline(version: str | None) -> None:
 def decode_envelope(payload: str, surface: str) -> dict[str, Any]:
     """The JSON object a table reply wraps its content in.
 
-    One decode per reply. The retained summary, the fetch parser and the
-    store handler all read the result, because the dispatcher runs on the
-    event loop and the largest replies run to megabytes.
+    Raises :class:`AmpioProtocolError` when the payload is not a JSON object.
     """
     try:
         data = json.loads(payload)
@@ -184,11 +173,9 @@ def decode_envelope(payload: str, surface: str) -> dict[str, Any]:
 def require_rows(data: Mapping[str, Any], surface: str) -> list[dict[str, Any]]:
     """The rows of a ``{"List": [...]}`` reply.
 
-    The M-SERV is the only expected publisher on these topics, but nothing on
-    the broker enforces that, and a reply of the wrong shape must not reach the
-    row loops - they index and attribute-access every row. Every such reply
-    raises :class:`AmpioProtocolError` instead, because no caller can tell a
-    tolerated malformed reply from an empty one.
+    Raises :class:`AmpioProtocolError` when `List` is not an array or a row is
+    not an object. The M-SERV is the expected publisher of these replies, but
+    the broker does not enforce that.
     """
     rows = data.get("List")
     if not isinstance(rows, list):
@@ -248,9 +235,7 @@ def _nullable_text_column(row: Mapping[str, Any], column: str, surface: str) -> 
 def _leaf_column(row: Mapping[str, Any]) -> str:
     """The `leafId` column: the string as is, "" for a null value.
 
-    Anything else is a server fault: a `leafId` of another JSON type is
-    neither a real leaf token nor the empty-leaf sentinel, so the door
-    could not tell an unconfigured object from a malformed one.
+    Anything else raises :class:`AmpioProtocolError`.
     """
     value = _column(row, "leafId", _CATALOGUE)
     if value is None:
@@ -282,13 +267,7 @@ _LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_(\d+)_(\d+)_(\d+)")
 
 
 class LeafFault(AmpioProtocolError):
-    """A ``leafId`` the library cannot read.
-
-    ``leafId`` rides `data/devices` alone, and the door that reads it runs
-    on whichever reply of the catalogue pair completes it. The client keys
-    this refusal on `data/devices`, so the report names the reply that
-    carried the row rather than the reply that ran the door.
-    """
+    """A ``leafId`` the library cannot read."""
 
 
 def parse_module_address(leaf_id: str) -> ModuleAddress:
@@ -312,14 +291,7 @@ def parse_module_address(leaf_id: str) -> ModuleAddress:
 
 
 def _shared_columns(row: Mapping[str, Any]) -> ObjectMetadata:
-    """The object-catalogue columns `data/devices` serves on every row.
-
-    ``leafId`` holds an empty string for a system row and after a Matter
-    check-then-uncheck. The door decides. Otherwise it is a short
-    underscored token like ``0_cb8f_76_0_0``, which the Designer reads as
-    ``macGroup``, ``mac``, ``sfId``, ``subSfId``, and ``ioNo``. The parse
-    keeps the raw string.
-    """
+    """The object-catalogue columns `data/devices` serves on every row."""
     return ObjectMetadata(
         id=_int_column(row, "id", _CATALOGUE),
         typ_komponentu=_text_column(row, "typ_komponentu", _CATALOGUE),
@@ -335,12 +307,8 @@ def _shared_columns(row: Mapping[str, Any]) -> ObjectMetadata:
 def parse_app_sync_devices(data: Mapping[str, Any]) -> list[ObjectMetadata]:
     """Every row of a `data/devices` reply, the object catalogue.
 
-    The rows are the connecting account's app-sync view: every object in a
-    room on the reserved admin login, and the account's own grants
-    otherwise. Every reply also carries the two system rows, which the
-    store drops by their type. The surface serves no `params`, `czas`, or
-    `url` column, so nothing here reads one - `data/params_devices` carries
-    the three on every tier.
+    The surface serves no `params`, `czas`, or `url` column, so nothing here
+    reads one - `data/params_devices` carries the three on every tier.
     """
     return [_shared_columns(row) for row in require_rows(data, _CATALOGUE)]
 
@@ -386,9 +354,8 @@ class ParamsEntry:
 def parse_params_devices(data: Mapping[str, Any]) -> dict[int, ParamsEntry]:
     """Parse a `data/params_devices` payload into per-object config facts.
 
-    The table covers the full object catalogue regardless of the account's
-    grants, so it carries a row for every object an app-sync catalogue can
-    list, and every row carries all three columns.
+    Every row must carry `params`, `czas`, and `url`, and a row without one
+    raises :class:`AmpioProtocolError`.
     """
     return {
         _int_column(row, "id", _PARAMS_TABLE): ParamsEntry(
@@ -464,8 +431,7 @@ def parse_groups(data: Mapping[str, Any]) -> dict[int, str]:
 def parse_group_devices(data: Mapping[str, Any]) -> list[tuple[int, int]]:
     """``(object_id, group_id)`` per row of a `data/group_devices` reply.
 
-    The order is the reply's own, which is what makes the first room an
-    object appears in the one :func:`parse_rooms` keeps.
+    The order is the reply's own.
     """
     return [
         (
@@ -482,16 +448,14 @@ def parse_rooms(
     """Join the two room tables into ``{ampio_object_id: room_name}``.
 
     An object in several groups takes the first room of the membership
-    reply: the join table marks no primary group, and the intended consumer
-    (a Home Assistant integration forwarding the value as
-    ``DeviceInfo.suggested_area``) allows one area per device. An object
+    reply, because the join table marks no primary group. An object
     takes the first membership row whose group the names table lists. An
     object with no such row has no room.
     """
     room_map: dict[int, str] = {}
     for oid, gid in membership:
         if oid in room_map:
-            continue  # first match wins; HA allows one area per device
+            continue
         name = group_names.get(gid)
         if name is not None:
             room_map[oid] = name
@@ -712,12 +676,8 @@ DEVICE_NAME_DESC_TYPE = 1
 
 
 # The `(typ_urzadzenia, wersja_pcb)` pairs whose panel params layout is
-# live-proven. The Designer keys the layout by the same pair, and other
-# boards use a different one - an older revision puts the touch field
-# colour at offset 1 as three bytes with no white channel, and shifts the
-# masks. Reading one of those with this layout would produce confident
-# wrong values, so an unlisted pair resolves nothing. Extend only with a
-# pair read off real hardware.
+# live-proven. An unlisted pair resolves nothing. Extend only with a pair
+# read off real hardware.
 PANEL_PARAMS_LAYOUTS: frozenset[tuple[int, int]] = frozenset(
     {
         (8, 4),  # M-DOT-4
@@ -731,11 +691,9 @@ PANEL_PARAMS_LAYOUTS: frozenset[tuple[int, int]] = frozenset(
 def parse_panel_settings(blob: bytes, fields: int) -> PanelSettings | None:
     """The panel section of a params blob, for a panel with ``fields`` fields.
 
-    The section is laid out by the field count: the colours, then one
-    light-signal byte per field, the beep time, and three field masks of
-    ``ceil(fields / 8)`` bytes each. None when ``fields`` is not positive or
-    the blob is too short to hold the whole section - a truncated blob must
-    not read as confident values. docs/description-records.md carries the offsets.
+    None when ``fields`` is not positive or the blob is too short to hold
+    the whole section - a truncated blob must not read as confident values.
+    docs/description-records.md carries the offsets.
     """
     mask_len = -(-fields // 8)  # bytes needed for one bit per field
     light = 7
@@ -775,9 +733,7 @@ def resolve_panel_settings(
 
     A module resolves only when its ``(typ_urzadzenia, wersja_pcb)`` pair
     is a proven layout and it advertises a backlight channel count - that
-    count is the number of touch fields. Everything else resolves
-    nothing, so a module that is not a panel and a board this library
-    has not read are both simply absent.
+    count is the number of touch fields.
     """
     out: dict[int, PanelSettings] = {}
     for mac, blob in params_by_mac.items():
@@ -825,8 +781,6 @@ def parse_cover_parameters(
 ) -> tuple[CoverParameters, ...] | None:
     """One board's roller section, one entry per channel in channel order.
 
-    The section interleaves by field rather than by channel: every
-    channel's work mode, then every channel's opening time, and so on.
     None when the blob is too short to hold the whole section - a
     truncated blob must not read as confident values.
     docs/description-records.md carries the offsets.
@@ -841,7 +795,6 @@ def parse_cover_parameters(
         return section[index] | section[index + 1] << 8
 
     def lag(index: int) -> int | None:
-        # A stride of 10 ends the section before both lag fields.
         return section[index] * 10 if index < len(section) else None
 
     return tuple(
@@ -1141,11 +1094,8 @@ def parse_color_temp_frame(
     The frame is `{"d": [0xFE, <function>, power, coldness, ...], "m": mac}`,
     with one byte pair per channel from offset 2. ``function`` fixes which
     channel the first pair carries. Each pair repacks to `power |
-    coldness<<8`, the same u16 the per-object topic reports, so both sources
-    decode through `AmpioObject.cct` alone. Returns None when the payload is
-    not a color-temperature frame. An odd-length frame has a half pair in
-    it, which leaves no way to tell which axis the stray byte belongs to, so
-    the whole frame is refused rather than half-read.
+    coldness<<8`, the same u16 the per-object topic reports. Returns None
+    when the payload is not a color-temperature frame or has an odd length.
     """
     first_channel = CCT_FRAME_FUNCTIONS.get(function)
     if first_channel is None:
@@ -1181,10 +1131,8 @@ def parse_color_temp_frame(
 def parse_stan_json(stan_json: str) -> StanJsonSeed:
     """Parse a `stan_json` blob into an initial state and server timestamp.
 
-    The snapshot lists the objects that hold a value, and every blob carries
-    both the value and the M-SERV stamp it was reported at. The stamp is
-    what orders the seed against a live value, so a blob without one seeds
-    nothing and is refused.
+    Raises :class:`AmpioProtocolError` for a blob that is not a JSON object,
+    lacks a numeric `on` stamp, or carries a null `state`.
     """
     try:
         data = json.loads(stan_json)
@@ -1238,7 +1186,7 @@ class Endpoint:
     resp_surface: str  # fromDB sub-topic: "config" | "data"
     resp_leaf: str  # final response-topic segment
     # Part of the initial-discovery set awaited by connect() /
-    # wait_for_initial_discovery(). The rooms/scenes endpoints are on-demand.
+    # wait_for_initial_discovery().
     initial: bool = False
     # The one tier this endpoint answers for, or None for both. The M-SERV
     # serves the config surfaces to administrators only. The object
@@ -1252,8 +1200,7 @@ class Endpoint:
     parses: Callable[[Mapping[str, Any]], object] | None = None
     # Overrides the default row-count summary in diagnostics_snapshot().
     # The retained string must omit private content because a consumer's
-    # key-based redactor cannot reach inside it. This reads the same decoded
-    # envelope the parser reads, so a reply is decoded once per arrival.
+    # key-based redactor cannot reach inside it.
     redacts: Callable[[Mapping[str, Any]], str] | None = None
 
 
@@ -1273,8 +1220,9 @@ ENDPOINTS: tuple[Endpoint, ...] = (
     ),
     # The object catalogue, served to every account: the objects in the
     # account's app-sync view, which on the reserved admin login is every
-    # object in a room. Every reply also carries the two system rows, and
-    # the store drops them by their type.
+    # object in a room, and the account's own grants otherwise. Every reply
+    # also carries the two system rows, and the store drops them by their
+    # type.
     Endpoint(
         "data_devices",
         "data",
@@ -1330,9 +1278,8 @@ ADMIN_ENDPOINTS: tuple[Endpoint, ...] = ENDPOINTS
 # against, as the server self-reports it on the info surface. This is the
 # compatibility floor, not a promise about anything older: a lower (or
 # missing) serverVersion logs a warning at discovery and behavior on such a
-# server is undefined - the fix is upgrading the M-SERV. The baseline server
-# also reported serverRevision 409 and mqttVersion 5.133.11, recorded in the
-# README; only serverVersion is compared.
+# server is undefined - the fix is upgrading the M-SERV. Only serverVersion
+# is compared.
 BASELINE_SERVER_VERSION = (1865,)
 
 
@@ -1482,8 +1429,7 @@ def panel_field_mask(fields: Sequence[int] | None, width: int) -> str:
     """The touch field mask of a panel action, as ASCII hex.
 
     One bit per field, least significant first, so field 1 is bit 0.
-    None selects every field: all bits set, which each panel reads down
-    to the fields it actually has.
+    None selects every field.
     """
     if fields is None:
         return "ff" * width
@@ -1504,11 +1450,7 @@ def raw_backlight_payload(
 
 
 def raw_status_light_payload(red: int, green: int, blue: int, mask: str) -> str:
-    """The per-field status indicator colour action as ASCII hex.
-
-    The same shape as the backlight action, minus the white channel: the
-    status indicator has no white.
-    """
+    """The per-field status indicator colour action as ASCII hex."""
     return (
         f"{_ACTION_FRAME_PREFIX}{_STATUS_LIGHT_ACTION}{_ACTION_SUB_FUNCTION}"
         f"{red:02x}{green:02x}{blue:02x}{mask}"
@@ -1567,11 +1509,8 @@ def raw_key_lock_payload(on: bool, ticks: int) -> str:
 
 
 # Module identify, the Designer's "Identify device" button: `[0x7E, flag]`
-# addressed to the module. 1 lights the module's CAN LED steadily (a M-DOT
-# lights the LED on its back), 0 returns it to its blink. The module holds
-# identify until the stop frame; the Designer's 30 s auto-stop is its own
-# timer. No echo follows on any topic. docs/panel-writes.md ("Module
-# identify") carries the wire facts.
+# addressed to the module. docs/panel-writes.md ("Module identify") carries
+# the wire facts.
 RAW_IDENTIFY_ON = "7e01"
 RAW_IDENTIFY_OFF = "7e00"
 
@@ -1678,7 +1617,6 @@ ROLLER_DESC_TYPE = 26
 
 # typ_komponentu -> description class (descType), live-proven pairs only
 # (docs/description-records.md): an unlisted kind resolves no Designer record.
-# Extend only with a live-proven pair.
 DESC_TYPE_BY_KIND: dict[str, int] = {
     "przekaznik": 12,  # OUTPUTS
     "roleta_procenty": ROLLER_DESC_TYPE,

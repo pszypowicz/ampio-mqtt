@@ -27,9 +27,7 @@ class AccessTier(Enum):
     permissioned, is served only the app-sync ``data`` surface.
 
     ``ADMIN`` carries the login name itself, and it is the one place that
-    name is written. The app refuses to create a user of this name and the
-    broker authenticates it at CONNACK, so the tier is a constructor fact
-    rather than a discovered one.
+    name is written.
     """
 
     ADMIN = "admin"  # the reserved `admin` login: full catalogue + modules
@@ -89,16 +87,12 @@ class ModuleFunction(IntEnum):
 # drops a row that carries it, so no admitted object is ever hidden; bit 6
 # is the Designer read-only checkbox (see `AmpioObject.read_only`); bit 37
 # is the per-object Matter opt-in, not a visibility signal, and nothing
-# here reads it. Bit 15 is the generic `OPTION1` slot, whose meaning
-# depends on the component type - Designer labels it "Bell object" on
-# `przekaznik` and `flaga` only, so `AmpioObject.bell` gates on the type
-# before reading it.
+# here reads it.
 HIDDEN_FLAG = 1 << 4
 _READ_ONLY_FLAG = 1 << 6
 _BELL_FLAG = 1 << 15
 # The component types whose Designer editor renders `OPTION1` as the
-# "Bell object" checkbox. On every other type the bit means something
-# else (slider layout, lamella step, ...), so it must not read as bell.
+# "Bell object" checkbox.
 _BELL_TYPES = frozenset({"przekaznik", "flaga"})
 
 # One printf conversion in Designer's "String format" column, or the `%%`
@@ -129,12 +123,10 @@ MSERV_MAC = 1
 def format_mac(mac: int) -> str:
     """The one written form of a mac, for a person to read.
 
-    A mac is a bus address. Ampio Designer shows the field in hex, and the
-    leaf token spells it in hex too, so a decimal mac is the only form
-    nobody types. Every place this library writes a mac for a person uses
-    this function: the diagnostics report, the admission failure message,
-    and the command-line tools. A consumer that composes its own text must
-    call it as well, so one install reads one way throughout.
+    Every place this library writes a mac for a person uses this function:
+    the diagnostics report, the admission failure message, and the
+    command-line tools. A consumer that composes its own text must call it
+    as well, so one install reads one way throughout.
 
     This is display only. Every model field, every payload key the wire
     owns, and ``AmpioServerInfo.server_key`` keep the integer or the
@@ -164,10 +156,8 @@ class ModuleAddress:
 class ThermostatState:
     """A regulator's climate readback, from the rich `reg` state push.
 
-    The push carries every field as a string; the library parses the
-    temperatures and the cooling flag and passes the mode letter through
-    verbatim, so a future unlisted letter loses nothing. The `A,S,M,H`
-    vocabulary is in docs/commands.md.
+    The push carries every field as a string. The `A,S,M,H` vocabulary is
+    in docs/commands.md.
     """
 
     measure_temp: float | None
@@ -355,9 +345,7 @@ class AmpioObject:
     # The columns every catalogue row carries on both tiers, so every
     # object holds them (docs/protocol.md). The per-object identity is
     # `id`, exposed as `object_key`; the module identity is `address.mac`.
-    # An object delete is soft on the `config` catalogue, so the
-    # autoincrement never renumbers. docs/identity.md is the home for the
-    # identity model.
+    # docs/identity.md is the home for the identity model.
     id: int
     typ_komponentu: str
     interpretacja: int
@@ -366,8 +354,7 @@ class AmpioObject:
     # channel events to this object.
     funkcja: int
     # Where the object sits on the bus, parsed from its Designer leaf at the
-    # door. Every admitted object carries one on both tiers, so nothing
-    # downstream tests for its absence. docs/identity.md.
+    # door. docs/identity.md.
     address: ModuleAddress
     # The physical output this object drives, `leaf_<leafId>`. Several
     # Designer views of one output share it by design, so it is not an
@@ -420,11 +407,9 @@ class AmpioObject:
     # Slat angle percent. Only tilt-capable covers report it.
     lammel: int | None = None
     # The roller lock, verbatim from the wire: two bits the module keeps per
-    # cover, so bit 0 blocks closing and bit 1 blocks opening. A blocked
-    # direction refuses every command, the API included, on the slat axis as
-    # well as on travel. Only covers report it. `blocks_closing` and
-    # `blocks_opening` read the bits. docs/commands.md holds the Designer
-    # actions that set them.
+    # cover, so bit 0 blocks closing and bit 1 blocks opening. Only covers
+    # report it. `blocks_closing` and `blocks_opening` read the bits.
+    # docs/commands.md holds the Designer actions that set them.
     block: int | None = None
     # Climate readback, from the rich state shape only `reg` objects push.
     # None until a reg-shaped report arrives; a later report that lacks the
@@ -476,9 +461,7 @@ class AmpioObject:
         """Numeric interpretation of `state`, meaningful for sensor objects.
 
         None when `state` is missing, not parseable as a number, or not
-        finite - `float()` alone accepts forms like `"nan"`, `"inf"` and the
-        overflowing `"1e999"`, which for a sensor reading are glitches rather
-        than measurements.
+        finite.
         """
         if self.state is None:
             return None
@@ -495,9 +478,8 @@ class AmpioObject:
         Only a color output (`OutputKind.color`) reads non-None - a
         dimmer's 0-255 level must not masquerade as a color. The packed
         form is ``R | G<<8 | B<<16 | W<<24``. A negative value is the same word
-        in signed 32-bit form - the M-SERV's own Matter bridge emits that
-        shape - and decodes identically. None when the value is missing,
-        not an integer, or outside 32 bits.
+        in signed 32-bit form and decodes identically. None when the value
+        is missing, not an integer, or outside 32 bits.
         """
         if not (isinstance(self.kind, OutputKind) and self.kind.color):
             return None
@@ -525,12 +507,9 @@ class AmpioObject:
         Only a color-temperature output (`OutputKind.color_temp`) reads
         non-None - a dimmer's level and an RGBW light's packed color must
         not masquerade as one. The packed form is ``power | coldness<<8``,
-        and both axes are single bytes the vendor names `SF_WW_POWER` and
-        `SF_WW_COLDNESS`. ``coldness`` is the raw byte the wire carries, not
-        a color temperature in kelvin: a non-DALI object's `min` and `max`
-        columns read 0 and 255, so no kelvin range exists to scale it
-        against. None when the value is missing, not an integer, or outside
-        16 bits.
+        and both axes are single bytes. ``coldness`` is the raw byte, not a
+        color temperature in kelvin. None when the value is missing, not an
+        integer, or outside 16 bits.
         """
         if not (isinstance(self.kind, OutputKind) and self.kind.color_temp):
             return None
@@ -598,13 +577,8 @@ class AmpioObject:
         :pyattr:`OutputKind.pulsable` says a ``setValue`` time argument
         reverts the object: a relay, a flag and a dimmer. Every other kind
         reads 0 - the analog flags and ``ledww`` take the timed form and
-        latch, and a camera reads the same column as a refresh time.
-        Designer offers the field on ten component types, and
-        :pyattr:`czas` serves that raw column for a caller that wants it.
-        Four of the ten (``flaga_l``, ``flaga_p``, ``rgb``, ``rgbww``)
-        carry no classification row at all, so they read 0 without this
-        property claiming anything about their wire behavior. The M-SERV
-        never applies the value server-side, so a caller honors it by
+        latch, and a camera reads the same column as a refresh time. The
+        M-SERV never applies the value server-side, so a caller honors it by
         passing it to :meth:`AmpioClient.set_value` as ``pulse_ms``, which
         raises for a kind that discards it. See docs/visibility.md.
         """
@@ -768,10 +742,8 @@ class AmpioServerInfo:
         """Canonical scoping key for this M-SERV, for consumer registries.
 
         The string to prefix per-server artifacts with - unique ids, device
-        identifiers: the decimal form of ``mac``, which is what every known
-        consumer already derived by hand. The format is a stable promise;
-        never parse or reformat it. An info reply without a ``mac`` does not
-        parse, so every :class:`AmpioServerInfo` a consumer can hold has one.
+        identifiers: the decimal form of ``mac``. The format is a stable
+        promise; never parse or reformat it.
         """
         return str(self.mac)
 
@@ -811,8 +783,6 @@ class ConnectionStats:
     # Subscriptions the broker rejected in the SUBACK of the latest
     # (re)connect: topic -> reason code. Replaced wholesale on every connect,
     # so an empty dict means the current session got everything it asked for.
-    # The subscribe set is tier-shaped, so every filter should be granted;
-    # a rejection is warned but does not fail the connection.
     subscribe_failures: dict[str, int] = field(default_factory=dict)
     # Replies the library refused to read, as topic -> the reason. One entry
     # per topic, the latest refusal on it, and the map rolls across runs

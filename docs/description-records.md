@@ -9,12 +9,11 @@ The Designer "Description in device" panel lets the installer tag an output with
 a Matter device type. Examples are "Lighting - On-off light" and "Plugs - Pump".
 The tag lives in the module itself, as one per-output entry of the module's
 description record: `{descType, outNo, outLoc, outType, desc}`. Designer writes
-that record over `device_api/to/<macHex>/descriptions_wr` (base64 frames of
-`[len:2][descType:2][outNo:2][outLoc:2][outType:2][utf8 desc]`, little-endian).
-It also mirrors `outType` into the object row's `type` column on both
-catalogues, as a decimal string (`"256"` = 0x0100). The library parses that
-mirror into `AmpioObject.matter_device_type`. That field is a pure catalogue
-fact. The sweep never changes it.
+that record as base64, in the frame layout below, over
+`device_api/to/<macHex>/descriptions_wr`. It also mirrors `outType` into the
+object row's `type` column on both catalogues, as a decimal string (`"256"` =
+0x0100). The library parses that mirror into `AmpioObject.matter_device_type`.
+That field is a pure catalogue fact. The sweep never changes it.
 
 Assignment and exposure are two independent facts. `type` is the device-type
 assignment. `params` bit 37 is the Matter-bridge exposure opt-in, and a row can
@@ -42,20 +41,19 @@ reads the description record into `AmpioAdminClient.records`, one
 `DesignerRecord` per object id. The tag lands in the entry's
 `matter_device_type`, the location name in its `location`, and the entry's own
 description string in its `desc`. The column mirror stays in
-`AmpioObject.matter_device_type`, identical on both tiers. The two fields are
-separate facts. The consumer picks which one to trust.
+`AmpioObject.matter_device_type`. The consumer picks which one to trust.
 
 ## The Designer location (per-output `outLoc`)
 
 The Designer "Lokalizacja" dropdown sits on an output's "Description in device"
 panel. It writes a second pointer into the same per-output entry as the Matter
-tag above: `{descType, outNo, outLoc, outType, desc}`. `outLoc` indexes the
-locations name table (request keyword `locations` on the admin `config` surface,
-`{id, opis_menu, opis_rozwiniety}` rows), and 0 means unassigned. A read-back
-needs the same description record the Matter tag lives in, because Designer does
-not mirror `outLoc` to the object catalogue. The DB row's `lokalizacja` column
-reads 0 for every object on the baseline install. `outType` differs: the `type`
-column does mirror it, with the lag noted above.
+tag above. `outLoc` indexes the locations name table (request keyword
+`locations` on the admin `config` surface, `{id, opis_menu, opis_rozwiniety}`
+rows), and 0 means unassigned. A read-back needs the same description record the
+Matter tag lives in, because Designer does not mirror `outLoc` to the object
+catalogue. The DB row's `lokalizacja` column reads 0 for every object on the
+baseline install. `outType` differs: the `type` column does mirror it, with the
+lag noted above.
 
 ### The list request/reply pair
 

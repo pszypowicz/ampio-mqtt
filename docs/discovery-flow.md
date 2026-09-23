@@ -15,9 +15,8 @@ discovery is complete for the client class, and `False` if the timeout elapses.
 It never raises on timeout. It raises `AmpioNotConfigured` when the door refuses
 a row (see [The door](#the-door)). `connect()` delegates its discovery wait to
 this method and returns its result, so the two share one definition of
-"discovery is done." The library's own accessors degrade gracefully when nothing
-is known yet, so this guarantee exists for consumers, not for the library. A
-consumer checks the `connect()` result or awaits `wait_for_initial_discovery()`.
+"discovery is done." A consumer checks the `connect()` result or awaits
+`wait_for_initial_discovery()`.
 
 Authoritative sources:
 [`src/ampio_mqtt/_connection.py`](../src/ampio_mqtt/_connection.py) owns the
@@ -150,10 +149,8 @@ condition arrives as the `NotConfigured` event, and each row leaves through
 installer gives each module its own mac in Designer. `diagnostics_snapshot()`
 lists the pairs under `mac_collisions`.
 
-A hidden row drops before the door reads its leaf, so a leaf on a row nothing
-drives never refuses a reply. A leaf of another shape is a server fault. The
-store refuses the reply whole as `AmpioProtocolError`, before any field changes.
-The apply is atomic, so no half-merged state is ever observable. `data/devices`
+A non-empty leaf that does not parse is a server fault. The store refuses the
+reply whole as `AmpioProtocolError`, before any field changes. `data/devices`
 carries the leaf, so `protocol_violations` names that topic whichever reply of
 the pair ran the door.
 
@@ -236,6 +233,15 @@ summary. On `AmpioAdminClient` it also holds the mac collisions and the module
 list. The `params_gap` entry names objects the params table skips. The
 `not_configured` entry names the rows the door left out.
 
+The `modules` list holds one row per known module, sorted by id. Each row
+carries the module's `id`, `mac`, `typ_urzadzenia`, `model`, `last_seen`,
+`supply_voltage`, and `temperature`. A bug report about a quiet module reads its
+`last_seen` from this list. The user-given module name stays out of the row. A
+module that sends no `b/4F` frame keeps `last_seen`, `supply_voltage`, and
+`temperature` empty after a connect. Its `last_seen` moves on the first push
+from one of its objects. The modules that send the frame are listed in
+[`raw-channel-bridge.md`](raw-channel-bridge.md).
+
 The module list and the collision pairs write each mac as the string `0xCB8F`,
 which is what `format_mac()` returns. The report is read by a person, and
 [`identity.md`](identity.md) gives the rule. The mac in the server-info entry
@@ -249,8 +255,9 @@ Malformed JSON or table envelopes retain `**REDACTED**`. A valid table envelope
 retains its row count even if the endpoint parser refuses its rows. Discovery
 and fetch methods still receive the full reply.
 
-The `info` entry retains its allowed values and masks other values. An
-unparseable info reply retains `**REDACTED**`.
+The `info` entry retains its allowed values and masks other values. An info
+reply that is not a JSON object with a `Results` object retains `**REDACTED**`.
+A `Results` object that the parser refuses stays, with the same mask.
 
 The `connection` entry carries six keys. `started_at` and `reconnect_count`
 cover the current `connect()` run, so a deliberate restart never reads as a
@@ -261,8 +268,7 @@ the reason, and rolls across runs too. Both maps mask the account segment of the
 key, as in `ampio/fromDB/<account>/ob/+/state`. The account names the surface no
 better than the rest of the topic does, and a key-based redactor cannot reach a
 credential that is itself a key. The global `ampio/from` tree carries no account
-and keeps its whole topic. The counters are cheap to update - the dispatch hot
-path touches only `last_message_at`.
+and keeps its whole topic.
 
 ## A reply the library refuses
 
@@ -274,12 +280,3 @@ connection up. Nothing else changes: the refused reply latches no discovery
 signal, resolves no pending `fetch_*` call, and leaves held state untouched. So
 a refused discovery reply makes `connect()` return False, exactly as silence
 does, and `protocol_violations` is what tells the two apart.
-
-The `modules` list holds one row per known module, sorted by id. Each row
-carries the module's `id`, `mac`, `typ_urzadzenia`, `model`, `last_seen`,
-`supply_voltage`, and `temperature`. A bug report about a quiet module reads its
-`last_seen` from this list. The user-given module name stays out of the row. A
-module that sends no `b/4F` frame keeps `last_seen`, `supply_voltage`, and
-`temperature` empty after a connect. Its `last_seen` moves on the first push
-from one of its objects. The modules that send the frame are listed in
-[`raw-channel-bridge.md`](raw-channel-bridge.md).

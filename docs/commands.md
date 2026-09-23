@@ -192,9 +192,10 @@ user name, so it drops the slash and everything after it. `AmpioClient` and
 `send_notification()` refuse such a message rather than truncate it.
 
 Every registered user of the install receives the notification. The OpenAPI spec
-lists a `/api/pushNotification/<message>/<user>` form for one named user. The
-baseline install registers too few push users to tell a targeted send from a
-broadcast, so the library exposes the broadcast form alone.
+lists a `/api/pushNotification/<message>/<user>` form for one named user, and
+the M-SERV accepts it. The baseline install registers too few push users to tell
+a targeted send from a broadcast, so the library exposes the broadcast form
+alone.
 
 ## A blocked cover refuses every command
 

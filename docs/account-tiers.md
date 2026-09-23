@@ -83,8 +83,7 @@ The SUBACK enforces the raw-tree denial. A standard account's subscription to
 the `ampio/from/...` filters comes back with reason code 128. This holds even
 over MQTT 3.1.1, where stock mosquitto grants silently and only filters
 delivery. The library never runs into the denial, because a standard client does
-not ask for the raw tree. But the verdict locks the table above to the broker's
-own enforcement, not to convention.
+not ask for the raw tree.
 
 ### A standard account sees its own namespace and nothing else
 
@@ -133,13 +132,13 @@ source per tier. There is no precedence chain and no second opinion.
 | `records`, `cover_parameters`, `module_records`, `capabilities`, `panel_settings`        | the `device_api` sweep, on `AmpioAdminClient`                                                                  |
 
 Both tiers hold the whole `params_devices` table, so every object either
-catalogue lists has a row there. The two replies arrive in no fixed order, which
-is why the library holds the table and applies it at the merge. The library
-holds the catalogue until the table answers. It then applies the matching row of
-each object at the merge. `wait_for_initial_discovery()` returning True is the
-boundary: it waits for both replies of the tier's pair. If the table answers and
-an object the catalogue lists has no row in it, the library warns. It lists that
-object in the `params_gap` entry of `diagnostics_snapshot()`.
+catalogue lists has a row there. The two replies arrive in no fixed order. The
+library holds the catalogue until the table answers. It then applies the
+matching row of each object at the merge. `wait_for_initial_discovery()`
+returning True is the boundary: it waits for both replies of the tier's pair. If
+the table answers and an object the catalogue lists has no row in it, the
+library warns. It lists that object in the `params_gap` entry of
+`diagnostics_snapshot()`.
 
 The model state is deterministic per tier. The tier is fixed at client
 construction, the store starts empty, and nothing persists to disk. The class

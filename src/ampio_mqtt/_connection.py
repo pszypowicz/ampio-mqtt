@@ -263,7 +263,7 @@ class Connection:
         failure is a bug: nothing will retry, so it is terminal. After a
         successful ``open()`` the crash is reported through ``on_fatal``,
         behind the availability drop; during ``open()`` it makes
-        ``open()`` raise instead, mirroring the auth path.
+        ``open()`` raise instead.
         """
         try:
             await self._loop()

@@ -7,12 +7,9 @@ the `params` bit semantics, the read-only marker, and deletion on the wire.
 
 The hidden marker is `params` bit 4, the bit the Designer enum names `DELETED`.
 It marks the rows the user deleted or hid, and the stubs that duplicate a real
-Designer channel. The door drops a row that carries it on both tiers, so
-`objects` never holds a hidden row. A `data/params_devices` push that sets or
-clears the bit evicts or admits the row. The door checks the bit-4 half of the
-gate the M-SERV's Matter bridge uses (`(params & 2**37) && !(params & 16)`) -
-see the section on the bit semantics below. Bit 37 is a Matter-only opt-in. The
-library deliberately does not filter on it and does not surface it.
+Designer channel. The door in [`discovery-flow.md`](discovery-flow.md) drops a
+row that carries it. A `data/params_devices` push that sets or clears the bit
+evicts or admits the row.
 
 Every config row that the app-sync catalogue omits carries the bit. Rows that
 app-sync still lists can carry it too, such as a hidden object or a duplicate
@@ -20,19 +17,18 @@ stub. The unfiltered params table serves the bit for those on both tiers.
 
 The M-SERV creates two system rows of its own, `detekcja` and `symulacja`.
 Neither row is an object (see [`untapped-surfaces.md`](untapped-surfaces.md)).
-The library drops both by their type as it reads the catalogue, so neither
-reaches the door. The wire facts of their configuration stay here. The devices
-that take part ride the `powiazane` field of the row in `data/params_devices`.
-It holds `<linkId>:<objectId>` pairs separated by commas, and reads null when
-nothing is linked. The M-SERV reassigns the link ids on every write. The library
-does not decode the field. The app writes the whole list at once, on the
-`simulation` and `detection` topics of the account's `control` namespace. The
-M-SERV answers `{ "Response": "OK" }` on the same-named topic under the
-account's `control` reply tree. Each detection entry carries a `type`, 1 for an
-inside sensor and 2 for an entrance sensor. The M-SERV sets the matching
-`params` bit on the sensor row. Bit 11 (`params & 2048`) is Designer's "Entrance
-sensor" and bit 12 (`params & 4096`) is its "Inside sensor". The simulation
-switch is the `czas` column of the simulation row. The app flips it through the
+The wire facts of their configuration stay here. The devices that take part ride
+the `powiazane` field of the row in `data/params_devices`. It holds
+`<linkId>:<objectId>` pairs separated by commas, and reads null when nothing is
+linked. The M-SERV reassigns the link ids on every write. The library does not
+decode the field. The app writes the whole list at once, on the `simulation` and
+`detection` topics of the account's `control` namespace. The M-SERV answers
+`{ "Response": "OK" }` on the same-named topic under the account's `control`
+reply tree. Each detection entry carries a `type`, 1 for an inside sensor and 2
+for an entrance sensor. The M-SERV sets the matching `params` bit on the sensor
+row. Bit 11 (`params & 2048`) is Designer's "Entrance sensor" and bit 12
+(`params & 4096`) is its "Inside sensor". The simulation switch is the `czas`
+column of the simulation row. The app flips it through the
 `/api/json/simulation/active` and `/api/json/simulation/deactive` paths on the
 `api` control topic. After each of these writes the M-SERV pushes
 `data/params_devices` and `md5/params_devices` into every account namespace. A

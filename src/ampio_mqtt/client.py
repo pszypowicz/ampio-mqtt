@@ -149,9 +149,7 @@ class _ReplyChannel:
 
     ``received`` latches on the first reply the parse accepted and never
     clears; ``last_payload`` keeps the safe reply summary for diagnostics;
-    ``waiters`` are fetch futures awaiting the next accepted reply. A
-    refused reply latches nothing and resolves no waiter, so the fetch
-    times out into the same retryable error as silence.
+    ``waiters`` are fetch futures awaiting the next accepted reply.
     """
 
     __slots__ = ("last_payload", "received", "waiters")
@@ -186,7 +184,7 @@ class AmpioClient:
     `/api` writes. :class:`AmpioAdminClient` extends it with what the
     M-SERV serves the reserved login alone. The class never inspects the
     username: the reserved login through this class gets the standard
-    view, a valid least-privilege choice.
+    view.
     """
 
     # The three choices the admin subclass widens: the endpoints the
@@ -214,10 +212,8 @@ class AmpioClient:
 
         ``refresh_interval`` opts into a periodic re-request of the
         discovery set, in seconds; None (the default) leaves the
-        cadence to the consumer. Each cycle re-publishes the
-        initial-discovery requests, so Designer additions and evictions
-        surface as :class:`ObjectAdded` / :class:`ObjectRemoved` without
-        a reconnect (#80). Zero or negative raises ``AmpioValueError``.
+        cadence to the consumer (docs/discovery-flow.md). Zero or
+        negative raises ``AmpioValueError``.
 
         ``reconnect_interval`` is the reconnect backoff base, in seconds.
         Zero or negative raises ``AmpioValueError``.
@@ -361,14 +357,12 @@ class AmpioClient:
     def _note_protocol_violation(self, topic: str, err: AmpioProtocolError) -> None:
         """Report a refused reply and keep the connection up.
 
-        The reply lacked what its surface always serves, so the library
-        refuses to read it (see :class:`AmpioProtocolError`). The message is
-        dropped whole: discovery does not latch on it, a fetch waiting on it
-        times out, and held state stays untouched. The report is this log
-        line plus the ``protocol_violations`` entry a consumer can surface
-        from :meth:`diagnostics_snapshot`. The entry is keyed on the masked
-        topic, because a consumer publishes the snapshot. The log line keeps
-        the real one, which the operator matches against the broker.
+        The reply lacked what its surface always serves, so the library refuses
+        to read it (see :class:`AmpioProtocolError`). The report is this log
+        line plus the ``protocol_violations`` entry a consumer can surface from
+        :meth:`diagnostics_snapshot`. The entry is keyed on the masked topic,
+        because a consumer publishes the snapshot. The log line keeps the real
+        one, which the operator matches against the broker.
         """
         self._stats.protocol_violations[account_free_topic(topic)] = str(err)
         _LOGGER.error("Refused an Ampio reply on %s: %s", topic, err)
@@ -457,26 +451,16 @@ class AmpioClient:
           the latest SUBACK to its reason code.
           ``protocol_violations`` maps each topic whose reply the library
           refused to the reason, and rolls across runs. Both key on the
-          topic with its account segment masked - the account is the one
-          credential a key-based redactor cannot reach, and the masked
-          form names the surface just as well.
+          topic with its account segment masked.
         - ``params_gap``: objects the ``params_devices`` table carries no
           row for. The table covers the whole catalogue on both tiers, so a
           non-empty list is a server fault: those objects read every
           Designer config flag as unset.
         - ``not_configured``: the ``(id, name)`` pairs of the catalogue
           rows the door left out because they carry no leaf.
-        - ``last_payloads``: each endpoint's last reply summary, absent
-          until a reply arrives. Table replies retain a JSON string with
-          ``row_count`` only. Names, URLs, state descriptions, and unknown
-          fields are omitted. Malformed JSON or table envelopes retain
-          ``**REDACTED**``. A valid envelope can summarize rows that the
-          endpoint parser refuses. The ``info`` entry keeps its existing
-          allowed values and masks other values. An info reply that is not
-          JSON or has no ``Results`` object retains ``**REDACTED**``. A
-          ``Results`` object the parser refuses is still retained, masked.
-          Summaries do not alter the data that
-          discovery and fetch methods receive.
+        - ``last_payloads``: each endpoint's last reply summary (a row
+          count, or the masked info reply), absent until a reply arrives
+          (docs/discovery-flow.md).
         """
         server_info = self._store.server_info
         return {
@@ -580,9 +564,7 @@ class AmpioClient:
         that ran :meth:`connect`, never from another thread, so a listener
         can touch loop-bound state directly (#81).
 
-        ``object_id`` narrows further, to one object's events. ID-filtered
-        listeners live in per-object buckets, so dispatch reaches only the
-        matching bucket, in O(1) of their total count (#99)::
+        ``object_id`` narrows further, to one object's events::
 
             client.subscribe(on_object, of=ObjectUpdated, object_id=135)
             client.subscribe(on_135, of=(ObjectUpdated, ObjectRemoved),
@@ -701,9 +683,7 @@ class AmpioClient:
         Returns True when discovery completed in time and False when
         `discovery_timeout` elapsed first. A False leaves the connection
         up and discovery continuing; await
-        :meth:`wait_for_initial_discovery` rather than restarting. A
-        consumer that must read `objects`/`server_info` before
-        building on the client checks this result or awaits that method.
+        :meth:`wait_for_initial_discovery` rather than restarting.
         Raises ``AmpioNotConfigured`` as :meth:`wait_for_initial_discovery`
         does. Raises ``AmpioAuthError`` when the broker rejects the
         credentials and ``AmpioConnectionError`` when the session does not
@@ -743,9 +723,9 @@ class AmpioClient:
         up, and the pushed reply after the installer fixes Designer
         admits the refused rows, after which this returns True. It never
         raises on timeout - discovery continues and this returns False.
-        Safe to call repeatedly and after reconnects: the signals latch on
-        first completion, and the door check runs on every call, so a
-        later failure is never hidden by an earlier success.
+        Safe to call repeatedly and after reconnects. Each call re-checks
+        the installer faults, so a later fault raises even after an
+        earlier True.
         """
         try:
             async with asyncio.timeout(timeout):
@@ -815,11 +795,8 @@ class AmpioClient:
     async def fetch_rooms(self, timeout: float = 5.0) -> dict[int, str]:
         """Return ``{ampio_object_id: room_name}`` for objects assigned to a room.
 
-        Publishes the ``groups`` and ``group_devices`` keywords to
-        ``ampio/control/<user>/data`` and awaits both responses on
-        ``ampio/fromDB/<user>/data/<keyword>``. Joins them in memory; objects
-        assigned to multiple groups map to the first room encountered (Home
-        Assistant allows one area per device).
+        Objects assigned to multiple groups map to the first room
+        encountered.
 
         Requires ``connect()`` to have completed. Raises ``AmpioConnectionError``
         if the broker is not connected and ``AmpioTimeoutError`` if either
@@ -867,13 +844,10 @@ class AmpioClient:
         topic, so the call returns once the broker accepts the publish and
         it can never report delivery.
 
-        Every registered user receives it. The M-SERV also accepts a form
-        that names one user, but the library does not expose it, because
-        nothing yet separates a targeted send from a broadcast on the wire.
+        Every registered user receives it.
 
         Raises ``AmpioValueError`` for an empty message, and for one that
-        contains ``/``. The M-SERV reads a second path segment as the user
-        name, so a slash would truncate the text with no way to tell.
+        contains ``/``.
         """
         if not message:
             raise AmpioValueError("message must not be empty")
@@ -899,8 +873,7 @@ class AmpioClient:
         await self._scene_command(scene_id, "undo")
 
     async def _scene_command(self, scene_id: int, verb: str) -> None:
-        """Publish a scene command; the M-SERV replays the scene's own
-        actions, grant-scoped like any other command (docs/commands.md)."""
+        """Publish a scene command."""
         await self._connection.publish(
             command_topic(self._username), scene_payload(scene_id, verb).encode()
         )
@@ -923,15 +896,8 @@ class AmpioClient:
         ``confirm`` opts into awaiting that state: the call returns the
         snapshot of the next :class:`~ampio_mqtt.events.ObjectUpdated`
         for the object within ``confirm`` seconds, raising
-        ``AmpioTimeoutError`` on expiry. The `/api` surface has no reply
-        topic, so the echo is an observation, not an acknowledgment: a
-        concurrent change satisfies it, and a timeout is how a silent
-        drop surfaces (an ignored verb, an out-of-grant object, or a
-        command that changed nothing). Most verbs echo in under ~200 ms
-        and `arm`/`disarm` take ~1 s (docs/commands.md), so
-        ``confirm=2.0`` covers the measured surface. The waiter is armed
-        before the publish. Scene commands and :meth:`set_event` fan out
-        beyond a single object and offer no per-object echo.
+        ``AmpioTimeoutError`` on expiry. A concurrent change also
+        satisfies it. See docs/commands.md.
 
         Raises ``AmpioValueError`` for an id the catalogue does not list.
         Raises ``AmpioConnectionError`` when the broker is unreachable and
@@ -1018,9 +984,8 @@ class AmpioClient:
         :meth:`turn_on` documents.
 
         A color output that does not answer the switch verbs (``rgbw``) is
-        turned off with ``setColors 0/0/0/0`` instead - off is unambiguous,
-        so the library routes it. A color-temperature output (``ledww``)
-        is turned off with ``setWWPower 0`` for the same reason, which also
+        turned off with ``setColors 0/0/0/0`` instead. A color-temperature
+        output (``ledww``) is turned off with ``setWWPower 0``, which also
         holds its color temperature for the next turn-on. ``confirm``
         awaits the state echo exactly as :meth:`command` documents.
         """
@@ -1054,13 +1019,7 @@ class AmpioClient:
         return kind if isinstance(kind, OutputKind) else None
 
     def _value_range(self, object_id: int) -> tuple[int, int]:
-        """The inclusive range `setValue` holds for one object.
-
-        An analog flag carries its own width, and the signed 16-bit one
-        reaches below zero, so the 0-255 default would reject legal
-        values. The M-SERV truncates an out-of-range write to the field
-        width rather than refusing it, which is why the check is here.
-        """
+        """The inclusive range `setValue` holds for one object."""
         obj = self._store.objects.get(object_id)
         kind = obj.kind if obj is not None else None
         if isinstance(kind, InputKind) and kind.value_range is not None:
@@ -1110,8 +1069,7 @@ class AmpioClient:
         The range is 0-255 for everything but the analog flags, which
         carry their own width: a `flaga_liniowa16` reaches -32768 to
         32767. :pyattr:`InputKind.value_range` states it, and a value
-        past it raises rather than reaching the M-SERV, which truncates
-        to the field width instead of refusing.
+        past it raises ``AmpioValueError``.
 
         With ``pulse_ms`` the M-SERV reverts the object to its previous state
         after that many milliseconds - a timed pulse, not a fade. The wire unit
@@ -1124,11 +1082,7 @@ class AmpioClient:
         cannot reach: ``rgbw`` (drive it with :meth:`set_colors`), ``ledww``,
         whose power axis moves through :meth:`set_ww_power` alone, and
         every cover, which moves through :meth:`open`, :meth:`close` and,
-        with a position axis, :meth:`set_roller_pos`. The M-SERV drops the plain form for all
-        three, with no effect and no reply. A cover drops the timed form
-        the same way. On a ``ledww`` the timed form is not a harmless
-        no-op: it sets the power, zeroes the color temperature, and never
-        reverts.
+        with a position axis, :meth:`set_roller_pos`.
 
         ``pulse_ms`` reaches the relay, the flag and the dimmer alone,
         and it raises for every other established kind. The two analog
@@ -1167,11 +1121,10 @@ class AmpioClient:
     ) -> AmpioObject | None:
         """Set a thermostat's (``reg``) target temperature in °C.
 
-        The regulator echoes the new target in its state push, readable
-        as :attr:`AmpioObject.thermostat`. Bools and non-finite floats are
-        rejected: both would serialize as text the M-SERV silently drops.
-        ``confirm`` awaits the state echo exactly as :meth:`command`
-        documents.
+        The regulator echoes the new target in its state push, readable as
+        :attr:`AmpioObject.thermostat`. Raises ``AmpioValueError`` for a bool,
+        a non-number or a non-finite float. ``confirm`` awaits the state echo
+        exactly as :meth:`command` documents.
         """
         if (
             isinstance(temperature, bool)
@@ -1262,9 +1215,7 @@ class AmpioClient:
     ) -> AmpioObject | None:
         """Set a CCT light's power axis alone, 0-255.
 
-        The color temperature stays where it stands, which is what makes
-        ``power=0`` a usable off: the next turn-on keeps the temperature the
-        light was last set to. ``confirm`` awaits the state echo exactly as
+        The color temperature holds. ``confirm`` awaits the state echo exactly as
         :meth:`command` documents.
 
         Raises ``AmpioValueError`` for an argument outside its range.
@@ -1277,9 +1228,7 @@ class AmpioClient:
     ) -> AmpioObject | None:
         """Set a CCT light's color-temperature axis alone, 0-255.
 
-        The power stays where it stands, so a consumer that changes the
-        temperature never has to read the power back and pack it into
-        :meth:`set_ww`. ``coldness`` is the raw byte the wire carries, not a
+        The power holds. ``coldness`` is the raw byte the wire carries, not a
         temperature in kelvin. ``confirm`` awaits the state echo exactly as
         :meth:`command` documents.
 
@@ -1335,10 +1284,7 @@ class AmpioClient:
         :meth:`command` documents, so its snapshot reads the travel's start,
         not its end.
 
-        A cover whose :pyattr:`AmpioObject.block` bit covers the requested
-        direction drops this command with no error and no reply. The bit
-        gates the slat axis on the same direction, so a blocked cover can
-        refuse the ``lamella`` half as well.
+        A blocked direction drops this command in silence (docs/commands.md).
 
         Raises ``AmpioValueError`` for an argument outside its range.
         """
@@ -1361,10 +1307,7 @@ class AmpioClient:
         ``confirm`` awaits the state echo exactly as :meth:`command`
         documents.
 
-        A turn toward open counts as opening and a turn toward closed counts
-        as closing, so :pyattr:`AmpioObject.block` gates this command on the
-        same bit travel uses. The module drops a blocked turn with no error
-        and no reply.
+        A blocked direction drops this command in silence (docs/commands.md).
 
         Raises ``AmpioValueError`` for an argument outside its range.
         """
@@ -1535,14 +1478,7 @@ class AmpioAdminClient(AmpioClient):
         await super()._handle_connected()
 
     def _note_digest(self, digest: _protocol.CatalogueDigest) -> None:
-        """Re-request the module list when a pushed table digest changes.
-
-        The M-SERV pushes the object tables into every account namespace on
-        a Designer save, and it rewrites the retained digests with them. It
-        never pushes the module list, so the digest is what tells the admin
-        session to re-request it. The live-value guard is left alone,
-        because a module list request is not a snapshot cycle.
-        """
+        """Re-request the module list when a pushed table digest changes."""
         previous = self._digests.get(digest.keyword)
         self._digests[digest.keyword] = digest.digest
         if previous is None or previous == digest.digest:
@@ -1596,9 +1532,7 @@ class AmpioAdminClient(AmpioClient):
         """The M-SERV's own module row, for naming the hub device.
 
         The row whose ``mac_global`` or ``mac`` is the server's
-        self-reported mac. The override arm covers a replaced unit, whose
-        factory id changes while the re-stamped override does not. Nothing
-        else identifies the row, so no other module stands in for it.
+        self-reported mac.
 
         None until both the module catalogue and the server info have
         arrived, which :meth:`wait_for_initial_discovery` waits for. A
@@ -1689,12 +1623,8 @@ class AmpioAdminClient(AmpioClient):
           ``temperature``. The user-given module name stays out.
 
         Both entries write the mac through :func:`format_mac`, as the
-        string ``"0xCB8F"``, because the report is read by a person and a
-        mac is a bus address. :attr:`AmpioModule.mac` keeps the integer.
-        The mac in ``server_info`` keeps it too: that entry is the
-        :class:`AmpioServerInfo` dataclass as it stands, and the decimal
-        form of that number is the ``server_key`` a consumer holds as its
-        registry id.
+        string ``"0xCB8F"``. :attr:`AmpioModule.mac` keeps the integer.
+        The mac in ``server_info`` stays an integer.
         """
         snapshot = super().diagnostics_snapshot()
         snapshot["mac_collisions"] = [
@@ -1736,16 +1666,12 @@ class AmpioAdminClient(AmpioClient):
     async def resolve_records(self, timeout: float = 10.0) -> RecordSweep:
         """Read every module's CAN description record and return what the pass covered.
 
-        Fetches the locations name table, reads the ``device_api`` list
-        reply - one message carrying every catalogued module's record,
-        the M-SERV's own included - and joins the entries to objects. The
-        result replaces the five datasets (:pyattr:`records`,
+        The call replaces the five datasets (:pyattr:`records`,
         :pyattr:`cover_parameters`, :pyattr:`module_records`,
         :pyattr:`capabilities`, :pyattr:`panel_settings`) for every mac
         the reply answered, sets :pyattr:`last_sweep`, and dispatches one
-        :class:`RecordSweepCompleted`. The catalogue facts
-        (``matter_device_type``, ``name``) are never touched: the
-        record is the separate, admin-guarded fact (#133).
+        :class:`RecordSweepCompleted`. A sweep changes no model field, so
+        it dispatches no :class:`ObjectUpdated` or :class:`ModuleUpdated`.
 
         Returns a :class:`RecordSweep`. Its ``records`` map is
         ``{object_id: DesignerRecord}`` for what this pass resolved, and
@@ -1850,12 +1776,7 @@ class AmpioAdminClient(AmpioClient):
         value: int,
         confirm: float | None,
     ) -> AmpioObject | None:
-        """Drive an output over the raw CAN write topic.
-
-        The one write that reaches a panel's status LEDs, and equivalent
-        to the `/api` switch verbs on relay outputs (docs/panel-writes.md,
-        "Panel outputs").
-        """
+        """Drive an output over the raw CAN write topic."""
         mac, channel, function = address
         return await self._publish_command(
             raw_write_topic(mac),
@@ -1971,9 +1892,7 @@ class AmpioAdminClient(AmpioClient):
         """Sound a panel's buzzer once.
 
         ``module_id`` is :pyattr:`AmpioModule.id`. ``tone`` 1-31 sets the
-        pitch: the fundamental is 16576 Hz / (tone + 1), and 6, the
-        Designer default, is the loudest - the piezo resonates near 2.4
-        kHz, and no amplitude control exists. ``seconds`` 0.01-2.55 in
+        pitch, and 6 is the loudest. ``seconds`` 0.01-2.55 in
         10 ms steps; 0 is refused, since a zero time latches the buzzer
         on. Use :meth:`buzz_pattern` with ``cycles=0`` for a sound that
         lasts until :meth:`buzz_stop`.
@@ -2032,9 +1951,8 @@ class AmpioAdminClient(AmpioClient):
     async def buzz_stop(self, module_id: int) -> None:
         """Silence a panel's buzzer.
 
-        Publishes a one-cycle silent sequence, which replaces a running
-        pattern within 100 ms, then the simple OFF, which ends a plain
-        beep. The same rules as :meth:`buzz` apply to the errors.
+        Ends a running pattern and a plain beep alike. The same rules as
+        :meth:`buzz` apply to the errors.
         """
         topic = raw_write_topic(self._raw_write_mac(module_id))
         await self._connection.publish(topic, RAW_BUZZER_SILENCE.encode())
@@ -2044,11 +1962,8 @@ class AmpioAdminClient(AmpioClient):
         """Light a module's CAN LED steadily so it can be found by eye.
 
         The Designer's "Identify device" button. ``module_id`` is
-        :pyattr:`AmpioModule.id`. A DIN-rail module lights its CAN LED
-        steadily (red on the M-ROL-4s); a M-DOT panel lights the LED on
-        its back and shows nothing on the front. The LED stays on until
-        :meth:`identify_stop`. The library schedules no stop by itself;
-        the Designer's 30 s auto-stop is its own timer.
+        :pyattr:`AmpioModule.id`. The LED stays on until
+        :meth:`identify_stop`, and the library schedules no stop.
 
         ``AmpioValueError`` for an unknown module, before any publish. No
         readback exists - the module confirms nothing on the bus - so
@@ -2070,11 +1985,9 @@ class AmpioAdminClient(AmpioClient):
     def _panel_mask(fields: Sequence[int] | None) -> str:
         """The touch field mask for one panel action.
 
-        Always the full width. A panel reads the width its own field count
-        needs and ignores the rest, which is what lets a caller send one
-        width to every panel and makes no panel write depend on a record
-        sweep (docs/panel-writes.md). A field number the frame cannot carry
-        is refused; a field the panel does not have is ignored by the panel.
+        Always the full width (docs/panel-writes.md). A field number the frame
+        cannot carry is refused; a field the panel does not have is ignored by
+        the panel.
         """
         if fields is not None:
             for number in fields:
@@ -2147,9 +2060,7 @@ class AmpioAdminClient(AmpioClient):
     async def lock_panel(self, module_id: int, *, seconds: float) -> None:
         """Ignore every touch on a panel for ``seconds``.
 
-        ``module_id`` is :pyattr:`AmpioModule.id`. The panel plays its
-        lock beeps and then swallows touches whole: a locked field
-        broadcasts nothing at all, not even the press. ``seconds`` is
+        ``module_id`` is :pyattr:`AmpioModule.id`. ``seconds`` is
         0.01-655.35 in 10 ms steps.
 
         The lock always expires. There is no indefinite form - a zero
@@ -2157,9 +2068,7 @@ class AmpioAdminClient(AmpioClient):
         Hold a panel locked by re-arming before the current lock runs
         out, and release it early with :meth:`unlock_panel`.
 
-        **No status exists.** Nothing on the bus reports whether a panel
-        is locked, and a locked panel is indistinguishable from an idle
-        one, so a consumer cannot read this back.
+        No readback exists.
 
         ``AmpioValueError`` for an out-of-range time or an unknown module,
         both before any publish.
@@ -2188,18 +2097,14 @@ class AmpioAdminClient(AmpioClient):
         """The lock frame's target for one cover, or why none can go out.
 
         Reads the catalogue row and the module's entry in
-        :pyattr:`capabilities`. A module that advertises no roller count
-        takes the ordinary roller moves and drops a lock frame in silence,
-        so the count is the gate as well as the mask width
-        (docs/panel-writes.md). An object outside the roller description
-        class (``roleta_procenty``, ``roleta_lamelki``) is refused, the
-        plain ``roleta`` included. A non-cover's channel index can belong
-        to a cover on the same module. The four lock
-        methods call this and raise on a refusal, so a consumer that
-        builds a lock control calls it after the sweep and leaves the
-        control out on a refusal. Raises ``AmpioValueError`` for an id the
-        catalogue does not list, and ``AmpioNotConfigured`` for a mac no
-        admitted module row carries.
+        :pyattr:`capabilities` (docs/panel-writes.md). An object outside the
+        roller description class (``roleta_procenty``, ``roleta_lamelki``) is
+        refused, the plain ``roleta`` included. A non-cover's channel index can
+        belong to a cover on the same module. The four lock methods call this
+        and raise on a refusal, so a consumer that builds a lock control calls
+        it after the sweep and leaves the control out on a refusal. Raises
+        ``AmpioValueError`` for an id the catalogue does not list, and
+        ``AmpioNotConfigured`` for a mac no admitted module row carries.
         """
         obj = self._store.objects.get(object_id)
         if obj is None:

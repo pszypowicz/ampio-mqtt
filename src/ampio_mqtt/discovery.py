@@ -1,18 +1,13 @@
 """Best-effort discovery of an Ampio M-SERV broker on the LAN.
 
-The M-SERV runs Avahi with default-only hostname publishing: no service type
-or TXT record on the LAN identifies it as Ampio (a co-located Matter process
-can share its address, but nothing there is Ampio-specific either) - the
-hostname A/AAAA record for the well-known name ``ampio.local`` is the only
-reliable signal. So discovery is a multicast DNS A-record query for that
-hostname, followed by a TCP probe to confirm the broker port is open.
+Discovery is an mDNS A-record query for ``ampio.local``, then a TCP probe
+of the broker port. The mDNS facts are in docs/lan-discovery.md.
 
 The mDNS query is driven from Python via the ``zeroconf`` package, the
 ``ampio-mqtt[discovery]`` extra. Callers that already own an
-``AsyncZeroconf`` instance (Home Assistant integrations almost always do)
-can pass it in via ``zeroconf=...`` to share the multicast socket;
-standalone callers can omit the argument and ``discover()`` will spin up
-its own per-call.
+``AsyncZeroconf`` instance can pass it in via ``zeroconf=...`` to share
+the multicast socket; standalone callers can omit the argument and
+``discover()`` will spin up its own per-call.
 """
 
 from __future__ import annotations
