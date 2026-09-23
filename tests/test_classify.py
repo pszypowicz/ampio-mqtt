@@ -16,6 +16,7 @@ from ampio_mqtt.classification import (
     SensorKind,
     ThermostatKind,
     classify,
+    input_channel_prefix,
 )
 
 
@@ -380,3 +381,16 @@ def test_an_unproven_alarm_sub_function_keeps_the_family(sub_sf_id: int) -> None
 def test_a_sub_function_outside_the_two_halves_is_the_base_alarm() -> None:
     assert classify("satel_alarm", 0).key == "alarm"
     assert classify("satel_alarm", 0, 9).key == "alarm"
+
+
+@pytest.mark.parametrize(
+    ("typ", "prefix"),
+    [("flaga", "f"), ("wej", "i"), ("flaga_liniowa", None), ("flaga_liniowa16", None)],
+)
+def test_an_input_carries_a_raw_prefix_only_when_the_client_subscribes_it(
+    typ: str, prefix: str | None
+) -> None:
+    """Every prefix an input profile sets is one the admin client subscribes.
+    The analog flags have none, so they update on the per-object topic
+    (#292)."""
+    assert input_channel_prefix(typ) == prefix

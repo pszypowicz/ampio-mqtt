@@ -22,6 +22,13 @@ explicit beta posture above and is no longer the supported upgrade path.
   dropped the whole message, for example a thermostat push, instead of the one
   field.
 
+### Removed
+
+- **The raw prefixes of the two analog flags** (#292). `flaga_liniowa` and
+  `flaga_liniowa16` carried the prefixes `afu8` and `afi16`, but no subscription
+  feeds those topics, so the entries did nothing. The analog flags update on the
+  per-object topic, as before.
+
 ## 0.74.0
 
 This release refuses the commands that the M-SERV drops with no reply. It also
