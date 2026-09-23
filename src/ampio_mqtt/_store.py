@@ -144,9 +144,12 @@ class AmpioStore:
 
         Every value held now predates the snapshot the new cycle will
         deliver, so a dated seed may correct locally-stamped values again.
-        The client calls this before it publishes the discovery requests.
+        The seeds of the previous snapshot are dropped, so a catalogue pass
+        before the new snapshot applies none of them. The client calls this
+        before it publishes the discovery requests.
         """
         self._guarded.clear()
+        self._stan_by_id.clear()
 
     def apply(self, msg: _protocol.Inbound, *, retained: bool = False) -> Applied:
         """Apply one typed message and report what it changed.
@@ -602,9 +605,10 @@ class AmpioStore:
         return obj, changed
 
     def _supersedes(self, obj: AmpioObject, reported_at: float) -> bool:
-        """Whether a snapshot report should replace what `obj` holds.
+        """Whether a report stamped by the M-SERV should replace what `obj` holds.
 
-        Every snapshot row carries the M-SERV stamp it was reported at, so
+        A snapshot row and a buffered live push each carry the M-SERV stamp
+        they were reported at, so
         stamp-versus-stamp compares that one clock on both sides and RTC
         skew cancels out. A locally-stamped value is never stamp-compared -
         this process's clock is not comparable to a server `on` stamp.

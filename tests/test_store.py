@@ -2232,6 +2232,42 @@ def test_a_live_frame_with_nothing_held_still_drops() -> None:
     assert store._pending_raw == {}
 
 
+def test_a_refresh_drops_the_previous_seeds() -> None:
+    """After `begin_refresh`, a catalogue pass before the new snapshot keeps a
+    local value newer than the previous seed (#288)."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _feed_catalogue(store, _flaga_row(50, 32))
+    _apply(store, STATES_TOPIC, _snapshot("0", 1_700_000_000_000, oid=50))
+    _apply(store, "ampio/from/CAFE/state/f/32", "1")
+    retyped = {**_flaga_row(50, 32), "typ_komponentu": "roleta_procenty"}
+    _feed_catalogue(store, retyped)
+    assert 50 not in store._raw_owned and store.objects[50].state == "1"
+
+    store.begin_refresh()
+    applied = _apply(store, PARAMS_DEVICES_TOPIC, params_of(retyped))
+    assert store.objects[50].state == "1"
+    assert _updated(applied) == []
+
+
+def test_the_new_snapshot_seeds_in_either_reply_order() -> None:
+    """The snapshot of the new request cycle corrects the object whether it
+    lands before or after the catalogue pair (#288)."""
+    for snapshot_first in (True, False):
+        store = _store()
+        _apply(store, DEVICES_TOPIC, devices(_PANEL))
+        _feed_catalogue(store, _flaga_row(50, 32))
+        _apply(store, STATES_TOPIC, _snapshot("0", 1_700_000_000_000, oid=50))
+        store.begin_refresh()
+        if snapshot_first:
+            _apply(store, STATES_TOPIC, _snapshot("1", 1_800_000_000_000, oid=50))
+            _feed_catalogue(store, _flaga_row(50, 32))
+        else:
+            _feed_catalogue(store, _flaga_row(50, 32))
+            _apply(store, STATES_TOPIC, _snapshot("1", 1_800_000_000_000, oid=50))
+        assert store.objects[50].state == "1", snapshot_first
+
+
 def test_a_channel_the_replay_skipped_keeps_the_per_object_path() -> None:
     """A channel the broker holds no frame for leaves its object unclaimed,
     so the per-object topic still feeds it. Nothing goes dark for want of a
