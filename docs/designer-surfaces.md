@@ -58,8 +58,9 @@ OpenAPI spec. It works on:
 
 - Config reads and saves: `ampio/control/admin/config/...`, with replies on
   `ampio/fromDB/admin/config/#`. This includes the `save/leaves` table that maps
-  every output leaf to command function 48 = `0x30` - the frame documented under
-  Panel outputs in [`panel-writes.md`](panel-writes.md).
+  a binary output leaf (class 257) to command function 48 = `0x30`, and an
+  open-collector leaf (class 67) to `0x32` - the frames documented under Panel
+  outputs in [`panel-writes.md`](panel-writes.md).
 - The `device_api` tree: `get_data`, `name_wr`, `descriptions_wr`,
   `firmware_wr`, `mac_user_wr`, `ow_search`, plus the broadcast helpers (`list`,
   `discover`, `version`, `alive`, `devices_log`).

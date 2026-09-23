@@ -41,9 +41,9 @@ class ModuleFunction(IntEnum):
 
     The ids and names are the Designer's own. Membership is limited to
     ids a module on the baseline install advertises, so an id here is one
-    the wire has shown. :pyattr:`AmpioAdminClient.capabilities` is keyed by the
-    raw id, so an id without a member still reads through under its
-    number.
+    the wire has shown. Each map in :pyattr:`AmpioAdminClient.capabilities`
+    is keyed by the raw function id, so an id without a member still reads
+    through under its number.
 
     The value paired with an id is a channel count, not a flag. On a touch
     panel the ``BACKLIGHT_RGBW`` count is the number of touch fields.
@@ -174,7 +174,8 @@ class ThermostatState:
     set_temperature: float | None
     # Mode letter, verbatim from the wire.
     mode: str | None
-    # The push's cooling flag; `"0"` reads False, anything else True.
+    # The push's cooling flag. `"0"` and an empty value read False, any
+    # other value True, and None when the push has no flag.
     cooling: bool | None
 
 
@@ -198,7 +199,8 @@ class RecordSweep:
     """What one :meth:`AmpioAdminClient.resolve_records` pass covered.
 
     ``records`` is this pass's join result, while the datasets on the
-    admin client accumulate across passes. The two mac sets separate the
+    admin client keep what an earlier pass gave a module this pass did not
+    answer. The two mac sets separate the
     case a bare record map cannot. A module in ``answered_macs`` with no
     entry for one of its outputs answered and carries none for it. A
     module in ``silent_macs`` is catalogued but missing from the device
@@ -374,16 +376,16 @@ class AmpioObject:
     # The opis_menu column: the object's name in the app, or None.
     name: str | None = None
     # `params` bitfield (Designer config flags; see `read_only`/`bell`).
-    # Defaults to 0, so a payload without the column reads 0 and no bit is
-    # set.
+    # 0 on an object the params table has never carried a row for. A params
+    # row without the column is refused.
     params: int = 0
     # Matter device type ID from the Designer "Description in device" tag
     # (`type` column; "256" = 0x0100 On/Off Light). None when untagged. A
-    # pure catalogue fact, served identically to both tiers and never
-    # mutated after the seed. The description record's own (fresher,
+    # pure catalogue fact, served identically to both tiers, taken from each
+    # catalogue reply and never touched by a sweep. The description record's own (fresher,
     # admin-only) tag is `DesignerRecord.matter_device_type`, and which one
-    # wins is the consumer's choice. docs/identity.md holds the vocabulary
-    # and the storage path.
+    # wins is the consumer's choice. docs/description-records.md holds the
+    # vocabulary and the storage path.
     matter_device_type: int | None = None
     # The `czas` column as served, in the wire unit of 10 ms ticks. Its
     # meaning follows the component type: Designer's "turn-on time" on the
@@ -402,7 +404,8 @@ class AmpioObject:
     # on both tiers. `unit` and `decimals` read it.
     format: str = ""
     # What this object is. Derived - never passed: computed from
-    # `typ_komponentu` and `interpretacja` on every construction,
+    # `typ_komponentu`, `interpretacja` and `address.sub_sf_id` on every
+    # construction,
     # `dataclasses.replace` included, so no instance can hold a kind that
     # disagrees with its inputs (#94).
     kind: ObjectKind = field(init=False)
@@ -683,8 +686,9 @@ class AmpioModule:
     id: int
     # The effective bus address (Designer "MAC override"), keying the raw
     # `ampio/from/<MAC>/...` topics. Replacement-stable - prefer it over
-    # `mac_global` as the module key; may be a non-unique default (the
-    # M-SERV is 1). docs/identity.md carries the full identity model.
+    # `mac_global` as the module key. Unique among held modules, because a
+    # mac two rows share admits neither row. The M-SERV's is `MSERV_MAC`.
+    # docs/identity.md carries the full identity model.
     mac: int  # devices.mac (override / effective bus address)
     # Factory-burned hardware id; CHANGES when the unit is replaced.
     mac_global: int  # devices.mac_global (factory id)
@@ -705,11 +709,11 @@ class AmpioModule:
     # the module: a state push or raw edge for one of its objects, or its own
     # diagnostics broadcast. One clock only - snapshot and catalogue seeds do
     # not count, since they replay DB state that may be arbitrarily old. None
-    # until the first live message after connect().
+    # until this process first receives live evidence of the module. A
+    # reconnect keeps the last value.
     last_seen: float | None = None
-    # Self-reported health from the module's `b/4F` broadcast. Both stay None
-    # on a standard account, which is not served the raw tree, and
-    # `temperature` stays None on modules without the sensor.
+    # Self-reported health from the module's `b/4F` broadcast. `temperature`
+    # stays None on modules without the sensor.
     supply_voltage: float | None = None  # volts on the CAN bus
     temperature: float | None = None  # °C
 
@@ -746,7 +750,9 @@ class AmpioServerInfo:
     (geolocation, cloud endpoint, public key, user permissions).
     """
 
-    mac: int  # the M-SERV's own CAN mac (matches a module's mac_global)
+    # the M-SERV's own CAN mac (matches its module row's mac_global, or its
+    # mac on a replaced unit)
+    mac: int
     # The asking account's id: -1 for the reserved `admin` login, the
     # users-table row id for an app-created user. Every reply carries it,
     # so a reply without one does not parse. See `access_tier`.
@@ -754,7 +760,7 @@ class AmpioServerInfo:
     server_version: str | None = None  # the M-SERV server application's version
     server_revision: str | None = None
     mqtt_version: str | None = None  # broker version
-    local_ip: str | None = None  # used for the configuration_url
+    local_ip: str | None = None  # the M-SERV's self-reported LAN address
     device_id: str | None = None  # hardware identifier of the host
 
     @property
@@ -787,7 +793,8 @@ class AmpioServerInfo:
 class ConnectionStats:
     """Internal liveness counters behind ``diagnostics_snapshot()``.
 
-    Updated by the connection layer (`last_message_at` by the client).
+    Updated by the connection layer (`last_message_at` and
+    `protocol_violations` by the client).
     `started_at` and `reconnect_count` cover the current ``connect()`` run -
     a deliberate disconnect/connect restarts them, so a snapshot never reads a
     consumer-initiated restart as a flapping connection. `last_error` and

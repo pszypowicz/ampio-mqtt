@@ -8,17 +8,16 @@ consult, unless the `discovery_timeout` elapsed first. On `AmpioAdminClient`,
 that point on.
 
 Some consumers **depend** on populated collections before they do anything else.
-The canonical case resolves `mserv` to pre-register the M-SERV device, so other
-modules' `via_device` parents resolve. `wait_for_initial_discovery()` (default
-`timeout=8.0`) returns `True` once discovery is complete for the account's tier,
-and `False` if the timeout elapses. It never raises. `connect()` delegates its
-discovery wait to this method and returns its result, so the two share one
-definition of "discovery is done." The library's own accessors degrade
-gracefully when nothing is known yet, so this guarantee exists for consumers,
-not for the library. Such a consumer must not rely on `connect()`'s wait as an
-implementation detail. It must call `await client.wait_for_initial_discovery()`
-explicitly. The explicit call keeps `connect()` free to return earlier in a
-future revision without a silent break of that ordering.
+The canonical case, on `AmpioAdminClient`, resolves `mserv` to pre-register the
+M-SERV device, so other modules' `via_device` parents resolve.
+`wait_for_initial_discovery()` (default `timeout=8.0`) returns `True` once
+discovery is complete for the client class, and `False` if the timeout elapses.
+It never raises on timeout. It raises `AmpioNotConfigured` when the door refuses
+a row (see [The door](#the-door)). `connect()` delegates its discovery wait to
+this method and returns its result, so the two share one definition of
+"discovery is done." The library's own accessors degrade gracefully when nothing
+is known yet, so this guarantee exists for consumers, not for the library. A
+consumer checks the `connect()` result or awaits `wait_for_initial_discovery()`.
 
 Authoritative sources:
 [`src/ampio_mqtt/_connection.py`](../src/ampio_mqtt/_connection.py) owns the
@@ -29,40 +28,44 @@ the `connect()` / `disconnect()` lifecycle that joins them.
 
 ## Sequence
 
-1. **Connect** - start the session loop. Its first pass connects over TCP and
-   authenticates, and `connect()` waits for that pass. Each later pass
-   reconnects with capped-exponential backoff. The run's first successful
-   connect stamps `stats.started_at`. Each subsequent one bumps
-   `stats.reconnect_count`.
+1. **Connect** - start the session loop. `connect()` waits up to `timeout` for
+   the first pass that connects, authenticates and subscribes. A transport
+   failure, on the first pass too, retries with capped exponential backoff. A
+   credential rejection or an unexpected error stops the loop. The run's first
+   successful connect stamps `started_at` in the `connection` entry of
+   `diagnostics_snapshot()`. Each subsequent one bumps `reconnect_count`.
 2. **Subscribe** - the tier's topic set, sent as one SUBSCRIBE packet. The set
-   is `ob/+/state` and the response topics of the tier's endpoints. The `admin`
-   login adds the retained `md5/devices` and `md5/params_devices` digests (see
-   below), the global raw-channel wildcards, and the `device_api/from/list`
-   reply topic. Every filter asks for QoS 1 except the four raw state wildcards,
-   which ask for QoS 0. The retained replay then arrives whole (see
+   is `ob/+/state` and the response topics of the tier's endpoints.
+   `AmpioAdminClient` adds the retained `md5/devices` and `md5/params_devices`
+   digests (see below), the global raw-channel wildcards, and the
+   `device_api/from/list` reply topic. Six raw state wildcards ask for QoS 0:
+   the `f`, `i`, `o` and `a` state trees and the two CCT broadcasts. Every other
+   filter asks for QoS 1. The retained replay then arrives whole (see
    [`raw-channel-bridge.md`](raw-channel-bridge.md)). The client class decides
    the set (see [`account-tiers.md`](account-tiers.md)), so every filter must be
-   granted. A SUBACK rejection lands in `stats.subscribe_failures` and warns,
-   because it means a broken broker or ACL. See [`protocol.md`](protocol.md) and
+   granted. A SUBACK rejection lands in `subscribe_failures` of the `connection`
+   entry and warns, because it means a broken broker or ACL. See
+   [`protocol.md`](protocol.md) and
    [`raw-channel-bridge.md`](raw-channel-bridge.md) for the topics.
 3. **Publish the tier's auto-discovery keywords** on the matching control
    surfaces:
-   - admin: `devices` and `params_devices` on `data`, `devices` on `config`,
-     plus `states` and `info`, five requests.
-   - standard: `devices` and `params_devices` on `data`, plus `states` and
+   - `AmpioAdminClient`: `devices` and `params_devices` on `data`, `devices` on
+     `config`, plus `states` and `info`, five requests.
+   - `AmpioClient`: `devices` and `params_devices` on `data`, plus `states` and
      `info`, four requests.
 
 4. **Await** completion or the `discovery_timeout` deadline, whichever comes
    first. This step is `wait_for_initial_discovery()`, which `connect()` calls
    with `timeout=discovery_timeout`: one wait on the tier's replies of step 3.
-   Each dispatched message bumps `stats.last_message_at`. The signals latch, so
-   a later `wait_for_initial_discovery()` call returns immediately once its set
-   fired (and stays correct across reconnects).
+   Each dispatched message bumps `last_message_at` in the `connection` entry.
+   The signals latch, so a later `wait_for_initial_discovery()` call returns
+   immediately once its set fired (and stays correct across reconnects).
 5. **Return.** The library does not refetch the catalogues on its own schedule.
-   Live state arrives via push on the per-object topic (and, for inputs and the
-   bridged `przekaznik` outputs, the raw tree). A Designer save reaches both
-   tiers through the push described below. A consumer that wants a periodic
-   catalogue re-read on top opts into `refresh_interval`.
+   Live state arrives via push on the per-object topic. On `AmpioAdminClient`,
+   the raw tree also carries inputs, bridged `przekaznik` outputs and `ledww`
+   CCT channels (see [`raw-channel-bridge.md`](raw-channel-bridge.md)). A
+   Designer save reaches both tiers through the push described below. A consumer
+   that wants a periodic catalogue re-read on top opts into `refresh_interval`.
 
 Every catalogue reply also evicts what it stopped listing, fired as
 `ObjectRemoved` / `ModuleRemoved`. The per-tier rules and the deletion-tool
@@ -135,16 +138,17 @@ same condition arrives as the `NotConfigured` event, and the row leaves through
 `ObjectRemoved`. The next catalogue push that restores the leaf produces
 `ObjectAdded`. `diagnostics_snapshot()` lists the rows under `not_configured`.
 
-On `AmpioAdminClient`, the module list has its own door. The door admits neither
-of two module rows on one override mac. The raw tree keys on that mac and cannot
-attribute a frame to either row. The store records the shared mac and the module
-ids, and `wait_for_initial_discovery()` raises `AmpioNotConfigured` with the
-pairs in `collisions`. After connect, the same condition arrives as the
-`NotConfigured` event, and each row leaves through `ModuleRemoved`. The next
-module list that gives each module its own mac reports `ModuleUpdated`. The
-default mac `1` is not unique (see [`identity.md`](identity.md)), so two rows
-left on it fail the door. The installer gives each module its own mac in
-Designer. `diagnostics_snapshot()` lists the pairs under `mac_collisions`.
+On `AmpioAdminClient`, the module list has its own door. The door admits no
+module row whose override mac another row shares. The raw tree keys on that mac
+and cannot attribute a frame to any of those rows. The store records the shared
+mac and the module ids, and `wait_for_initial_discovery()` raises
+`AmpioNotConfigured` with the pairs in `collisions`. After connect, the same
+condition arrives as the `NotConfigured` event, and each row leaves through
+`ModuleRemoved`. The next module list that gives each module its own mac reports
+`ModuleUpdated`. The default mac `1` is not unique (see
+[`identity.md`](identity.md)), so two rows left on it fail the door. The
+installer gives each module its own mac in Designer. `diagnostics_snapshot()`
+lists the pairs under `mac_collisions`.
 
 A hidden row drops before the door reads its leaf, so a leaf on a row nothing
 drives never refuses a reply. A leaf of another shape is a server fault. The
@@ -158,25 +162,33 @@ hidden bit that changes evicts or admits its row.
 
 ## Errors
 
-Every error the library raises subclasses `AmpioError`. `connect()` raises
-`AmpioAuthError` when the broker rejects the credentials on the first CONNACK,
-and `AmpioConnectionError` when the broker is unreachable within `timeout`. A
-publish while the broker is disconnected raises `AmpioConnectionError` too.
-`check_connection()`, the fetch helpers, `resolve_records()`, and a command with
-`confirm=` raise `AmpioTimeoutError` when an expected reply does not arrive.
-`AmpioTimeoutError` subclasses `AmpioConnectionError`, so a handler that treats
-every connection problem alike keeps working. A rejection after a successful
-`connect()` arrives as the `AuthFailed` event instead (see
-[`events.md`](events.md)).
+Every error that the client classes raise subclasses `AmpioError`. There are two
+exceptions. Access to `discover` or `DiscoveryResult` without the
+`ampio-mqtt[discovery]` extra raises `ImportError`. The `ampio_mqtt.testing`
+helper `apply_reply` raises `KeyError` or `RuntimeError`, as its docstring
+states. `connect()` raises `AmpioAuthError` when the broker rejects the
+credentials before the first successful connect. It raises
+`AmpioConnectionError` when the broker is unreachable within `timeout`, or when
+the connection loop stops during the connect. It raises `AmpioNotConfigured` as
+`wait_for_initial_discovery()` does. A publish while the broker is disconnected
+raises `AmpioConnectionError` too. A publish on the session raises
+`AmpioTimeoutError` when the broker does not acknowledge it in time.
+`check_connection()` publishes on its own probe session, and a timeout there
+raises `AmpioConnectionError`. `check_connection()`, the fetch helpers,
+`resolve_records()`, and a command with `confirm=` raise `AmpioTimeoutError`
+when an expected reply does not arrive. `AmpioTimeoutError` subclasses
+`AmpioConnectionError`, so a handler that treats every connection problem alike
+keeps working. A rejection after a successful `connect()` arrives as the
+`AuthFailed` event instead (see [`events.md`](events.md)).
 
 Four classes separate whose fault a refusal is:
 
-| Error                | Whose fault   | Raised for                                                                                                                                                                              |
-| -------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AmpioValueError`    | the developer | A bad argument, a value beyond the frame's range, or an id the catalogue does not list. It also covers a call that needs a sweep that did not run. It subclasses `ValueError`.          |
-| `AmpioNotConfigured` | the installer | A drivable row carries no leaf, or two module rows share one override mac. A lock write can also name a mac no admitted module row carries. The installer fixes each in Designer.       |
-| `AmpioUnsupported`   | nobody        | The install cannot do it. Examples are an output whose kind does not answer the verb, a kind no timed write pulses, and a module without the roller lock. A consumer omits the control. |
-| `AmpioProtocolError` | the server    | A reply lacks what its surface always serves.                                                                                                                                           |
+| Error                | Whose fault   | Raised for                                                                                                                                                                                |
+| -------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AmpioValueError`    | the developer | A bad argument, a value beyond the frame's range, or an id the catalogue does not list. It also covers a call that needs a sweep that did not run. It subclasses `ValueError`.            |
+| `AmpioNotConfigured` | the installer | A drivable row carries no leaf, or two or more module rows share one override mac. A lock write can also name a mac no admitted module row carries. The installer fixes each in Designer. |
+| `AmpioUnsupported`   | nobody        | The install cannot do it. Examples are an output whose kind does not answer the verb, a kind no timed write pulses, and a module without the roller lock. A consumer omits the control.   |
+| `AmpioProtocolError` | the server    | A reply lacks what its surface always serves.                                                                                                                                             |
 
 ## What runs on demand, not automatically
 
@@ -210,8 +222,9 @@ well-known hostname because no LAN record identifies the M-SERV (see
 process, it behaves the same on macOS, HAOS, plain Linux, and Docker, without
 host-side `nss-mdns`/avahi configuration. A Home Assistant integration passes
 its shared `AsyncZeroconf` via `discover(zeroconf=...)` instead of a second
-multicast socket. The result is a hint based on the hostname alone. When
-credentials are known, confirm identity with `check_connection()`.
+multicast socket. It returns None when nothing answers. The result is a hint
+based on the hostname alone. When credentials are known, confirm identity with
+`check_connection()`.
 
 ## Liveness counters
 

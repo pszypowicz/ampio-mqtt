@@ -1,7 +1,8 @@
 """Everything the library knows, and how an inbound message changes it.
 
-Pure state: no sockets, no tasks, no listeners. `apply()` takes one MQTT
-message and reports what it touched, so the caller decides who to tell. That
+Pure state: no sockets, no tasks, no listeners. `apply()` and
+`apply_endpoint()` take one routed message or decoded table reply and report
+what it touched, so the caller decides who to tell. That
 also makes every protocol behaviour here reachable from a plain function call.
 """
 
@@ -66,8 +67,9 @@ class AmpioStore:
     def __init__(self) -> None:
         self.objects: dict[int, AmpioObject] = {}
         self.server_info: AmpioServerInfo | None = None
-        # The last `data/devices` reply, held whole so a `data/params_devices`
-        # push alone re-runs the door on it. None until the first reply.
+        # The served rows of the last `data/devices` reply, system rows
+        # dropped, held so a `data/params_devices` push alone re-runs the
+        # door on them. None until the first reply.
         self._catalogue: list[_protocol.ObjectMetadata] | None = None
         # The `(id, name)` pairs of the rows the door left out because they
         # carry no leaf, from the last apply. Empty when every listed row
@@ -81,15 +83,16 @@ class AmpioStore:
         # Whether the config table has answered at least once, so a gap in
         # its coverage is told apart from a table still in flight.
         self._params_received = False
-        # Catalogue objects the params table carries no row for. Every
+        # Admitted objects the params table carries no row for. Every
         # object the catalogue lists has a row on both tiers, so a
         # non-empty set is a server fault: those objects read every
         # Designer config flag as unset. Warned once per change and
         # surfaced for diagnostics.
         self.missing_params_ids: frozenset[int] = frozenset()
-        # `{object_id: seed}` from the last `data/states` snapshot,
-        # kept for the same reason; a snapshot row for an id no catalogue
-        # established creates nothing.
+        # `{object_id: seed}` from the last `data/states` snapshot, held
+        # because the snapshot and the catalogue replies arrive in no fixed
+        # order; a snapshot row for an id no catalogue established creates
+        # nothing.
         self._stan_by_id: dict[int, _protocol.StanJsonSeed] = {}
         # Latest live push per id no catalogue has established. Only the
         # catalogues decide which objects exist, so a push that races ahead
@@ -175,8 +178,9 @@ class AmpioStore:
         applied = Applied()
         handler = self._handlers.get(endpoint.name)
         if handler is None:
-            # The router yields the served endpoints alone, so a reply for
-            # one this store has no handler for never reaches here.
+            # The client sends only handler-gated served endpoints here.
+            # `testing.apply_reply` can send any served endpoint, and this
+            # raise is its documented refusal.
             raise RuntimeError(
                 f"endpoint {endpoint.name!r} has no handler on this store"
             )
@@ -241,8 +245,8 @@ class AmpioStore:
         The table is this store's one source for `params`, `czas` and `url`
         on both tiers, the hidden bit included, so the door waits for it. A
         push of the table alone re-runs the door on the held catalogue, so
-        a hidden bit that changes evicts or admits its row. The table is
-        held only after the door admitted the result.
+        a hidden bit that changes evicts or admits its row. A table the
+        door refuses is not held.
         """
         params = _protocol.parse_params_devices(data)
         if self._catalogue is not None:
@@ -349,8 +353,7 @@ class AmpioStore:
         a row that now carries the hidden bit, and a row the door rejected
         all leave here, an empty reply included (a full grant revocation
         empties a restricted view). Each evicted id also drops its held
-        sweep entries. The explicit `_guarded.discard` is what clears the
-        guard on the base store, where `_release_raw` does nothing.
+        sweep entries.
         """
         missing = [oid for oid in self.objects if oid not in present]
         if not missing:
@@ -465,7 +468,7 @@ class AmpioStore:
         return changed or created
 
     def _report_params_coverage(self) -> None:
-        """Name the catalogue objects the params table carries no row for.
+        """Name the admitted objects the params table carries no row for.
 
         The table covers the whole object catalogue, so every object the
         catalogue lists has a row on both tiers. A gap leaves those objects
@@ -836,8 +839,9 @@ class AdminStore(AmpioStore):
         key = (edge.mac, edge.prefix, edge.channel)
         ids = self._input_index.get(key)
         if ids is None:
-            # A replay waits for the routing table; a live frame for a
-            # channel no object exposes is one nothing will ever route.
+            # A replay waits for the routing table. A live frame with no
+            # route drops, including one that lands before the first
+            # catalogue builds the table.
             if retained:
                 self._pending_raw[key] = edge.state
             return
@@ -934,10 +938,10 @@ class AdminStore(AmpioStore):
         self._module_id_by_mac = {
             module.mac: module.id for module in self.modules.values()
         }
-        # An object the index no longer covers must go back to its
-        # per-object updates, or a mac change in Designer would freeze it
-        # for good. Ownership is store bookkeeping, so the release changes
-        # nothing a consumer can read and reports nothing.
+        # An object the index no longer covers (a retype out of a bridged
+        # kind) goes back to its per-object updates. Ownership is store
+        # bookkeeping, so the release changes nothing a consumer can read
+        # and reports nothing.
         covered = {oid for ids in index.values() for oid in ids}
         self._raw_owned.intersection_update(covered)
         # The guard stays set on an object the index stopped covering,
@@ -989,12 +993,12 @@ class AdminStore(AmpioStore):
             self._apply_diagnostics(mac, diagnostics, applied, retained=True)
 
 
-# The object fields both catalogue surfaces own, derived from the shared
-# row's own shape so a new column is added in one place and flows through
-# the merge. `id` keys the merge, so it is not metadata. `leaf_id` is the
-# door's input: it reaches the object as `address` and `leaf_key`, not as
-# a field of its own. The Designer config columns are not here: each tier
-# serves them from its own surface, and the merge takes them as `config`.
+# The object fields the `data/devices` catalogue owns, derived from the
+# shared row's own shape so a new column is added in one place and flows
+# through the merge. `id` keys the merge, so it is not metadata. `leaf_id`
+# is the door's input: it reaches the object as `address` and `leaf_key`,
+# not as a field of its own. The Designer config columns come from
+# `data/params_devices`, and the merge takes them as `config`.
 _METADATA_FIELDS = tuple(
     f.name for f in fields(_protocol.ObjectMetadata) if f.name not in ("id", "leaf_id")
 )

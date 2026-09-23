@@ -40,8 +40,8 @@ column mirror lags it. An output tagged 256 (0x0100) in the description record
 can still show an empty `type` column. `AmpioAdminClient.resolve_records()`
 reads the description record into `AmpioAdminClient.records`, one
 `DesignerRecord` per object id. The tag lands in the entry's
-`matter_device_type`, the location pointer in its `location`, and the entry's
-own description string in its `desc`. The column mirror stays in
+`matter_device_type`, the location name in its `location`, and the entry's own
+description string in its `desc`. The column mirror stays in
 `AmpioObject.matter_device_type`, identical on both tiers. The two fields are
 separate facts. The consumer picks which one to trust.
 
@@ -102,6 +102,7 @@ bundle's enum):
 | 25    | SatelOutput                                                          |
 | 26    | ROLLER                                                               |
 | 34    | (the RGBW output class - no symbolic name recovered from the bundle) |
+| 81    | LED_WW_CNT                                                           |
 
 ### The module-level record (`AmpioAdminClient.module_records`)
 
@@ -113,9 +114,9 @@ it from the same reply into `AmpioAdminClient.module_records`, one
 `desc` the module name from the description record. Every module that answered
 has an entry. A record without the frame gives an entry whose fields read None,
 and an `outLoc` of 0 reads unassigned. The module answered, so None is
-authoritative. On the baseline install the installer tagged the wall devices
-this way, and left the cabinet modules untagged. An M-SENS and three M-DOT
-panels carry room names.
+authoritative. A pointer with no name in the location table also reads None. On
+the baseline install the installer tagged the wall devices this way, and left
+the cabinet modules untagged. An M-SENS and three M-DOT panels carry room names.
 
 ### Module capabilities (`AmpioAdminClient.capabilities`)
 
@@ -145,8 +146,8 @@ the count comes from the module itself.
 
 A blob that is absent, not base64, or of odd length gives an empty map, and the
 module keeps its description record. Capabilities are additive, so an unreadable
-capability blob must not cost the descriptions. An empty map from a module that
-answered is authoritative. That module advertises nothing.
+capability blob must not cost the descriptions. An empty map decoded from a
+readable blob is authoritative. That module advertises nothing.
 
 ### Panel settings (`AmpioAdminClient.panel_settings`)
 
@@ -245,7 +246,7 @@ Where a module does report one and it disagrees with the layout, the module
 resolves nothing rather than guessing.
 
 `AmpioObject.block` is a different fact. It is the live roller lock the module
-pushes, and it reports whether a cover will move at all. The fields here hold
+pushes, and it reports which directions the lock blocks. The fields here hold
 the configuration, and the two never describe each other.
 
 ### The join rule
@@ -259,6 +260,7 @@ Designer's own channel key. `DESC_TYPE_BY_KIND` ships only these pairs:
 - `roleta_procenty` and `roleta_lamelki` -> 26 (ROLLER)
 - `led` -> 16 (OUT_OC_U8)
 - `rgbw` -> 34
+- `ledww` -> 81 (LED_WW_CNT)
 - `flaga` -> 6 (FLAG_BIN)
 
 A channel index repeats across classes by design, so a frame at the right index
@@ -266,27 +268,35 @@ in another class proves nothing on its own. The object name is the proof. Every
 leafed flag on the baseline install has a class-6 frame at its channel. That
 frame carries the object's own name wherever a name is set. A kind outside the
 table (`bit32`, `lin_wej`, `satel_alarm`, `temp` among them) resolves no
-location, because no class was proven for it. The read is admin-only, so the
-module catalogue is present for the join.
+location, because no class was proven for it. The join keys on `address.mac`
+against the reply's `macUser`, and it needs no module catalogue row.
 
 ### Coverage
 
 One rule reads every dataset. Present means the module answered a sweep and
 carries the entry. Absent with the mac in `last_sweep.answered_macs` means the
-module answered and carries no such entry. That answer covers the objects the
-catalogue lists when the sweep runs, and it stays true until the next sweep. If
-the catalogue admits an object after the sweep, that object needs another sweep
-before absence answers for it. Absent with the mac not answered means not known.
-Absence in `cover_parameters` or `panel_settings` can also mean the library has
-not proven that board's layout. A sweep replaces every entry of every mac it
-answered, and `RecordSweepCompleted` fires once per sweep with the `RecordSweep`
-the call returned. `answered_macs` names every module the list reply listed, and
-`silent_macs` names the catalogued modules the reply left out. The M-SERV's own
-row is a device like any other in both sets.
+module answered and carries no such entry, for a kind the join table lists. That
+answer covers the objects the catalogue lists when the sweep runs. It stays true
+until the next sweep, or until the catalogue moves the object to another leaf.
+If the catalogue admits an object after the sweep, that object needs another
+sweep before absence answers for it. Absent with the mac not answered means not
+known. Absence in `cover_parameters` or `panel_settings` can also mean the
+library has not proven that board's layout. A sweep replaces every entry of
+every mac it answered, and `RecordSweepCompleted` fires once per sweep with the
+`RecordSweep` the call returned. `answered_macs` names every module the list
+reply listed with a readable entry. A listed device is left out of
+`answered_macs` when its `macUser` or `macProd` does not parse. An absent, null
+or empty `descriptions` field counts as an empty answer. Any other
+`descriptions` value that is not a readable base64 string also leaves the device
+out. If such a module is catalogued, it lands in `silent_macs`, together with
+the catalogued modules the reply left out. The M-SERV's own row is a device like
+any other in both sets.
 
 An entry leaves with the row it belongs to. An object that leaves the catalogue
-drops its `records` and `cover_parameters` entry. A module that leaves the list
-drops its `module_records`, `capabilities` and `panel_settings` entry.
+drops its `records` and `cover_parameters` entry. An object whose leaf moves to
+another address drops the same two entries until the next sweep. A module that
+leaves the list drops its `module_records`, `capabilities` and `panel_settings`
+entry.
 
 A sweep changes no model field. It dispatches no `ObjectUpdated` and no
 `ModuleUpdated`, so a consumer that reads a dataset refreshes on

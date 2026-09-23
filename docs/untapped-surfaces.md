@@ -30,11 +30,12 @@ state is a home-status code, code 5 is "home empty", and no single sensor pulse
 moved it in forty minutes. The simulation replay is unverified too. Scope notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/270).
 
-**CAN write tree device classes.** The raw write frames for binary outputs, the
-panel buzzer, module identify and the cover roller lock are documented in
-[`panel-writes.md`](panel-writes.md) ("Panel outputs", "Panel buzzer", "Module
-identify", "Cover roller lock"). The DALI write and the module parameter writes
-on the same `ampio/to` tree remain unexplored. Probe notes:
+**CAN write tree device classes.** [`panel-writes.md`](panel-writes.md)
+documents the raw write frames for binary outputs, the panel buzzer, panel
+colors, the touch lock, module identify and the cover roller lock. Its sections
+are "Panel outputs", "Panel buzzer", "Panel colours", "Touch lock", "Module
+identify" and "Cover roller lock". The DALI write and the module parameter
+writes on the same `ampio/to` tree remain unexplored. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/60).
 
 **M-SERV display lines.** The OpenAPI spec declares `/api/set/setLcdUp/<text>`

@@ -1,8 +1,9 @@
 # Object classification
 
 The `data/devices` payload returns one row per logical object. The library
-classifies each row into exactly one kind. The kinds are `SensorKind`
-(sensor-side platforms), `InputKind` (binary or boolean platforms), `OutputKind`
+classifies each object the door admits into exactly one kind (see
+[`visibility.md`](visibility.md)). The kinds are `SensorKind` (sensor-side
+platforms), `InputKind` (binary or boolean platforms), `OutputKind`
 (controllable platforms), and `ThermostatKind` (the `reg` temperature
 controllers, climate platform).
 `classify(typ_komponentu, interpretacja, sub_sf_id)` in
@@ -124,24 +125,26 @@ linear inputs, which Designer creates with "Divide by" 10.
 What each `OutputKind.key` maps to on the consumer side - guidance the code
 deliberately does not encode:
 
-| `OutputKind.key` | Platform shape                    |
-| ---------------- | --------------------------------- |
-| `relay`          | switch                            |
-| `dimmer`         | light with brightness             |
-| `rgbw`           | light with RGBW color             |
-| `cover`          | cover, open/close/stop only       |
-| `cover_position` | cover with position               |
-| `cover_tilt`     | cover with position and slat tilt |
+| `OutputKind.key` | Platform shape                              |
+| ---------------- | ------------------------------------------- |
+| `relay`          | switch                                      |
+| `dimmer`         | light with brightness                       |
+| `rgbw`           | light with RGBW color                       |
+| `cct`            | light with brightness and color temperature |
+| `cover`          | cover, open/close/stop only                 |
+| `cover_position` | cover with position                         |
+| `cover_tilt`     | cover with position and slat tilt           |
 
-`AmpioObject` carries five read helpers for the consumer side. `is_on` reads
-`state` as a boolean for inputs and outputs. It is off for None, an empty
+`AmpioObject` carries these read helpers for the platform shapes above. `is_on`
+reads `state` as a boolean for inputs and outputs. It is off for None, an empty
 string, or `"0"`, and on otherwise. `numeric_value` reads `state` as a float for
 sensors. It is None for a missing, unparseable, or non-finite value. `position`
-is the travel percent of a position-capable cover, 0 closed to 100 open, and
-None elsewhere. `supports_tilt` says whether the object has a slat axis.
-`updated_at` is the epoch time of the report `state` came from. It is the
-M-SERV's own `on` stamp, or the local receive time for a raw edge, which carries
-no stamp. It is None until a report arrives.
+is the travel percent of a position-capable cover, 0 closed to 100 open. It is
+None elsewhere, or when the value is not an integer in 0-100. `supports_tilt`
+says whether the object has a slat axis. `updated_at` is the epoch time of the
+report `state` came from. It is the M-SERV's own `on` stamp, or the local
+receive time for a raw edge, which carries no stamp. It is None until a report
+arrives.
 
 ## The kind-key vocabulary
 

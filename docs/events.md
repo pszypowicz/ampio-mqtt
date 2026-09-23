@@ -1,12 +1,15 @@
 # The event stream
 
-One stream carries everything the library learns, in the order the library
-produced it. Every event is a frozen dataclass that carries immutable model
-instances. What an event announced stays true, no matter how late a listener
-processes it. Current state is in `client.objects` and `client.modules`.
-Listeners are consumer code. A listener whose call fails with an exception is
-logged, and the other listeners still run. A message whose processing fails is
-dropped, and the connection stays up.
+One stream carries every object, module, admission, sweep, bus and connection
+change the library learns, in the order the library produced it. `server_info`
+changes without an event, and so does a module's `last_seen` when an object push
+moves it. A consumer reads both on demand. Every event is a frozen dataclass
+whose fields are read-only. What an event announced stays true, no matter how
+late a listener processes it. Current state is in `client.objects`, and on an
+`AmpioAdminClient` also in `client.modules`. Listeners are consumer code. A
+listener whose call fails with an exception is logged, and the other listeners
+still run. A message whose processing fails is dropped, and the connection stays
+up.
 
 The docstrings in [`src/ampio_mqtt/events.py`](../src/ampio_mqtt/events.py) are
 the authoritative contract for each class. This page is the map.
@@ -25,13 +28,16 @@ unsubscribe = client.subscribe(on_object, of=ObjectUpdated)
 unsubscribe()                                       # deregister
 ```
 
-A bare subscription receives every `ClientEvent`. `of` narrows the subscription
-and, for a single class, types the callback parameter precisely. `object_id`
-narrows further, to one object's events, and dispatches in O(1) of the count of
-such registrations. This shape fits a consumer with one listener per object. It
-applies only to the classes that carry `.object` (`ObjectUpdated`, its
-`ObjectAdded` subclass, and `ObjectRemoved`). Any other combination fails with
-`AmpioValueError` at registration time.
+A bare subscription receives every `ClientEvent`. `StoreEvent` is the union of
+the classes one inbound message can produce. `ClientEvent` adds
+`RecordSweepCompleted` and the three connection events. `of` narrows the
+subscription and, for a single class, types the callback parameter precisely.
+`object_id` narrows further, to one object's events, and dispatches in O(1) of
+the count of such registrations. This shape fits a consumer with one listener
+per object. It applies only to the classes that carry `.object`
+(`ObjectUpdated`, its `ObjectAdded` subclass, and `ObjectRemoved`). Any other
+combination, or an empty `of`, fails with `AmpioValueError` at registration
+time.
 
 ## What arrives
 
@@ -41,8 +47,8 @@ applies only to the classes that carry `.object` (`ObjectUpdated`, its
 | `ObjectAdded`          | An object's first event: initial discovery, a later catalogue addition, or re-creation after eviction. It subclasses `ObjectUpdated`, so `of=ObjectUpdated` subscriptions receive it too. `of=ObjectAdded` narrows to appearances alone. | both       | no       |
 | `ObjectRemoved`        | The catalogue stopped listing an object, or the door stopped admitting it: the hidden bit set, or the leaf cleared.                                                                                                                      | both       | no       |
 | `NotConfigured`        | The set of rows the admission door refuses changed. Carries the `(id, name)` pairs of the leafless object rows and the `(mac, ids)` pairs of the shared override macs. Two empty sides mean the door refuses nothing now.                | both       | no       |
-| `ModuleUpdated`        | A module's catalogue row changed, or its diagnostics broadcast arrived.                                                                                                                                                                  | admin only | no       |
-| `ModuleRemoved`        | The module catalogue stopped listing a module.                                                                                                                                                                                           | admin only | no       |
+| `ModuleUpdated`        | A module appeared in or changed in the module list, or its diagnostics broadcast arrived. There is no separate addition event.                                                                                                           | admin only | no       |
+| `ModuleRemoved`        | The module catalogue stopped listing a module, or the mac collision door stopped admitting it.                                                                                                                                           | admin only | no       |
 | `RecordSweepCompleted` | A `resolve_records()` pass finished. Carries the `RecordSweep` it returned.                                                                                                                                                              | admin only | no       |
 | `BusEventRaised`       | Ampio logic raised a bus event (1-65535).                                                                                                                                                                                                | admin only | no       |
 | `AvailabilityChanged`  | The broker connection came up or went down (never for a `disconnect()`). `AmpioClient.available` holds the current value.                                                                                                                | both       | no       |

@@ -39,12 +39,27 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("--host", default=os.environ.get("AMPIO_HOST"))
     p.add_argument(
-        "--port", type=int, default=int(os.environ.get("AMPIO_PORT", "1883"))
+        "--host",
+        default=os.environ.get("AMPIO_HOST"),
+        help="broker host (default: AMPIO_HOST)",
     )
-    p.add_argument("--username", default=os.environ.get("AMPIO_USERNAME"))
-    p.add_argument("--password", default=os.environ.get("AMPIO_PASSWORD"))
+    p.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("AMPIO_PORT", "1883")),
+        help="broker port (default: AMPIO_PORT, else 1883)",
+    )
+    p.add_argument(
+        "--username",
+        default=os.environ.get("AMPIO_USERNAME"),
+        help="account name (default: AMPIO_USERNAME)",
+    )
+    p.add_argument(
+        "--password",
+        default=os.environ.get("AMPIO_PASSWORD"),
+        help="account password (default: AMPIO_PASSWORD)",
+    )
     p.add_argument(
         "--object-id", type=int, required=True, help="DB object id to command"
     )
@@ -55,7 +70,11 @@ def parse_args() -> argparse.Namespace:
     action.add_argument("--toggle", action="store_true", help="switch")
     action.add_argument("--open", action="store_true", help="open a cover")
     action.add_argument("--close", action="store_true", help="close a cover")
-    action.add_argument("--value", type=int, help="setValue level, 0-255")
+    action.add_argument(
+        "--value",
+        type=int,
+        help="setValue level; 0-255, or the object's own range for an analog flag",
+    )
     action.add_argument("--position", type=int, help="cover position percent, 0-100")
     action.add_argument("--color", help="RGBW as R,G,B,W (each 0-255)")
     action.add_argument("--ww", help="CCT light as POWER,COLDNESS (each 0-255)")
@@ -81,8 +100,8 @@ def parse_args() -> argparse.Namespace:
     if not args.host:
         p.error("missing --host (or AMPIO_HOST env)")
     if not args.username:
-        # An empty username namespaces every topic as ampio/.../ /... and the
-        # run just hangs; fail loud instead.
+        # Report a missing username as an argument error before the client
+        # constructor refuses it.
         p.error("missing --username (or AMPIO_USERNAME env)")
     return args
 

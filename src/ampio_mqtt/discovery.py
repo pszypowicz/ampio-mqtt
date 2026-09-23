@@ -59,7 +59,9 @@ async def discover(
 
     A candidate is returned when the hostname answers via mDNS *and* a TCP
     connection to the resolved address succeeds. Never raises on "not
-    found".
+    found". ``timeout`` is the whole budget in seconds, and a non-positive
+    value raises ``AmpioValueError``. ``port`` is the TCP port the probe
+    connects to.
 
     ``zeroconf`` lets HA pass its shared ``AsyncZeroconf`` so the discovery
     doesn't open a competing multicast socket. When omitted, a short-lived

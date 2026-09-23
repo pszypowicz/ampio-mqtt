@@ -2155,8 +2155,8 @@ def test_a_retained_diagnostics_frame_before_the_module_list_applies_at_the_fold
 
 
 def test_a_live_frame_for_an_unknown_channel_is_dropped() -> None:
-    """Only a replay waits for the catalogue. A live frame for a channel no
-    object exposes is one nothing will ever route."""
+    """Only a replay waits for the catalogue. A live frame with no route yet
+    drops, even for a channel a later catalogue exposes."""
     store = _store()
     _apply(store, "ampio/from/CAFE/state/f/32", "1")
     _apply(store, "ampio/from/CAFE/b/4F", _DIAGNOSTICS)

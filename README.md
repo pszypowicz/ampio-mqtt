@@ -69,17 +69,18 @@ the API detail.
 - Replacement-stable identity for objects and modules, so a hardware swap keeps
   its entities ([`docs/identity.md`](docs/identity.md)).
 - Commands for relays, dimmers, RGBW and color-temperature lights, covers with
-  stop and tilt with the roller lock, the regulator setpoint, scenes, and bus
-  events. A push notification to the install's mobile app rides the same
-  surface. The M-DOT panel buzzer, its touch field colours and touch lock, and
-  the module identify LED are admin-only. The `command()` escape hatch sends any
+  stop and tilt, the regulator setpoint, scenes, and bus events. A push
+  notification to the install's mobile app rides the same surface. The roller
+  lock, the M-DOT panel buzzer, its touch field colours and touch lock, and the
+  module identify LED are admin-only. The `command()` escape hatch sends any
   other `/api` verb ([`docs/commands.md`](docs/commands.md)).
 - A low-latency input bridge from the raw per-channel topics on
   `AmpioAdminClient`
   ([`docs/raw-channel-bridge.md`](docs/raw-channel-bridge.md)).
-- Room mapping, per-module health, reported capabilities, touch panel settings
-  and cover travel parameters, eviction events for server-side deletions, and
-  connection diagnostics for a consumer's report blob.
+- Room mapping, eviction events for server-side deletions, and connection
+  diagnostics for a consumer's report blob. Per-module health, reported
+  capabilities, touch panel settings and cover travel parameters are admin-only
+  ([`docs/account-tiers.md`](docs/account-tiers.md)).
 - LAN discovery of the M-SERV by multicast DNS, self-contained in the process
   ([`docs/discovery-flow.md`](docs/discovery-flow.md)).
 
@@ -88,11 +89,12 @@ the API detail.
 A dedicated standard account is the recommended shape for Home Assistant. It
 sees exactly the objects granted in the Ampio app and can command only those.
 `AmpioAdminClient` adds the module catalogue, the low-latency raw tree, the
-module diagnostics, and the CAN write surfaces (panel LEDs and colours, the
-buzzer, the touch lock, and the identify LED). Bus events are the exception on
-both tiers. Any account can raise any event number, and the logic behind an
-event runs with full authority. [`docs/account-tiers.md`](docs/account-tiers.md)
-has the capability table and the measured latency difference.
+module diagnostics, the description-record sweep, and the CAN write surfaces
+(panel LEDs and colours, the buzzer, the touch lock, the identify LED, and the
+cover roller lock). Bus events are the exception on both tiers. Any account can
+raise any event number, and the logic behind an event runs with full authority.
+[`docs/account-tiers.md`](docs/account-tiers.md) has the capability table and
+the measured latency difference.
 
 ## Testing a consumer against the library
 
@@ -113,8 +115,9 @@ assert store.objects.keys() == {193}
 
 `build_store` takes the client class, because the class is the account tier.
 `apply_reply` names the reply the way the endpoint table does and returns the
-events the reply produced. Use `parse_module_address` to derive the
-`ModuleAddress` of a `leafId` token rather than to build one by hand.
+events the reply produced, as a list of `StoreEvent` values. Use
+`parse_module_address` to derive the `ModuleAddress` of a `leafId` token rather
+than to build one by hand.
 
 ## Supported M-SERV versions
 
