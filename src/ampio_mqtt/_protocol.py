@@ -1168,8 +1168,9 @@ def parse_stan_json(stan_json: str) -> StanJsonSeed:
 # and retained payloads all derive from it. To add an endpoint: verify
 # the wire shape live, add the row, give a fetchable endpoint a `parses=`
 # parser (a state-mutating one gets an entry in `AmpioStore._handler_table()`,
-# or in the `AdminStore` override for an admin-only reply, instead), and expose a `fetch_<name>()` awaiting `AmpioClient._fetch` -
-# `fetch_scenes()` is the reference shape.
+# or in the `AdminStore` override for an admin-only reply, instead), and
+# expose a `fetch_<name>()` awaiting `AmpioClient._fetch` - `fetch_scenes()`
+# is the reference shape.
 #
 # A request publishes ``req_payload`` (a keyword, or "" for the dedicated
 # ``states``/``info`` surfaces) to ``ampio/control/<user>/<req_surface>``;
@@ -1383,7 +1384,7 @@ _STATUS_LIGHT_ACTION = "60"  # per-field RGB status indicator
 _KEY_LOCK_ACTION = "f02f"  # destination 303, so the escape form
 # The backlight and status light actions use the vendor's sub-function 1,
 # the code the stored conditions on live modules carry. For the backlight, 1 and 2
-# both set the resting colour and neither outranks the other.
+# both set the resting color and neither outranks the other.
 _ACTION_SUB_FUNCTION = "01"
 # A panel reports at most 24 touch fields, so three mask bytes cover any
 # of them. A module reads the width its own field count needs and ignores
@@ -1442,7 +1443,7 @@ def panel_field_mask(fields: Sequence[int] | None, width: int) -> str:
 def raw_backlight_payload(
     red: int, green: int, blue: int, white: int, mask: str
 ) -> str:
-    """The per-field backlight colour action as ASCII hex."""
+    """The per-field backlight color action as ASCII hex."""
     return (
         f"{_ACTION_FRAME_PREFIX}{_BACKLIGHT_ACTION}{_ACTION_SUB_FUNCTION}"
         f"{red:02x}{green:02x}{blue:02x}{white:02x}{mask}"
@@ -1450,7 +1451,7 @@ def raw_backlight_payload(
 
 
 def raw_status_light_payload(red: int, green: int, blue: int, mask: str) -> str:
-    """The per-field status indicator colour action as ASCII hex."""
+    """The per-field status indicator color action as ASCII hex."""
     return (
         f"{_ACTION_FRAME_PREFIX}{_STATUS_LIGHT_ACTION}{_ACTION_SUB_FUNCTION}"
         f"{red:02x}{green:02x}{blue:02x}{mask}"

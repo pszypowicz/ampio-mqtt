@@ -19,9 +19,9 @@ notes: [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/23).
 **Presence simulation and detection.** The M-SERV creates two system rows of its
 own, `detekcja` and `symulacja`. Neither row is a module output, and neither
 carries a leaf. The library drops both by their type as it reads the catalogue,
-so neither reaches the discovery door. No object represents them, and the
-missing leaf raises nothing. The Ampio app configures them over three surfaces
-the library does not consume. The simulation switch rides
+so discovery never checks either row for a leaf. No object represents them, and
+the missing leaf raises nothing. The Ampio app configures them over three
+surfaces the library does not consume. The simulation switch rides
 `/api/json/simulation/active` and `/api/json/simulation/deactive` on the `api`
 control topic. The device lists ride the `simulation` and `detection` topics of
 the account's `control` namespace. The wire facts are in
@@ -31,11 +31,11 @@ moved it in forty minutes. The simulation replay is unverified too. Scope notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/270).
 
 **CAN write tree device classes.** [`panel-writes.md`](panel-writes.md)
-documents the raw write frames for binary outputs, the panel buzzer, panel
-colors, the touch lock, module identify and the cover roller lock. Its sections
-are "Panel outputs", "Panel buzzer", "Panel colours", "Touch lock", "Module
-identify" and "Cover roller lock". The DALI write and the module parameter
-writes on the same `ampio/to` tree remain unexplored. Probe notes:
+documents the raw write frames for binary outputs, the panel buzzer and panel
+colors. It also documents the touch lock, module identify and the cover roller
+lock. Its sections are "Panel outputs", "Panel buzzer", "Panel colors", "Touch
+lock", "Module identify" and "Cover roller lock". The DALI write and the module
+parameter writes on the same `ampio/to` tree remain unexplored. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/60).
 
 **M-SERV display lines.** The OpenAPI spec declares `/api/set/setLcdUp/<text>`
@@ -47,13 +47,13 @@ verified. Probe notes:
 [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/63).
 
 **`ampio/from/<MAC>/raw` leaf.** The M-SERV mirrors a CAN frame whose first byte
-is not the broadcast byte `0xFE` onto this leaf as ASCII hex, at QoS 1 and not
-retained. On the baseline install, two modules emit one. The M-SERV sends a
-three-byte frame every 5 s, of the family that Designer names `mqtt`. The
-M-CON-s on firmware 908 sends one every 10 s. Designer feeds the leaf to its CAN
-packet monitor and decodes only a module's IPv4 report and MLED events. The
-library does not subscribe. A subscription would add about 0.3 messages per
-second and would give `last_seen` to the M-SERV row and to that one module.
+is not the broadcast byte `0xFE` onto this leaf as ASCII hex. The frame arrives
+at QoS 1 and is not retained. On the baseline install, two modules emit one. The
+M-SERV sends a three-byte frame every 5 s, of the family that Designer names
+`mqtt`. The M-CON-s on firmware 908 sends one every 10 s. Designer feeds the
+leaf to its CAN packet monitor and decodes only a module's IPv4 report and MLED
+events. The library does not subscribe. A subscription adds about 0.3 messages
+per second, and it gives `last_seen` to the M-SERV row and to that one module.
 Probe notes: [tracker](https://github.com/pszypowicz/ampio-mqtt/issues/188).
 
 **The rest of the `params` blob.** Every module's stored settings ride a base64

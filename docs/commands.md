@@ -37,9 +37,9 @@ stronger. A concurrent change from another source satisfies it. A timeout is how
 every silent drop shows. The drops are an ignored verb, an out-of-grant object,
 a read-only object, or a command that changed nothing and thus pushed nothing.
 Latency bounds the timeout choice. Most verbs echo in under ~200 ms on the
-per-object path, and `arm`/`disarm` take ~1 s, so `confirm=2.0` covers the
-measured surface. Scene commands and `setEvent` fan out beyond a single object
-and offer no per-object echo.
+per-object path, and `arm`/`disarm` take ~1 s, so `confirm=2.0` covers both
+latencies. Scene commands and `setEvent` fan out beyond a single object and
+offer no per-object echo.
 
 The `ampio/to/<mac>/...` CAN tree is the other write path, documented in Ampio's
 own MQTT API note. It has per-channel `cmd` topics and a `raw` hex channel that
@@ -94,7 +94,7 @@ Remember the last non-zero state value (the packed color, decoded as
 **A `ledww` light needs no such replay.** Its two axes are independent, so
 `setWWPower 0` turns the light off and holds the color temperature. The next
 `setWWPower` with a non-zero value brings the light back at the temperature it
-had. `turn_off()` sends that verb for a CCT object, and `turn_on()` refuses: the
+had. `turn_off()` sends that verb for a CCT object, and `turn_on()` refuses. The
 library has no value to pick, because the power the light had before is the
 consumer's to remember. `set_ww()` writes both axes at once, and
 `set_ww_coldness()` writes the temperature axis alone. The state value packs
@@ -188,8 +188,8 @@ all arrive unchanged, because the payload is an MQTT string rather than an HTTP
 request line. A 300 character message arrives whole.
 
 **Do not put a `/` in the message.** The M-SERV reads a second path segment as a
-user name, so it drops the slash and everything after it. `AmpioClient` and
-`send_notification()` refuse such a message rather than truncate it.
+user name. It drops the slash and everything after it. `send_notification()`
+refuses such a message with `AmpioValueError` rather than truncate it.
 
 Every registered user of the install receives the notification. The OpenAPI spec
 lists a `/api/pushNotification/<message>/<user>` form for one named user, and

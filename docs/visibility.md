@@ -109,23 +109,21 @@ its color temperature (see [`commands.md`](commands.md)).
 `AmpioObject.pulse_ms` therefore reports the pulse length a timed write honors,
 in milliseconds. It reads `czas` times 10 on the three kinds that revert, and 0
 everywhere else. Four of the ten editor types (`flaga_l`, `flaga_p`, `rgb` and
-`rgbww`) carry no classification row, so they read 0 with no claim about their
-wire behavior. The field is the app's default pulse length. The app reads it and
+`rgbww`) carry no classification row. They read 0 with no claim about their wire
+behavior. The field is the app's default pulse length. The app reads it and
 sends the timed command itself. A consumer honors it by passing the value to
 `AmpioClient.set_value(pulse_ms=...)`, which raises for a kind that discards the
 time. Read `AmpioObject.czas` for the raw column on any type.
 
-The M-SERV ships its own Matter bridge (a matter.js app launched by
-`ampio-server`). That bridge's production gate corroborates the enum: it exposes
-an object only when `(params & 2**37) && !(params & 16)`. Bit 37 is the
-per-object Matter opt-in set in Designer. Bit 4 is the hidden/stub marker the
-door checks. The `leafId` structure `0_<macHex>_<sfId>_<subSfId>_<ioNo>` that
-`AmpioObject.address` parses is likewise the structure the bridge's own
-classifier reads. The bridge also shows why a dedicated integration is the right
-path for sensors. It types objects through a registry with known gaps (no
-`lin_wej` branch, and loudness has no Matter device type at all). And it exposes
-only the channels hand-flagged for Matter - a dozen on the baseline install,
-with humidity, pressure, illuminance, and CO2 on zero modules.
+The M-SERV ships its own Matter bridge. The bridge exposes an object only when
+`params` bit 37 is set and bit 4 is clear. Bit 37 is the per-object Matter
+opt-in set in Designer. Bit 4 is the hidden/stub marker the door checks. The
+bridge reads the same `leafId` structure `0_<macHex>_<sfId>_<subSfId>_<ioNo>`
+that `AmpioObject.address` parses. The bridge also shows why a dedicated
+integration is the right path for sensors. Its object typing has known gaps. It
+does not type a `lin_wej` object, and loudness has no Matter device type at all.
+And it exposes only the channels hand-flagged for Matter - a dozen on the
+baseline install, with humidity, pressure, illuminance, and CO2 on zero modules.
 
 ## The read-only marker (`AmpioObject.read_only`)
 
@@ -133,10 +131,9 @@ Designer has a per-object "read only" checkbox. The checkbox sets `params` bit 6
 and nothing else. The marker has these effects:
 
 - The M-SERV enforces the marker itself, on both account tiers. An `/api` write
-  to a read-only object produces no echo and no error. A watch on `hw/out`
-  during the write shows why. The M-SERV emits zero CAN frames for the read-only
-  object. The same write to a writable flag emits the normal frame set. Reads
-  are unaffected on every surface.
+  to a read-only object produces no echo and no error. The M-SERV sends no CAN
+  frame for a read-only object. The same write to a writable flag sends the
+  normal frame set. Reads are unaffected on every surface.
 - The marker never reaches the module. The description record is identical for a
   read-only flag and a writable one, so only the catalogue `params` field
   announces it.

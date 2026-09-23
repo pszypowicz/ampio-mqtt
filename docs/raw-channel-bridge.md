@@ -11,7 +11,7 @@ The M-SERV publishes the same data twice:
   NOT user-scoped, and **retained**. The broker holds every channel's last value
   (edges republish retained), so a subscriber receives the complete current
   input state at subscribe time. This is the decoded-CAN form: plain-text
-  payloads (`"0"`, `"1"`, ...) keyed by the module's effective bus MAC and a
+  payloads (`"0"`, `"1"`, ...) keyed by the module's effective bus mac and a
   per-prefix channel index.
 
 The raw form arrives **first** for input changes (the M-SERV decodes CAN and
@@ -33,19 +33,19 @@ the next replay, because every channel is retained.
 
 The replay arrives before the catalogues can build that index. The broker sends
 it within a second of the subscribe, and a catalogue reply is later. So the
-store holds a replayed value whose channel it cannot route yet, keyed the way
-the index keys it, and folds the held values in as soon as the catalogue builds
-the routing. Because the replay arrives first, a bridged object whose channel
-the replay carries holds its value and its raw ownership when `connect()`
-returns True. The bridge is live from the first connect rather than from the
-first press. A **live** frame for a channel no object exposes still drops,
-because nothing will ever route it.
+store holds a replayed value whose channel it cannot route yet. It keys the held
+value the way the index keys it. It folds the held values in as soon as the
+catalogue builds the routing. Because the replay arrives first, a bridged object
+whose channel the replay carries holds its value and its raw ownership when
+`connect()` returns True. The bridge is live from the first connect rather than
+from the first press. A **live** frame for a channel no object exposes still
+drops, because nothing will ever route it.
 
 An input whose module publishes no raw state (the M-SERV's own virtual objects)
 never becomes raw-owned. It lives on the per-object path with snapshot resync,
-unchanged. The same holds for a channel the broker happens to hold no frame for:
-the object stays on the per-object path until a raw value arrives, so nothing
-goes dark for want of a replay.
+unchanged. The same holds for a channel the broker holds no frame for. The
+object stays on the per-object path until a raw value arrives. So nothing goes
+dark for want of a replay.
 
 The M-SERV serves the raw tree only to **administrator** accounts. The broker
 ACL delivers nothing on `ampio/from/#` to a standard account, retained or live,
@@ -91,7 +91,7 @@ case. The library parses the mac as a number, so it reads either form.
 The channel wildcards are bridged to the owning `AmpioObject`, so listeners see
 the same push as for any other update. The `o` prefix covers every `przekaznik`
 on a binary-output leaf. The `a` prefix covers the ones on an open-collector
-leaf (class 67). Those report a u8 there and never on their object topic. A
+leaf (class 67). Those report a u8 there and never on their per-object topic. A
 touch panel's per-field status LEDs have no other retained surface, and a
 relay's outputs share the channel shape, so both gain the raw-first path. The
 event wildcard feeds `BusEventRaised` subscribers - a different surface with its
@@ -141,8 +141,8 @@ sensor (relays, panels) report voltage only.
 
 The broker retains the last frame of each sending module, so the fields are
 present from the subscribe replay on every connect. The replay arrives before
-the module list, so the store holds each frame by mac and folds it in when the
-list lands, the same way it holds a replayed channel value. The broadcasts then
+the module list. So the store holds each frame by mac and folds it in when the
+list lands. It holds a replayed channel value the same way. The broadcasts then
 refresh them. A replayed frame updates the values but not `last_seen`, because a
 replay says nothing about whether the module is alive now. The same holds for a
 replayed raw channel value.
@@ -212,20 +212,20 @@ Passive retained sweeps of `ampio/from/+/state/#` on the baseline install show
 more prefixes than the bridge consumes. The full set, with the module classes
 that publish each:
 
-| Prefix           | Publishes on                 | Meaning                                                                                                                                                                    |
-| ---------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `f`              | every module                 | Binary flags - bridged.                                                                                                                                                    |
-| `i`              | most modules                 | Binary inputs - bridged.                                                                                                                                                   |
-| `o`              | most modules                 | Binary outputs - bridged for `przekaznik` (see above).                                                                                                                     |
-| `a`              | dimmers, OC, rollers, relays | Analog output/input channels - bridged for `przekaznik` on an open-collector leaf (class 67), whose object topic never echoes. The per-object form is preferred elsewhere. |
-| `t`              | M-SENS                       | Temperature - the per-object form is preferred.                                                                                                                            |
-| `rgbw`           | RGBW-capable modules         | Packed color - the per-object form is preferred.                                                                                                                           |
-| `afu8`, `afi16`  | M-SERV, panels, M-INOC       | Analog flags, u8 and i16 - the `FLAG_ANALOG_U8` / `FLAG_ANALOG_I16` functions of the module's own census (`supportedFunctions` in its `device_api` record). Not bridged.   |
-| `au16l`          | M-SENS only                  | 16-bit sensor channels (humidity, pressure, noise, illuminance, air quality).                                                                                              |
-| `au32`           | alarm gateway (M-CON) only   | 32-bit channels of the gateway's alarm system (`bit32` objects).                                                                                                           |
-| `bi`, `bo`       | alarm gateway (M-CON) only   | Binary inputs and outputs of the gateway's alarm system (zone table, 128 channels each on the baseline install).                                                           |
-| `armed`, `alarm` | alarm gateway (M-CON) only   | Alarm partition states - the pair behind `satel_alarm` objects.                                                                                                            |
-| `rs`             | M-SERV only                  | Heating-zone setpoint in °C (`ampio/from/1/state/rs/<zone>`), the raw mirror of the `reg` object's target.                                                                 |
+| Prefix           | Publishes on                 | Meaning                                                                                                                                                                        |
+| ---------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `f`              | every module                 | Binary flags - bridged.                                                                                                                                                        |
+| `i`              | most modules                 | Binary inputs - bridged.                                                                                                                                                       |
+| `o`              | most modules                 | Binary outputs - bridged for `przekaznik` (see above).                                                                                                                         |
+| `a`              | dimmers, OC, rollers, relays | Analog output/input channels - bridged for `przekaznik` on an open-collector leaf (class 67), whose per-object topic never echoes. The per-object form is preferred elsewhere. |
+| `t`              | M-SENS                       | Temperature - the per-object form is preferred.                                                                                                                                |
+| `rgbw`           | RGBW-capable modules         | Packed color - the per-object form is preferred.                                                                                                                               |
+| `afu8`, `afi16`  | M-SERV, panels, M-INOC       | Analog flags, u8 and i16 - the `FLAG_ANALOG_U8` / `FLAG_ANALOG_I16` functions of the module's own census (`supportedFunctions` in its `device_api` record). Not bridged.       |
+| `au16l`          | M-SENS only                  | 16-bit sensor channels (humidity, pressure, noise, illuminance, air quality).                                                                                                  |
+| `au32`           | alarm gateway (M-CON) only   | 32-bit channels of the gateway's alarm system (`bit32` objects).                                                                                                               |
+| `bi`, `bo`       | alarm gateway (M-CON) only   | Binary inputs and outputs of the gateway's alarm system (zone table, 128 channels each on the baseline install).                                                               |
+| `armed`, `alarm` | alarm gateway (M-CON) only   | Alarm partition states - the pair behind `satel_alarm` objects.                                                                                                                |
+| `rs`             | M-SERV only                  | Heating-zone setpoint in °C (`ampio/from/1/state/rs/<zone>`), the raw mirror of the `reg` object's target.                                                                     |
 
 Two companion claims from a third-party integration stay unverified: `rsdn/<n>`
 (day/night setpoints) and `rm/<n>` (operating mode, 0=calendar 1=manual-day
@@ -237,7 +237,7 @@ inventory exists so that classification work starts from the real set.
 
 ## Routing key
 
-Raw tree topics carry the module's effective MAC, not the user namespace. The
+Raw tree topics carry the module's effective mac, not the user namespace. The
 dispatcher's lookup table is keyed on `(address.mac, prefix, funkcja)`, the mac
 the leaf embeds and the raw topics carry, with no module-list lookup. `funkcja`
 is the 1-based state channel the raw topic carries, so a reader does not confuse

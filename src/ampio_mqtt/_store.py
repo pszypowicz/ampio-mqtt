@@ -3,7 +3,7 @@
 Pure state: no sockets, no tasks, no listeners. `apply()` and
 `apply_endpoint()` take one routed message or decoded table reply and report
 what it touched, so the caller decides who to tell. That
-also makes every protocol behaviour here reachable from a plain function call.
+also makes every protocol behavior here reachable from a plain function call.
 """
 
 from __future__ import annotations

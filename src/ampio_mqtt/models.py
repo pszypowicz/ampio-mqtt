@@ -234,7 +234,7 @@ class PanelLightSignal(IntEnum):
 
 @dataclass(slots=True, frozen=True)
 class PanelSettings:
-    """A touch panel's stored appearance and behaviour settings.
+    """A touch panel's stored appearance and behavior settings.
 
     These are the panel's configured defaults, held in the module and
     read back with the rest of its record. They are what the panel
@@ -248,7 +248,7 @@ class PanelSettings:
 
     # Resting backlight of the touch field icons, as red, green, blue, white.
     touch_field_color: tuple[int, int, int, int]
-    # Colour the status indicator shows, as red, green, blue.
+    # Color the status indicator shows, as red, green, blue.
     status_color: tuple[int, int, int]
     # Per field, how its status indicator reacts to a touch. Read the
     # values with `PanelLightSignal`.
@@ -369,10 +369,10 @@ class AmpioObject:
     # Matter device type ID from the Designer "Description in device" tag
     # (`type` column; "256" = 0x0100 On/Off Light). None when untagged. A
     # pure catalogue fact, served identically to both tiers, taken from each
-    # catalogue reply and never touched by a sweep. The description record's own (fresher,
-    # admin-only) tag is `DesignerRecord.matter_device_type`, and which one
-    # wins is the consumer's choice. docs/description-records.md holds the
-    # vocabulary and the storage path.
+    # catalogue reply and never touched by a sweep. The description record's
+    # own (fresher, admin-only) tag is `DesignerRecord.matter_device_type`,
+    # and which one wins is the consumer's choice.
+    # docs/description-records.md holds the vocabulary and the storage path.
     matter_device_type: int | None = None
     # The `czas` column as served, in the wire unit of 10 ms ticks. Its
     # meaning follows the component type: Designer's "turn-on time" on the

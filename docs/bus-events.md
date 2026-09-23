@@ -24,9 +24,9 @@ The two directions are gated differently:
 
 - **Raising** works on both account tiers, and nothing bounds it. The Ampio app
   shows a per-user rights list per event, but that list is not enforced here. A
-  standard account raised an event it had no right to, checked against a control
-  event created without that right. Because the logic behind an event can drive
-  anything, this is how an account reaches objects it cannot command directly.
+  standard account can raise an event that its rights list does not grant.
+  Because the logic behind an event can drive anything, this is how an account
+  reaches objects it cannot command directly.
 - **Receiving** is administrator-only. It rides the raw tree. A standard account
   that holds the event's right still sees nothing - not on the raw tree, and not
   anywhere in its own namespace.
@@ -36,10 +36,9 @@ number, low byte first. The frame is `FE 2B BD 00` for 189 and `FE 2B BD BD`
 for 48573. A legacy 8-bit event is one whose high byte is zero.
 
 Does logic bound to an 8-bit event also fire for a 16-bit event that shares one
-of its bytes? This was tested against a module rule bound to event 189
-(`0x00BD`). Neither `0xBDBD` nor `0xBD00` moved it, 189 itself toggled reliably,
-and an unrelated event did nothing. The match is on the full 16-bit value, at
-least on the M-DOT firmware this ran against.
+of its bytes? No. Logic bound to an event matches the full 16-bit value. A rule
+bound to event 189 (`0x00BD`) does not fire for `0xBDBD` or `0xBD00`. Proven on
+M-DOT firmware.
 
 **The M-SERV raises event 254 from its own MAC whenever a client asks for a
 discovery refresh**, so `connect()` normally produces one. It is not periodic. A

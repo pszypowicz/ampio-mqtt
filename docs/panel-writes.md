@@ -2,7 +2,7 @@
 
 This page continues [`protocol.md`](protocol.md) with the raw CAN output frame
 for panel status LEDs, relays, and open-collector outputs. It also covers the
-panel buzzer, the touch field colours, the touch lock, the module identify LED,
+panel buzzer, the touch field colors, the touch lock, the module identify LED,
 and the cover roller lock.
 
 ## Panel outputs
@@ -98,10 +98,10 @@ M-DOT panels are the proven targets. The touch-press beep length and its
 per-field mask are stored settings, readable as
 `AmpioAdminClient.panel_settings` and written only by the Designer.
 
-## Panel colours
+## Panel colors
 
 The M-DOT panels light each touch field's icon, and show a separate status
-indicator beside it. Both colours are stored settings, read back as
+indicator beside it. Both colors are stored settings, read back as
 `AmpioAdminClient.panel_settings` (see
 [`description-records.md`](description-records.md)). Two raw frames override
 them at runtime:
@@ -125,19 +125,19 @@ selects every field.
 `mask` selects the touch fields, one bit per field, least significant first, so
 field 1 is bit 0. A panel reads the width its own field count needs and ignores
 any surplus. The library therefore always sends the full three bytes, which
-covers the 24 fields a panel can report, and no panel write depends on a record
-sweep. A field number above 24 is refused with `AmpioValueError`, because no
-frame can carry it. The ceiling is public as `MAX_PANEL_FIELD`, so a consumer
+cover the 24 fields a panel can report. As a result, no panel write depends on a
+record sweep. A field number above 24 is refused with `AmpioValueError`, because
+no frame can carry it. The ceiling is public as `MAX_PANEL_FIELD`, so a consumer
 can check a field number before it calls. A field the panel does not have is
 accepted and the panel ignores it.
 
 These frames write nothing to the module's configuration. The stored settings
-stay untouched, so a panel restart returns the configured colours. Nothing on
-the bus reports the current colour, so no readback exists.
+stay untouched, so a panel restart returns the configured colors. Nothing on the
+bus reports the current color, so no readback exists.
 
-The sub-function `02` also sets the resting colour, and neither code outranks
-the other. The last frame wins in either order. What else separates the two
-codes is not known, and it does not show in the resting colour.
+The sub-function `02` also sets the resting color, and neither code outranks the
+other. The last frame wins in either order. What else separates the two codes is
+not known, and it does not show in the resting color.
 
 ## Touch lock
 
@@ -151,15 +151,15 @@ an idle one.
 ampio/to/<machex>/raw   0c0703 f0 2f <fn> <time:2>
 ```
 
-The key lock destination is 303, above one byte, so it takes the escape form:
-`0xf0` with the action function in the low nibble, then the destination's low
-byte `0x2f`. `fn` is 1 to lock and 0 to release at once. `time` is little-endian
-10 ms ticks.
+The touch lock destination is 303, above one byte, so it takes the escape form.
+That form is `0xf0` with the action function in the low nibble, then the
+destination's low byte `0x2f`. `fn` is 1 to lock and 0 to release at once.
+`time` is little-endian 10 ms ticks.
 
 **The lock always expires.** There is no indefinite form. A zero time is a lock
 of zero length, not a latch, so the panel beeps and a touch works at once. The
-16-bit field caps a single lock at 655.35 s, about 10 minutes 55 seconds, so
-holding a panel locked means re-arming before the current lock runs out.
+16-bit field caps a single lock at 655.35 s, about 10 minutes 55 seconds.
+Holding a panel locked means re-arming before the current lock runs out.
 
 `lock_panel(module_id, seconds=...)` sets the lock, and `seconds` is 0.01 to
 655.35 s. `unlock_panel()` releases the lock early. Both are `AmpioAdminClient`
@@ -228,18 +228,18 @@ the mask, and it also decides whether the write works at all.
 | No roller channel count | Runs                  | Dropped     |
 
 The second row is a real module generation, not a fault. Those modules take the
-same envelope, the same destination and the same mask for an ordinary move, and
-they discard the three lock sub-functions in silence. So the capability count is
-the gate, and it is also the number the mask needs.
+same envelope, the same destination and the same mask for an ordinary move. They
+discard the three lock sub-functions in silence. So the capability count is the
+gate, and it is also the number the mask needs.
 
-Those modules drop all three lock sub-functions (8, 9 and 10), on both the
-`f0 05` and the `00` destination, with a 1-byte and a 2-byte mask. `00` is the
-destination that the module's own stored rules carry. An ordinary move on `00`
-runs the motor, so the frame reaches the module, and the lock sub-functions are
-absent from that firmware. On such a module, `block` stays at 0 after the lock
-frame, and the release frame changes nothing. A module that advertises a count
-answers the same frame: the lock frame sets `block` to 2, and the release frame
-returns it to 0.
+Those modules drop all three lock sub-functions (8, 9 and 10) on both the
+`f0 05` and the `00` destination. The drop happens with a 1-byte and with a
+2-byte mask. `00` is the destination that the module's own stored rules carry.
+An ordinary move on `00` runs the motor, so the frame reaches the module, and
+the lock sub-functions are absent from that firmware. On such a module, `block`
+stays at 0 after the lock frame, and the release frame changes nothing. A module
+that advertises a count answers the same frame: the lock frame sets `block` to
+2, and the release frame returns it to 0.
 
 #### What a consumer reads
 

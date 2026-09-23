@@ -1,7 +1,7 @@
 """The store applies messages without a client, a broker, or an event loop.
 
 These drive the stores directly, which is the point of them being separate:
-protocol behaviour is reachable from a plain function call, and what a message
+protocol behavior is reachable from a plain function call, and what a message
 changed is a return value rather than something to reconstruct from callbacks.
 Tests speak in wire topics for readability; :func:`_apply` routes them the
 way the client dispatcher does, with the endpoint scoping the client applies

@@ -2,7 +2,7 @@
 
 Owns the aiomqtt client, the subscribe set, and the reconnect loop, and knows
 nothing about what the messages mean - it hands each one to a callback. Keeping
-that boundary means a protocol change never touches reconnect behaviour, and a
+that boundary means a protocol change never touches reconnect behavior, and a
 transport change never touches state.
 """
 

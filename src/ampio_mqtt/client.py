@@ -1537,8 +1537,8 @@ class AmpioAdminClient(AmpioClient):
         None until both the module catalogue and the server info have
         arrived, which :meth:`wait_for_initial_discovery` waits for. A
         lasting None says no admitted module row is the M-SERV's own
-        (absent, or refused for a mac collision). Device grouping that needs no module row at all
-        is :pyattr:`AmpioObject.is_server_owned`.
+        (absent, or refused for a mac collision). Device grouping that needs
+        no module row at all is :pyattr:`AmpioObject.is_server_owned`.
         """
         info = self._store.server_info
         if info is None:
@@ -2004,10 +2004,10 @@ class AmpioAdminClient(AmpioClient):
         *,
         fields: Sequence[int] | None = None,
     ) -> None:
-        """Set the resting colour of a panel's touch field icons.
+        """Set the resting color of a panel's touch field icons.
 
         ``module_id`` is :pyattr:`AmpioModule.id`. ``fields`` names the
-        1-based touch fields to colour, and None colours every field the
+        1-based touch fields to color, and None colors every field the
         panel has. Each channel is 0-255; the white channel drives the
         panel's own white LEDs, so ``0, 0, 0, 255`` is the plain white
         most installs configure.
@@ -2015,7 +2015,7 @@ class AmpioAdminClient(AmpioClient):
         This is a runtime override, not a setting. It takes effect at
         once, writes no configuration, and a panel restart restores the
         module's :pyattr:`panel_settings` entry, its stored default.
-        Nothing on the bus reports the current colour, so there is no
+        Nothing on the bus reports the current color, so there is no
         readback.
 
         ``AmpioValueError`` for an out-of-range value, including a field
@@ -2043,7 +2043,7 @@ class AmpioAdminClient(AmpioClient):
         *,
         fields: Sequence[int] | None = None,
     ) -> None:
-        """Set the colour a panel's status indicators show.
+        """Set the color a panel's status indicators show.
 
         The indicator is what reacts when a field is touched or its
         object is on. It has no white channel, which is the only

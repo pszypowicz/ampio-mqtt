@@ -37,8 +37,8 @@ value sensor or the `analog_<n>` fallback.
 - `flaga_liniowa` and `flaga_liniowa16` are the analog flags, the module's own
   u8 and signed 16-bit variables. Both answer `setValue` and neither answers the
   switch verbs, so `switchable` is False and `value_range` carries the width: 0
-  to 255, and -32768 to 32767. Respect the range. The M-SERV truncates an
-  out-of-range write to the field width rather than refusing it, so a 300 on a
+  to 255, and -32768 to 32767. Respect the range. The M-SERV does not refuse an
+  out-of-range write. It truncates the value to the field width, so a 300 on a
   u8 flag lands as 44 with no error. `AmpioClient.set_value` refuses such a
   value before the wire. Neither flag honors a `setValue` time argument. Both
   take the timed form, set the value and hold it, so `pulsable` is False and
@@ -61,8 +61,9 @@ value sensor or the `analog_<n>` fallback.
   no single flag can say that one verb of the family works. A timed `setValue`
   is not ignored. It sets the power, writes 0 into the coldness axis and never
   reverts, so `pulsable` is False too. `coldness` is the raw byte the wire
-  carries and not a temperature in kelvin, because a non-DALI object's `min` and
-  `max` columns read 0 and 255. See [`commands.md`](commands.md).
+  carries and not a temperature in kelvin. The reason is that a non-DALI
+  object's `min` and `max` columns read 0 and 255. See
+  [`commands.md`](commands.md).
 - `bit8`, `bit16`, `sbit16`, and `bit32` are the integer sensor slots an
   M-CON-485 lands a Modbus reading in. Designer names them `bit 8`, `bit 16`,
   `sbit 16[+/-]`, and `bit 32`. All four classify into the open

@@ -14,7 +14,7 @@ M-SERV device, so other modules' `via_device` parents resolve.
 discovery is complete for the client class, and `False` if the timeout elapses.
 It never raises on timeout. It raises `AmpioNotConfigured` when the door refuses
 a row (see [The door](#the-door)). `connect()` delegates its discovery wait to
-this method and returns its result, so the two share one definition of
+this method and returns its result. Thus the two share one definition of
 "discovery is done." A consumer checks the `connect()` result or awaits
 `wait_for_initial_discovery()`.
 
@@ -123,11 +123,11 @@ seconds.
 
 ## The door
 
-The store admits a catalogue through one door, on both tiers. The door waits for
-both replies of the pair, `data/devices` and `data/params_devices`, because the
-hidden bit rides the second. Then it decides in one order. A row with the hidden
-bit drops. Every remaining row must carry a leaf that parses into
-`AmpioObject.address`. A row the M-SERV creates itself, `detekcja` or
+The store admits the object catalogue through one door, on both tiers. The door
+waits for both replies of the pair, `data/devices` and `data/params_devices`,
+because the hidden bit rides the second. Then it decides in one order. A row
+with the hidden bit drops. Every remaining row must carry a leaf that parses
+into `AmpioObject.address`. A row the M-SERV creates itself, `detekcja` or
 `symulacja`, drops by its type before the door reads any leaf.
 
 A row with an empty leaf stays out of `objects`. The store records it, and
@@ -266,9 +266,9 @@ flapping connection. `last_error` and `last_message_at` roll across runs, and
 code. `protocol_violations` maps each topic whose reply the library refused to
 the reason, and rolls across runs too. Both maps mask the account segment of the
 key, as in `ampio/fromDB/<account>/ob/+/state`. The account names the surface no
-better than the rest of the topic does, and a key-based redactor cannot reach a
-credential that is itself a key. The global `ampio/from` tree carries no account
-and keeps its whole topic.
+better than the rest of the topic does. Also, a key-based redactor cannot reach
+a credential that is itself a key. The global `ampio/from` tree carries no
+account and keeps its whole topic.
 
 ## A reply the library refuses
 
