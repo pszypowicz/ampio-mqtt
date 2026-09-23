@@ -14,6 +14,15 @@ explicit beta posture above and is no longer the supported upgrade path.
 
 ## Unreleased
 
+### Changed
+
+- **A plain `setValue` refuses every kind that takes no value write** (#299).
+  `set_value()` without `pulse_ms` refused the RGBW lights, the CCT lights and
+  the covers, and it sent the verb to every other kind. It now also raises
+  `AmpioUnsupported` for a `wej`, a sensor, a thermostat, an alarm half and an
+  unclassified type, because the M-SERV drops the write with no reply. The
+  relay, the dimmer, the flag and both analog flags take it as before.
+
 ### Fixed
 
 - **A retype out of a bridged kind takes the new snapshot in a refresh cycle**

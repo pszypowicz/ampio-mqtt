@@ -1087,6 +1087,28 @@ class AmpioClient:
         label = kind.key if kind is not None else obj.typ_komponentu
         raise AmpioUnsupported(f"object {object_id} ({label}) does not answer {verb}")
 
+    def _check_value_writable(self, object_id: int) -> None:
+        """Reject a `setValue` unless the object's kind takes a value write.
+
+        An output takes it once :meth:`set_value` has refused the color,
+        color-temperature and cover kinds. An input takes it when it is the
+        binary flag or an analog flag with a value range. Every other kind,
+        an unclassified type included, is refused. An id the catalogue does
+        not list passes, so :meth:`command` raises its own error.
+        """
+        obj = self._store.objects.get(object_id)
+        if obj is None:
+            return
+        kind = obj.kind
+        if isinstance(kind, OutputKind):
+            return
+        if isinstance(kind, InputKind) and (
+            kind.switchable or kind.value_range is not None
+        ):
+            return
+        label = kind.key if kind is not None else obj.typ_komponentu
+        raise AmpioUnsupported(f"object {object_id} ({label}) takes no setValue")
+
     def _check_pulsable(self, object_id: int) -> None:
         """Reject a `pulse_ms` unless the object's kind pulses.
 
@@ -1136,7 +1158,9 @@ class AmpioClient:
         whose power axis moves through :meth:`set_ww_power` or
         :meth:`set_ww`, and
         every cover, which moves through :meth:`open`, :meth:`close` and,
-        with a position axis, :meth:`set_roller_pos`.
+        with a position axis, :meth:`set_roller_pos`. It also raises for a
+        kind that takes no value write: a ``wej``, a sensor, a thermostat,
+        an alarm half and an unclassified type.
 
         ``pulse_ms`` reaches the relay, the flag and the dimmer alone,
         and it raises for every other kind, an unclassified type included.
@@ -1165,6 +1189,7 @@ class AmpioClient:
                 f"object {object_id} ({kind.key}) does not answer setValue; "
                 f"drive it with {replacement}"
             )
+        self._check_value_writable(object_id)
         if pulse_ms is None:
             return await self.command(object_id, "setValue", value, confirm=confirm)
         self._check_pulsable(object_id)
