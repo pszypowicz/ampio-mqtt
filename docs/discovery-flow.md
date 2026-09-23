@@ -29,8 +29,9 @@ the `connect()` / `disconnect()` lifecycle that joins them.
 ## Sequence
 
 1. **Connect** - start the session loop. `connect()` waits up to `timeout` for
-   the first pass that connects, authenticates and subscribes. A failed pass,
-   the first included, retries with capped exponential backoff. The run's first
+   the first pass that connects, authenticates and subscribes. A transport
+   failure, on the first pass too, retries with capped exponential backoff. A
+   credential rejection or an unexpected error stops the loop. The run's first
    successful connect stamps `started_at` in the `connection` entry of
    `diagnostics_snapshot()`. Each subsequent one bumps `reconnect_count`.
 2. **Subscribe** - the tier's topic set, sent as one SUBSCRIBE packet. The set
@@ -161,20 +162,24 @@ hidden bit that changes evicts or admits its row.
 
 ## Errors
 
-Every error a library call raises subclasses `AmpioError`. Access to `discover`
-or `DiscoveryResult` without the `ampio-mqtt[discovery]` extra raises
-`ImportError`. `connect()` raises `AmpioAuthError` when the broker rejects the
+Every error that the client classes raise subclasses `AmpioError`. There are two
+exceptions. Access to `discover` or `DiscoveryResult` without the
+`ampio-mqtt[discovery]` extra raises `ImportError`. The `ampio_mqtt.testing`
+helper `apply_reply` raises `KeyError` or `RuntimeError`, as its docstring
+states. `connect()` raises `AmpioAuthError` when the broker rejects the
 credentials before the first successful connect. It raises
 `AmpioConnectionError` when the broker is unreachable within `timeout`, or when
 the connection loop stops during the connect. It raises `AmpioNotConfigured` as
 `wait_for_initial_discovery()` does. A publish while the broker is disconnected
-raises `AmpioConnectionError` too. Any publish raises `AmpioTimeoutError` when
-the broker does not acknowledge it in time. `check_connection()`, the fetch
-helpers, `resolve_records()`, and a command with `confirm=` raise
-`AmpioTimeoutError` when an expected reply does not arrive. `AmpioTimeoutError`
-subclasses `AmpioConnectionError`, so a handler that treats every connection
-problem alike keeps working. A rejection after a successful `connect()` arrives
-as the `AuthFailed` event instead (see [`events.md`](events.md)).
+raises `AmpioConnectionError` too. A publish on the session raises
+`AmpioTimeoutError` when the broker does not acknowledge it in time.
+`check_connection()` publishes on its own probe session, and a timeout there
+raises `AmpioConnectionError`. `check_connection()`, the fetch helpers,
+`resolve_records()`, and a command with `confirm=` raise `AmpioTimeoutError`
+when an expected reply does not arrive. `AmpioTimeoutError` subclasses
+`AmpioConnectionError`, so a handler that treats every connection problem alike
+keeps working. A rejection after a successful `connect()` arrives as the
+`AuthFailed` event instead (see [`events.md`](events.md)).
 
 Four classes separate whose fault a refusal is:
 

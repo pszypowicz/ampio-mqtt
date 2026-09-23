@@ -70,14 +70,14 @@ and a row without a member fails CI.
 
 ## What the admin session receives
 
-| Surface                                                                | Wire source                                                                       | Complete when                |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------- |
-| raw-bridged state for inputs, panel LEDs, OC outputs, and CCT channels | `ampio/from/<mac>/state/*`, `ampio/from/<mac>/b/62`, `b/63`                       | after the retained replay    |
-| `AmpioModule.supply_voltage`, `AmpioModule.temperature`                | `ampio/from/<mac>/b/4F`                                                           | after the first broadcast    |
-| `AmpioModule.last_seen`                                                | any live message the module sends: a broadcast, a raw edge, or a per-object state | after the first live message |
-| `ModuleUpdated`, `ModuleRemoved`                                       | the module catalogue and the raw tree                                             | on connect                   |
-| `BusEventRaised`                                                       | `ampio/from/<mac>/event`                                                          | when Ampio logic raises one  |
-| the `modules` and `mac_collisions` entries of `diagnostics_snapshot()` | the session                                                                       | always                       |
+| Surface                                                                | Wire source                                                                                                               | Complete when                |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| raw-bridged state for inputs, panel LEDs, OC outputs, and CCT channels | `ampio/from/<mac>/state/*`, `ampio/from/<mac>/b/62`, `b/63`                                                               | after the retained replay    |
+| `AmpioModule.supply_voltage`, `AmpioModule.temperature`                | `ampio/from/<mac>/b/4F`                                                                                                   | after the first broadcast    |
+| `AmpioModule.last_seen`                                                | a diagnostics broadcast, a raw edge that routes to an object, or a per-object state push. A bus event does not update it. | after the first live message |
+| `ModuleUpdated`, `ModuleRemoved`                                       | the module catalogue and the raw tree                                                                                     | on connect                   |
+| `BusEventRaised`                                                       | `ampio/from/<mac>/event`                                                                                                  | when Ampio logic raises one  |
+| the `modules` and `mac_collisions` entries of `diagnostics_snapshot()` | the session                                                                                                               | always                       |
 
 The SUBACK enforces the raw-tree denial. A standard account's subscription to
 the `ampio/from/...` filters comes back with reason code 128. This holds even
@@ -124,19 +124,19 @@ own event logic. The gating detail is in [`bus-events.md`](bus-events.md).
 The tier is fixed before the first connect, so every fact below has exactly one
 source per tier. There is no precedence chain and no second opinion.
 
-| Fact                                                                              | Source                                                                                                         |
-| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| object rows, names, leaf ids                                                      | `data/devices`                                                                                                 |
-| `params`, `czas`, `url`                                                           | `data/params_devices`                                                                                          |
-| the initial value of every object                                                 | `data/states`, except a raw-bridged object on `AmpioAdminClient`, whose initial value is the retained raw tree |
-| module rows                                                                       | `config/devices`, admin only                                                                                   |
-| `records`, `cover_parameters`, `module_records`, `capabilities`, `panel_settings` | the `device_api` sweep, on `AmpioAdminClient`                                                                  |
+| Fact                                                                                     | Source                                                                                                         |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| object rows, names, leaf ids                                                             | `data/devices`                                                                                                 |
+| `params`, `czas`, `url`                                                                  | `data/params_devices`                                                                                          |
+| the snapshot seed of every object (a live push that arrives first gives the first value) | `data/states`, except a raw-bridged object on `AmpioAdminClient`, whose initial value is the retained raw tree |
+| module rows                                                                              | `config/devices`, admin only                                                                                   |
+| `records`, `cover_parameters`, `module_records`, `capabilities`, `panel_settings`        | the `device_api` sweep, on `AmpioAdminClient`                                                                  |
 
 Both tiers hold the whole `params_devices` table, so every object either
 catalogue lists has a row there. The two replies arrive in no fixed order, which
 is why the library holds the table and applies it at the merge. The library
-holds the catalogue until the table answers, so no object is served without its
-`params`, `czas` and `url`. `wait_for_initial_discovery()` returning True is the
+holds the catalogue until the table answers. It then applies the matching row of
+each object at the merge. `wait_for_initial_discovery()` returning True is the
 boundary: it waits for both replies of the tier's pair. If the table answers and
 an object the catalogue lists has no row in it, the library warns. It lists that
 object in the `params_gap` entry of `diagnostics_snapshot()`.

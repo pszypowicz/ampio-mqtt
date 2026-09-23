@@ -285,11 +285,12 @@ library has not proven that board's layout. A sweep replaces every entry of
 every mac it answered, and `RecordSweepCompleted` fires once per sweep with the
 `RecordSweep` the call returned. `answered_macs` names every module the list
 reply listed with a readable entry. A listed device is left out of
-`answered_macs` when its `macUser` or `macProd` does not parse. The same applies
-when it carries a `descriptions` field that is not a readable base64 string. If
-such a module is catalogued, it lands in `silent_macs`, together with the
-catalogued modules the reply left out. The M-SERV's own row is a device like any
-other in both sets.
+`answered_macs` when its `macUser` or `macProd` does not parse. An absent, null
+or empty `descriptions` field counts as an empty answer. Any other
+`descriptions` value that is not a readable base64 string also leaves the device
+out. If such a module is catalogued, it lands in `silent_macs`, together with
+the catalogued modules the reply left out. The M-SERV's own row is a device like
+any other in both sets.
 
 An entry leaves with the row it belongs to. An object that leaves the catalogue
 drops its `records` and `cover_parameters` entry. An object whose leaf moves to

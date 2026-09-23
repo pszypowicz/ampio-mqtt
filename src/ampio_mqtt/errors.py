@@ -12,8 +12,9 @@ class AmpioError(Exception):
 class AmpioConnectionError(AmpioError):
     """Raised when the broker connection fails or is not up.
 
-    Covers every reason other than credentials, which raise
-    :class:`AmpioAuthError`.
+    A credential rejection during connection setup raises
+    :class:`AmpioAuthError` instead. A publish wraps every MQTT error in
+    this class.
     """
 
 
