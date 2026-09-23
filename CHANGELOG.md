@@ -22,6 +22,14 @@ explicit beta posture above and is no longer the supported upgrade path.
   `AmpioUnsupported` for a `wej`, a sensor, a thermostat, an alarm half and an
   unclassified type, because the M-SERV drops the write with no reply. The
   relay, the dimmer, the flag and both analog flags take it as before.
+- **The diagnostics report stops passing text from the install through** (#297).
+  `auth_failure`, the `AuthFailed` event and the `AmpioAuthError` message name
+  the broker's reason code alone. A refused `leafId` names its row, without the
+  value. `not_configured` lists the object ids, and the `NotConfigured` event
+  keeps the names. The retained info reply leaves out every key outside its safe
+  set, and a safe key whose value is not a scalar reads `**REDACTED**`. The
+  error text of the MQTT stack in `connection.last_error` stays, with the
+  account and the host masked.
 
 ### Fixed
 

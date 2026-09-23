@@ -917,3 +917,43 @@ def test_the_last_error_mask_keeps_the_rest_of_the_text(
     client = AmpioClient(host, username=username)
     client._stats.last_error = text
     assert client.diagnostics_snapshot()["connection"]["last_error"] == expected
+
+
+def test_the_retained_info_reply_keeps_only_safe_scalar_values() -> None:
+    """An unknown key leaves no trace, and a safe key whose value is not a
+    scalar reads the redaction marker (#297)."""
+    client = _client()
+    payload = json.dumps(
+        {
+            "Status": "ok",
+            "Extra": "hidden",
+            "Results": {
+                "mac": 12345,
+                "userId": 4,
+                "serverVersion": {"password": "secret-pass"},
+                "alice": 0,
+                "city": "Springfield",
+            },
+        }
+    )
+    feed(client, f"ampio/fromDB/{USER}/data/info", payload)
+    retained = json.loads(client.diagnostics_snapshot()["last_payloads"]["info"])
+    assert retained == {
+        "Status": "ok",
+        "Results": {"mac": 12345, "userId": 4, "serverVersion": REDACTED},
+    }
+
+
+@pytest.mark.parametrize("leaf", ["0_secret-pass", {"password": "secret-pass"}])
+def test_a_refused_leaf_id_names_its_row_and_not_its_value(leaf: object) -> None:
+    """A protocol violation names the row that carried a bad `leafId`, and the
+    value stays out of the report (#297)."""
+    client = _client()
+    feed(client, PARAMS_DEVICES_TOPIC, params_table({"id": 5, "params": 0}))
+    feed(
+        client, f"ampio/fromDB/{USER}/data/devices", details({"id": 5, "leafId": leaf})
+    )
+    violations = client.diagnostics_snapshot()["connection"]["protocol_violations"]
+    (reason,) = violations.values()
+    assert "secret-pass" not in reason
+    assert "row 5" in reason

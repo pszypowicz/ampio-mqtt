@@ -64,6 +64,7 @@ _PUBLISH_TIMEOUT = 5.0
 # A tuple, not a set: paho's ReasonCode compares equal to its integer value
 # but is unhashable.
 _AUTH_REASON_CODES = (134, 135)
+_AUTH_REASONS = {134: "bad user name or password", 135: "not authorized"}
 
 # (topic, payload, retained): the broker sets the retain flag on a message
 # it replays from its retained store at subscribe time and clears it on a
@@ -338,9 +339,15 @@ class Connection:
                 # _is_auth_error walks the cause chain, so a wrapped auth
                 # rejection still classifies.
                 self._stats.last_error = str(err)
-                if _is_auth_error(err):
-                    # Reconnecting will not help; surface it and stop.
-                    self._auth_error_message = str(err)
+                reason_code = _auth_reason_code(err)
+                if reason_code is not None:
+                    # Reconnecting will not help; surface it and stop. The
+                    # message names the reason code alone, because the text
+                    # of the MQTT stack can carry any value.
+                    reason = _AUTH_REASONS[reason_code]
+                    self._auth_error_message = (
+                        f"{_AUTH_REJECTED}: {reason} (reason code {reason_code})"
+                    )
                     self._auth_failed.set()
                     self._stop = True
                 else:
@@ -442,8 +449,8 @@ def _mqtt_client(
     return client
 
 
-def _is_auth_error(err: BaseException) -> bool:
-    """Whether an MQTT failure is a credential rejection rather than transport.
+def _auth_reason_code(err: BaseException) -> int | None:
+    """The credential-rejection reason code of an MQTT failure, or None.
 
     Reads the structured reason code off ``MqttCodeError``; the cause
     chain is walked because a drop during message iteration arrives as a
@@ -453,10 +460,14 @@ def _is_auth_error(err: BaseException) -> bool:
     """
     current: BaseException | None = err
     while current is not None:
-        if (
-            isinstance(current, aiomqtt.MqttCodeError)
-            and current.rc in _AUTH_REASON_CODES
-        ):
-            return True
+        if isinstance(current, aiomqtt.MqttCodeError):
+            for code in _AUTH_REASON_CODES:
+                if current.rc == code:
+                    return code
         current = current.__cause__
-    return False
+    return None
+
+
+def _is_auth_error(err: BaseException) -> bool:
+    """Whether an MQTT failure is a credential rejection rather than transport."""
+    return _auth_reason_code(err) is not None

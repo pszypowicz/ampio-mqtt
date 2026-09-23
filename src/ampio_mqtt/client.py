@@ -453,9 +453,11 @@ class AmpioClient:
 
         The library puts no password into it. It masks the account in
         topics, the broker host in ``last_error``, and the host
-        identifiers of ``server_info``. Text that the broker or the M-SERV
-        sends, such as a refused value or an object name, passes through.
-        Keys:
+        identifiers of ``server_info``. It names the reason code of an auth
+        failure, the row and column of a refused reply without the value,
+        and the ids of the rows the door left out. The error text of the
+        MQTT stack in ``last_error`` is the one value that passes through,
+        with the account and the host masked. Keys:
 
         - ``available``: whether the broker connection is up.
         - ``auth_failure``: the broker's rejection reason once the
@@ -479,8 +481,9 @@ class AmpioClient:
           row for. The table covers the whole catalogue on both tiers, so a
           non-empty list is a server fault: those objects read every
           Designer config flag as unset.
-        - ``not_configured``: the ``(id, name)`` pairs of the catalogue
-          rows the door left out because they carry no leaf.
+        - ``not_configured``: the ids of the catalogue rows the door left
+          out because they carry no leaf. :class:`NotConfigured` carries
+          their names.
         - ``last_payloads``: each endpoint's last reply summary (a row
           count, or the masked info reply), absent until a reply arrives
           (docs/discovery-flow.md).
@@ -504,7 +507,7 @@ class AmpioClient:
                 "protocol_violations": dict(self._stats.protocol_violations),
             },
             "params_gap": sorted(self._store.missing_params_ids),
-            "not_configured": [list(pair) for pair in self._store.not_configured],
+            "not_configured": [oid for oid, _name in self._store.not_configured],
             "last_payloads": {
                 name: channel.last_payload
                 for name, channel in self._channels.items()

@@ -554,7 +554,8 @@ async def test_wait_for_initial_discovery_raises_on_a_leafless_row() -> None:
             await client.wait_for_initial_discovery(timeout=1.0)
         assert caught.value.objects == ((10, "Lamp"),)
         assert list(client.objects) == [11]
-        assert client.diagnostics_snapshot()["not_configured"] == [[10, "Lamp"]]
+        # The report keeps the id and leaves the Designer name out (#297).
+        assert client.diagnostics_snapshot()["not_configured"] == [10]
         feed(client, PARAMS_DEVICES_TOPIC, params_of({"id": 10}, {"id": 11}))
         feed(client, DATA_DEVICES_TOPIC, details({"id": 10}, {"id": 11}))
         assert await client.wait_for_initial_discovery(timeout=1.0) is True
@@ -695,6 +696,21 @@ async def test_fresh_connect_clears_a_runtime_auth_failure() -> None:
         assert client.available is True
     finally:
         await client.disconnect()
+
+
+async def test_the_auth_failure_reads_the_reason_code_alone() -> None:
+    """The rejection text of the MQTT stack can carry any value, so the
+    failure message names the reason code and nothing else (#297)."""
+    broker = FakeBroker()
+    broker.enter_errors = [aiomqtt.MqttCodeError(135, "Rejected alice:secret-pass")]
+    client = make_client(broker)
+    with pytest.raises(AmpioAuthError) as raised:
+        await client.connect(timeout=2.0, discovery_timeout=0.05)
+    expected = (
+        "Authentication rejected by Ampio broker: not authorized (reason code 135)"
+    )
+    assert str(raised.value) == expected
+    assert client.diagnostics_snapshot()["auth_failure"] == expected
 
 
 async def test_initial_auth_rejection_raises_without_firing_listener() -> None:

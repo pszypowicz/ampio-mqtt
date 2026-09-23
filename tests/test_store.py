@@ -949,7 +949,7 @@ def test_a_malformed_leaf_refuses_the_reply_whole() -> None:
     store = _store()
     _feed_catalogue(store, {"id": 42}, _DET)
     before = dict(store.objects)
-    with pytest.raises(AmpioProtocolError, match="garbage"):
+    with pytest.raises(AmpioProtocolError, match="row 41"):
         _feed_catalogue(store, {"id": 41, "leafId": "garbage"}, {"id": 43}, _DET)
     assert store.objects == before
     assert store.not_configured == ()

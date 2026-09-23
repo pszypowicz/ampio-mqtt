@@ -135,7 +135,7 @@ A row with an empty leaf stays out of `objects`. The store records it, and
 pairs. The other rows are served and the connection stays up. After connect, the
 same condition arrives as the `NotConfigured` event, and the row leaves through
 `ObjectRemoved`. The next catalogue push that restores the leaf produces
-`ObjectAdded`. `diagnostics_snapshot()` lists the rows under `not_configured`.
+`ObjectAdded`. `diagnostics_snapshot()` lists their ids under `not_configured`.
 
 On `AmpioAdminClient`, the module list has its own door. The door admits no
 module row whose override mac another row shares. The raw tree keys on that mac
@@ -228,13 +228,17 @@ based on the hostname alone. When credentials are known, confirm identity with
 `client.diagnostics_snapshot()` returns one report for a diagnostics platform or
 a bug report. The library puts no password into it. It masks the account in
 topics, the broker host in `last_error`, and the host identifiers of the server
-info. Text that the broker or the M-SERV sends, such as a refused value or an
-object name, passes through. It holds the availability flag, the auth-failure
-reason, and the safe server-info subset. It also holds the connection counters,
-the SUBACK rejections, and each endpoint's last reply summary. On
-`AmpioAdminClient` it also holds the mac collisions and the module list. The
-`params_gap` entry names objects the params table skips. The `not_configured`
-entry names the rows the door left out.
+info. The auth-failure reason names the reason code alone. A refused reply names
+its row and its column, without the value. The retained info reply keeps its
+safe scalar values and leaves every other key out. The error text of the MQTT
+stack in `last_error` is the one value that passes through, with the account and
+the host masked. It holds the availability flag, the auth-failure reason, and
+the safe server-info subset. It also holds the connection counters, the SUBACK
+rejections, and each endpoint's last reply summary. On `AmpioAdminClient` it
+also holds the mac collisions and the module list. The `params_gap` entry names
+objects the params table skips. The `not_configured` entry lists the ids of the
+rows the door left out. Their Designer names stay out of the report, and the
+`NotConfigured` event carries them.
 
 The `modules` list holds one row per known module, sorted by id. Each row
 carries the module's `id`, `mac`, `typ_urzadzenia`, `model`, `last_seen`,

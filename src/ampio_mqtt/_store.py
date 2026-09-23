@@ -301,7 +301,16 @@ class AmpioStore:
             if not meta.leaf_id:
                 rejected.append((meta.id, meta.name))
                 continue
-            admitted.append((meta, _protocol.parse_module_address(meta.leaf_id)))
+            try:
+                address = _protocol.parse_module_address(meta.leaf_id)
+            except _protocol.LeafFault as err:
+                # The public parse quotes the token it refused. The report
+                # names the row, because the token is content from the install.
+                raise _protocol.LeafFault(
+                    f"The Ampio object catalogue row {meta.id} carries a leafId "
+                    "that is not a 0_<macHex>_<sfId>_<subSfId>_<ioNo> token"
+                ) from err
+            admitted.append((meta, address))
         touched = False
         for meta, address in admitted:
             touched |= self._merge_metadata(
