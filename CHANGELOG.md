@@ -22,7 +22,8 @@ explicit beta posture above and is no longer the supported upgrade path.
   reached `server_info` in the diagnostics report, but the retained info reply
   masked it. A version field in any other form now reads as None on
   `AmpioServerInfo`. The retained info reply takes its version fields from the
-  parser, so the two forms agree.
+  parser, so both forms keep only the versions that the parser accepts. The
+  retained reply writes `**REDACTED**` for a rejected version that is present.
 
 ## 0.76.0
 

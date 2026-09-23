@@ -608,7 +608,14 @@ def test_snapshot_keeps_a_free_text_version_out() -> None:
         mqttVersion=marker,
     )
     feed(client, f"ampio/fromDB/{USER}/data/info", payload)
-    assert marker not in json.dumps(client.diagnostics_snapshot())
+    snap = client.diagnostics_snapshot()
+    assert marker not in json.dumps(snap)
+    assert snap["connection"]["protocol_violations"] == {}
+    assert client.server_info is not None
+    assert client.server_info.mac == 12345
+    assert client.server_info.server_version is None
+    assert client.server_info.server_revision is None
+    assert client.server_info.mqtt_version is None
 
 
 def test_snapshot_masks_the_account_in_the_last_error() -> None:
