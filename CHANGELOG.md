@@ -21,6 +21,10 @@ explicit beta posture above and is no longer the supported upgrade path.
   does not fit a float. Either one raised `OverflowError` in the parser, which
   dropped the whole message, for example a thermostat push, instead of the one
   field.
+- **An object that the params table drops reads every config flag as unset**
+  (#290). It kept the `params`, `czas` and `url` of the last table, so a dropped
+  row could leave a stale `read_only` flag in place. It now reads the defaults,
+  as the `params_gap` entry of the diagnostics report already said.
 
 ### Removed
 
