@@ -27,9 +27,10 @@ explicit beta posture above and is no longer the supported upgrade path.
   the broker's reason code alone. A refused `leafId` names its row, without the
   value. `not_configured` lists the object ids, and the `NotConfigured` event
   keeps the names. The retained info reply leaves out every key outside its safe
-  set, and a safe key whose value is not a scalar reads `**REDACTED**`. The
-  error text of the MQTT stack in `connection.last_error` stays, with the
-  account and the host masked.
+  set, and a safe key whose value is not a scalar reads `**REDACTED**`. A
+  version field of the info reply that is not a scalar reads as None in
+  `server_info`. The error text of the MQTT stack in `connection.last_error`
+  stays, with the account and the host masked.
 
 ### Fixed
 

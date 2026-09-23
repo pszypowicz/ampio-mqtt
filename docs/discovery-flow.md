@@ -229,16 +229,17 @@ based on the hostname alone. When credentials are known, confirm identity with
 a bug report. The library puts no password into it. It masks the account in
 topics, the broker host in `last_error`, and the host identifiers of the server
 info. The auth-failure reason names the reason code alone. A refused reply names
-its row and its column, without the value. The retained info reply keeps its
-safe scalar values and leaves every other key out. The error text of the MQTT
-stack in `last_error` is the one value that passes through, with the account and
-the host masked. It holds the availability flag, the auth-failure reason, and
-the safe server-info subset. It also holds the connection counters, the SUBACK
-rejections, and each endpoint's last reply summary. On `AmpioAdminClient` it
-also holds the mac collisions and the module list. The `params_gap` entry names
-objects the params table skips. The `not_configured` entry lists the ids of the
-rows the door left out. Their Designer names stay out of the report, and the
-`NotConfigured` event carries them.
+its column, and a refused `leafId` also names its row, without the value. The
+retained info reply keeps its safe scalar values and leaves every other key out.
+The error text of the MQTT stack in `last_error` is the one value that passes
+through, with the account and the host masked. It holds the availability flag,
+the auth-failure reason, and the safe server-info subset. It also holds the
+connection counters, the SUBACK rejections, and each endpoint's last reply
+summary. On `AmpioAdminClient` it also holds the mac collisions and the module
+list. The `params_gap` entry names objects the params table skips. The
+`not_configured` entry lists the ids of the rows the door left out. Their
+Designer names stay out of the report, and the `NotConfigured` event carries
+them.
 
 The `modules` list holds one row per known module, sorted by id. Each row
 carries the module's `id`, `mac`, `typ_urzadzenia`, `model`, `last_seen`,

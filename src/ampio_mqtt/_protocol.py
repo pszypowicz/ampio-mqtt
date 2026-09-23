@@ -896,9 +896,13 @@ def _to_str(value: Any) -> str | None:
 
     The info fields are typed as strings; coercing keeps that true even if
     a number arrives on the wire - `server_below_baseline` splits the
-    version, so a non-str value there would raise instead of comparing.
+    version, so a non-str value there would raise instead of comparing. A
+    value that is not a scalar reads as None, so a nested object never
+    becomes text.
     """
-    return str(value) if value not in (None, "") else None
+    if value in (None, "") or not _is_scalar(value):
+        return None
+    return str(value)
 
 
 def parse_server_info(data: Mapping[str, Any]) -> AmpioServerInfo:

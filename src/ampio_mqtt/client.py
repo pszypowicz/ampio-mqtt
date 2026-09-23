@@ -454,14 +454,16 @@ class AmpioClient:
         The library puts no password into it. It masks the account in
         topics, the broker host in ``last_error``, and the host
         identifiers of ``server_info``. It names the reason code of an auth
-        failure, the row and column of a refused reply without the value,
-        and the ids of the rows the door left out. The error text of the
+        failure, the column of a refused reply (and the row of a refused
+        ``leafId``) without the value, and the ids of the rows the door
+        left out. The error text of the
         MQTT stack in ``last_error`` is the one value that passes through,
         with the account and the host masked. Keys:
 
         - ``available``: whether the broker connection is up.
-        - ``auth_failure``: the broker's rejection reason once the
-          connection loop has stopped for auth, else None.
+        - ``auth_failure``: the rejection message, which names the
+          broker's reason code, once the connection loop has stopped for
+          auth, else None.
         - ``server_info``: the safe self-report subset as a dict
           (:class:`AmpioServerInfo` excludes the private fields by
           construction), with ``local_ip`` and ``device_id`` masked, or

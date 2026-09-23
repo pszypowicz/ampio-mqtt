@@ -957,3 +957,16 @@ def test_a_refused_leaf_id_names_its_row_and_not_its_value(leaf: object) -> None
     (reason,) = violations.values()
     assert "secret-pass" not in reason
     assert "row 5" in reason
+
+
+def test_a_nested_server_version_reads_as_none() -> None:
+    """A version field that is not a scalar never becomes text in
+    `server_info`, so a nested value stays out of the report (#297)."""
+    client = _client()
+    payload = json.dumps(
+        {"Results": {"mac": 1, "userId": 4, "serverVersion": {"password": "SECRET"}}}
+    )
+    feed(client, f"ampio/fromDB/{USER}/data/info", payload)
+    assert client.server_info is not None
+    assert client.server_info.server_version is None
+    assert "SECRET" not in json.dumps(client.diagnostics_snapshot())
