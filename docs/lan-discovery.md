@@ -11,11 +11,12 @@ Authoritative source for the discovery mechanics themselves:
 
 ## What the M-SERV publishes over mDNS
 
-The M-SERV's hostname, `ampio.local`, resolves over mDNS to the broker's
-address. That hostname is the one Ampio-specific signal a browse-and-resolve
-client gets. Nothing else on the LAN advertises a service type or TXT record
-that identifies that address as Ampio. There is no `_ampio._tcp` or equivalent,
-and no TXT key or value carries Ampio-specific data.
+The M-SERV runs Avahi with default-only hostname publishing. The M-SERV's
+hostname, `ampio.local`, resolves over mDNS to the broker's address. That
+hostname is the one Ampio-specific signal a browse-and-resolve client gets.
+Nothing else on the LAN advertises a service type or TXT record that identifies
+that address as Ampio. There is no `_ampio._tcp` or equivalent, and no TXT key
+or value carries Ampio-specific data.
 
 Two separate `_matter._tcp` service instances, each with its own
 `_sub._matter._tcp` sub-type advertisement, resolve to the same address as

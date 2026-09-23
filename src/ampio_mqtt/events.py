@@ -76,7 +76,7 @@ class NotConfigured:
     door fills it: ``objects`` holds the ``(id, name)`` pairs of every
     visible object row without a leaf, and ``collisions`` the ``(mac,
     module ids)`` pairs of every override mac two or more module rows
-    share, so every ids tuple here names two rows or more.
+    share.
 
     A reply that changes either set reports both, so an event with two
     empty sides means the door refuses nothing now. That is the signal to
@@ -155,11 +155,9 @@ class AvailabilityChanged:
 
     Fires for every transition the consumer did not cause itself: the
     connection coming up, an outage, and the drop preceding the terminal
-    :class:`AuthFailed` / :class:`ConnectionDied` events (dispatched
-    after it, so entities read unavailable by then). A consumer-initiated
-    ``disconnect()`` is not reported - a deliberate shutdown is not an
-    availability event - though ``AmpioClient.available`` still reads
-    False after it.
+    :class:`AuthFailed` / :class:`ConnectionDied` events. A
+    consumer-initiated ``disconnect()`` is not reported, though
+    ``AmpioClient.available`` still reads False after it.
     """
 
     available: bool
@@ -191,7 +189,7 @@ class ConnectionDied:
     exception text kept in the diagnostics snapshot's ``last_error``. Only
     a fresh ``connect()`` recovers. A crash before the first session comes
     up makes ``connect()`` raise ``AmpioConnectionError`` instead and
-    dispatches nothing, mirroring the auth path.
+    dispatches nothing.
     """
 
     reason: str

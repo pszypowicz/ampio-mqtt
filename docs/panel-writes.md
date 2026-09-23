@@ -38,12 +38,11 @@ objects. `confirm=` resolves on either edge.
 On `AmpioAdminClient`, a `przekaznik` on a CAN module rides this frame when its
 leaf class has a proven function byte. The frame is addressed by the object's
 own leaf alone (mac, 0-based channel, and class). A class outside that table
-stays on `/api`. There is no module-type table to maintain. Two more writes stay
-on `/api`: the M-SERV's own virtual outputs, and every `pulse_ms` write. The
-virtual outputs live in the server's DB, not on the CAN bus. The raw frame has
-no timed form, so a panel output cannot pulse, and `confirm=` is what shows
-that. `AmpioClient` always publishes the `/api` form, which a panel output
-ignores.
+stays on `/api`. Two more writes stay on `/api`: the M-SERV's own virtual
+outputs, and every `pulse_ms` write. The virtual outputs live in the server's
+DB, not on the CAN bus. The raw frame has no timed form, so a panel output
+cannot pulse, and `confirm=` is what shows that. `AmpioClient` always publishes
+the `/api` form, which a panel output ignores.
 
 A module condition bound to the LED overrides such writes eventually, not
 preventively. A write to a condition-bound LED takes effect, and the panel
@@ -232,27 +231,11 @@ same envelope, the same destination and the same mask for an ordinary move, and
 they discard the three lock sub-functions in silence. So the capability count is
 the gate, and it is also the number the mask needs.
 
-#### The destination is not the reason
-
-A cover on a module that drops the lock took every combination of these three
-axes, which is twelve frames:
-
-| Axis         | Values sent        |
-| ------------ | ------------------ |
-| Sub-function | 8, 9 and 10        |
-| Destination  | `f0 05` and `00`   |
-| Mask width   | 1 byte and 2 bytes |
-
-`block` stayed at 0 after each frame, and the matching release frame changed
-nothing either.
-
-A lock frame also went to a cover on a module that advertises a count. That
-cover moved `block` to 2, and the release frame returned it to 0. The topic, the
-envelope and the mask are therefore all correct as this library builds them.
-
-`00` is the destination that the dropping module's own stored rules carry, and
-an ordinary move sub-function on that destination runs its motor. The frame
-reaches the module. The lock sub-functions are absent from that firmware.
+Those modules drop all three lock sub-functions (8, 9 and 10), on both the
+`f0 05` and the `00` destination, at every mask width. `00` is the destination
+that the module's own stored rules carry. An ordinary move on `00` runs the
+motor, so the frame reaches the module, and the lock sub-functions are absent
+from that firmware. A module that advertises a count answers the same frame.
 
 #### What a consumer reads
 

@@ -24,9 +24,7 @@ class AmpioTimeoutError(AmpioConnectionError):
     Also raised when ``check_connection`` receives an unreadable server-info
     reply.
 
-    Subclasses ``AmpioConnectionError`` so a handler that treats every
-    connection problem alike keeps working; catch this one first to tell "the
-    server did not answer in time, try again" apart from a transport failure.
+    Catch this one first to tell a late reply apart from a transport failure.
     """
 
 
@@ -90,9 +88,7 @@ class AmpioValueError(AmpioError, ValueError):
 
     A value beyond the range the frame carries, a mis-typed argument, an
     unlisted heating mode, an id the catalogue does not list, or a call
-    that needs a sweep that did not run. ``ValueError`` is a base because
-    that is what a bad argument is in Python, so a handler that catches
-    the builtin keeps working. What the install cannot do raises
+    that needs a sweep that did not run. What the install cannot do raises
     :class:`AmpioUnsupported` instead.
     """
 
@@ -113,8 +109,7 @@ class AmpioProtocolError(AmpioError):
 
     The account tier fixes which surface answers, and each surface serves a
     fixed column set (docs/protocol.md). A reply that drops a column, or
-    that is not the surface's own document shape, is a server fault. To
-    read it as an unconfigured object would hide that fault behind wrong
-    values, so the parse refuses it instead. The client reports the refusal
-    through ``diagnostics_snapshot()`` and keeps the connection up.
+    that is not the surface's own document shape, is a server fault. The
+    client reports the refusal through ``diagnostics_snapshot()`` and keeps
+    the connection up.
     """

@@ -7,12 +7,9 @@ platforms), `InputKind` (binary or boolean platforms), `OutputKind`
 (controllable platforms), and `ThermostatKind` (the `reg` temperature
 controllers, climate platform).
 `classify(typ_komponentu, interpretacja, sub_sf_id)` in
-`ampio_mqtt.classification` returns it. The lookup input is the object type (the
-wire's `typ_komponentu`) plus two refinements. `interpretacja` refines the
-analog inputs and the integer slots. `sub_sf_id` refines the alarm halves. A
-component type is a measurement, a boolean input, something controllable, or a
-thermostat, and never two of these. The four kinds are thus alternatives, not
-optional slots on the object.
+`ampio_mqtt.classification` returns it. A component type is a measurement, a
+boolean input, something controllable, or a thermostat, and never two of these.
+The four kinds are thus alternatives, not optional slots on the object.
 
 The tables themselves live in
 [`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py) and
@@ -113,12 +110,12 @@ The unit a kind fixes and the unit Designer stores are separate facts. On a
 A consumer picks which one it shows.
 
 Designer's "Divide by" checkbox lives in the Dictionary dialog, not on the main
-form. It sets `params` bit 5 (`MAKE_SEMICOLON` in the Designer enum) and stores
-the divider in the `max` column. The M-SERV applies the divider to the published
-state. A slot that holds 37 with "Divide by" 100 arrives as
-`"state": "0.370000"`. The library needs no scale logic of its own, and it reads
-neither the bit nor the divider. The same mechanism explains the float noise on
-linear inputs, which Designer creates with "Divide by" 10.
+form. It sets `params` bit 5 and stores the divider in the `max` column. The
+M-SERV applies the divider to the published state. A slot that holds 37 with
+"Divide by" 100 arrives as `"state": "0.370000"`. The library needs no scale
+logic of its own, and it reads neither the bit nor the divider. The same
+mechanism explains the float noise on linear inputs, which Designer creates with
+"Divide by" 10.
 
 ## Platform shapes
 
@@ -156,10 +153,7 @@ drift. Two key families embed `interpretacja` and stay open.
 `kind.key` to its own entity descriptions. Its CI must assert that every
 exported key is either mapped or deliberately excluded. Each open prefix counts
 as one decision. Then a library upgrade that adds a kind fails a test instead of
-a silent drop of entities. That silent drop is the failure mode of every prior
-Ampio consumer, from the config-driven predecessors to the M-SERV's own Matter
-bridge. The bridge returns `undefined` for an unmapped object, and the object
-vanishes.
+a silent drop of entities.
 
 ## What classification keys on (and what it ignores)
 
@@ -171,8 +165,7 @@ Classification uses exactly three wire fields:
   or names the `analog_<n>` fallback. For `bit8`, `bit16`, `sbit16`, and `bit32`
   it names the `value_<n>` key.
 - **`sub_sf_id`** - a refinement for `satel_alarm` only, read from
-  `address.sub_sf_id`. It names the armed half or the alarmed half. A
-  sub-function outside those two classifies as the base `alarm` kind.
+  `address.sub_sf_id`. It names the armed half or the alarmed half.
 
 It does **not** use:
 
@@ -202,6 +195,4 @@ reads from the wire.
 platform = obj.kind    # ObjectKind = SensorKind | InputKind | OutputKind | ThermostatKind
 ```
 
-The two checks stay separate so that a consumer can use one without the other. A
-diagnostics report classifies a hidden row straight off the wire, so it can show
-"hidden objects of type X".
+The two checks stay separate so that a consumer can use one without the other.

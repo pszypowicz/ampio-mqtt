@@ -284,8 +284,6 @@ class AmpioStore:
         :class:`NotConfigured` reports every change of the set, a change
         to empty included. A leaf that does not parse is a server fault, raised
         here before any store field changes, so the reply is refused whole.
-        `data/devices` carries the leaf, and the raise names that surface
-        whichever reply of the pair ran the door.
         """
         admitted: list[tuple[_protocol.ObjectMetadata, ModuleAddress]] = []
         rejected: list[tuple[int, str | None]] = []
@@ -493,8 +491,7 @@ class AmpioStore:
         """Apply a `data/info` reply, the M-SERV's self-report.
 
         The reply names the asking account, a wire fact the store records
-        as it reads it. Which client class a session runs is the consumer's
-        own choice, so no store compares the two.
+        as it reads it.
         """
         info = _protocol.parse_server_info(data)
         previous = self.server_info
@@ -644,8 +641,7 @@ class AdminStore(AmpioStore):
         super().__init__()
         self.modules: dict[int, AmpioModule] = {}
         # The override macs two or more module rows share, with those
-        # rows' ids, from the last module list. The door admits no row on
-        # a shared mac, because the raw tree cannot attribute its frames.
+        # rows' ids, from the last module list.
         self.collisions: tuple[tuple[int, tuple[int, ...]], ...] = ()
         # Raw-channel bridge: (module mac, prefix, channel) -> the ids of
         # every object on that channel.
@@ -665,10 +661,7 @@ class AdminStore(AmpioStore):
         # the catalogue builds the routing.
         self._pending_raw: dict[tuple[int, str, int], str] = {}
         self._pending_diagnostics: dict[int, _protocol.ModuleDiagnostics] = {}
-        # The sweep datasets, by object id and by mac. A sweep replaces
-        # every entry of the macs it answered, so absence with the mac
-        # answered is an authoritative "no entry" until the next sweep, and
-        # absence with the mac not answered is not known.
+        # The sweep datasets, by object id and by mac.
         # docs/description-records.md.
         self.records: dict[int, DesignerRecord] = {}
         self.cover_parameters: dict[int, CoverParameters] = {}
@@ -907,26 +900,14 @@ class AdminStore(AmpioStore):
             self.modules[mid] = replace(self.modules[mid], last_seen=time.time())
 
     def _rebuild_indexes(self, applied: Applied) -> None:
-        """Rebuild the routing tables for the raw tree.
-
-        The raw-channel index keys on the object's own `address.mac`, the
-        override mac the leaf embeds, which the raw topics carry - never
-        `mac_global`, which diverges from the raw-topic MAC on replaced
-        modules. `(mac, prefix, channel)` routes a raw channel to every
-        object on that channel: the bridgeable input types, plus
-        `przekaznik` outputs on the `o` prefix, or on `a` for an
-        open-collector leaf - a panel's status LEDs have no other retained
-        surface, an OC output never echoes on its object topic, and every
-        module's outputs share the channel shape. A `ledww` joins on the
-        color-temperature prefix, whose channels its broadcast fans out to.
-        `mac` alone routes a module's own diagnostics broadcast.
+        """Rebuild the raw routing: `(address.mac, prefix, funkcja)` to the
+        objects on that channel, and `mac` to the module id
+        (docs/raw-channel-bridge.md).
         """
         index: dict[tuple[int, str, int], tuple[int, ...]] = {}
         for obj in self.objects.values():
             prefix = input_channel_prefix(obj.typ_komponentu)
             if prefix is None and obj.typ_komponentu == "przekaznik":
-                # A binary output reports on `o`; an open-collector output
-                # (leaf class 67) reports a u8 on `a`, same 1-based channel.
                 prefix = "a" if obj.address.sf_id == _protocol.OC_OUTPUT_SF else "o"
             if prefix is None and obj.typ_komponentu == "ledww":
                 prefix = _protocol.CCT_PREFIX
