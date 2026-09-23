@@ -12,7 +12,10 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## Unreleased
+## 0.77.0
+
+This release closes a second gap in the diagnostics report. The `server_info`
+entry now keeps a version field only in the dotted-number form.
 
 ### Fixed
 
