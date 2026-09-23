@@ -1565,6 +1565,23 @@ def account_free_topic(topic: str) -> str:
     return topic
 
 
+_TOPIC_IN_TEXT = re.compile(r"ampio/[^\s'\"]+")
+
+
+def account_free_text(text: str, host: str) -> str:
+    """`text` with each topic's account segment and the broker host masked.
+
+    An error message can name the account's own topic or the host it
+    failed to reach. The account segment reads as the topic placeholder,
+    and the host reads as the redaction marker where it stands as a whole
+    token.
+    """
+    text = _TOPIC_IN_TEXT.sub(lambda match: account_free_topic(match[0]), text)
+    if host:
+        text = re.sub(rf"(?<![\w.-]){re.escape(host)}(?![\w.-])", REDACTED, text)
+    return text
+
+
 # The raw `ampio/from/<MAC>/...` tree: global (not user-namespaced), retained,
 # admin-only. docs/raw-channel-bridge.md is the home for which prefixes are
 # subscribed and bridged, and which stay on the per-object topic.

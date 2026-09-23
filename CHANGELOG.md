@@ -12,6 +12,18 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Fixed
+
+- **`diagnostics_snapshot()` keeps its promise of no host, username or
+  password** (#289). `connection.last_error` masks the account segment of any
+  topic it names, and a publish timeout named the account's own control topic.
+  It also masks the broker host. The `server_info` entry masks `local_ip` and
+  `device_id`, the two fields that identify the host the M-SERV runs on. `mac`
+  stays, because `server_key` is built from it. `AmpioClient.server_info` and
+  the debug log keep the full values.
+
 ## 0.73.0
 
 This release writes every mac the library shows a person in one form. The

@@ -42,7 +42,7 @@ from ampio_mqtt import (
     ObjectUpdated,
     _protocol,
 )
-from ampio_mqtt._protocol import REDACTED
+from ampio_mqtt._protocol import ACCOUNT_PLACEHOLDER, REDACTED
 
 
 def _flaga(oid: int, funkcja: int) -> dict:
@@ -579,9 +579,53 @@ def test_snapshot_retains_the_info_payload_redacted() -> None:
     for secret in ("Springfield", "52.1000", "21.0000", "192.168.1.10", "hw-0042"):
         assert secret not in retained
     assert json.loads(retained)["Results"]["mac"] == 12345
-    # The parsed form still carries the fields a consumer masks by key.
-    assert snap["server_info"]["local_ip"] == "192.168.1.10"
-    assert snap["server_info"]["device_id"] == "hw-0042"
+
+
+def test_snapshot_masks_the_host_identifiers_of_server_info() -> None:
+    """`local_ip` and `device_id` read as the redaction marker, and `mac`
+    stays, because `server_key` is built from it (#289)."""
+    client = _client()
+    payload = info(mac=12345, userId=4, local_ip="192.168.1.10", device_id="hw-0042")
+    feed(client, f"ampio/fromDB/{USER}/data/info", payload)
+    server_info = client.diagnostics_snapshot()["server_info"]
+    assert server_info["local_ip"] == REDACTED
+    assert server_info["device_id"] == REDACTED
+    assert server_info["mac"] == 12345
+    assert client.server_info is not None
+    assert client.server_info.local_ip == "192.168.1.10"
+
+
+def test_snapshot_masks_the_account_in_the_last_error() -> None:
+    """A publish timeout names the account's control topic. The snapshot
+    masks the account segment and keeps the rest of the text (#289)."""
+    client = AmpioClient("broker.lan", username="alice")
+    client._stats.last_error = (
+        "Broker did not acknowledge publish to ampio/control/alice/config within 5.0s"
+    )
+    assert client.diagnostics_snapshot()["connection"]["last_error"] == (
+        f"Broker did not acknowledge publish to ampio/control/{ACCOUNT_PLACEHOLDER}"
+        "/config within 5.0s"
+    )
+
+
+def test_snapshot_masks_the_host_in_the_last_error() -> None:
+    """A connect error that names the broker host reads the redaction marker
+    in its place (#289)."""
+    client = AmpioClient("broker.lan", username="alice")
+    client._stats.last_error = "[Errno 111] Connect call failed ('broker.lan', 1883)"
+    last_error = client.diagnostics_snapshot()["connection"]["last_error"]
+    assert "broker.lan" not in last_error
+    assert last_error == f"[Errno 111] Connect call failed ('{REDACTED}', 1883)"
+
+
+def test_snapshot_keeps_a_short_username_out_of_other_words() -> None:
+    """The mask touches the account segment of a topic alone, so a one-letter
+    username leaves the rest of the text intact (#289)."""
+    client = AmpioClient("broker.lan", username="u")
+    client._stats.last_error = "publish to ampio/control/u/config timed out"
+    assert client.diagnostics_snapshot()["connection"]["last_error"] == (
+        f"publish to ampio/control/{ACCOUNT_PLACEHOLDER}/config timed out"
+    )
 
 
 def test_snapshot_withholds_unparseable_info_bytes() -> None:
