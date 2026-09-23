@@ -558,7 +558,7 @@ def test_last_payloads_retained_for_each_handler() -> None:
 
 
 def test_snapshot_retains_the_info_payload_redacted() -> None:
-    """The retained info entry masks every non-safelisted field, so a
+    """The retained info entry leaves out every field it does not parse, so a
     snapshot attached verbatim to a bug report carries no address or
     coordinates; the store still parses the raw reply (#137)."""
     client = _client()
@@ -919,9 +919,9 @@ def test_the_last_error_mask_keeps_the_rest_of_the_text(
     assert client.diagnostics_snapshot()["connection"]["last_error"] == expected
 
 
-def test_the_retained_info_reply_keeps_only_safe_scalar_values() -> None:
-    """An unknown key leaves no trace, and a safe key whose value is not a
-    scalar reads the redaction marker (#297)."""
+def test_the_retained_info_reply_keeps_only_parsed_values() -> None:
+    """An unknown key leaves no trace, and a version field that is not a
+    dotted number reads the redaction marker (#297, #308)."""
     client = _client()
     payload = json.dumps(
         {
@@ -939,7 +939,6 @@ def test_the_retained_info_reply_keeps_only_safe_scalar_values() -> None:
     feed(client, f"ampio/fromDB/{USER}/data/info", payload)
     retained = json.loads(client.diagnostics_snapshot()["last_payloads"]["info"])
     assert retained == {
-        "Status": "ok",
         "Results": {"mac": 12345, "userId": 4, "serverVersion": REDACTED},
     }
 

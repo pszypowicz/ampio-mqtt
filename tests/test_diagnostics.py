@@ -155,6 +155,21 @@ def test_retained_malformed_reply_withholds_all_bytes(payload: str) -> None:
     assert "private-" not in json.dumps(client.diagnostics_snapshot())
 
 
+def test_a_refused_info_reply_after_discovery_is_withheld() -> None:
+    """A retained info reply that the parser refuses reads the redaction
+    marker, and its values stay out of the report (#308)."""
+    client = AmpioClient("host", username="u")
+    feed(client, "ampio/fromDB/u/data/info", info(userId=4, serverVersion="1865"))
+    assert client.server_info is not None
+    bad = json.dumps(
+        {"Status": "OK", "Results": {"mac": "broker.example.invalid", "userId": -1}}
+    )
+    feed(client, "ampio/fromDB/u/data/info", bad)
+    report = client.diagnostics_snapshot()
+    assert report["last_payloads"]["info"] == REDACTED
+    assert "broker.example.invalid" not in json.dumps(report)
+
+
 def test_retained_summary_distinguishes_empty_reply_from_missing_reply() -> None:
     client = AmpioClient("host", username="u")
     assert "groups" not in client.diagnostics_snapshot()["last_payloads"]

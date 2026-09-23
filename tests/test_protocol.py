@@ -415,9 +415,9 @@ def test_parse_server_info_refuses_a_reply_without_the_identity(payload: str) ->
         parse_server_info(json.loads(payload))
 
 
-def test_redact_info_reply_keeps_only_safelisted_values() -> None:
-    """Every key outside the safe-key set is left out, so the retained copy
-    carries neither the private values nor their names."""
+def test_redact_info_reply_keeps_only_the_parsed_values() -> None:
+    """Every key outside the identity and the version fields is left out, so
+    the retained copy carries neither the private values nor their names."""
     payload = json.dumps(
         {
             "Status": 0,
@@ -445,7 +445,7 @@ def test_redact_info_reply_keeps_only_safelisted_values() -> None:
     assert results["serverVersion"] == "1865"
     assert results["serverRevision"] == "409"
     assert results["mqttVersion"] == "5"
-    assert data["Status"] == 0
+    assert "Status" not in data
     private = ("city", "lat", "lon", "cloudInfo", "local_ip", "device_id", "publicKey")
     for key in private:
         assert key not in results
@@ -454,11 +454,67 @@ def test_redact_info_reply_keeps_only_safelisted_values() -> None:
 
 
 def test_redact_info_reply_leaves_out_unknown_top_level_keys() -> None:
-    """A top-level key outside the safe set is left out too: the allowlist
+    """A top-level key is left out too: the allowlist
     covers fields a future firmware adds anywhere in the envelope."""
-    payload = json.dumps({"Results": {"mac": 1}, "debugDump": {"ip": "10.0.0.1"}})
+    payload = json.dumps(
+        {"Results": {"mac": 1, "userId": -1}, "debugDump": {"ip": "10.0.0.1"}}
+    )
     data = json.loads(redact_info_reply(json.loads(payload)))
-    assert data == {"Results": {"mac": 1}}
+    assert data == {"Results": {"mac": 1, "userId": -1}}
+
+
+@pytest.mark.parametrize(
+    "results",
+    [
+        {},
+        {"mac": "broker.example.invalid", "userId": -1},
+        {"mac": 1, "userId": "broker.example.invalid"},
+        {"mac": 1},
+    ],
+)
+def test_redact_info_reply_withholds_a_reply_the_parser_refuses(
+    results: dict[str, object],
+) -> None:
+    """A reply that `parse_server_info` refuses is withheld outright (#308)."""
+    data = {"Status": "OK", "Results": {**results, "serverVersion": "1865"}}
+    assert redact_info_reply(data) == REDACTED
+
+
+def test_redact_info_reply_keeps_the_parsed_identity() -> None:
+    """`mac` and `userId` read as the integers the parser returns (#308)."""
+    data = json.loads(redact_info_reply({"Results": {"mac": "12345", "userId": "-1"}}))
+    assert data == {"Results": {"mac": 12345, "userId": -1}}
+
+
+@pytest.mark.parametrize(
+    ("value", "kept"),
+    [
+        ("1865", "1865"),
+        (1865, "1865"),
+        ("3.4.5", "3.4.5"),
+        ("broker.example.invalid", REDACTED),
+        ("1865-beta", REDACTED),
+        ("", REDACTED),
+        (True, REDACTED),
+        (None, REDACTED),
+        ({"host": "x"}, REDACTED),
+    ],
+)
+def test_redact_info_reply_keeps_a_version_only_in_the_dotted_number_form(
+    value: object, kept: str
+) -> None:
+    """A version field outside the dotted-number form reads the redaction
+    marker (#308)."""
+    for key in ("serverVersion", "serverRevision", "mqttVersion"):
+        data = json.loads(
+            redact_info_reply({"Results": {"mac": 1, "userId": -1, key: value}})
+        )
+        assert data["Results"][key] == kept
+
+
+def test_redact_info_reply_leaves_out_an_absent_version() -> None:
+    data = json.loads(redact_info_reply({"Results": {"mac": 1, "userId": -1}}))
+    assert "serverVersion" not in data["Results"]
 
 
 def test_redact_info_reply_withholds_a_reply_without_results() -> None:

@@ -12,6 +12,18 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Fixed
+
+- **The retained info reply keeps only the values that the parser accepts**
+  (#308). The diagnostics copy of the info reply kept any string under a safe
+  key, even when `server_info` refused the reply. A value such as a host name
+  under `mac` then reached `last_payloads`. The copy now holds the parsed `mac`
+  and `userId`, and each version field in the dotted-number form. A version
+  field in any other form reads `**REDACTED**`. `Status` is left out. If the
+  parser refuses the reply, the whole entry reads `**REDACTED**`.
+
 ## 0.75.0
 
 This release finishes two rules that 0.74.0 started. A plain `setValue` now goes
