@@ -167,7 +167,8 @@ class AvailabilityChanged:
 class AuthFailed:
     """Terminal: the broker rejected the credentials after a session came up.
 
-    Carries the broker's reason string. By dispatch time
+    Carries a library message that names the broker's reason code. By
+    dispatch time
     ``AvailabilityChanged(False)`` has fired and the connection loop has
     stopped for good, so this is the signal to drive a reauthentication
     flow. A rejection before the first session comes up raises

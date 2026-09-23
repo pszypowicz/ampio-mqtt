@@ -12,6 +12,35 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Changed
+
+- **A plain `setValue` refuses every kind that takes no value write** (#299).
+  `set_value()` without `pulse_ms` refused the RGBW lights, the CCT lights and
+  the covers, and it sent the verb to every other kind. It now also raises
+  `AmpioUnsupported` for a `wej`, a sensor, a thermostat, an alarm half and an
+  unclassified type, because the M-SERV drops the write with no reply. The
+  relay, the dimmer, the flag and both analog flags take it as before.
+- **The diagnostics report stops passing text from the install through** (#297).
+  `auth_failure`, the `AuthFailed` event and the `AmpioAuthError` message name
+  the broker's reason code alone. A refused `leafId` names its row, without the
+  value. `not_configured` lists the object ids, and the `NotConfigured` event
+  keeps the names. The retained info reply leaves out every key outside its safe
+  set, and a safe key whose value is not a scalar reads `**REDACTED**`. A
+  version field of the info reply that is not a scalar reads as None in
+  `server_info`. The error text of the MQTT stack in `connection.last_error`
+  stays, with the account and the host masked.
+
+### Fixed
+
+- **A retype out of a bridged kind takes the new snapshot in a refresh cycle**
+  (#301). The snapshot row of a raw-owned object is skipped, and the ownership
+  lifts only in the index rebuild. When the new snapshot landed before the
+  retyping catalogue reply, the object kept its raw value. The rebuild now
+  applies the current seed to each object it releases, under the same supersede
+  rule as any other seed.
+
 ## 0.74.1
 
 This patch fixes three small faults. An out-of-range number from the wire no

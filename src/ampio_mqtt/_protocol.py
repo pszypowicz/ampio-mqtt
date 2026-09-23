@@ -243,8 +243,8 @@ def _leaf_column(row: Mapping[str, Any]) -> str:
     if isinstance(value, str):
         return value
     raise AmpioProtocolError(
-        f"The Ampio object catalogue carries the leafId {value!r}, which is "
-        "neither a string nor null"
+        f"The Ampio object catalogue row {to_int(row.get('id'))} carries a "
+        "leafId that is neither a string nor null"
     )
 
 
@@ -896,9 +896,13 @@ def _to_str(value: Any) -> str | None:
 
     The info fields are typed as strings; coercing keeps that true even if
     a number arrives on the wire - `server_below_baseline` splits the
-    version, so a non-str value there would raise instead of comparing.
+    version, so a non-str value there would raise instead of comparing. A
+    value that is not a scalar reads as None, so a nested object never
+    becomes text.
     """
-    return str(value) if value not in (None, "") else None
+    if value in (None, "") or not _is_scalar(value):
+        return None
+    return str(value)
 
 
 def parse_server_info(data: Mapping[str, Any]) -> AmpioServerInfo:
@@ -939,25 +943,31 @@ _INFO_SAFE_KEYS = frozenset(
 
 
 def redact_info_reply(data: Mapping[str, Any]) -> str:
-    """The server-info reply with every non-safelisted value masked.
+    """The server-info reply with only its safelisted scalar values.
 
-    Keys stay visible, so a report still shows the reply's shape. A reply
-    without a ``Results`` object is withheld outright.
+    Every other key is left out, and a safelisted key whose value is not a
+    string, a number or null reads the redaction marker. A reply without a
+    ``Results`` object is withheld outright.
     """
     results = data.get("Results")
     if not isinstance(results, dict):
         return REDACTED
-    masked_results = {
-        key: value if key in _INFO_SAFE_KEYS else REDACTED
-        for key, value in results.items()
-    }
-    masked = {
-        key: masked_results
-        if key == "Results"
-        else (value if key in _INFO_SAFE_KEYS else REDACTED)
-        for key, value in data.items()
-    }
+
+    def _safe(fields: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            key: value if _is_scalar(value) else REDACTED
+            for key, value in fields.items()
+            if key in _INFO_SAFE_KEYS
+        }
+
+    masked = _safe(data)
+    masked["Results"] = _safe(results)
     return json.dumps(masked)
+
+
+def _is_scalar(value: object) -> bool:
+    """Whether a JSON value is a string, a number, a bool or null."""
+    return value is None or isinstance(value, str | int | float)
 
 
 def summarize_rows(data: Mapping[str, Any]) -> str:

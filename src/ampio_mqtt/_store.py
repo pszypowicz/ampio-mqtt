@@ -301,7 +301,16 @@ class AmpioStore:
             if not meta.leaf_id:
                 rejected.append((meta.id, meta.name))
                 continue
-            admitted.append((meta, _protocol.parse_module_address(meta.leaf_id)))
+            try:
+                address = _protocol.parse_module_address(meta.leaf_id)
+            except _protocol.LeafFault as err:
+                # The public parse quotes the token it refused. The report
+                # names the row, because the token is content from the install.
+                raise _protocol.LeafFault(
+                    f"The Ampio object catalogue row {meta.id} carries a leafId "
+                    "that is not a 0_<macHex>_<sfId>_<subSfId>_<ioNo> token"
+                ) from err
+            admitted.append((meta, address))
         touched = False
         for meta, address in admitted:
             touched |= self._merge_metadata(
@@ -942,11 +951,23 @@ class AdminStore(AmpioStore):
         # bookkeeping, so the release changes nothing a consumer can read
         # and reports nothing.
         covered = {oid for ids in index.values() for oid in ids}
+        released = self._raw_owned - covered
         self._raw_owned.intersection_update(covered)
         # The guard stays set on an object the index stopped covering,
         # because its held value still belongs to its own channel and the
         # next request cycle lifts it, while a moved leaf lifts the guard
         # through `_release_raw`.
+        # A released object skipped the seed of the current request while
+        # the raw path owned it, so that seed applies now, under the same
+        # supersede rule as any other seed.
+        for oid in sorted(released):
+            seed = self._stan_by_id.get(oid)
+            if seed is None or oid in self._previous_seeds or oid not in self.objects:
+                continue
+            obj, changed = self._apply_stan_json(self.objects[oid], seed)
+            self.objects[oid] = obj
+            if changed:
+                self._record(obj, applied)
         self._fold_pending_diagnostics(applied)
         self._fold_pending_raw(index, applied)
 

@@ -453,13 +453,17 @@ class AmpioClient:
 
         The library puts no password into it. It masks the account in
         topics, the broker host in ``last_error``, and the host
-        identifiers of ``server_info``. Text that the broker or the M-SERV
-        sends, such as a refused value or an object name, passes through.
-        Keys:
+        identifiers of ``server_info``. It names the reason code of an auth
+        failure, the column of a refused reply (and the row of a refused
+        ``leafId``) without the value, and the ids of the rows the door
+        left out. The error text of the
+        MQTT stack in ``last_error`` is the one value that passes through,
+        with the account and the host masked. Keys:
 
         - ``available``: whether the broker connection is up.
-        - ``auth_failure``: the broker's rejection reason once the
-          connection loop has stopped for auth, else None.
+        - ``auth_failure``: the rejection message, which names the
+          broker's reason code, once the connection loop has stopped for
+          auth, else None.
         - ``server_info``: the safe self-report subset as a dict
           (:class:`AmpioServerInfo` excludes the private fields by
           construction), with ``local_ip`` and ``device_id`` masked, or
@@ -479,8 +483,9 @@ class AmpioClient:
           row for. The table covers the whole catalogue on both tiers, so a
           non-empty list is a server fault: those objects read every
           Designer config flag as unset.
-        - ``not_configured``: the ``(id, name)`` pairs of the catalogue
-          rows the door left out because they carry no leaf.
+        - ``not_configured``: the ids of the catalogue rows the door left
+          out because they carry no leaf. :class:`NotConfigured` carries
+          their names.
         - ``last_payloads``: each endpoint's last reply summary (a row
           count, or the masked info reply), absent until a reply arrives
           (docs/discovery-flow.md).
@@ -504,7 +509,7 @@ class AmpioClient:
                 "protocol_violations": dict(self._stats.protocol_violations),
             },
             "params_gap": sorted(self._store.missing_params_ids),
-            "not_configured": [list(pair) for pair in self._store.not_configured],
+            "not_configured": [oid for oid, _name in self._store.not_configured],
             "last_payloads": {
                 name: channel.last_payload
                 for name, channel in self._channels.items()
@@ -1087,6 +1092,28 @@ class AmpioClient:
         label = kind.key if kind is not None else obj.typ_komponentu
         raise AmpioUnsupported(f"object {object_id} ({label}) does not answer {verb}")
 
+    def _check_value_writable(self, object_id: int) -> None:
+        """Reject a `setValue` unless the object's kind takes a value write.
+
+        An output takes it once :meth:`set_value` has refused the color,
+        color-temperature and cover kinds. An input takes it when it is the
+        binary flag or an analog flag with a value range. Every other kind,
+        an unclassified type included, is refused. An id the catalogue does
+        not list passes, so :meth:`command` raises its own error.
+        """
+        obj = self._store.objects.get(object_id)
+        if obj is None:
+            return
+        kind = obj.kind
+        if isinstance(kind, OutputKind):
+            return
+        if isinstance(kind, InputKind) and (
+            kind.switchable or kind.value_range is not None
+        ):
+            return
+        label = kind.key if kind is not None else obj.typ_komponentu
+        raise AmpioUnsupported(f"object {object_id} ({label}) takes no setValue")
+
     def _check_pulsable(self, object_id: int) -> None:
         """Reject a `pulse_ms` unless the object's kind pulses.
 
@@ -1136,7 +1163,9 @@ class AmpioClient:
         whose power axis moves through :meth:`set_ww_power` or
         :meth:`set_ww`, and
         every cover, which moves through :meth:`open`, :meth:`close` and,
-        with a position axis, :meth:`set_roller_pos`.
+        with a position axis, :meth:`set_roller_pos`. It also raises for a
+        kind that takes no value write: a ``wej``, a sensor, a thermostat,
+        an alarm half and an unclassified type.
 
         ``pulse_ms`` reaches the relay, the flag and the dimmer alone,
         and it raises for every other kind, an unclassified type included.
@@ -1165,6 +1194,7 @@ class AmpioClient:
                 f"object {object_id} ({kind.key}) does not answer setValue; "
                 f"drive it with {replacement}"
             )
+        self._check_value_writable(object_id)
         if pulse_ms is None:
             return await self.command(object_id, "setValue", value, confirm=confirm)
         self._check_pulsable(object_id)

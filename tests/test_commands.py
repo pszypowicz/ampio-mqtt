@@ -1909,3 +1909,31 @@ async def test_a_pulse_reaches_a_kind_that_pulses(
     _learn(client, 63, typ)
     await client.set_value(63, 100, pulse_ms=500)
     assert broker.published == [(API_TOPIC, b"/api/set/63/setValue/100/50")]
+
+
+@pytest.mark.parametrize(
+    "typ", ["wej", "temp", "reg", "satel_alarm", "bit8", "lin_wej", "not_a_type"]
+)
+async def test_a_plain_set_value_is_refused_for_a_kind_that_takes_no_value(
+    connected: tuple[AmpioClient, FakeBroker], typ: str
+) -> None:
+    """A read-only input, a sensor, a thermostat, an alarm half, a value
+    kind and an unclassified type get no `setValue` (#299)."""
+    client, broker = connected
+    _learn(client, 64, typ)
+    with pytest.raises(AmpioUnsupported):
+        await client.set_value(64, 1)
+    assert broker.published == []
+
+
+@pytest.mark.parametrize(
+    "typ", ["przekaznik", "led", "flaga", "flaga_liniowa", "flaga_liniowa16"]
+)
+async def test_a_plain_set_value_reaches_a_kind_that_takes_a_value(
+    connected: tuple[AmpioClient, FakeBroker], typ: str
+) -> None:
+    """The relay, the dimmer, the flag and both analog flags take `setValue`."""
+    client, broker = connected
+    _learn(client, 65, typ)
+    await client.set_value(65, 1)
+    assert broker.published == [(API_TOPIC, b"/api/set/65/setValue/1")]

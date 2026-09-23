@@ -416,8 +416,8 @@ def test_parse_server_info_refuses_a_reply_without_the_identity(payload: str) ->
 
 
 def test_redact_info_reply_keeps_only_safelisted_values() -> None:
-    """Every value outside the safe-key set is masked with the key kept,
-    so the retained copy shows the reply's shape without the private data."""
+    """Every key outside the safe-key set is left out, so the retained copy
+    carries neither the private values nor their names."""
     payload = json.dumps(
         {
             "Status": 0,
@@ -448,18 +448,17 @@ def test_redact_info_reply_keeps_only_safelisted_values() -> None:
     assert data["Status"] == 0
     private = ("city", "lat", "lon", "cloudInfo", "local_ip", "device_id", "publicKey")
     for key in private:
-        assert results[key] == REDACTED
+        assert key not in results
     assert "Springfield" not in redacted
     assert "52.1000" not in redacted
 
 
-def test_redact_info_reply_masks_unknown_top_level_values() -> None:
-    """A top-level key outside the safe set is masked too: the allowlist
+def test_redact_info_reply_leaves_out_unknown_top_level_keys() -> None:
+    """A top-level key outside the safe set is left out too: the allowlist
     covers fields a future firmware adds anywhere in the envelope."""
     payload = json.dumps({"Results": {"mac": 1}, "debugDump": {"ip": "10.0.0.1"}})
     data = json.loads(redact_info_reply(json.loads(payload)))
-    assert data["debugDump"] == REDACTED
-    assert data["Results"] == {"mac": 1}
+    assert data == {"Results": {"mac": 1}}
 
 
 def test_redact_info_reply_withholds_a_reply_without_results() -> None:
