@@ -38,8 +38,9 @@ value the way the index keys it. It folds the held values in as soon as the
 catalogue builds the routing. Because the replay arrives first, a bridged object
 whose channel the replay carries holds its value and its raw ownership when
 `connect()` returns True. The bridge is live from the first connect rather than
-from the first press. A **live** frame for a channel no object exposes still
-drops, because nothing will ever route it.
+from the first press. A **live** frame for a channel no object exposes replaces
+a replay held for that channel, so a held value is never older than the
+channel's latest frame. With no replay held, the live frame drops.
 
 An input whose module publishes no raw state (the M-SERV's own virtual objects)
 never becomes raw-owned. It lives on the per-object path with snapshot resync,

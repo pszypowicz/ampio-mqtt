@@ -94,6 +94,10 @@ class AmpioStore:
         # order; a snapshot row for an id no catalogue established creates
         # nothing.
         self._stan_by_id: dict[int, _protocol.StanJsonSeed] = {}
+        # Ids whose held seed came from a snapshot before the latest request.
+        # Such a seed still starts an object that holds no value yet, but it
+        # never replaces a value an existing object holds.
+        self._previous_seeds: set[int] = set()
         # Latest live push per id no catalogue has established. Only the
         # catalogues decide which objects exist, so a push that races ahead
         # of them waits here and surfaces with the catalogue row.
@@ -144,9 +148,13 @@ class AmpioStore:
 
         Every value held now predates the snapshot the new cycle will
         deliver, so a dated seed may correct locally-stamped values again.
-        The client calls this before it publishes the discovery requests.
+        The seeds of the previous snapshot stay for an object the catalogue
+        adds later, and they no longer replace a value an existing object
+        holds. The client calls this before it publishes the discovery
+        requests.
         """
         self._guarded.clear()
+        self._previous_seeds = set(self._stan_by_id)
 
     def apply(self, msg: _protocol.Inbound, *, retained: bool = False) -> Applied:
         """Apply one typed message and report what it changed.
@@ -424,7 +432,7 @@ class AmpioStore:
         # buffered snapshot value applies here and reply order never decides
         # whether an object starts with its state.
         seed = self._stan_by_id.get(meta.id)
-        if seed is not None:
+        if seed is not None and (created or meta.id not in self._previous_seeds):
             updated, seeded = self._apply_stan_json(updated, seed)
             changed |= seeded
         # Replay a buffered push under the same stamp-supersedes rule the
@@ -518,6 +526,7 @@ class AmpioStore:
         }
         # No code below this line raises.
         self._stan_by_id = seeds
+        self._previous_seeds.clear()
         for oid, seed in seeds.items():
             obj = self.objects.get(oid)
             if obj is None:
@@ -602,9 +611,10 @@ class AmpioStore:
         return obj, changed
 
     def _supersedes(self, obj: AmpioObject, reported_at: float) -> bool:
-        """Whether a snapshot report should replace what `obj` holds.
+        """Whether a report stamped by the M-SERV should replace what `obj` holds.
 
-        Every snapshot row carries the M-SERV stamp it was reported at, so
+        A snapshot row and a buffered live push each carry the M-SERV stamp
+        they were reported at, so
         stamp-versus-stamp compares that one clock on both sides and RTC
         skew cancels out. A locally-stamped value is never stamp-compared -
         this process's clock is not comparable to a server `on` stamp.
@@ -659,7 +669,8 @@ class AdminStore(AmpioStore):
         # are still empty when those frames land. They wait here, keyed the
         # way the tables key them, and `_rebuild_indexes` folds them in once
         # the catalogue builds the routing.
-        self._pending_raw: dict[tuple[int, str, int], str] = {}
+        # Each held value keeps the local time it arrived.
+        self._pending_raw: dict[tuple[int, str, int], tuple[str, float]] = {}
         self._pending_diagnostics: dict[int, _protocol.ModuleDiagnostics] = {}
         # The sweep datasets, by object id and by mac.
         # docs/description-records.md.
@@ -827,22 +838,29 @@ class AdminStore(AmpioStore):
     # --- live state -------------------------------------------------------
 
     def _apply_raw_channel(
-        self, edge: _protocol.RawChannelEdge, applied: Applied, *, retained: bool
+        self,
+        edge: _protocol.RawChannelEdge,
+        applied: Applied,
+        *,
+        retained: bool,
+        received_at: float | None = None,
     ) -> None:
         key = (edge.mac, edge.prefix, edge.channel)
         ids = self._input_index.get(key)
         if ids is None:
             # A replay waits for the routing table. A live frame with no
-            # route drops, including one that lands before the first
-            # catalogue builds the table.
-            if retained:
-                self._pending_raw[key] = edge.state
+            # route replaces a value held for its channel, so a held value
+            # is never older than the channel's latest frame. With nothing
+            # held, the live frame drops.
+            if retained or key in self._pending_raw:
+                self._pending_raw[key] = (edge.state, time.time())
             return
         # Two Designer views of one output share the module and the
         # channel, so one raw channel feeds every object on that channel.
         for oid in ids:
             self._raw_owned.add(oid)
-            obj = replace(self.objects[oid], state=edge.state, updated_at=time.time())
+            stamp = time.time() if received_at is None else received_at
+            obj = replace(self.objects[oid], state=edge.state, updated_at=stamp)
             self.objects[oid] = obj
             self._local_stamped.add(oid)
             self._guarded.add(oid)
@@ -860,8 +878,8 @@ class AdminStore(AmpioStore):
     ) -> None:
         mid = self._module_id_by_mac.get(mac)
         if mid is None:
-            # The same rule as a raw channel edge: a replay waits for the
-            # module list, a live frame for an unlisted module drops.
+            # A replay waits for the module list, and a live frame for an
+            # unlisted module drops.
             if retained:
                 self._pending_diagnostics[mac] = diagnostics
             return
@@ -937,12 +955,11 @@ class AdminStore(AmpioStore):
     ) -> None:
         """Apply the held channel values the fresh index can now route.
 
-        Each lands exactly as the live replay of it would have: the value,
-        the raw ownership in the store's set, and no touch of the module's
-        `last_seen`, because a replay says what the channel last reported
-        rather than that the module is alive now.
+        Each lands with the time it arrived and the raw ownership in the store's set.
+        It does not touch the module's `last_seen`, because a held value says
+        what the channel reported rather than that the module is alive now.
         """
-        for key, state in list(self._pending_raw.items()):
+        for key, (state, received_at) in list(self._pending_raw.items()):
             if key not in index:
                 continue
             del self._pending_raw[key]
@@ -953,12 +970,12 @@ class AdminStore(AmpioStore):
                 ),
                 applied,
                 retained=True,
+                received_at=received_at,
             )
         if index:
-            # The routing table exists, so both catalogue replies have
-            # landed, and whatever is still held is a channel no object
-            # exposes. Holding it would let an arbitrarily old value reach
-            # an object a later Designer save exposes.
+            # A rebuild drops what the fresh index still does not route. A
+            # replay that lands after this rebuild waits for the next one,
+            # and a live frame keeps it current until then.
             self._pending_raw.clear()
 
     def _fold_pending_diagnostics(self, applied: Applied) -> None:

@@ -2193,9 +2193,8 @@ def test_a_held_frame_for_an_unlisted_module_waits_for_its_row() -> None:
 
 
 def test_a_held_channel_no_object_exposes_is_discarded() -> None:
-    """Once the routing table exists, both catalogue replies have landed, so
-    a held value nothing routes is stale weight rather than a value waiting
-    for an object a later Designer save might add."""
+    """A rebuild into a non-empty index drops a held value that the index does
+    not route."""
     store = _store()
     _apply(store, "ampio/from/CAFE/state/f/99", "1", retained=True)
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
@@ -2205,6 +2204,105 @@ def test_a_held_channel_no_object_exposes_is_discarded() -> None:
     # The object for that channel appears later and stays on its own path.
     _feed_catalogue(store, _flaga_row(50, 32), _flaga_row(52, 99))
     assert store.objects[52].state is None and 52 not in store._raw_owned
+
+
+def test_a_live_frame_updates_a_held_value_for_a_channel_no_object_routes() -> None:
+    """A held replay never outlives a newer live frame on its channel, so an
+    object a later Designer save adds starts with the current value (#287)."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _feed_catalogue(store, _flaga_row(50, 32))
+    # A reconnect: the replay holds channel 99, and the unchanged catalogue
+    # runs no rebuild.
+    store.begin_refresh()
+    _apply(store, "ampio/from/CAFE/state/f/99", "1", retained=True)
+    _feed_catalogue(store, _flaga_row(50, 32))
+    _apply(store, "ampio/from/CAFE/state/f/99", "0")
+
+    _feed_catalogue(store, _flaga_row(50, 32), _flaga_row(52, 99))
+    assert store.objects[52].state == "0"
+
+
+def test_a_live_frame_with_nothing_held_still_drops() -> None:
+    """A live frame for a channel no object routes waits only when a replay
+    already holds that channel (#287)."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _feed_catalogue(store, _flaga_row(50, 32))
+    _apply(store, "ampio/from/CAFE/state/f/99", "0")
+    assert store._pending_raw == {}
+
+
+def test_a_previous_seed_never_replaces_an_existing_value() -> None:
+    """After `begin_refresh`, a catalogue pass before the new snapshot keeps a
+    local value newer than the previous seed (#288)."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _feed_catalogue(store, _flaga_row(50, 32))
+    _apply(store, STATES_TOPIC, _snapshot("0", 1_700_000_000_000, oid=50))
+    _apply(store, "ampio/from/CAFE/state/f/32", "1")
+    retyped = {**_flaga_row(50, 32), "typ_komponentu": "roleta_procenty"}
+    _feed_catalogue(store, retyped)
+    assert 50 not in store._raw_owned and store.objects[50].state == "1"
+
+    store.begin_refresh()
+    applied = _apply(store, PARAMS_DEVICES_TOPIC, params_of(retyped))
+    assert store.objects[50].state == "1"
+    assert _updated(applied) == []
+
+
+def test_the_new_snapshot_seeds_in_either_reply_order() -> None:
+    """The snapshot of the new request cycle corrects the object whether it
+    lands before or after the catalogue pair (#288)."""
+    for snapshot_first in (True, False):
+        store = _store()
+        _apply(store, DEVICES_TOPIC, devices(_PANEL))
+        _feed_catalogue(store, _flaga_row(50, 32))
+        _apply(store, STATES_TOPIC, _snapshot("0", 1_700_000_000_000, oid=50))
+        store.begin_refresh()
+        if snapshot_first:
+            _apply(store, STATES_TOPIC, _snapshot("1", 1_800_000_000_000, oid=50))
+            _feed_catalogue(store, _flaga_row(50, 32))
+        else:
+            _feed_catalogue(store, _flaga_row(50, 32))
+            _apply(store, STATES_TOPIC, _snapshot("1", 1_800_000_000_000, oid=50))
+        assert store.objects[50].state == "1", snapshot_first
+
+
+@pytest.mark.parametrize("next_snapshot", [None, "refused"])
+def test_a_previous_seed_still_starts_an_object_the_catalogue_adds_later(
+    next_snapshot: str | None,
+) -> None:
+    """A refresh keeps the previous seeds for an object that holds no value
+    yet, so a row the catalogue adds later starts with its state even when
+    the new snapshot never arrives or is refused (#288)."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _feed_catalogue(store, _flaga_row(50, 32))
+    _apply(store, STATES_TOPIC, _snapshot("7", 1_700_000_000_000, oid=51))
+    store.begin_refresh()
+    if next_snapshot == "refused":
+        malformed = json.dumps({"List": [{"id": 99, "stan_json": "not json"}]})
+        with pytest.raises(AmpioProtocolError):
+            _apply(store, STATES_TOPIC, malformed)
+    _feed_catalogue(store, _flaga_row(50, 32), _flaga_row(51, 33))
+    assert store.objects[51].state == "7"
+
+
+def test_a_held_live_frame_keeps_its_receive_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A live frame that waits for its object lands with the time it arrived,
+    not the time of the catalogue that routes it (#287)."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _apply(store, "ampio/from/CAFE/state/f/32", "0", retained=True)
+    monkeypatch.setattr(time, "time", lambda: 100.0)
+    _apply(store, "ampio/from/CAFE/state/f/32", "1")
+    monkeypatch.setattr(time, "time", lambda: 200.0)
+    _feed_catalogue(store, _flaga_row(50, 32))
+    assert store.objects[50].state == "1"
+    assert store.objects[50].updated_at == 100.0
 
 
 def test_a_channel_the_replay_skipped_keeps_the_per_object_path() -> None:

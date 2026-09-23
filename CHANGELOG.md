@@ -27,6 +27,16 @@ explicit beta posture above and is no longer the supported upgrade path.
 
 ### Fixed
 
+- **A retained raw value no longer outlives a newer live frame** (#287). After a
+  reconnect, the replay of a channel that no object used waited in the store,
+  and a live frame for that channel dropped. A later Designer save that added an
+  object on the channel gave it the old value. A live frame now replaces a value
+  held for its channel, and the held value keeps the time it arrived.
+- **A refresh no longer applies the previous snapshot over a newer value**
+  (#288). `begin_refresh()` kept the seeds of the previous snapshot. A catalogue
+  reply that landed before the new snapshot applied them again, over a newer
+  value from the raw tree. A seed from before the refresh now starts only an
+  object that holds no value yet, such as a row the catalogue adds later.
 - **`diagnostics_snapshot()` no longer carries the account name, the broker host
   or the host identifiers of the M-SERV** (#289). A publish timeout named the
   account's own control topic in `connection.last_error`. That field now masks
