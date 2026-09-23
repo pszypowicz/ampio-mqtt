@@ -12,7 +12,11 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## Unreleased
+## 0.74.1
+
+This patch fixes three small faults. An out-of-range number from the wire no
+longer drops a whole message, an object that the params table drops reads its
+config defaults, and the analog flags lose two raw prefixes that nothing fed.
 
 ### Fixed
 
