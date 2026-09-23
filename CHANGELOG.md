@@ -12,7 +12,12 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## Unreleased
+## 0.74.0
+
+This release refuses the commands that the M-SERV drops with no reply. It also
+closes a privacy gap in the diagnostics report and fixes two faults in a refresh
+cycle. The docs pages and the docstrings were checked against the code and
+corrected in the same batch.
 
 ### Changed
 
