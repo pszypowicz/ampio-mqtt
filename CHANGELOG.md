@@ -12,6 +12,17 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Fixed
+
+- **A retype out of a bridged kind takes the new snapshot in a refresh cycle**
+  (#301). The snapshot row of a raw-owned object is skipped, and the ownership
+  lifts only in the index rebuild. When the new snapshot landed before the
+  retyping catalogue reply, the object kept its raw value. The rebuild now
+  applies the current seed to each object it releases, under the same supersede
+  rule as any other seed.
+
 ## 0.74.1
 
 This patch fixes three small faults. An out-of-range number from the wire no

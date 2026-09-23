@@ -2327,6 +2327,42 @@ def test_a_held_live_frame_keeps_its_receive_time(
     assert store.objects[50].updated_at == 100.0
 
 
+@pytest.mark.parametrize("snapshot_first", [True, False])
+def test_a_retype_in_a_refresh_cycle_takes_the_new_snapshot(
+    snapshot_first: bool,
+) -> None:
+    """A retype out of a bridged kind releases the raw ownership. The seed of
+    the current request then applies, whichever reply lands first (#301)."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _feed_catalogue(store, _flaga_row(50, 32))
+    _apply(store, "ampio/from/CAFE/state/f/32", "1")
+    retyped = {**_flaga_row(50, 32), "typ_komponentu": "roleta_procenty"}
+    store.begin_refresh()
+    if snapshot_first:
+        _apply(store, STATES_TOPIC, _snapshot("50", 1_800_000_000_000, oid=50))
+        applied = _feed_catalogue(store, retyped)
+    else:
+        _feed_catalogue(store, retyped)
+        applied = _apply(
+            store, STATES_TOPIC, _snapshot("50", 1_800_000_000_000, oid=50)
+        )
+    assert store.objects[50].state == "50"
+    assert "50" in [obj.state for obj in _updated(applied)]
+
+
+def test_a_retype_outside_a_refresh_keeps_the_newer_raw_value() -> None:
+    """Without a new request cycle the raw value is newer than every seed,
+    so a retype keeps it (#301)."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _feed_catalogue(store, _flaga_row(50, 32))
+    _apply(store, STATES_TOPIC, _snapshot("0", 1_700_000_000_000, oid=50))
+    _apply(store, "ampio/from/CAFE/state/f/32", "1")
+    _feed_catalogue(store, {**_flaga_row(50, 32), "typ_komponentu": "roleta_procenty"})
+    assert store.objects[50].state == "1"
+
+
 def test_a_channel_the_replay_skipped_keeps_the_per_object_path() -> None:
     """A channel the broker holds no frame for leaves its object unclaimed,
     so the per-object topic still feeds it. Nothing goes dark for want of a
