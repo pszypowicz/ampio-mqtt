@@ -189,7 +189,7 @@ def to_int(value: Any) -> int | None:
     """Int coercion, None on bad input."""
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -990,7 +990,7 @@ def _finite_float(raw: object) -> float | None:
         return None
     try:
         parsed = float(raw)
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
     return parsed if math.isfinite(parsed) else None
 
@@ -1056,13 +1056,20 @@ def _parse_state_payload(oid: int, payload: str) -> StateUpdate:
     )
 
 
+def _frame_byte(value: object) -> int | None:
+    """One byte of a CAN frame as an int, or None outside 0-255."""
+    byte = to_int(value)
+    return byte if byte is not None and 0 <= byte <= 0xFF else None
+
+
 def parse_diagnostics(payload: str) -> ModuleDiagnostics | None:
     """Parse a `b/4F` diagnostics frame into supply voltage and temperature.
 
     The frame is `{"d": [0xFE, 0x4F, voltage, temperature], "m": mac}`.
     Voltage is in 0.2 V steps; temperature is offset by 100 °C and reads 0 on
     the modules that carry no temperature sensor. Returns None when the payload
-    is not a diagnostics frame.
+    is not a diagnostics frame or its voltage byte lies outside 0-255. A
+    temperature byte outside 0-255 reads as no reading.
     """
     try:
         data = json.loads(payload)
@@ -1075,11 +1082,11 @@ def parse_diagnostics(payload: str) -> ModuleDiagnostics | None:
         return None
     if frame[0] != 0xFE or frame[1] != 0x4F:
         return None
-    voltage_byte = to_int(frame[2])
+    voltage_byte = _frame_byte(frame[2])
     if voltage_byte is None:
         return None
     voltage = voltage_byte * 0.2
-    raw_temp = to_int(frame[3]) or 0 if len(frame) > 3 else 0
+    raw_temp = _frame_byte(frame[3]) or 0 if len(frame) > 3 else 0
     return ModuleDiagnostics(
         supply_voltage=round(voltage, 1),
         temperature=float(raw_temp - 100) if raw_temp else None,
@@ -1095,7 +1102,8 @@ def parse_color_temp_frame(
     with one byte pair per channel from offset 2. ``function`` fixes which
     channel the first pair carries. Each pair repacks to `power |
     coldness<<8`, the same u16 the per-object topic reports. Returns None
-    when the payload is not a color-temperature frame or has an odd length.
+    when the payload is not a color-temperature frame, has an odd length, or
+    carries a byte outside 0-255.
     """
     first_channel = CCT_FRAME_FUNCTIONS.get(function)
     if first_channel is None:
@@ -1113,8 +1121,8 @@ def parse_color_temp_frame(
         return None
     edges: list[RawChannelEdge] = []
     for index in range((len(frame) - 2) // 2):
-        power = to_int(frame[2 + 2 * index])
-        coldness = to_int(frame[2 + 2 * index + 1])
+        power = _frame_byte(frame[2 + 2 * index])
+        coldness = _frame_byte(frame[2 + 2 * index + 1])
         if power is None or coldness is None:
             return None
         edges.append(

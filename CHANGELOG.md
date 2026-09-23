@@ -12,6 +12,29 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Fixed
+
+- **An infinite or oversized number from the wire reads as None** (#291).
+  `json.loads` reads `Infinity` as a float, and a number with hundreds of digits
+  does not fit a float. Either one raised `OverflowError` in the parser, which
+  dropped the whole message, for example a thermostat push, instead of the one
+  field. A module diagnostics frame or a color-temperature frame now also reads
+  a byte outside 0-255 as unreadable, instead of raising or packing a wrong
+  state.
+- **An object that the params table drops reads every config flag as unset**
+  (#290). It kept the `params`, `czas` and `url` of the last table, so a dropped
+  row could leave a stale `read_only` flag in place. It now reads the defaults,
+  as the `params_gap` entry of the diagnostics report already said.
+
+### Removed
+
+- **The raw prefixes of the two analog flags** (#292). `flaga_liniowa` and
+  `flaga_liniowa16` carried the prefixes `afu8` and `afi16`, but no subscription
+  feeds those topics, so the entries did nothing. The analog flags update on the
+  per-object topic, as before.
+
 ## 0.74.0
 
 This release refuses the commands that the M-SERV drops with no reply. It also

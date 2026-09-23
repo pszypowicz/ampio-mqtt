@@ -305,7 +305,7 @@ class AmpioStore:
         touched = False
         for meta, address in admitted:
             touched |= self._merge_metadata(
-                meta, address, config.get(meta.id, {}), applied
+                meta, address, config.get(meta.id, _UNSET_CONFIG), applied
             )
         evicted = self._evict_missing_objects(
             {meta.id for meta, _ in admitted}, applied
@@ -999,4 +999,14 @@ class AdminStore(AmpioStore):
 # `data/params_devices`, and the merge takes them as `config`.
 _METADATA_FIELDS = tuple(
     f.name for f in fields(_protocol.ObjectMetadata) if f.name not in ("id", "leaf_id")
+)
+
+# The config an object reads when the params table carries no row for it:
+# the model's own defaults, so a dropped row takes its flags with it.
+_UNSET_CONFIG: Mapping[str, Any] = MappingProxyType(
+    {
+        f.name: f.default
+        for f in fields(AmpioObject)
+        if f.name in ("params", "czas", "url")
+    }
 )

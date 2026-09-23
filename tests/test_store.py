@@ -264,7 +264,7 @@ def test_a_leaf_id_that_is_not_a_string_refuses_the_whole_catalogue_reply() -> N
     objects_before = dict(store.objects)
     not_configured_before = store.not_configured
     with pytest.raises(AmpioProtocolError, match="neither a string nor null"):
-        _feed_catalogue(store, _catalogue_row(id=42, leafId=123))
+        _feed_catalogue(store, _catalogue_row(), _catalogue_row(id=42, leafId=123))
     assert store.objects == objects_before
     assert store.not_configured == not_configured_before
 
@@ -1690,6 +1690,28 @@ def test_a_granted_object_the_config_table_misses_is_reported(
     with caplog.at_level(logging.WARNING, logger="ampio_mqtt._store"):
         _apply(store, PARAMS_DEVICES_TOPIC, params_table({"id": 999, "params": 1}))
     assert caplog.text == ""
+
+
+def test_an_object_the_config_table_drops_reads_every_flag_as_unset() -> None:
+    """A params row that disappears takes its config with it: the object
+    reads the defaults, not the flags of the last table (#290)."""
+    store = _app_store()
+    row = _app_row(24, "0_cb9b_74_0_1")
+    _apply(store, DATA_DEVICES_TOPIC, details(row))
+    _apply(
+        store,
+        PARAMS_DEVICES_TOPIC,
+        params_table({"id": 24, "params": 64, "czas": 50, "url": "http://x"}),
+    )
+    assert store.objects[24].read_only is True and store.objects[24].czas == 50
+
+    applied = _apply(
+        store, PARAMS_DEVICES_TOPIC, params_table({"id": 999, "params": 1})
+    )
+    obj = store.objects[24]
+    assert (obj.params, obj.czas, obj.url) == (0, 0, "")
+    assert obj.read_only is False
+    assert [o.id for o in _updated(applied)] == [24]
 
 
 def test_a_catalogue_row_with_no_config_row_yet_reports_no_gap() -> None:

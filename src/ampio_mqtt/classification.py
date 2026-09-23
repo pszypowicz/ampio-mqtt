@@ -199,8 +199,9 @@ class TypeProfile:
     """
 
     kind: ObjectKind | _Selector
-    # Raw ``ampio/from/<mac>/state/<prefix>/<ch>`` bridge prefix. Only known
-    # prefixes are set; an input without one falls back to the per-object topic.
+    # Raw ``ampio/from/<mac>/state/<prefix>/<ch>`` bridge prefix, set only
+    # for a prefix the admin client subscribes. An input without one updates
+    # on the per-object topic.
     channel_prefix: str | None = None
 
 
@@ -240,13 +241,11 @@ TYPE_PROFILES: dict[str, TypeProfile] = {
     # answer `setValue` and both wrap silently past their field width.
     "flaga_liniowa": TypeProfile(
         InputKind("flaga_liniowa", "Analog flag", value_range=(0, 255)),
-        channel_prefix="afu8",
     ),
     "flaga_liniowa16": TypeProfile(
         InputKind(
             "flaga_liniowa16", "Analog flag (16-bit)", value_range=(-32768, 32767)
         ),
-        channel_prefix="afi16",
     ),
     "satel_alarm": TypeProfile(_Selector.ALARM),
     # The per-channel physical-input object (a wall button wired to a module
