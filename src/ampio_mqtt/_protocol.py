@@ -174,7 +174,8 @@ def require_rows(data: Mapping[str, Any], surface: str) -> list[dict[str, Any]]:
     """The rows of a ``{"List": [...]}`` reply.
 
     Raises :class:`AmpioProtocolError` when `List` is not an array or a row is
-    not an object.
+    not an object. The M-SERV is the expected publisher of these replies, but
+    the broker does not enforce that.
     """
     rows = data.get("List")
     if not isinstance(rows, list):
@@ -1094,8 +1095,7 @@ def parse_color_temp_frame(
     with one byte pair per channel from offset 2. ``function`` fixes which
     channel the first pair carries. Each pair repacks to `power |
     coldness<<8`, the same u16 the per-object topic reports. Returns None
-    when the payload is not a color-temperature frame, has an odd length, or
-    carries a non-integer byte.
+    when the payload is not a color-temperature frame or has an odd length.
     """
     first_channel = CCT_FRAME_FUNCTIONS.get(function)
     if first_channel is None:
@@ -1278,7 +1278,8 @@ ADMIN_ENDPOINTS: tuple[Endpoint, ...] = ENDPOINTS
 # against, as the server self-reports it on the info surface. This is the
 # compatibility floor, not a promise about anything older: a lower (or
 # missing) serverVersion logs a warning at discovery and behavior on such a
-# server is undefined - the fix is upgrading the M-SERV.
+# server is undefined - the fix is upgrading the M-SERV. Only serverVersion
+# is compared.
 BASELINE_SERVER_VERSION = (1865,)
 
 

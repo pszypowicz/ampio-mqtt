@@ -9,11 +9,11 @@ The Designer "Description in device" panel lets the installer tag an output with
 a Matter device type. Examples are "Lighting - On-off light" and "Plugs - Pump".
 The tag lives in the module itself, as one per-output entry of the module's
 description record: `{descType, outNo, outLoc, outType, desc}`. Designer writes
-that record over `device_api/to/<macHex>/descriptions_wr`. It also mirrors
-`outType` into the object row's `type` column on both catalogues, as a decimal
-string (`"256"` = 0x0100). The library parses that mirror into
-`AmpioObject.matter_device_type`. That field is a pure catalogue fact. The sweep
-never changes it.
+that record as base64, in the frame layout below, over
+`device_api/to/<macHex>/descriptions_wr`. It also mirrors `outType` into the
+object row's `type` column on both catalogues, as a decimal string (`"256"` =
+0x0100). The library parses that mirror into `AmpioObject.matter_device_type`.
+That field is a pure catalogue fact. The sweep never changes it.
 
 Assignment and exposure are two independent facts. `type` is the device-type
 assignment. `params` bit 37 is the Matter-bridge exposure opt-in, and a row can

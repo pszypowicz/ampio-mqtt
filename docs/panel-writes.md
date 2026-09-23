@@ -141,10 +141,11 @@ codes is not known, and it does not show in the resting colour.
 
 ## Touch lock
 
-A panel can ignore every touch for a while. A locked field broadcasts nothing at
-all, not even the press, so the module suppresses the touch before it reaches
-the bus. The lock is write-only. Nothing reports whether a panel is locked, and
-a locked panel is indistinguishable from an idle one.
+A panel can ignore every touch for a while. The panel plays its lock beeps. Then
+a locked field broadcasts nothing at all, not even the press, so the module
+suppresses the touch before it reaches the bus. The lock is write-only. Nothing
+reports whether a panel is locked, and a locked panel is indistinguishable from
+an idle one.
 
 ```
 ampio/to/<machex>/raw   0c0703 f0 2f <fn> <time:2>
@@ -232,10 +233,13 @@ they discard the three lock sub-functions in silence. So the capability count is
 the gate, and it is also the number the mask needs.
 
 Those modules drop all three lock sub-functions (8, 9 and 10), on both the
-`f0 05` and the `00` destination, at every mask width. `00` is the destination
-that the module's own stored rules carry. An ordinary move on `00` runs the
-motor, so the frame reaches the module, and the lock sub-functions are absent
-from that firmware. A module that advertises a count answers the same frame.
+`f0 05` and the `00` destination, with a 1-byte and a 2-byte mask. `00` is the
+destination that the module's own stored rules carry. An ordinary move on `00`
+runs the motor, so the frame reaches the module, and the lock sub-functions are
+absent from that firmware. On such a module, `block` stays at 0 after the lock
+frame, and the release frame changes nothing. A module that advertises a count
+answers the same frame: the lock frame sets `block` to 2, and the release frame
+returns it to 0.
 
 #### What a consumer reads
 

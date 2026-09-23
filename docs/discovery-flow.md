@@ -255,8 +255,9 @@ Malformed JSON or table envelopes retain `**REDACTED**`. A valid table envelope
 retains its row count even if the endpoint parser refuses its rows. Discovery
 and fetch methods still receive the full reply.
 
-The `info` entry retains its allowed values and masks other values. An
-unparseable info reply retains `**REDACTED**`.
+The `info` entry retains its allowed values and masks other values. An info
+reply that is not a JSON object with a `Results` object retains `**REDACTED**`.
+A `Results` object that the parser refuses stays, with the same mask.
 
 The `connection` entry carries six keys. `started_at` and `reconnect_count`
 cover the current `connect()` run, so a deliberate restart never reads as a

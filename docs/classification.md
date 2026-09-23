@@ -153,7 +153,8 @@ drift. Two key families embed `interpretacja` and stay open.
 `kind.key` to its own entity descriptions. Its CI must assert that every
 exported key is either mapped or deliberately excluded. Each open prefix counts
 as one decision. Then a library upgrade that adds a kind fails a test instead of
-a silent drop of entities.
+a silent drop of entities. The M-SERV's own Matter bridge omits an object whose
+type it does not map.
 
 ## What classification keys on (and what it ignores)
 
