@@ -15,6 +15,10 @@ whatever logic the installer bound to it.
 | Raise     | `ampio/control/<user>/api` ← `/api/setEvent/<n>` |
 | Receive   | `ampio/from/<MAC>/event` → `<n>`                 |
 
+`AmpioClient.set_event(n)` raises an event. A number outside 1-65535 raises
+`AmpioValueError`. An `AmpioAdminClient` receives each event as
+`BusEventRaised`, which carries `event_number` and `mac`.
+
 The MAC on a received event identifies what raised it. A panel press carries the
 module's own address. An event injected through the command surface carries the
 M-SERV's (`1` by default).
@@ -43,6 +47,6 @@ this ran against.
 
 **The M-SERV raises event 254 from its own MAC whenever a client asks for a
 discovery refresh**, so `connect()` normally produces one. It is not periodic. A
-purely passive listener sees no events at all. A consumer that only cares about
+purely passive listener sees no event 254. A consumer that only cares about
 panel presses must filter on the originating MAC, and must not treat every event
 as user intent.

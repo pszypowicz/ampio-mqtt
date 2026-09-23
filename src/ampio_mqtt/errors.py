@@ -10,11 +10,18 @@ class AmpioError(Exception):
 
 
 class AmpioConnectionError(AmpioError):
-    """Raised when the broker connection fails for non-auth transport reasons."""
+    """Raised when the broker connection fails or is not up.
+
+    Covers every reason other than credentials, which raise
+    :class:`AmpioAuthError`.
+    """
 
 
 class AmpioTimeoutError(AmpioConnectionError):
-    """Raised when the broker is reachable but an expected reply never arrives.
+    """Raised when an expected reply or acknowledgement does not arrive in time.
+
+    Also raised when ``check_connection`` receives an unreadable server-info
+    reply.
 
     Subclasses ``AmpioConnectionError`` so a handler that treats every
     connection problem alike keeps working; catch this one first to tell "the
@@ -93,10 +100,10 @@ class AmpioUnsupported(AmpioError):
     """Raised when the install cannot do what the call asks.
 
     The call is well formed and the object is in the catalogue, and the
-    refusal comes from what the hardware or the firmware answers: an
-    output whose kind does not answer the verb, a kind no timed write
-    pulses, a module generation without the roller lock. Nobody fixes it,
-    so a consumer leaves the control out instead of catching this.
+    refusal comes from what the install is: an output whose kind does not
+    answer the verb, a kind no timed write pulses, a lock call on a
+    non-cover, a module that advertises no roller channel count. Nobody
+    fixes it, so a consumer leaves the control out instead of catching this.
     """
 
 

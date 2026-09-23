@@ -2,7 +2,7 @@
 
 One module owns both directions: the endpoint table with its topic and
 command builders (what the client says), and the pure parsers with the
-Router (what the wire says back). No I/O and no state mutation - the
+Router (what the wire says back). No network I/O and no store mutation - the
 `AmpioStore` applies the typed results to its state.
 
 Topics are namespaced by the connecting account:
@@ -14,11 +14,12 @@ Topics are namespaced by the connecting account:
   digests:   ampio/fromDB/<user>/md5/<table> (retained) = MD5 of an app-sync
              table's reply, rewritten by the M-SERV on a Designer save
 
-The same ampio/control/<user>/config topic carries every discovery request;
-the payload keyword selects what the server publishes back. The `config`
-surface answers only for administrator accounts; non-admin accounts are
-served the app-sync `data` surface instead - see :class:`AccessTier` and
-the endpoint table below.
+Each endpoint publishes on `ampio/control/<user>/<surface>`, where the
+surface is `config`, `data`, `states`, or `info`. On `config` and `data` the
+payload keyword selects the reply. The `states` and `info` requests carry an
+empty payload. The `config` surface (module list, locations) answers only for
+administrator accounts. Every account reads the object catalogue from the
+`data` surface - see :class:`AccessTier` and the endpoint table below.
 """
 
 from __future__ import annotations
@@ -151,7 +152,10 @@ def server_below_baseline(version: str | None) -> bool:
 
 
 def warn_if_below_baseline(version: str | None) -> None:
-    """Log the one below-baseline warning both discovery paths share."""
+    """Log the below-baseline warning.
+
+    The info handler and `check_connection` share it.
+    """
     if server_below_baseline(version):
         logging.getLogger(__name__).warning(
             "Ampio server reports version %s, below the tested baseline %s; "
@@ -195,7 +199,7 @@ def require_rows(data: Mapping[str, Any], surface: str) -> list[dict[str, Any]]:
 
 
 def to_int(value: Any) -> int | None:
-    """Int coercion for a column whose absence is a value, None on bad input."""
+    """Int coercion, None on bad input."""
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -232,9 +236,10 @@ def _text_column(row: Mapping[str, Any], column: str, surface: str) -> str:
 def _nullable_text_column(row: Mapping[str, Any], column: str, surface: str) -> str:
     """One served text column whose null reads as empty.
 
-    The M-SERV writes null in place of an empty string on some rows of
-    ``leafId``, ``opis_menu``, and ``format``. The column must still be
-    there: an absent one is a different reply shape.
+    Serves ``opis_menu``, ``format``, and ``nazwa_urzadzenia``. The M-SERV
+    writes null in place of an empty string on some rows, and any non-string
+    value reads as empty. The column must still be there: an absent one is a
+    different reply shape.
     """
     value = _column(row, column, surface)
     return value if isinstance(value, str) else ""
@@ -287,10 +292,10 @@ class LeafFault(AmpioProtocolError):
 
 
 def parse_module_address(leaf_id: str) -> ModuleAddress:
-    """The bus address a non-empty ``leafId`` token embeds.
+    """The bus address in a ``leafId`` token.
 
-    An empty token is the door's decision, not a parse failure, so the
-    caller tests for it first. Any other shape is a server fault.
+    Raises :class:`AmpioProtocolError` for any string that is not a
+    ``0_<macHex>_<sfId>_<subSfId>_<ioNo>`` token, the empty string included.
     """
     match = _LEAF_ID_RE.fullmatch(leaf_id)
     if match is None:
@@ -479,9 +484,9 @@ def parse_rooms(
     An object in several groups takes the first room of the membership
     reply: the join table marks no primary group, and the intended consumer
     (a Home Assistant integration forwarding the value as
-    ``DeviceInfo.suggested_area``) allows one area per device. A membership
-    row can name a group the names table does not list, which leaves that
-    object without a room.
+    ``DeviceInfo.suggested_area``) allows one area per device. An object
+    takes the first membership row whose group the names table lists. An
+    object with no such row has no room.
     """
     room_map: dict[int, str] = {}
     for oid, gid in membership:
@@ -517,7 +522,9 @@ class OutputDescription:
 
     desc_type: int  # description class (OUTPUTS=12, ROLLER=26, ...)
     out_no: int  # output index within the class
-    out_loc: int  # pointer into the locations name table; 0 = unassigned
+    # pointer into the locations name table; 0 or 0x3FFF (the cleared form)
+    # = unassigned
+    out_loc: int
     out_type: int  # Matter device type; 0 = untagged
     desc: str
 
@@ -616,8 +623,8 @@ def parse_device_list(payload: str) -> tuple[DeviceRecord, ...] | None:
 
     None when the payload is not a JSON object with a ``devices`` list. A
     device without a ``descriptions`` field reads empty - no descriptions
-    written. A device whose ids do not parse or whose blob is unreadable
-    is left out, so it counts as unlisted.
+    written. A device whose ids do not parse or whose ``descriptions``
+    blob is unreadable is left out, so it counts as unlisted.
     """
     try:
         data = json.loads(payload)
@@ -726,9 +733,9 @@ def parse_panel_settings(blob: bytes, fields: int) -> PanelSettings | None:
 
     The section is laid out by the field count: the colours, then one
     light-signal byte per field, the beep time, and three field masks of
-    ``ceil(fields / 8)`` bytes each. None when the blob is too short to
-    hold the whole section - a truncated blob must not read as confident
-    values. docs/description-records.md carries the offsets.
+    ``ceil(fields / 8)`` bytes each. None when ``fields`` is not positive or
+    the blob is too short to hold the whole section - a truncated blob must
+    not read as confident values. docs/description-records.md carries the offsets.
     """
     mask_len = -(-fields // 8)  # bytes needed for one bit per field
     light = 7
@@ -901,8 +908,8 @@ def resolve_module_capabilities(
 ) -> dict[int, Mapping[int, int]]:
     """The capability map of every answering module, by mac.
 
-    An empty map is authoritative: the module answered and advertised
-    nothing.
+    An empty map means the module advertised nothing or its
+    ``supportedFunctions`` blob is absent or unreadable.
     """
     return dict(capabilities_by_mac)
 
@@ -982,8 +989,7 @@ def redact_info_reply(data: Mapping[str, Any]) -> str:
     """The server-info reply with every non-safelisted value masked.
 
     Keys stay visible, so a report still shows the reply's shape. A reply
-    without the expected envelope is withheld outright: a truncated JSON
-    string can carry the private fields in clear text.
+    without a ``Results`` object is withheld outright.
     """
     results = data.get("Results")
     if not isinstance(results, dict):
@@ -1212,9 +1218,9 @@ def parse_stan_json(stan_json: str) -> StanJsonSeed:
 # One row per M-SERV request/response endpoint, and the row is the single
 # source of truth: subscriptions, routing, discovery-completion signals,
 # and retained payloads all derive from it. To add an endpoint: verify
-# the wire shape live (tools/probe_config.py), add the row, give the
-# reply an `AmpioStore._handlers` entry only if it mutates state, and
-# expose a `fetch_<name>()` awaiting `AmpioClient._fetch` -
+# the wire shape live, add the row, give a fetchable endpoint a `parses=`
+# parser (a state-mutating one gets an entry in `AmpioStore._handler_table()`,
+# or in the `AdminStore` override for an admin-only reply, instead), and expose a `fetch_<name>()` awaiting `AmpioClient._fetch` -
 # `fetch_scenes()` is the reference shape.
 #
 # A request publishes ``req_payload`` (a keyword, or "" for the dedicated
@@ -1415,7 +1421,8 @@ def raw_output_payload(function: int, value: int, channel: int) -> str:
 # The Designer's "test condition" button executes one module action at
 # once: the `0c07` envelope, a trigger state byte, then the action. State
 # 3 asserts and 0 releases, and the button sends 3 on press. Every action
-# the library sends asserts, so the prefix carries the 3.
+# that uses this prefix asserts. The roller lock builds its own envelope,
+# because its release sends state 0.
 #
 # An action starts with its destination in the high nibble and its
 # function in the low one. A destination above one byte takes the escape
@@ -1427,8 +1434,8 @@ _ACTION_FRAME_PREFIX = "0c0703"
 _BACKLIGHT_ACTION = "50"  # per-field RGBW backlight
 _STATUS_LIGHT_ACTION = "60"  # per-field RGB status indicator
 _KEY_LOCK_ACTION = "f02f"  # destination 303, so the escape form
-# Every action below uses the vendor's own sub-function 1, the code the
-# stored conditions on live modules carry. For the backlight, 1 and 2
+# The backlight and status light actions use the vendor's sub-function 1,
+# the code the stored conditions on live modules carry. For the backlight, 1 and 2
 # both set the resting colour and neither outranks the other.
 _ACTION_SUB_FUNCTION = "01"
 # A panel reports at most 24 touch fields, so three mask bytes cover any
@@ -1670,7 +1677,7 @@ DEVICE_API_LIST_TOPIC = "device_api/from/list"
 ROLLER_DESC_TYPE = 26
 
 # typ_komponentu -> description class (descType), live-proven pairs only
-# (docs/description-records.md): an unlisted kind resolves no location.
+# (docs/description-records.md): an unlisted kind resolves no Designer record.
 # Extend only with a live-proven pair.
 DESC_TYPE_BY_KIND: dict[str, int] = {
     "przekaznik": 12,  # OUTPUTS
@@ -1700,8 +1707,8 @@ def joins_roller_records(typ_komponentu: str | None) -> bool:
 class EndpointReply:
     """A reply on a request/response endpoint, payload unparsed.
 
-    Which parser applies is per-endpoint business - the store's handler
-    table decides; the router only identifies the endpoint.
+    The endpoint's ``parses`` gate or, when it has none, the store's handler
+    decides how the reply applies. The router only identifies the endpoint.
     """
 
     endpoint: Endpoint
@@ -1773,8 +1780,8 @@ Inbound = (
 class Router:
     """Classifies one MQTT message into a typed inbound message, or None.
 
-    The single home of topic-shape knowledge: anything unroutable returns
-    None, and the store applies typed messages without inspecting a
+    The home of inbound topic classification: anything unroutable returns
+    None, and the client dispatches typed messages without inspecting a
     topic. ``endpoints`` is the tier's served subset, so a reply topic
     outside it is unroutable like any other unknown shape. Endpoint reply
     and per-object state topics are namespaced by the connecting account

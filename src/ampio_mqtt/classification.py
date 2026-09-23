@@ -1,10 +1,11 @@
 """Object classification for the Ampio DB-object protocol.
 
 One `TypeProfile` row per known ``typ_komponentu`` drives everything the
-library derives from a component type: its sensor/input/output kind and the
-raw-channel bridge prefix. This module is Home Assistant agnostic;
-device/state class strings match Home Assistant's SensorDeviceClass /
-SensorStateClass enum values so consumers can pass them through unchanged.
+library derives from a component type: its kind (sensor, input, output or
+thermostat) and an input's raw-channel bridge prefix. This module is Home
+Assistant agnostic; device/state class strings match Home Assistant's
+SensorDeviceClass / SensorStateClass enum values so consumers can pass them
+through unchanged.
 """
 
 from __future__ import annotations
@@ -194,8 +195,9 @@ class TypeProfile:
     One row per known component type; a type absent from the table is
     unknown metadata and classifies as the generic value sensor. ``kind``
     is the one kind the type is - a fixed instance, or a `_Selector` for
-    the ``interpretacja``-keyed families - so a profile carrying two kinds
-    is unrepresentable, exactly as the `ObjectKind` contract demands.
+    the families keyed by ``interpretacja`` or the leaf sub-function - so
+    a profile carrying two kinds is unrepresentable, exactly as the
+    `ObjectKind` contract demands.
     """
 
     kind: ObjectKind | _Selector
@@ -312,9 +314,10 @@ def classify(
 ) -> ObjectKind:
     """Classify a DB object into the one kind it is.
 
-    ``interpretacja`` selects the lin_wej measurement. A ``typ_komponentu``
-    with no table entry (unknown, or no metadata yet) is the generic
-    value-only sensor, so such an object still surfaces. ``sub_sf_id`` is
+    ``interpretacja`` selects the lin_wej measurement and names the numeric
+    ``value_<n>`` key. A ``typ_komponentu`` with no table entry (unknown,
+    or no metadata yet) is the generic value-only sensor, so such an
+    object still surfaces. ``sub_sf_id`` is
     the leaf sub-function, 0 for a single-role class, which refines
     ``satel_alarm`` alone.
     """
@@ -335,7 +338,9 @@ def classify(
 
 
 def input_channel_prefix(typ_komponentu: str | None) -> str | None:
-    """Raw-channel bridge prefix for ``typ_komponentu``, or None if it bridges
-    no channel."""
+    """Raw-channel bridge prefix for an input ``typ_komponentu``, or None.
+
+    Outputs pick their prefix in the store.
+    """
     profile = TYPE_PROFILES.get(typ_komponentu) if typ_komponentu is not None else None
     return profile.channel_prefix if profile is not None else None

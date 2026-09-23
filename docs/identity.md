@@ -16,11 +16,11 @@ The rest of this area is on its own pages.
 
 ## Modules
 
-| Field                     | Stable across module replacement?                                                  | Use it for                                                                                           |
-| ------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `id` (DB autoincrement)   | **No** - assigned in `mac_global` order, reassigned when a module is replaced.     | Cross-referencing objects to their owning module _within a single discovery snapshot_ only.          |
-| `mac` (Designer override) | **Yes** - re-stamped onto the replacement unit so CAN logic elsewhere stays valid. | The replacement-stable per-module key. Also what the raw `ampio/from/<MAC>/...` topics are keyed by. |
-| `mac_global` (factory id) | **No** - factory-burned, unique per physical unit, changes on swap.                | Display in diagnostics, never as identity.                                                           |
+| Field                     | Stable across module replacement?                                                  | Use it for                                                                                                                                                                                         |
+| ------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id` (DB autoincrement)   | **No** - assigned in `mac_global` order, reassigned when a module is replaced.     | The key of `AmpioAdminClient.modules` and the `module_id` argument of the module write methods, valid _within a single discovery snapshot_ only. Objects reach their module through `address.mac`. |
+| `mac` (Designer override) | **Yes** - re-stamped onto the replacement unit so CAN logic elsewhere stays valid. | The replacement-stable per-module key. Also what the raw `ampio/from/<MAC>/...` topics are keyed by.                                                                                               |
+| `mac_global` (factory id) | **No** - factory-burned, unique per physical unit, changes on swap.                | Display in diagnostics, never as identity.                                                                                                                                                         |
 
 The M-SERV's default `mac` is `1`, which is not unique. Treat `mac` as unique
 _within a single install_ (the user assigns the overrides), not globally.
@@ -44,13 +44,13 @@ only. The HA device topology must never branch on them.
 
 ## Objects
 
-| Field                     | Stable across module replacement?                                                                                                                                                                                                        | Notes                                                          |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `id`                      | **Yes**. An object delete is soft on the `config` catalogue. The row stays, with the `params` hidden bit set, so the autoincrement never renumbers. Unchanged across years of configuration uploads, module replacements, and deletions. | The per-object unique id, exposed as `AmpioObject.object_key`. |
-| `funkcja` (channel index) | **Yes** - part of the reloaded Designer config. Not unique: if the same physical signal is exposed as several Designer objects, they share one `funkcja`.                                                                                |
+| Field                     | Stable across module replacement?                                                                                                                                                                                                        | Notes                                                                                                 |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `id`                      | **Yes**. An object delete is soft on the `config` catalogue. The row stays, with the `params` hidden bit set, so the autoincrement never renumbers. Unchanged across years of configuration uploads, module replacements, and deletions. | The per-object unique id, exposed as `AmpioObject.object_key`.                                        |
+| `funkcja` (channel index) | **Yes** - part of the reloaded Designer config. Not unique: if the same physical signal is exposed as several Designer objects, they share one `funkcja`.                                                                                | On the admin tier, the raw report index keys on it together with `address.mac` and the report prefix. |
 | `typ_komponentu`          | **Yes** - the type vocabulary (`temp`, `lin_wej`, `flaga`, ...).                                                                                                                                                                         |
-| `address`                 | **Yes**. `ModuleAddress(mac, channel, sf_id, sub_sf_id)`, parsed from the leaf. `mac` is the module's override mac.                                                                                                                      | The module key on every tier, and the raw routing key.         |
-| `leaf_key`                | **Yes**. `leaf_<leafId>`, the physical output the object drives. Several views of one output share it.                                                                                                                                   | Grouping the views of one output.                              |
+| `address`                 | **Yes**. `ModuleAddress(mac, channel, sf_id, sub_sf_id)`, parsed from the leaf. `mac` is the module's override mac.                                                                                                                      | The module key on every tier, and the raw write address (mac, channel, and class).                    |
+| `leaf_key`                | **Yes**. `leaf_<leafId>`, the physical output the object drives. Several views of one output share it.                                                                                                                                   | Grouping the views of one output.                                                                     |
 
 ## Unique id: the object id (`AmpioObject.object_key`)
 
@@ -129,6 +129,10 @@ The Designer names all five segments. Its bundle builds the token, and it parses
 the token back into `macGroup`, `mac`, `sfId`, `subSfId`, and `ioNo`. Earlier
 revisions of this page called the last three `F2`, `F3`, and `F4`.
 
+`parse_module_address()` is the public form of the leaf parse. It returns a
+`ModuleAddress`. It raises `AmpioProtocolError` for a token that does not have
+this shape, and for an empty token.
+
 The library parses the mac, the `sfId`, the `subSfId`, and the trailing `ioNo`
 into `AmpioObject.address`. `address.channel` reads the last segment. It covers
 inputs as well as outputs. `address.sf_id` and `address.sub_sf_id` read the
@@ -171,10 +175,10 @@ above show the same pattern.
 `sfId` thus carries a tier-independent function-class signal (it rides the
 app-sync catalogue the standard tier receives), but it cannot replace the module
 type code. Both tables are coverage, not a specification, so an unlisted code
-proves nothing. The library keeps its classification on `typ_komponentu` alone.
+proves nothing. `kind` reads `typ_komponentu`, `interpretacja` for `lin_wej` and
+the numeric value types, and `address.sub_sf_id` for `satel_alarm`.
 `address.sf_id` does not enter `kind`. The raw bridge reads `address.sf_id` for
-`przekaznik` objects only. A leaf of class 67 reports on the `a` prefix and
-takes the write byte `0x32`. A leaf of class 257 reports on `o` and takes
-`0x30`. Any other class reports on `o` and writes through `/api`. See
-[`raw-channel-bridge.md`](raw-channel-bridge.md) and
-[`panel-writes.md`](panel-writes.md).
+`przekaznik` objects only. A leaf of class 67 reports on the `a` prefix. Any
+other class reports on `o`. [`panel-writes.md`](panel-writes.md) describes which
+writes ride the raw frame and which stay on `/api`. See also
+[`raw-channel-bridge.md`](raw-channel-bridge.md).

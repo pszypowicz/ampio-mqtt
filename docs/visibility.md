@@ -5,14 +5,14 @@ the `params` bit semantics, the read-only marker, and deletion on the wire.
 
 ## Hidden rows and the door
 
-`hidden` is `params` bit 4, the bit the Designer enum names `DELETED`. It marks
-the rows the user deleted or hid, and the stubs that duplicate a real Designer
-channel. The door drops a row that carries it on both tiers, so `objects` never
-holds a hidden row. A `data/params_devices` push that sets or clears the bit
-evicts or admits the row. This is the same gate the M-SERV's Matter bridge uses
-(`(params & 2**37) && !(params & 16)`) - see the section on the bit semantics
-below. Bit 37 is a Matter-only opt-in. The library deliberately does not filter
-on it and does not surface it.
+The hidden marker is `params` bit 4, the bit the Designer enum names `DELETED`.
+It marks the rows the user deleted or hid, and the stubs that duplicate a real
+Designer channel. The door drops a row that carries it on both tiers, so
+`objects` never holds a hidden row. A `data/params_devices` push that sets or
+clears the bit evicts or admits the row. The door checks the bit-4 half of the
+gate the M-SERV's Matter bridge uses (`(params & 2**37) && !(params & 16)`) -
+see the section on the bit semantics below. Bit 37 is a Matter-only opt-in. The
+library deliberately does not filter on it and does not surface it.
 
 Every config row that the app-sync catalogue omits carries the bit. Rows that
 app-sync still lists can carry it too, such as a hidden object or a duplicate
@@ -111,7 +111,7 @@ value and hold it. A `ledww` holds the same way, and the timed form also zeroes
 its color temperature (see [`commands.md`](commands.md)).
 
 `AmpioObject.pulse_ms` therefore reports the pulse length a timed write honors,
-in milliseconds. It reads `czas` on the three kinds that revert, and 0
+in milliseconds. It reads `czas` times 10 on the three kinds that revert, and 0
 everywhere else. Four of the ten editor types (`flaga_l`, `flaga_p`, `rgb` and
 `rgbww`) carry no classification row, so they read 0 with no claim about their
 wire behavior. The field is the app's default pulse length. The app reads it and

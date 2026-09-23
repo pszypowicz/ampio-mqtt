@@ -1,8 +1,8 @@
 """Typed events dispatched to :meth:`AmpioClient.subscribe` listeners.
 
-One stream carries everything the library learns: object and module news
-from the store, bus events, and connection-state transitions, in the order
-they were produced. Two cross-class orderings are guaranteed: a removal
+One stream carries object and module news from the store, record sweeps,
+bus events, and connection-state transitions, in the order they were
+produced. Two cross-class orderings are guaranteed: a removal
 follows the updates the same catalogue reply produced, and
 ``AvailabilityChanged(False)`` precedes a terminal ``AuthFailed`` /
 ``ConnectionDied``. A held retained value that the reply makes routable is
@@ -12,8 +12,8 @@ Every class is a frozen dataclass, so a ``match``
 statement destructures them positionally and instances compare by value.
 Update and removal events carry a snapshot taken as the change was
 applied - a listener that defers processing still sees the state the
-event was about, and reads current state from ``AmpioClient.objects`` /
-``modules`` when it wants that instead.
+event was about, and reads current state from ``objects``, or ``modules``
+on the admin client, when it wants that instead.
 """
 
 from __future__ import annotations
@@ -54,13 +54,15 @@ class ObjectAdded(ObjectUpdated):
 
 @dataclass(frozen=True, slots=True)
 class ObjectRemoved:
-    """The account's authoritative catalogue stopped listing an object.
+    """The catalogue stopped listing an object, or the door stopped admitting it.
+
+    The door stops admitting a row when its hidden bit is set or its leaf
+    is cleared.
 
     Carries the final state; by dispatch time the id is gone from
     :pyattr:`AmpioClient.objects`. This is the signal to drop whatever
-    entity was built on the object. What triggers it differs by tier
-    because deletion differs by tool - the wire mechanics (app-side
-    soft-delete vs a Designer save) live in docs/visibility.md.
+    entity was built on the object. The deletion wire mechanics are in
+    docs/visibility.md.
     """
 
     object: AmpioObject
@@ -72,9 +74,9 @@ class NotConfigured:
 
     The payload :class:`~ampio_mqtt.AmpioNotConfigured` carries, as the
     door fills it: ``objects`` holds the ``(id, name)`` pairs of every
-    object row without a leaf, and ``collisions`` the ``(mac, module
-    ids)`` pairs of every override mac two or more module rows share, so
-    every ids tuple here names two rows or more.
+    visible object row without a leaf, and ``collisions`` the ``(mac,
+    module ids)`` pairs of every override mac two or more module rows
+    share, so every ids tuple here names two rows or more.
 
     A reply that changes either set reports both, so an event with two
     empty sides means the door refuses nothing now. That is the signal to
@@ -94,7 +96,7 @@ class NotConfigured:
 
 @dataclass(frozen=True, slots=True)
 class ModuleUpdated:
-    """A module's catalogue row or its diagnostics broadcast changed.
+    """A module's catalogue row changed, or its diagnostics broadcast arrived.
 
     Fires for a module the list adds or changes and for each diagnostics
     broadcast. Both sources are administrator-only, so it never fires on a
@@ -108,7 +110,9 @@ class ModuleUpdated:
 
 @dataclass(frozen=True, slots=True)
 class ModuleRemoved:
-    """The module catalogue stopped listing a module.
+    """The module list stopped admitting a module.
+
+    Its row left the list, or another row now shares its mac.
 
     Carries the final state, after the store has dropped it. The module
     list is administrator-only, so this never fires on a standard account.
@@ -163,13 +167,13 @@ class AvailabilityChanged:
 
 @dataclass(frozen=True, slots=True)
 class AuthFailed:
-    """Terminal: the broker rejected the credentials after ``connect()``.
+    """Terminal: the broker rejected the credentials after a session came up.
 
     Carries the broker's reason string. By dispatch time
     ``AvailabilityChanged(False)`` has fired and the connection loop has
     stopped for good, so this is the signal to drive a reauthentication
-    flow. A rejection during ``connect()`` itself raises
-    ``AmpioAuthError`` there instead and dispatches nothing.
+    flow. A rejection before the first session comes up raises
+    ``AmpioAuthError`` from ``connect()`` instead and dispatches nothing.
     """
 
     reason: str
@@ -184,10 +188,10 @@ class ConnectionDied:
     triggered by one message's processing is not this: the client guards
     per message and the connection stays up. Dispatched after
     ``AvailabilityChanged(False)``, with the traceback logged and the
-    reason kept in the diagnostics snapshot's ``last_error``. Only a
-    fresh ``connect()`` recovers. A crash during ``connect()`` itself makes
-    ``connect()`` raise ``AmpioConnectionError`` instead and dispatches
-    nothing, mirroring the auth path.
+    exception text kept in the diagnostics snapshot's ``last_error``. Only
+    a fresh ``connect()`` recovers. A crash before the first session comes
+    up makes ``connect()`` raise ``AmpioConnectionError`` instead and
+    dispatches nothing, mirroring the auth path.
     """
 
     reason: str

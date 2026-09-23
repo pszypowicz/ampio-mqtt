@@ -150,10 +150,10 @@ class Connection:
         """Start the loop and wait for the first connection.
 
         Raises ``AmpioAuthError`` if the broker rejects the credentials,
-        ``AmpioConnectionError`` if nothing comes up within ``timeout`` or
-        ``close()`` is called while this connect is in flight. Concurrent
-        ``open()`` calls run one after another, each closing whatever loop
-        the previous one left.
+        ``AmpioConnectionError`` if nothing comes up within ``timeout``,
+        ``close()`` is called while this connect is in flight, or the loop
+        crashes before it connects. Concurrent ``open()`` calls run one
+        after another, each closing whatever loop the previous one left.
         """
         async with self._lifecycle:
             # Swapped in before the first await so any close() arriving
@@ -207,7 +207,7 @@ class Connection:
             raise AmpioConnectionError("Timed out connecting to Ampio")
 
     async def close(self) -> None:
-        """Stop the loop, reporting rather than raising whatever ended it.
+        """Stop the loop without raising whatever ended it.
 
         A deliberate stop is not an availability event: the consumer asked
         for it, so the availability listeners are not invoked, unlike every
@@ -227,10 +227,11 @@ class Connection:
         if runner is None:
             return
         runner.cancel()
-        # The runner's own cancellation is read off the finished task rather
-        # than raised here, which `await runner` cannot separate from a second
-        # cancel landing on this task. Swallowing that second cancel would let
-        # this return as if the reap had finished on its own terms.
+        # `asyncio.wait` leaves the runner's own cancellation on the finished
+        # task instead of raising it here. `await runner` cannot tell that
+        # apart from a second cancel landing on this task, and swallowing that
+        # second cancel would let this return as if the reap had finished on
+        # its own terms.
         await asyncio.wait([runner])
 
     async def publish(self, topic: str, payload: bytes) -> None:
@@ -350,9 +351,9 @@ class Connection:
             if self._auth_failed.is_set() and self._connected.is_set():
                 # A rejection after a successful open() stops the loop for
                 # good with no exception to reach a caller, so this
-                # callback is the consumer's only signal. Fired after the
-                # availability drop; a rejection on the initial connect is
-                # raised from open() instead.
+                # callback is the push signal. Fired after the availability
+                # drop; a rejection on the initial connect is raised from
+                # open() instead.
                 self._on_auth_failure(self._auth_error_message or _AUTH_REJECTED)
             if not self._stop:
                 await asyncio.sleep(self._backoff_seconds(attempt))
@@ -432,11 +433,11 @@ def _mqtt_client(
         timeout=10,
     )
     # aiomqtt warns once per publish above this many in-flight QoS 1 calls
-    # (default 10). Every publish here carries its own PUBACK deadline in
-    # `publish()`, so a pile-up surfaces as AmpioTimeoutError and the count
-    # itself warns about nothing. A multi-entity Home Assistant service call
-    # fires one publish per entity at once and would otherwise log a burst
-    # of warnings for a burst that completes.
+    # (default 10). Every publish on the session loop carries its own PUBACK
+    # deadline in `publish()`, so a pile-up surfaces as AmpioTimeoutError and
+    # the count itself warns about nothing. A multi-entity Home Assistant
+    # service call fires one publish per entity at once and would otherwise
+    # log a burst of warnings for a burst that completes.
     client.pending_calls_threshold = sys.maxsize
     return client
 
@@ -447,8 +448,8 @@ def _is_auth_error(err: BaseException) -> bool:
     Reads the structured reason code off ``MqttCodeError``; the cause
     chain is walked because a drop during message iteration arrives as a
     bare ``MqttError`` with the coded disconnect chained as its
-    ``__cause__``. paho's own ``MQTTErrorCode`` ints stay in single
-    digits, so codes outside ``_AUTH_REASON_CODES`` never false-match.
+    ``__cause__``. paho's own ``MQTTErrorCode`` ints stay below 20, so
+    they never collide with 134/135.
     """
     current: BaseException | None = err
     while current is not None:

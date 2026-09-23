@@ -4,8 +4,9 @@ The M-SERV publishes the same data twice:
 
 - On the **per-object topic** `ampio/fromDB/<user>/ob/<id>/state`: user-scoped,
   not retained. Initial values come from the bulk `states` snapshot. This is the
-  well-formed JSON form (`{state, desc, on}`, `desc` optional) and the one the
-  library's per-object dispatcher consumes.
+  well-formed JSON form (`{state, on}` plus optional keys, full shape in
+  [`protocol.md`](protocol.md) "Live state") and the one the library's
+  per-object dispatcher consumes.
 - On the **raw tree**, at `ampio/from/<MAC>/state/<prefix>/<channel>`: global,
   NOT user-scoped, and **retained**. The broker holds every channel's last value
   (edges republish retained), so a subscriber receives the complete current
@@ -22,21 +23,23 @@ Once an object produced a raw message, the admin store marks it **raw-owned**.
 It then ignores the slower per-object echo whole, and the bulk `states` snapshot
 skips the object. Its resync is the retained raw state tree itself. Every
 reconnect's subscribe re-delivers that tree whole, and the index that persists
-across sessions routes it. The library subscribes to the four state wildcards at
-QoS 0 for that reason. The broker replays retained values into a QoS 1
-subscription through a queue of 1000 messages per client. The `f` prefix alone
-holds more values than that on the baseline install. A QoS 0 subscription takes
-no queue slot, so its replay is complete. A raw edge lost on a socket drop
-returns with the next replay, because every channel is retained.
+across sessions routes it. The library subscribes to the retained state filters
+(the four `state` wildcards and the two color-temperature broadcasts) at QoS 0
+for that reason. The broker replays retained values into a QoS 1 subscription
+through a queue of 1000 messages per client. The `f` prefix alone holds more
+values than that on the baseline install. A QoS 0 subscription takes no queue
+slot, so its replay is complete. A raw edge lost on a socket drop returns with
+the next replay, because every channel is retained.
 
 The replay arrives before the catalogues can build that index. The broker sends
 it within a second of the subscribe, and a catalogue reply is later. So the
 store holds a replayed value whose channel it cannot route yet, keyed the way
 the index keys it, and folds the held values in as soon as the catalogue builds
-the routing. Every bridged object therefore carries its value and its raw
-ownership by the time `connect()` returns, and the bridge is live from the first
-connect rather than from the first press. A **live** frame for a channel no
-object exposes still drops, because nothing will ever route it.
+the routing. Because the replay arrives first, a bridged object whose channel
+the replay carries holds its value and its raw ownership when `connect()`
+returns True. The bridge is live from the first connect rather than from the
+first press. A **live** frame for a channel no object exposes still drops,
+because nothing will ever route it.
 
 An input whose module publishes no raw state (the M-SERV's own virtual objects)
 never becomes raw-owned. It lives on the per-object path with snapshot resync,
@@ -54,11 +57,14 @@ are in [`account-tiers.md`](account-tiers.md).
 Authoritative sources:
 [`src/ampio_mqtt/_protocol.py`](../src/ampio_mqtt/_protocol.py) holds
 `RAW_INPUT_WILDCARDS`, `RAW_OUTPUT_WILDCARD`, `RAW_ANALOG_WILDCARD`,
-`RAW_DIAGNOSTICS_WILDCARD`, and `RAW_EVENT_WILDCARD` - together the six raw-tree
-subscriptions - plus the router.
+`RAW_DIAGNOSTICS_WILDCARD`, `RAW_COLOR_TEMP_WILDCARDS`, and
+`RAW_EVENT_WILDCARD` - together the eight raw-tree subscriptions - plus the
+router.
 [`src/ampio_mqtt/classification.py`](../src/ampio_mqtt/classification.py) holds
-the `channel_prefix` field on the `TYPE_PROFILES` rows. The store's
-`_apply_raw_channel` applies a routed edge.
+the `channel_prefix` field on the `TYPE_PROFILES` rows.
+`AdminStore._rebuild_indexes` builds the routing index and assigns the `o`, `a`
+and `ww` prefixes to `przekaznik` and `ledww`. The store's `_apply_raw_channel`
+applies a routed edge.
 
 ## What the library subscribes to
 
@@ -67,13 +73,16 @@ ampio/from/+/state/f/+   # flags  ("flaga")                                     
 ampio/from/+/state/i/+   # digital inputs  ("wej")                               QoS 0
 ampio/from/+/state/o/+   # binary outputs ("przekaznik")                         QoS 0
 ampio/from/+/state/a/+   # analog outputs ("przekaznik" on an open-collector leaf) QoS 0
+ampio/from/+/b/62        # color-temperature broadcast, channels 1 to 3 ("ledww") QoS 0
+ampio/from/+/b/63        # color-temperature broadcast, channels 4 to 6 ("ledww") QoS 0
 ampio/from/+/b/4F        # per-module diagnostics broadcast                      QoS 1
 ampio/from/+/event       # bus events                                            QoS 1
 ```
 
-The four state wildcards ask for QoS 0. The broker retains every channel, and a
-QoS 1 replay of that many values overflows its queue (see above). The
-diagnostics and event filters keep QoS 1, the acknowledged leg for a live push.
+The four state wildcards and the two color-temperature broadcasts ask for QoS 0.
+The broker retains every channel, and a QoS 1 replay of that many values
+overflows its queue (see above). The diagnostics and event filters keep QoS 1,
+the acknowledged leg for a live push.
 
 The `from` tree spells the mac in uppercase hex (`ampio/from/CFFE/...`), and the
 `to` tree in lowercase (`ampio/to/cffe/raw`). A topic filter must match the
@@ -193,6 +202,7 @@ minutes.
 | `a` (other than class-67 relays) | Subscribed, but indexed for `przekaznik` objects on an open-collector leaf alone. Every other analog channel already arrives on the per-object topic with full precision and the right state-class metadata, so it drops at the lookup. |
 | `t` (temperature)                | Same reasoning - the per-object form is sufficient.                                                                                                                                                                                     |
 | `rgbw` (RGBW output)             | Output side. Latency is not the win it is for inputs, and the per-object form carries the user-friendly desc.                                                                                                                           |
+| `afu8`, `afi16` (analog flags)   | Not subscribed. An analog flag object (`flaga_liniowa`, `flaga_liniowa16`) updates through the per-object topic alone.                                                                                                                  |
 | `o` (non-przekaznik)             | Subscribed, but indexed for `przekaznik` objects alone (see above). Channels of other output classes drop at the lookup.                                                                                                                |
 | the M-SERV's two system rows     | Not objects, so never indexed. The library drops both by their type as it reads the catalogue (see [`untapped-surfaces.md`](untapped-surfaces.md)).                                                                                     |
 
@@ -210,7 +220,7 @@ that publish each:
 | `a`              | dimmers, OC, rollers, relays | Analog output/input channels - bridged for `przekaznik` on an open-collector leaf (class 67), whose object topic never echoes. The per-object form is preferred elsewhere. |
 | `t`              | M-SENS                       | Temperature - the per-object form is preferred.                                                                                                                            |
 | `rgbw`           | RGBW-capable modules         | Packed color - the per-object form is preferred.                                                                                                                           |
-| `afu8`, `afi16`  | M-SERV, panels, M-INOC       | Analog flags, u8 and i16 - the `FLAG_ANALOG_U8` / `FLAG_ANALOG_I16` functions of the module's own census (`supportedFunctions` in its `device_api` record).                |
+| `afu8`, `afi16`  | M-SERV, panels, M-INOC       | Analog flags, u8 and i16 - the `FLAG_ANALOG_U8` / `FLAG_ANALOG_I16` functions of the module's own census (`supportedFunctions` in its `device_api` record). Not bridged.   |
 | `au16l`          | M-SENS only                  | 16-bit sensor channels (humidity, pressure, noise, illuminance, air quality).                                                                                              |
 | `au32`           | alarm gateway (M-CON) only   | 32-bit channels of the gateway's alarm system (`bit32` objects).                                                                                                           |
 | `bi`, `bo`       | alarm gateway (M-CON) only   | Binary inputs and outputs of the gateway's alarm system (zone table, 128 channels each on the baseline install).                                                           |

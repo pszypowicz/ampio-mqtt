@@ -92,7 +92,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--timeout",
         type=float,
         default=20.0,
-        help="seconds to wait for the description sweep (default: 20)",
+        help="seconds to wait for each sweep reply (default: 20)",
     )
     p.add_argument(
         "--watch",
@@ -101,8 +101,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "hold the connection this long and report how many modules have "
             "broadcast a voltage or a temperature as time passes. A fresh "
-            "connection starts with almost none, because the client drops the "
-            "retained frames that arrive before the module catalogue."
+            "connection starts with almost none."
         ),
     )
     return p.parse_args(argv)

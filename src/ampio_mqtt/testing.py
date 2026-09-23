@@ -9,7 +9,8 @@ Two functions and five store read attributes are the promise here:
 ``objects``, ``not_configured`` and ``server_info`` on
 :class:`AmpioStore`, and ``modules`` and ``collisions`` on
 :class:`AdminStore`. ``objects``, ``server_info`` and ``modules`` carry
-what the matching :class:`~ampio_mqtt.AmpioClient` attribute carries. The
+what the matching client attribute carries (``modules`` on
+:class:`~ampio_mqtt.AmpioAdminClient`). The
 client reports the two refusal sets through ``diagnostics_snapshot()``
 instead, under ``not_configured`` and ``mac_collisions``.
 

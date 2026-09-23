@@ -1,8 +1,9 @@
 # Panel writes
 
 This page continues [`protocol.md`](protocol.md) with the raw CAN output frame
-for panel status LEDs, relays, and open-collector outputs, the panel buzzer, the
-touch field colours, the touch lock, and the module identify LED.
+for panel status LEDs, relays, and open-collector outputs. It also covers the
+panel buzzer, the touch field colours, the touch lock, the module identify LED,
+and the cover roller lock.
 
 ## Panel outputs
 
@@ -117,6 +118,11 @@ the vendor's own stored conditions carry. The backlight has a white channel and
 the status indicator does not, which is the only difference between the two
 payloads.
 
+`set_panel_backlight()` writes the icon backlight and `set_panel_status_light()`
+writes the status indicator. Both are `AmpioAdminClient` methods, addressed by
+`AmpioModule.id`. Their `fields` argument takes 1-based field numbers, and None
+selects every field.
+
 `mask` selects the touch fields, one bit per field, least significant first, so
 field 1 is bit 0. A panel reads the width its own field count needs and ignores
 any surplus. The library therefore always sends the full three bytes, which
@@ -154,6 +160,10 @@ byte `0x2f`. `fn` is 1 to lock and 0 to release at once. `time` is little-endian
 of zero length, not a latch, so the panel beeps and a touch works at once. The
 16-bit field caps a single lock at 655.35 s, about 10 minutes 55 seconds, so
 holding a panel locked means re-arming before the current lock runs out.
+
+`lock_panel(module_id, seconds=...)` sets the lock, and `seconds` is 0.01 to
+655.35 s. `unlock_panel()` releases the lock early. Both are `AmpioAdminClient`
+methods, addressed by `AmpioModule.id`.
 
 A person can also toggle the lock from the panel, with the touch field
 combination the Designer assigns. That combination is invisible on the bus, and
@@ -251,14 +261,14 @@ raises `AmpioValueError` for an id the catalogue does not list. The table covers
 every other answer: the `LockTarget`, the four `LockRefusal` members, and the
 raise for a mac no admitted module row carries.
 
-| Result               | Meaning                                                                                                              |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `LockTarget`         | A lock write reaches this cover. Carries the module mac, the cover's channel, and the module's roller channel count. |
-| `NOT_A_COVER`        | The object is not a cover, and its channel index can belong to a cover on the same module.                           |
-| `NOT_SWEPT`          | No sweep has answered the module, so the answer is not known.                                                        |
-| `NO_ROLLER_COUNT`    | The module advertises no roller channel count and drops the lock frame.                                              |
-| `PAST_LAST_CHANNEL`  | The cover's channel lies past the roller count the module advertises.                                                |
-| `AmpioNotConfigured` | No admitted module row carries the cover's mac, so the frame has no module to reach. The installer fixes the list.   |
+| Result               | Meaning                                                                                                                                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `LockTarget`         | A lock write reaches this cover. Carries the module mac, the cover's channel, and the module's roller channel count.                                                                             |
+| `NOT_A_COVER`        | The object is outside the roller description class (`roleta_procenty`, `roleta_lamelki`). A plain `roleta` is refused too. A non-cover's channel index can belong to a cover on the same module. |
+| `NOT_SWEPT`          | No sweep has answered the module, so the answer is not known.                                                                                                                                    |
+| `NO_ROLLER_COUNT`    | The module advertises no roller channel count and drops the lock frame.                                                                                                                          |
+| `PAST_LAST_CHANNEL`  | The cover's channel lies past the roller count the module advertises.                                                                                                                            |
+| `AmpioNotConfigured` | No admitted module row carries the cover's mac, so the frame has no module to reach. The installer fixes the list.                                                                               |
 
 `block_opening()`, `unblock_opening()`, `block_closing()` and
 `unblock_closing()` call `lock_target()` and raise on a refusal. `NOT_SWEPT`

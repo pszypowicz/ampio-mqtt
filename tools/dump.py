@@ -3,8 +3,8 @@
 
 Subscribes to a topic filter and prints every message received for a duration.
 Optionally publishes one or more requests (e.g. the device-list request) after
-subscribing. Every printed line carries the seconds elapsed since the first
-request, so a slow or missing reply is visible, and an `R` marks a message the
+subscribing. Every message line carries the seconds elapsed since the
+subscribe, so a slow or missing reply is visible, and an `R` marks a message the
 broker replayed from its retained store rather than a live push.
 
 Usage:
@@ -52,14 +52,29 @@ def line_sink(path: str | None) -> Generator[Callable[[str], None]]:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Raw MQTT topic dumper for Ampio. Credentials may come from "
-        "AMPIO_HOST/AMPIO_USERNAME/AMPIO_PASSWORD env vars."
+        "AMPIO_HOST/AMPIO_PORT/AMPIO_USERNAME/AMPIO_PASSWORD env vars."
     )
-    p.add_argument("--host", default=os.environ.get("AMPIO_HOST"))
     p.add_argument(
-        "--port", type=int, default=int(os.environ.get("AMPIO_PORT", "1883"))
+        "--host",
+        default=os.environ.get("AMPIO_HOST"),
+        help="Broker host (default: AMPIO_HOST)",
     )
-    p.add_argument("--username", default=os.environ.get("AMPIO_USERNAME"))
-    p.add_argument("--password", default=os.environ.get("AMPIO_PASSWORD"))
+    p.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("AMPIO_PORT", "1883")),
+        help="Broker port (default: AMPIO_PORT, else 1883)",
+    )
+    p.add_argument(
+        "--username",
+        default=os.environ.get("AMPIO_USERNAME"),
+        help="Account name (default: AMPIO_USERNAME)",
+    )
+    p.add_argument(
+        "--password",
+        default=os.environ.get("AMPIO_PASSWORD"),
+        help="Account password (default: AMPIO_PASSWORD)",
+    )
     p.add_argument("--topic", default="#", help="Topic filter (default '#')")
     p.add_argument(
         "--qos",
@@ -81,7 +96,12 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Payload for every --request (default empty)",
     )
-    p.add_argument("--duration", type=float, default=15.0)
+    p.add_argument(
+        "--duration",
+        type=float,
+        default=15.0,
+        help="Seconds to listen after subscribing (default 15)",
+    )
     p.add_argument(
         "--max",
         type=int,

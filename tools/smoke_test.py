@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Live smoke test for ampio-mqtt against a real Ampio broker.
 
-Connects, requests device discovery, and prints discovered devices and any
-sensor states received (from retained state topics) for a fixed duration.
+Connects, requests device discovery, and prints the discovered objects and the
+sensor states from the states snapshot and live pushes for a fixed duration.
 
 Usage:
   python tools/smoke_test.py --host 192.0.2.10 --username USER --password PASS
@@ -36,14 +36,26 @@ from ampio_mqtt import (
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Live smoke test for ampio-mqtt against a real Ampio broker. "
-        "Credentials may come from AMPIO_HOST/AMPIO_USERNAME/AMPIO_PASSWORD env vars."
+        "Credentials may come from AMPIO_HOST/AMPIO_PORT/AMPIO_USERNAME/"
+        "AMPIO_PASSWORD env vars."
     )
     p.add_argument("--host", default=os.environ.get("AMPIO_HOST"), help="Broker host")
     p.add_argument(
-        "--port", type=int, default=int(os.environ.get("AMPIO_PORT", "1883"))
+        "--port",
+        type=int,
+        default=int(os.environ.get("AMPIO_PORT", "1883")),
+        help="Broker port (default: AMPIO_PORT, else 1883)",
     )
-    p.add_argument("--username", default=os.environ.get("AMPIO_USERNAME"))
-    p.add_argument("--password", default=os.environ.get("AMPIO_PASSWORD"))
+    p.add_argument(
+        "--username",
+        default=os.environ.get("AMPIO_USERNAME"),
+        help="Account name (default: AMPIO_USERNAME)",
+    )
+    p.add_argument(
+        "--password",
+        default=os.environ.get("AMPIO_PASSWORD"),
+        help="Account password (default: AMPIO_PASSWORD)",
+    )
     p.add_argument(
         "--duration",
         type=float,
@@ -55,8 +67,8 @@ def parse_args() -> argparse.Namespace:
     if not args.host:
         p.error("missing --host (or AMPIO_HOST env)")
     if not args.username:
-        # An empty username namespaces every topic as ampio/.../ /... and the
-        # run just hangs; fail loud instead.
+        # Report a missing username as an argument error before the client
+        # constructor refuses it.
         p.error("missing --username (or AMPIO_USERNAME env)")
     return args
 
@@ -83,7 +95,7 @@ async def run(
     print(f"Connecting to {args.host}:{args.port} ...")
     try:
         await client.connect(timeout=15)
-        print("Connected. Listening for discovery + retained state...\n")
+        print("Connected. Listening for discovery + state...\n")
 
         await asyncio.sleep(args.duration)
 
