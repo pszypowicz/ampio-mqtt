@@ -833,9 +833,10 @@ class AdminStore(AmpioStore):
         ids = self._input_index.get(key)
         if ids is None:
             # A replay waits for the routing table. A live frame with no
-            # route drops, including one that lands before the first
-            # catalogue builds the table.
-            if retained:
+            # route replaces a value held for its channel, so a held value
+            # is never older than the channel's latest frame. With nothing
+            # held, the live frame drops.
+            if retained or key in self._pending_raw:
                 self._pending_raw[key] = edge.state
             return
         # Two Designer views of one output share the module and the
@@ -955,10 +956,9 @@ class AdminStore(AmpioStore):
                 retained=True,
             )
         if index:
-            # The routing table exists, so both catalogue replies have
-            # landed, and whatever is still held is a channel no object
-            # exposes. Holding it would let an arbitrarily old value reach
-            # an object a later Designer save exposes.
+            # A rebuild drops what the fresh index still does not route. A
+            # replay that lands after this rebuild waits for the next one,
+            # and a live frame keeps it current until then.
             self._pending_raw.clear()
 
     def _fold_pending_diagnostics(self, applied: Applied) -> None:

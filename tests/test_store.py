@@ -2193,9 +2193,7 @@ def test_a_held_frame_for_an_unlisted_module_waits_for_its_row() -> None:
 
 
 def test_a_held_channel_no_object_exposes_is_discarded() -> None:
-    """Once the routing table exists, both catalogue replies have landed, so
-    a held value nothing routes is stale weight rather than a value waiting
-    for an object a later Designer save might add."""
+    """A rebuild drops a held value that its fresh index does not route."""
     store = _store()
     _apply(store, "ampio/from/CAFE/state/f/99", "1", retained=True)
     _apply(store, DEVICES_TOPIC, devices(_PANEL))
@@ -2205,6 +2203,33 @@ def test_a_held_channel_no_object_exposes_is_discarded() -> None:
     # The object for that channel appears later and stays on its own path.
     _feed_catalogue(store, _flaga_row(50, 32), _flaga_row(52, 99))
     assert store.objects[52].state is None and 52 not in store._raw_owned
+
+
+def test_a_live_frame_updates_a_held_value_for_a_channel_no_object_routes() -> None:
+    """A held replay never outlives a newer live frame on its channel, so an
+    object a later Designer save adds starts with the current value (#287)."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _feed_catalogue(store, _flaga_row(50, 32))
+    # A reconnect: the replay holds channel 99, and the unchanged catalogue
+    # runs no rebuild.
+    store.begin_refresh()
+    _apply(store, "ampio/from/CAFE/state/f/99", "1", retained=True)
+    _feed_catalogue(store, _flaga_row(50, 32))
+    _apply(store, "ampio/from/CAFE/state/f/99", "0")
+
+    _feed_catalogue(store, _flaga_row(50, 32), _flaga_row(52, 99))
+    assert store.objects[52].state == "0"
+
+
+def test_a_live_frame_with_nothing_held_still_drops() -> None:
+    """A live frame for a channel no object routes waits only when a replay
+    already holds that channel (#287)."""
+    store = _store()
+    _apply(store, DEVICES_TOPIC, devices(_PANEL))
+    _feed_catalogue(store, _flaga_row(50, 32))
+    _apply(store, "ampio/from/CAFE/state/f/99", "0")
+    assert store._pending_raw == {}
 
 
 def test_a_channel_the_replay_skipped_keeps_the_per_object_path() -> None:

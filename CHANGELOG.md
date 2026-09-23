@@ -27,6 +27,11 @@ explicit beta posture above and is no longer the supported upgrade path.
 
 ### Fixed
 
+- **A retained raw value no longer outlives a newer live frame** (#287). After a
+  reconnect, the replay of a channel that no object used waited in the store,
+  and a live frame for that channel dropped. A later Designer save that added an
+  object on the channel gave it the old value. A live frame now replaces a value
+  held for its channel.
 - **`diagnostics_snapshot()` no longer carries the account name, the broker host
   or the host identifiers of the M-SERV** (#289). A publish timeout named the
   account's own control topic in `connection.last_error`. That field now masks
