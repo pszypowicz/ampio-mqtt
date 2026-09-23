@@ -1133,17 +1133,19 @@ class AmpioClient:
 
         Raises ``AmpioUnsupported`` for an output whose level this verb
         cannot reach: ``rgbw`` (drive it with :meth:`set_colors`), ``ledww``,
-        whose power axis moves through :meth:`set_ww_power` alone, and
+        whose power axis moves through :meth:`set_ww_power` or
+        :meth:`set_ww`, and
         every cover, which moves through :meth:`open`, :meth:`close` and,
         with a position axis, :meth:`set_roller_pos`.
 
         ``pulse_ms`` reaches the relay, the flag and the dimmer alone,
-        and it raises for every other established kind. The two analog
+        and it raises for every other kind, an unclassified type included.
+        The two analog
         flags are the ones that would surprise a caller: they take the
         timed form, set the value and latch, so a pulse would land as a
         permanent write. :pyattr:`AmpioObject.pulse_ms` reads 0 for every
-        kind this refuses, so a consumer that honors that field never
-        trips the check.
+        kind this refuses, so a consumer that passes
+        ``pulse_ms=obj.pulse_ms or None`` never trips the check.
 
         Raises ``AmpioValueError`` for a value outside the range or a
         ``pulse_ms`` outside 0-655350.

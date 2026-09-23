@@ -17,13 +17,13 @@ explicit beta posture above and is no longer the supported upgrade path.
 ### Changed
 
 - **The switch verbs and the pulse refuse every kind that does not answer them**
-  (#286). `turn_on()`, `turn_off()` and `switch()` raised only for the two light
-  kinds that ignore them. They now also raise `AmpioUnsupported` for a `wej`, an
-  analog flag, a sensor, a thermostat and an unclassified type, because the
-  M-SERV drops the verb with no reply. `set_value(pulse_ms=...)` goes out for
-  the relay, the flag and the dimmer alone. `command()` still sends any verb to
-  any object. The `set_value()` refusal for a cover without a position axis
-  names `open()` or `close()`.
+  (#286). `turn_on()` raised for the `rgbw` and `ledww` lights alone, `switch()`
+  for the `rgbw` light alone, and `turn_off()` never raised. All three now raise
+  `AmpioUnsupported` for a `wej`, an analog flag, a sensor, a thermostat and an
+  unclassified type, because the M-SERV drops the verb with no reply.
+  `set_value(pulse_ms=...)` goes out for the relay, the flag and the dimmer
+  alone. `command()` still sends any verb to any object. The `set_value()`
+  refusal for a cover without a position axis names `open()` or `close()`.
 
 ### Fixed
 
