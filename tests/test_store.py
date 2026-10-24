@@ -471,6 +471,30 @@ def test_a_raw_edge_marks_the_object_raw_owned_in_the_admin_store() -> None:
     assert store.objects[41].state == "1"
 
 
+def test_the_raw_tree_never_routes_to_an_object_outside_the_can_group() -> None:
+    """The raw tree is the CAN bus, so a LoRa output keeps its per-object
+    updates (#320)."""
+    store = _store()
+    _feed_catalogue(
+        store,
+        {
+            "id": 42,
+            "typ_komponentu": "przekaznik",
+            "funkcja": 1,
+            "leafId": "1_11000209_257_2_0",
+        },
+    )
+    _apply(store, "ampio/from/11000209/state/o/1", "1")
+    assert 42 not in store._raw_owned
+    assert store.objects[42].state is None
+    _apply(
+        store,
+        f"ampio/fromDB/{USER}/ob/42/state",
+        json.dumps({"state": "1", "on": 1779560000000}),
+    )
+    assert store.objects[42].state == "1"
+
+
 def test_an_object_leaving_the_index_is_released_without_an_event() -> None:
     """Raw ownership is store bookkeeping, so the release itself changes
     nothing a consumer can read and the row change is the only news."""
@@ -793,11 +817,11 @@ def test_a_live_edge_touches_the_module_on_the_leaf_mac() -> None:
     assert store.modules[2].last_seen is not None
 
 
-def test_module_by_mac_reads_none_for_an_unlisted_mac() -> None:
+def test_module_at_reads_none_for_an_unlisted_mac() -> None:
     store = _store()
     _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB))
-    assert store.module_by_mac(0xA) is not None
-    assert store.module_by_mac(0xC) is None
+    assert store.module_at(0, 0xA) is not None
+    assert store.module_at(0, 0xC) is None
 
 
 # --- catalogues, state pushes, and snapshots --------------------------------
@@ -953,6 +977,24 @@ def test_a_malformed_leaf_refuses_the_reply_whole() -> None:
         _feed_catalogue(store, {"id": 41, "leafId": "garbage"}, {"id": 43}, _DET)
     assert store.objects == before
     assert store.not_configured == ()
+
+
+def test_a_catalogue_mixing_bus_groups_admits_every_leafed_row() -> None:
+    """A LoRa row sits beside the CAN rows, and only a leafless row is
+    left out (#320)."""
+    store = _store()
+    _feed_catalogue(
+        store,
+        {"id": 41, "leafId": "0_78dd_67_0_1"},
+        {"id": 42, "typ_komponentu": "przekaznik", "leafId": "1_11000209_257_2_0"},
+        {"id": 43, "leafId": ""},
+        {"id": 44, "leafId": None},
+    )
+    assert sorted(store.objects) == [41, 42]
+    assert store.objects[42].address == ModuleAddress(
+        mac_group=1, mac=0x11000209, channel=0, sf_id=257, sub_sf_id=2
+    )
+    assert store.not_configured == ((43, None), (44, None))
 
 
 def test_a_leaf_that_disappears_after_admission_evicts_the_row() -> None:
@@ -1611,7 +1653,9 @@ def test_data_devices_populate_and_classify() -> None:
     assert obj.name == "Air quality"
     assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
     assert obj.funkcja == 5
-    assert obj.address == ModuleAddress(mac=0xCB9B, channel=1, sf_id=74, sub_sf_id=0)
+    assert obj.address == ModuleAddress(
+        mac_group=0, mac=0xCB9B, channel=1, sf_id=74, sub_sf_id=0
+    )
 
 
 def test_the_config_table_before_the_catalogue_applies_at_the_merge() -> None:
@@ -2404,7 +2448,53 @@ def test_two_module_rows_on_one_mac_are_refused_at_the_door() -> None:
     assert store.collisions == ((0xB, (2, 3)),)
     assert [e.collisions for e in _collisions(applied)] == [((0xB, (2, 3)),)]
     assert store.admission_failure().collisions == ((0xB, (2, 3)),)
-    assert store.module_by_mac(0xB) is None
+    assert store.module_at(0, 0xB) is None
+
+
+def test_rows_in_two_groups_on_one_mac_do_not_collide() -> None:
+    """The door keys the CAN group's macs, so a row in another group on the
+    M-SERV's mac is admitted beside it (#320)."""
+    store = _store()
+    applied = _apply(
+        store,
+        DEVICES_TOPIC,
+        devices({"id": 1, "mac": 1}, {"id": 2, "macGroup": 1, "mac": 1}),
+    )
+    assert sorted(store.modules) == [1, 2]
+    assert store.collisions == ()
+    assert _collisions(applied) == []
+
+
+def test_a_push_touches_the_module_in_its_own_group() -> None:
+    store = _store()
+    _apply(
+        store,
+        DEVICES_TOPIC,
+        devices({"id": 17, "mac": 9}, {"id": 18, "macGroup": 1, "mac": 9}),
+    )
+    _feed_catalogue(
+        store, {"id": 42, "typ_komponentu": "przekaznik", "leafId": "1_9_257_2_0"}
+    )
+    _apply(
+        store,
+        f"ampio/fromDB/{USER}/ob/42/state",
+        '{"state": "1", "on": 1779565263813}',
+    )
+    assert store.modules[18].last_seen is not None
+    assert store.modules[17].last_seen is None
+
+
+def test_a_row_leaving_another_group_keeps_the_can_module_datasets() -> None:
+    """The sweep datasets key the CAN group's macs (#320)."""
+    store = _store()
+    _apply(
+        store,
+        DEVICES_TOPIC,
+        devices({"id": 1, "mac": 0xA}, {"id": 2, "macGroup": 1, "mac": 0xA}),
+    )
+    _sweep(store, {0xA}, capabilities={0xA: {}})
+    _apply(store, DEVICES_TOPIC, devices({"id": 1, "mac": 0xA}))
+    assert 0xA in store.capabilities
 
 
 def test_a_collision_found_after_connect_evicts_both_rows() -> None:

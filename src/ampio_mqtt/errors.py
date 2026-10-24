@@ -40,9 +40,9 @@ class AmpioNotConfigured(AmpioError):
     addresses an object on the bus through its leaf alone, so ``objects``
     names every such row as an ``(id, name)`` pair.
 
-    ``collisions`` names each mac no single module row carries, with the
-    ids of the rows on it. Two or more ids are the rows that share the
-    mac, which the raw tree keys on and cannot attribute a frame to. An
+    ``collisions`` names each CAN mac no single module row carries, with
+    the ids of the rows on it. Two or more ids are the CAN rows that share
+    the mac, which the raw tree keys on and cannot attribute a frame to. An
     empty tuple is a mac the module list carries no row for, so a write
     addressed by that mac reaches no module.
 

@@ -159,6 +159,23 @@ def test_module_for_joins_on_the_leaf_mac() -> None:
     assert client.module_for(client.objects[11]) is None
 
 
+def test_module_for_joins_on_the_group_and_the_mac_of_the_leaf() -> None:
+    """The lookup keys on the group as well as the mac (#320)."""
+    client = _admin_client()
+    feed(
+        client,
+        ADMIN_DEVICES,
+        devices(_module_row(7, 0xCAFE), {**_module_row(8, 0xCAFE), "macGroup": 1}),
+    )
+    catalogue(
+        client,
+        {"id": 10, "leafId": "0_cafe_3_0_0"},
+        {"id": 12, "typ_komponentu": "przekaznik", "leafId": "1_cafe_257_2_0"},
+    )
+    assert client.module_for(client.objects[10]).id == 7
+    assert client.module_for(client.objects[12]).id == 8
+
+
 def test_mserv_matches_the_override_mac_arm() -> None:
     """The cross-check accepts the Designer override mac as well as the
     factory id: after a hardware swap mac_global changes but the
@@ -797,6 +814,7 @@ def test_diagnostics_snapshot_is_credential_free_and_complete() -> None:
     (module_row,) = snap["modules"]
     assert set(module_row) == {
         "id",
+        "mac_group",
         "mac",
         "typ_urzadzenia",
         "model",
@@ -858,6 +876,7 @@ def test_diagnostics_snapshot_module_rows_mirror_liveness() -> None:
     assert module.supply_voltage is not None
     assert client.diagnostics_snapshot()["modules"][0] == {
         "id": 7,
+        "mac_group": 0,
         "mac": "0xCAFE",
         "typ_urzadzenia": 4,
         "model": module.model,

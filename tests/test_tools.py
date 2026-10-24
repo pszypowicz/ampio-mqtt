@@ -575,6 +575,23 @@ async def test_modules_filters_by_capability(
     assert "1 of 2 modules" in printed
 
 
+async def test_modules_reads_no_capabilities_for_a_row_outside_the_can_group(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The capability map keys CAN macs, so a LoRa row on the panel's mac
+    number reads none of the panel's (#320)."""
+    lora = {"id": 18, "macGroup": 1, "mac": 0xCB89, "typ_urzadzenia": 3}
+    code = await _sweep(
+        monkeypatch,
+        [PANEL, lora],
+        _device_list((0xCB89, _caps((ModuleFunction.BUZZER, 1)))),
+        "--function",
+        "buzzer",
+    )
+    assert code == 0
+    assert "1 of 2 modules" in capsys.readouterr().out
+
+
 async def test_modules_rejects_an_unknown_capability_name(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

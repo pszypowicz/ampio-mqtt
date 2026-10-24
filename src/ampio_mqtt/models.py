@@ -15,7 +15,7 @@ from .classification import (
     SensorKind,
     classify,
 )
-from .device_types import Mounting, module_model, module_mounting
+from .device_types import CAN_GROUP, Mounting, module_model, module_mounting
 
 
 class AccessTier(Enum):
@@ -137,19 +137,29 @@ def format_mac(mac: int) -> str:
 
 @dataclass(slots=True, frozen=True)
 class ModuleAddress:
-    """Where an object sits on the CAN bus, parsed from its Designer leaf.
+    """Where an object sits, parsed from its Designer leaf.
 
-    Every admitted object carries one, on both account tiers. ``mac`` is
-    the owning module's override mac: the key of the raw tree and the
-    value of ``AmpioModule.mac``. ``channel`` is the 0-based leaf channel,
-    the Designer's description-record key. ``sf_id`` is the leaf class and
-    ``sub_sf_id`` the sub-function inside it (docs/identity.md).
+    Every admitted object carries one, on both account tiers.
+    ``mac_group`` is the Designer's bus group: 0 for the CAN bus, and
+    another value for a device behind a CAN module, such as a LoRa
+    device. ``mac`` is the owning module's override mac within that
+    group: the key of the raw tree and the value of ``AmpioModule.mac``.
+    ``channel`` is the 0-based leaf channel, the Designer's
+    description-record key. ``sf_id`` is the leaf class and ``sub_sf_id``
+    the sub-function inside it (docs/identity.md).
     """
 
+    mac_group: int
     mac: int
     channel: int
     sf_id: int
     sub_sf_id: int
+
+    @property
+    def on_can_bus(self) -> bool:
+        """Whether the address is in the CAN group, which the raw tree, the
+        raw write topic and ``device_api`` reach."""
+        return self.mac_group == CAN_GROUP
 
 
 @dataclass(slots=True, frozen=True)
@@ -288,10 +298,11 @@ class LockTarget:
 class LockRefusal(Enum):
     """Why no roller lock frame can go out for an object.
 
-    ``NOT_SWEPT`` changes with the next sweep; the other three do not.
+    ``NOT_SWEPT`` changes with the next sweep; the other four do not.
     """
 
     NOT_A_COVER = "not_a_cover"
+    NOT_ON_CAN_BUS = "not_on_can_bus"
     NOT_SWEPT = "not_swept"
     NO_ROLLER_COUNT = "no_roller_count"
     PAST_LAST_CHANNEL = "past_last_channel"
@@ -646,7 +657,7 @@ class AmpioObject:
         tiers, so a consumer can anchor server-owned objects to its hub
         device without the module catalogue.
         """
-        return self.address.mac == MSERV_MAC
+        return self.address.on_can_bus and self.address.mac == MSERV_MAC
 
 
 @dataclass(slots=True, frozen=True)
@@ -658,11 +669,15 @@ class AmpioModule:
 
     # Every module-list row carries these (docs/protocol.md).
     id: int
-    # The effective bus address (Designer "MAC override"), keying the raw
-    # `ampio/from/<MAC>/...` topics. Replacement-stable - prefer it over
-    # `mac_global` as the module key. Unique among held modules, because a
-    # mac two rows share admits neither row. The M-SERV's is `MSERV_MAC`.
-    # docs/identity.md carries the full identity model.
+    # The Designer's bus group (devices.macGroup): `CAN_GROUP` for a CAN
+    # module, another value for a device behind one, such as a LoRa device.
+    mac_group: int
+    # The effective bus address (Designer "MAC override") within the group,
+    # keying the raw `ampio/from/<MAC>/...` topics in the CAN group.
+    # Replacement-stable - prefer it over `mac_global` as the module key.
+    # Unique among held CAN modules, because a mac two CAN rows share
+    # admits neither row. The M-SERV's is `MSERV_MAC`. docs/identity.md
+    # carries the full identity model.
     mac: int  # devices.mac (override / effective bus address)
     # Factory-burned hardware id; CHANGES when the unit is replaced.
     mac_global: int  # devices.mac_global (factory id)
@@ -692,8 +707,18 @@ class AmpioModule:
     temperature: float | None = None  # °C
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "model", module_model(self.typ_urzadzenia))
-        object.__setattr__(self, "mounting", module_mounting(self.typ_urzadzenia))
+        object.__setattr__(
+            self, "model", module_model(self.typ_urzadzenia, self.mac_group)
+        )
+        object.__setattr__(
+            self, "mounting", module_mounting(self.typ_urzadzenia, self.mac_group)
+        )
+
+    @property
+    def on_can_bus(self) -> bool:
+        """Whether the module is in the CAN group, which the raw tree, the
+        raw write topic and ``device_api`` reach."""
+        return self.mac_group == CAN_GROUP
 
 
 @dataclass(slots=True, frozen=True)

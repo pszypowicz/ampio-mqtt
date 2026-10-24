@@ -26,7 +26,9 @@ def _object(**over: object) -> AmpioObject:
         "typ_komponentu": "",
         "interpretacja": 0,
         "funkcja": 1,
-        "address": ModuleAddress(mac=0xCAFE, channel=0, sf_id=257, sub_sf_id=0),
+        "address": ModuleAddress(
+            mac_group=0, mac=0xCAFE, channel=0, sf_id=257, sub_sf_id=0
+        ),
         "leaf_key": "leaf_0_cafe_257_0_0",
     }
     return AmpioObject(**{**row, **over})  # type: ignore[arg-type]
@@ -36,6 +38,7 @@ def _module(**over: object) -> AmpioModule:
     """A module carrying the columns every module-list row serves."""
     row: dict[str, object] = {
         "id": 1,
+        "mac_group": 0,
         "mac": 0xCAFE,
         "mac_global": 0xBEEF,
         "typ_urzadzenia": 44,
@@ -244,6 +247,13 @@ def test_module_model_derives_from_type() -> None:
         _module(id=1, model="M-REL")  # type: ignore[call-arg]
 
 
+def test_module_model_reads_the_type_code_in_its_group() -> None:
+    """A LoRa relay's type code 3 is not the CAN M-ROL-4s (#320)."""
+    module = _module(id=1, mac_group=1, typ_urzadzenia=3)
+    assert module.model == "WL-REL-2p"
+    assert module.mounting == "flush"
+
+
 def test_reg_classifies_as_thermostat_and_surfaces_the_running_flag() -> None:
     obj = _object(id=138, typ_komponentu="reg")
     assert isinstance(obj.kind, ThermostatKind)
@@ -251,9 +261,18 @@ def test_reg_classifies_as_thermostat_and_surfaces_the_running_flag() -> None:
 
 
 def test_is_server_owned_reads_the_address_mac() -> None:
-    server = ModuleAddress(mac=MSERV_MAC, channel=0, sf_id=257, sub_sf_id=0)
+    server = ModuleAddress(
+        mac_group=0, mac=MSERV_MAC, channel=0, sf_id=257, sub_sf_id=0
+    )
     assert _object(address=server).is_server_owned is True
     assert _object().is_server_owned is False
+
+
+def test_is_server_owned_holds_in_the_can_group_only() -> None:
+    """The M-SERV's mac names it on the CAN bus, and another group numbers
+    its own devices (#320)."""
+    other = ModuleAddress(mac_group=1, mac=MSERV_MAC, channel=0, sf_id=257, sub_sf_id=2)
+    assert _object(address=other).is_server_owned is False
 
 
 @pytest.mark.parametrize(("mac", "expected"), [(47846, "47846"), (1, "1")])
@@ -359,7 +378,7 @@ def test_position_reads_none_off_the_position_axis() -> None:
 
 
 def test_the_alarm_halves_classify_on_the_address_sub_function() -> None:
-    armed = ModuleAddress(mac=0xCAFE, channel=0, sf_id=296, sub_sf_id=3)
+    armed = ModuleAddress(mac_group=0, mac=0xCAFE, channel=0, sf_id=296, sub_sf_id=3)
     assert (
         _object(typ_komponentu="satel_alarm", address=armed).kind.key == "alarm_armed"
     )

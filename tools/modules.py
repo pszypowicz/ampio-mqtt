@@ -15,13 +15,14 @@ import argparse
 import asyncio
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import aiomqtt
 from _session import ADMIN_USERNAME
 
 from ampio_mqtt import (
     AmpioAdminClient,
+    AmpioModule,
     AmpioNotConfigured,
     ModuleFunction,
     format_mac,
@@ -122,6 +123,14 @@ async def watch_readings(client: AmpioAdminClient, seconds: float) -> None:
         print(f"{mark:>6.0f}s  {volts:>7}  {temps:>11}")
 
 
+def _capabilities(client: AmpioAdminClient, module: AmpioModule) -> Mapping[int, int]:
+    """A module's capability map. The map keys CAN macs, so a module outside
+    the CAN group has none."""
+    if not module.on_can_bus:
+        return {}
+    return client.capabilities.get(module.mac, {})
+
+
 async def run(
     a: argparse.Namespace,
     client_factory: Callable[[], aiomqtt.Client] | None = None,
@@ -157,7 +166,7 @@ async def run(
                 print(f"no module on row {a.module}")
                 return 1
             print(f"row {a.module}: {module.model or '?'}")
-            for fn, count in sorted(client.capabilities.get(module.mac, {}).items()):
+            for fn, count in sorted(_capabilities(client, module).items()):
                 try:
                     name = ModuleFunction(fn).name
                 except ValueError:
@@ -179,7 +188,7 @@ async def run(
         print(header)
         shown = 0
         for row, m in modules.items():
-            caps = client.capabilities.get(m.mac, {})
+            caps = _capabilities(client, m)
             if wanted is not None and wanted not in caps:
                 continue
             shown += 1

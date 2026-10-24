@@ -75,7 +75,7 @@ class NotConfigured:
     The payload :class:`~ampio_mqtt.AmpioNotConfigured` carries, as the
     door fills it: ``objects`` holds the ``(id, name)`` pairs of every
     visible object row without a leaf, and ``collisions`` the ``(mac,
-    module ids)`` pairs of every override mac two or more module rows
+    module ids)`` pairs of every override mac two or more CAN module rows
     share.
 
     A reply that changes either set reports both, so an event with two

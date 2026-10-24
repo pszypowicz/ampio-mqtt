@@ -946,6 +946,27 @@ async def test_oc_output_rides_the_raw_frame_with_its_own_function_byte() -> Non
         await client.disconnect()
 
 
+async def test_an_output_outside_the_can_group_keeps_the_api_path() -> None:
+    """The raw frame is a CAN frame, and a LoRa relay output sits behind a
+    CAN module, so the admin client drives it over /api (#320)."""
+    client, broker = await _admin_with_panel_output()
+    try:
+        lora = {
+            "id": 95,
+            "typ_komponentu": "przekaznik",
+            "interpretacja": 1,
+            "funkcja": 1,
+            "leafId": "1_11000209_257_2_0",
+        }
+        feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(lora))
+        feed(client, ADMIN_DATA_DEVICES_TOPIC, details(lora))
+        broker.published.clear()
+        await client.turn_on(95)
+        assert broker.published == [(ADMIN_API_TOPIC, b"/api/set/95/turnOn")]
+    finally:
+        await client.disconnect()
+
+
 async def test_relay_of_an_unproven_leaf_class_keeps_the_api_path() -> None:
     client, broker = await _admin_with_panel_output()
     try:
@@ -1399,6 +1420,28 @@ async def test_identify_rejects_an_unknown_module_without_a_publish() -> None:
         await client.disconnect()
 
 
+async def test_a_module_write_refuses_a_module_outside_the_can_group() -> None:
+    """The raw write topic reaches the CAN bus, and a LoRa device sits
+    behind a CAN module (#320)."""
+    client, broker = await _admin_with_panel_module()
+    try:
+        feed(
+            client,
+            ADMIN_DEVICES_TOPIC,
+            devices(
+                {"id": 7, "mac": 0xCAFE, "typ_urzadzenia": 11},
+                {"id": 9, "macGroup": 1, "mac": 0x11000209, "typ_urzadzenia": 3},
+            ),
+        )
+        with pytest.raises(AmpioUnsupported, match="CAN"):
+            await client.identify(9)
+        with pytest.raises(AmpioUnsupported, match="CAN"):
+            await client.buzz(9)
+        assert broker.published == []
+    finally:
+        await client.disconnect()
+
+
 @pytest.mark.parametrize(
     ("message", "expected"),
     [
@@ -1579,6 +1622,29 @@ async def test_lock_target_answers_a_cover_a_non_cover_and_an_unknown_id() -> No
         assert client.lock_target(relay) is LockRefusal.NOT_A_COVER
         with pytest.raises(AmpioValueError, match="999"):
             client.lock_target(999)
+    finally:
+        await client.disconnect()
+
+
+async def test_lock_target_refuses_a_cover_outside_the_can_group() -> None:
+    """The lock is a CAN frame. A LoRa cover whose mac number matches a
+    swept CAN module must not lock that module's roller (#320)."""
+    client, broker = await _admin_with_covers()
+    try:
+        lora = {
+            "id": 196,
+            "typ_komponentu": "roleta_procenty",
+            "interpretacja": 1,
+            "funkcja": 1,
+            "leafId": "1_be82_5_0_0",
+        }
+        feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(lora))
+        feed(client, ADMIN_DATA_DEVICES_TOPIC, details(lora))
+        broker.published.clear()
+        assert client.lock_target(196) is LockRefusal.NOT_ON_CAN_BUS
+        with pytest.raises(AmpioUnsupported, match="CAN"):
+            await client.block_opening(196)
+        assert broker.published == []
     finally:
         await client.disconnect()
 

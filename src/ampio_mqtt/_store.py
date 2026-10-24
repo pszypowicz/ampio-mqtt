@@ -17,6 +17,7 @@ from typing import Any
 
 from . import _protocol
 from .classification import input_channel_prefix
+from .device_types import CAN_GROUP
 from .errors import AmpioNotConfigured
 from .events import (
     BusEventRaised,
@@ -197,8 +198,9 @@ class AmpioStore:
 
     # --- admin hooks ------------------------------------------------------
 
-    def _touch_module(self, mac: int) -> None:
-        """Mark the module on ``mac`` as alive now. The base holds no module list."""
+    def _touch_module(self, mac_group: int, mac: int) -> None:
+        """Mark the module on ``mac`` in ``mac_group`` as alive now. The base
+        holds no module list."""
 
     def _rebuild_indexes(self, applied: Applied) -> None:
         """Rebuild the raw routing after a catalogue change.
@@ -308,7 +310,8 @@ class AmpioStore:
                 # names the row, because the token is content from the install.
                 raise _protocol.LeafFault(
                     f"The Ampio object catalogue row {meta.id} carries a leafId "
-                    "that is not a 0_<macHex>_<sfId>_<subSfId>_<ioNo> token"
+                    "that is not a <macGroup>_<macHex>_<sfId>_<subSfId>_<ioNo> "
+                    "token"
                 ) from err
             admitted.append((meta, address))
         touched = False
@@ -557,7 +560,7 @@ class AmpioStore:
             # what the raw edge delivered ~150 ms earlier, so it is
             # dropped whole. It still counts as live evidence of the
             # module.
-            self._touch_module(obj.address.mac)
+            self._touch_module(obj.address.mac_group, obj.address.mac)
             return
         obj = replace(
             obj,
@@ -574,7 +577,7 @@ class AmpioStore:
         # bookkeeping a raw edge left behind no longer applies.
         self._local_stamped.discard(update.id)
         self._guarded.discard(update.id)
-        self._touch_module(obj.address.mac)
+        self._touch_module(obj.address.mac_group, obj.address.mac)
         self._record(obj, applied)
 
     # --- helpers ----------------------------------------------------------
@@ -665,10 +668,11 @@ class AdminStore(AmpioStore):
         # Raw-channel bridge: (module mac, prefix, channel) -> the ids of
         # every object on that channel.
         self._input_index: dict[tuple[int, str, int], tuple[int, ...]] = {}
-        # Effective bus mac -> module id, for routing a module's own
-        # broadcasts. Ids, not instances: modules are frozen and replaced on
-        # every change, so a cached instance would go stale.
-        self._module_id_by_mac: dict[int, int] = {}
+        # `(mac_group, mac)` -> module id, for the module behind an object
+        # and for routing a CAN module's own broadcasts. Ids, not instances:
+        # modules are frozen and replaced on every change, so a cached
+        # instance would go stale.
+        self._module_id_by_address: dict[tuple[int, int], int] = {}
         # The ids the raw path owns: a per-object echo and a snapshot row
         # for one of them is skipped, because the retained raw tree is its
         # resync. docs/raw-channel-bridge.md.
@@ -787,21 +791,27 @@ class AdminStore(AmpioStore):
 
         The list is admin-only and complete, so its arrival is the
         authority to evict what it stopped listing or stopped admitting.
-        A mac two rows share admits neither: the raw tree keys on that
+        A mac two CAN rows share admits neither: the raw tree keys on that
         mac and cannot attribute a frame to either row. Those rows are
         recorded on ``collisions``, and :class:`NotConfigured` reports
-        every change of the set, a change to empty included.
+        every change of the set, a change to empty included. A row in
+        another group is its own module, whatever its mac number.
         """
         modules = _protocol.parse_devices(data)
         rows_by_mac: dict[int, list[AmpioModule]] = {}
         for module in modules:
-            rows_by_mac.setdefault(module.mac, []).append(module)
+            if module.on_can_bus:
+                rows_by_mac.setdefault(module.mac, []).append(module)
         collisions = tuple(
             (mac, tuple(sorted(row.id for row in rows)))
             for mac, rows in sorted(rows_by_mac.items())
             if len(rows) > 1
         )
-        admitted = [module for module in modules if len(rows_by_mac[module.mac]) == 1]
+        admitted = [
+            module
+            for module in modules
+            if not module.on_can_bus or len(rows_by_mac[module.mac]) == 1
+        ]
         changed = False
         for module in admitted:
             previous = self.modules.get(module.id)
@@ -825,7 +835,9 @@ class AdminStore(AmpioStore):
         for mid in missing:
             evicted = True
             module = self.modules.pop(mid)
-            self._drop_module_datasets(module.mac)
+            # The sweep datasets key the CAN group's macs.
+            if module.on_can_bus:
+                self._drop_module_datasets(module.mac)
             applied.events.append(ModuleRemoved(module))
         if changed or evicted:
             self._rebuild_indexes(applied)
@@ -875,7 +887,7 @@ class AdminStore(AmpioStore):
             self._guarded.add(oid)
             self._record(obj, applied)
         if not retained:
-            self._touch_module(edge.mac)
+            self._touch_module(CAN_GROUP, edge.mac)
 
     def _apply_diagnostics(
         self,
@@ -885,7 +897,7 @@ class AdminStore(AmpioStore):
         *,
         retained: bool,
     ) -> None:
-        mid = self._module_id_by_mac.get(mac)
+        mid = self._module_id_by_address.get((CAN_GROUP, mac))
         if mid is None:
             # A replay waits for the module list, and a live frame for an
             # unlisted module drops.
@@ -908,13 +920,15 @@ class AdminStore(AmpioStore):
         """Both sides: the admin session is served the module list too."""
         return NotConfigured(objects=self.not_configured, collisions=self.collisions)
 
-    def module_by_mac(self, mac: int) -> AmpioModule | None:
-        """The module row on ``mac``, or None when the list has none."""
-        mid = self._module_id_by_mac.get(mac)
+    def module_at(self, mac_group: int, mac: int) -> AmpioModule | None:
+        """The module row on ``mac`` in ``mac_group``, or None when the list
+        has none."""
+        mid = self._module_id_by_address.get((mac_group, mac))
         return None if mid is None else self.modules[mid]
 
-    def _touch_module(self, mac: int) -> None:
-        """Mark the module on ``mac`` as having produced live evidence just now.
+    def _touch_module(self, mac_group: int, mac: int) -> None:
+        """Mark the module on ``mac`` in ``mac_group`` as having produced live
+        evidence just now.
 
         One clock only: the local receive time, because a live message is by
         definition received "now". Snapshot and catalogue seeds do not touch
@@ -922,17 +936,20 @@ class AdminStore(AmpioStore):
         nothing about whether the module is alive. A mac the module list
         does not carry touches nothing.
         """
-        mid = self._module_id_by_mac.get(mac)
+        mid = self._module_id_by_address.get((mac_group, mac))
         if mid is not None:
             self.modules[mid] = replace(self.modules[mid], last_seen=time.time())
 
     def _rebuild_indexes(self, applied: Applied) -> None:
         """Rebuild the raw routing: `(address.mac, prefix, funkcja)` to the
         objects on that channel, and `mac` to the module id
-        (docs/raw-channel-bridge.md).
+        (docs/raw-channel-bridge.md). The raw tree is the CAN bus, so an
+        object outside the CAN group keeps its per-object updates.
         """
         index: dict[tuple[int, str, int], tuple[int, ...]] = {}
         for obj in self.objects.values():
+            if not obj.address.on_can_bus:
+                continue
             prefix = input_channel_prefix(obj.typ_komponentu)
             if prefix is None and obj.typ_komponentu == "przekaznik":
                 prefix = "a" if obj.address.sf_id == _protocol.OC_OUTPUT_SF else "o"
@@ -943,8 +960,9 @@ class AdminStore(AmpioStore):
             key = (obj.address.mac, prefix, obj.funkcja)
             index[key] = (*index.get(key, ()), obj.id)
         self._input_index = index
-        self._module_id_by_mac = {
-            module.mac: module.id for module in self.modules.values()
+        self._module_id_by_address = {
+            (module.mac_group, module.mac): module.id
+            for module in self.modules.values()
         }
         # An object the index no longer covers (a retype out of a bridged
         # kind) goes back to its per-object updates. Ownership is store
@@ -1006,7 +1024,7 @@ class AdminStore(AmpioStore):
         so it leaves `last_seen` alone exactly as a live replay does (#174).
         """
         for mac, diagnostics in list(self._pending_diagnostics.items()):
-            if mac not in self._module_id_by_mac:
+            if (CAN_GROUP, mac) not in self._module_id_by_address:
                 continue
             del self._pending_diagnostics[mac]
             self._apply_diagnostics(mac, diagnostics, applied, retained=True)

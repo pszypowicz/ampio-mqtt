@@ -41,7 +41,7 @@ for every account.
 
 | Keyword          | Control surface               | Response topic                            | Shape                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ---------------- | ----------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `devices`        | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devices`      | `{List: [{id, mac, mac_global, typ_urzadzenia, nazwa_urzadzenia, wersja_softu, wersja_pcb, ...}]}`                                                                                                                                                                                                                                                                                                                                                                                      |
+| `devices`        | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/devices`      | `{List: [{id, macGroup, mac, mac_global, typ_urzadzenia, nazwa_urzadzenia, wersja_softu, wersja_pcb, ...}]}`                                                                                                                                                                                                                                                                                                                                                                            |
 | `locations`      | `ampio/control/<user>/config` | `ampio/fromDB/<user>/config/locations`    | `{List: [{id, opis_menu, opis_rozwiniety}]}` - Designer's "Lokalizacja" name table. The per-output pointer that resolves through it rides the `device_api` tree below (see [`description-records.md`](description-records.md)).                                                                                                                                                                                                                                                         |
 | `devices`        | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/devices`        | `{List: [...]}` - the object catalogue, served to every account. A standard account sees its app grants. The admin login sees every object in a room. Every reply also carries the two system rows, and the library drops them by their type.                                                                                                                                                                                                                                           |
 | `params_devices` | `ampio/control/<user>/data`   | `ampio/fromDB/<user>/data/params_devices` | `{List: [{id, params, param1, czas, powiazane, url}]}` - per-object `params` bitfields for the **full** catalogue (not grant-filtered). `powiazane` lists linked objects as `<linkId>:<objectId>` pairs, comma separated, and reads null when none. The `logging` payload on the same request topic is `{List: [{id_obiektu, typ_logowania}]}`, one row per object that Designer's "Log data" box covers, and `typ_logowania` is the interval in seconds, with 0 for "logged in turns". |
@@ -59,18 +59,18 @@ the client reports the refusal through `diagnostics_snapshot()` and drops the
 message. A dropped column read as "not configured" turns a server fault into
 wrong values on an object.
 
-| Surface               | Columns every row carries                                                                     |
-| --------------------- | --------------------------------------------------------------------------------------------- |
-| `data/devices`        | `id`, `typ_komponentu`, `interpretacja`, `funkcja`, `leafId`, `opis_menu`, `type`, `format`   |
-| `config/devices`      | `id`, `mac`, `mac_global`, `nazwa_urzadzenia`, `typ_urzadzenia`, `wersja_softu`, `wersja_pcb` |
-| `data/params_devices` | `id`, `params`, `czas`, `url`                                                                 |
-| `data/states`         | `id`, `stan_json`, and inside the blob `state` and `on`                                       |
-| `data/info`           | `mac`, `userId`                                                                               |
-| `config/locations`    | `id`, `opis_menu`                                                                             |
-| `data/scenes`         | `id`, `parentId`, `sceneName`, `active`, `Infos`, and an `id` per `Infos` entry               |
-| `data/groups`         | `id`, a non-empty `opis_menu`                                                                 |
-| `data/group_devices`  | `id_grupy`, `id_obiektu`                                                                      |
-| `ob/<id>/state`       | `state`, `on`                                                                                 |
+| Surface               | Columns every row carries                                                                                 |
+| --------------------- | --------------------------------------------------------------------------------------------------------- |
+| `data/devices`        | `id`, `typ_komponentu`, `interpretacja`, `funkcja`, `leafId`, `opis_menu`, `type`, `format`               |
+| `config/devices`      | `id`, `macGroup`, `mac`, `mac_global`, `nazwa_urzadzenia`, `typ_urzadzenia`, `wersja_softu`, `wersja_pcb` |
+| `data/params_devices` | `id`, `params`, `czas`, `url`                                                                             |
+| `data/states`         | `id`, `stan_json`, and inside the blob `state` and `on`                                                   |
+| `data/info`           | `mac`, `userId`                                                                                           |
+| `config/locations`    | `id`, `opis_menu`                                                                                         |
+| `data/scenes`         | `id`, `parentId`, `sceneName`, `active`, `Infos`, and an `id` per `Infos` entry                           |
+| `data/groups`         | `id`, a non-empty `opis_menu`                                                                             |
+| `data/group_devices`  | `id_grupy`, `id_obiektu`                                                                                  |
+| `ob/<id>/state`       | `state`, `on`                                                                                             |
 
 A column can hold an empty value. `leafId`, `opis_menu` on an object row, and
 `format` are text columns the M-SERV writes empty, or null, when the object

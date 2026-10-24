@@ -12,6 +12,46 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+This release reads the bus group of every leaf and module row. A LoRa device no
+longer stops the object catalogue from loading.
+
+### Fixed
+
+- **A leaf outside the CAN group no longer refuses the whole catalogue** (#320).
+  The leaf parse accepted only a `0_` first segment. The first LoRa row, for
+  example `1_<macHex>_257_2_0`, therefore refused the whole `data/devices`
+  reply, and no object loaded. The parse reads the first segment as the
+  Designer's bus group, so every leafed row loads.
+- **An object outside the CAN group stays off every CAN surface** (#320). The
+  Designer sends raw frames and `device_api` writes to the CAN group only. A
+  LoRa output therefore takes its commands on `/api` and its state from its
+  object topic, also on the admin client. It joins no description record and no
+  cover parameters.
+
+### Added
+
+- **`ModuleAddress.mac_group` and `AmpioModule.mac_group`** (#320), the
+  Designer's bus group: 0 for CAN, 1 for LoRa, and four more groups that the
+  Designer names. `on_can_bus` on both types reads group 0.
+- **`LockRefusal.NOT_ON_CAN_BUS`** (#320). `lock_target()` refuses a cover
+  outside the CAN group, because the lock frame is a CAN frame.
+- **The LoRa model names** (#320). `AmpioModule.model` reads `WL-REL-2p`,
+  `WL-REL-ROL1p`, and `WL-OC-RGBW1p` for the three LoRa type codes that the
+  Designer names. `module_model()` and `module_mounting()` take the group.
+
+### Changed
+
+- **Module identity is the bus group and the mac** (#320). `module_for()` looks
+  up both. The mac-collision door counts CAN rows only, because the raw tree
+  that it protects keys on CAN macs. The module write methods raise
+  `AmpioUnsupported` for a module outside the CAN group. `silent_macs` and the
+  sweep datasets hold CAN modules only.
+- **The module list requires the `macGroup` column** (#320), as it requires
+  every other served column. `ModuleAddress` and `AmpioModule` take `mac_group`
+  as a required field, and each diagnostics `modules` row carries it.
+
 ## 0.77.0
 
 This release closes a second gap in the diagnostics report. The `server_info`

@@ -5,6 +5,10 @@ for panel status LEDs, relays, and open-collector outputs. It also covers the
 panel buzzer, the touch field colors, the touch lock, the module identify LED,
 and the cover roller lock.
 
+Every module write on this page (the buzzer, the panel colors, the touch lock,
+and identify) addresses a module row. If the row is outside the CAN group, the
+write raises `AmpioUnsupported` before it publishes.
+
 ## Panel outputs
 
 The M-DOT touch panels expose one binary output per touch field - the status LED
@@ -38,11 +42,13 @@ objects. `confirm=` resolves on either edge.
 On `AmpioAdminClient`, a `przekaznik` on a CAN module rides this frame when its
 leaf class has a proven function byte. The frame is addressed by the object's
 own leaf alone (mac, 0-based channel, and class). A class outside that table
-stays on `/api`. Two more writes stay on `/api`: the M-SERV's own virtual
-outputs, and every `pulse_ms` write. The virtual outputs live in the server's
-DB, not on the CAN bus. The raw frame has no timed form, so a panel output
-cannot pulse, and `confirm=` is what shows that. `AmpioClient` always publishes
-the `/api` form, which a panel output ignores.
+stays on `/api`. Three more writes stay on `/api`: an output outside the CAN
+group, the M-SERV's own virtual outputs, and every `pulse_ms` write. The frame
+reaches the CAN bus only, and a LoRa output is connected through a CAN module.
+The virtual outputs live in the server's DB, not on the CAN bus. The raw frame
+has no timed form, so a panel output cannot pulse, and `confirm=` is what shows
+that. `AmpioClient` always publishes the `/api` form, which a panel output
+ignores.
 
 A module condition bound to the LED overrides such writes eventually, not
 preventively. A write to a condition-bound LED takes effect, and the panel
@@ -245,13 +251,14 @@ that advertises a count answers the same frame: the lock frame sets `block` to
 
 `AmpioAdminClient.lock_target(object_id)` resolves one cover's lock write. It
 raises `AmpioValueError` for an id the catalogue does not list. The table covers
-every other answer: the `LockTarget`, the four `LockRefusal` members, and the
+every other answer: the `LockTarget`, the five `LockRefusal` members, and the
 raise for a mac no admitted module row carries.
 
 | Result               | Meaning                                                                                                                                                                                          |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `LockTarget`         | A lock write reaches this cover. Carries the module mac, the cover's channel, and the module's roller channel count.                                                                             |
 | `NOT_A_COVER`        | The object is outside the roller description class (`roleta_procenty`, `roleta_lamelki`). A plain `roleta` is refused too. A non-cover's channel index can belong to a cover on the same module. |
+| `NOT_ON_CAN_BUS`     | The cover is outside the CAN group, and the lock frame is a CAN frame.                                                                                                                           |
 | `NOT_SWEPT`          | No sweep has answered the module, so the answer is not known.                                                                                                                                    |
 | `NO_ROLLER_COUNT`    | The module advertises no roller channel count and drops the lock frame.                                                                                                                          |
 | `PAST_LAST_CHANNEL`  | The cover's channel lies past the roller count the module advertises.                                                                                                                            |
@@ -259,7 +266,7 @@ raise for a mac no admitted module row carries.
 
 `block_opening()`, `unblock_opening()`, `block_closing()` and
 `unblock_closing()` call `lock_target()` and raise on a refusal. `NOT_SWEPT`
-raises `AmpioValueError`, because `resolve_records()` fixes it. The other three
+raises `AmpioValueError`, because `resolve_records()` fixes it. The other four
 raise `AmpioUnsupported`, because the install cannot do the write. A raise from
 `lock_target()` reaches the caller through all four. A consumer that builds a
 lock control calls `lock_target()` after the sweep, and leaves the control out

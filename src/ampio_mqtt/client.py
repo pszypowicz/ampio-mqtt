@@ -61,6 +61,7 @@ from ._protocol import (
 )
 from ._store import AdminStore, AmpioStore, Applied
 from .classification import InputKind, OutputKind
+from .device_types import CAN_GROUP
 from .errors import (
     AmpioConnectionError,
     AmpioNotConfigured,
@@ -115,6 +116,9 @@ _LOCK_REFUSALS: Final[dict[LockRefusal, str]] = {
         "not a cover in the roller description class (roleta_procenty, "
         "roleta_lamelki), and a non-cover's channel index can belong to a "
         "cover on the same module"
+    ),
+    LockRefusal.NOT_ON_CAN_BUS: (
+        "it sits outside the CAN group, and the lock frame is a CAN frame"
     ),
     LockRefusal.NO_ROLLER_COUNT: (
         "its module advertises no roller channel count and drops the lock frame"
@@ -1609,8 +1613,9 @@ class AmpioAdminClient(AmpioClient):
 
         The M-SERV serves the module catalogue to the reserved ``admin``
         login alone. A consumer that must group entities by module on any
-        account reads ``AmpioObject.address.mac``, which the catalogue
-        carries for every account (docs/identity.md).
+        account reads ``AmpioObject.address.mac_group`` and
+        ``AmpioObject.address.mac``, which the catalogue carries for every
+        account (docs/identity.md).
         """
         return MappingProxyType(self._store.modules)
 
@@ -1638,13 +1643,14 @@ class AmpioAdminClient(AmpioClient):
     def module_for(self, obj: AmpioObject) -> AmpioModule | None:
         """The catalogue row of the module that owns ``obj``.
 
-        One lookup on ``obj.address.mac``, the override mac the leaf embeds
-        and the module list's replacement-stable key (docs/identity.md).
-        None when the list carries no row on that mac, or when two rows
-        share it and no lookup can pick one. Grouping that needs no module
-        catalogue reads ``address.mac`` directly.
+        One lookup on ``obj.address.mac_group`` and ``obj.address.mac``. The
+        leaf embeds both, and together they are the module list's
+        replacement-stable key (docs/identity.md). None when the list
+        carries no row on that address, or when two CAN rows share the mac
+        and no lookup can pick one. Grouping that needs no module catalogue
+        reads ``address`` directly.
         """
-        return self._store.module_by_mac(obj.address.mac)
+        return self._store.module_at(obj.address.mac_group, obj.address.mac)
 
     @property
     def records(self) -> Mapping[int, DesignerRecord]:
@@ -1655,8 +1661,9 @@ class AmpioAdminClient(AmpioClient):
         the module answered and carries no entry. That answer covers the
         objects the catalogue lists when the sweep runs, so an object the
         catalogue admits later needs another sweep before absence answers
-        for it. Absent with the mac not answered: not known.
-        docs/description-records.md.
+        for it. Absent with the mac not answered: not known. An object
+        outside the CAN group has no entry, because the records are CAN
+        modules'. docs/description-records.md.
         """
         return MappingProxyType(self._store.records)
 
@@ -1670,23 +1677,26 @@ class AmpioAdminClient(AmpioClient):
 
     @property
     def module_records(self) -> Mapping[int, ModuleRecord]:
-        """Each module's DEVICE_NAME entry, by mac, under the rule
-        :pyattr:`records` states."""
+        """Each CAN module's DEVICE_NAME entry, by mac, under the rule
+        :pyattr:`records` states. A module outside the CAN group has none."""
         return MappingProxyType(self._store.module_records)
 
     @property
     def capabilities(self) -> Mapping[int, Mapping[int, int]]:
-        """Each module's ``{function id: channel count}`` map, by mac.
+        """Each CAN module's ``{function id: channel count}`` map, by mac.
 
         Every module that answered a sweep has an entry, an empty map when
-        it advertises nothing. Index a map with :class:`ModuleFunction`; an
-        id without a member reads through under its number.
+        it advertises nothing. A module outside the CAN group has none, so
+        a lookup by :attr:`AmpioModule.mac` checks
+        :pyattr:`AmpioModule.on_can_bus` first. Index a map with
+        :class:`ModuleFunction`; an id without a member reads through under
+        its number.
         """
         return MappingProxyType(self._store.capabilities)
 
     @property
     def panel_settings(self) -> Mapping[int, PanelSettings]:
-        """Each touch panel's stored settings, by mac, under the rule
+        """Each CAN touch panel's stored settings, by mac, under the rule
         :pyattr:`records` states. Absence can also mean this library has not
         proven that panel's layout."""
         return MappingProxyType(self._store.panel_settings)
@@ -1703,11 +1713,11 @@ class AmpioAdminClient(AmpioClient):
         Two keys on top of :meth:`AmpioClient.diagnostics_snapshot`:
 
         - ``mac_collisions``: the door's record of every override mac two
-          or more module rows share, as ``[mac, [module ids]]``.
+          or more CAN module rows share, as ``[mac, [module ids]]``.
         - ``modules``: one row per known module, sorted by id, with the
-          :class:`AmpioModule` fields ``id``, ``mac``, ``typ_urzadzenia``,
-          ``model``, ``last_seen``, ``supply_voltage``, and
-          ``temperature``. The user-given module name stays out.
+          :class:`AmpioModule` fields ``id``, ``mac_group``, ``mac``,
+          ``typ_urzadzenia``, ``model``, ``last_seen``, ``supply_voltage``,
+          and ``temperature``. The user-given module name stays out.
 
         Both entries write the mac through :func:`format_mac`, as the
         string ``"0xCB8F"``. :attr:`AmpioModule.mac` keeps the integer.
@@ -1720,6 +1730,7 @@ class AmpioAdminClient(AmpioClient):
         snapshot["modules"] = [
             {
                 "id": module.id,
+                "mac_group": module.mac_group,
                 "mac": format_mac(module.mac),
                 "typ_urzadzenia": module.typ_urzadzenia,
                 "model": module.model,
@@ -1794,9 +1805,11 @@ class AmpioAdminClient(AmpioClient):
             if future in self._device_list_waiters:
                 self._device_list_waiters.remove(future)
         # Keyed by the override mac the reply carries: the id every leaf
-        # embeds, so the join needs no catalogue lookup.
+        # embeds, so the join needs no catalogue lookup. The list answers
+        # for the CAN group, so every mac here is a CAN mac.
         by_mac = {device.mac: device.entries for device in devices}
-        catalogued = {mod.mac for mod in self._store.modules.values()}
+        can_modules = [mod for mod in self._store.modules.values() if mod.on_can_bus]
+        catalogued = {mod.mac for mod in can_modules}
         silent = frozenset(catalogued - by_mac.keys())
         if silent:
             _LOGGER.warning(
@@ -1807,8 +1820,7 @@ class AmpioAdminClient(AmpioClient):
         resolved = _protocol.resolve_designer(self._store.objects, by_mac, names)
         params_by_mac = {device.mac: device.params for device in devices}
         hardware_by_mac = {
-            mod.mac: (mod.typ_urzadzenia, mod.wersja_pcb)
-            for mod in self._store.modules.values()
+            mod.mac: (mod.typ_urzadzenia, mod.wersja_pcb) for mod in can_modules
         }
         capabilities = _protocol.resolve_module_capabilities(
             {device.mac: device.capabilities for device in devices}
@@ -1845,11 +1857,17 @@ class AmpioAdminClient(AmpioClient):
         mac from ``address.mac`` (the replacement-stable override), the
         0-based ``address.channel``, and the function byte the leaf class
         takes (:data:`RAW_OUTPUT_FUNCTION_BY_SF`). A class outside that
-        table stays on `/api`. The M-SERV's own virtual outputs stay on
-        `/api` too - they live in its DB, not on the CAN bus.
+        table stays on `/api`. An output outside the CAN group stays on
+        `/api`, and so do the M-SERV's own virtual outputs, which live in
+        its DB.
         """
         obj = self._store.objects.get(object_id)
-        if obj is None or obj.typ_komponentu != "przekaznik" or obj.is_server_owned:
+        if (
+            obj is None
+            or obj.typ_komponentu != "przekaznik"
+            or not obj.address.on_can_bus
+            or obj.is_server_owned
+        ):
             return None
         function = RAW_OUTPUT_FUNCTION_BY_SF.get(obj.address.sf_id)
         if function is None:
@@ -1956,13 +1974,18 @@ class AmpioAdminClient(AmpioClient):
         """The bus address a raw frame addressed to one module goes to.
 
         Dumb routing by module, as the raw output frame is by leaf: any
-        catalogued module is a valid address. The buzzer frames are proven
-        on M-DOT panels, the identify frames on panels and DIN-rail
-        modules.
+        catalogued CAN module is a valid address. The buzzer frames are
+        proven on M-DOT panels, the identify frames on panels and DIN-rail
+        modules. A module outside the CAN group raises ``AmpioUnsupported``.
         """
         module = self._store.modules.get(module_id)
         if module is None:
             raise AmpioValueError(f"module id {module_id} is not in the catalogue")
+        if not module.on_can_bus:
+            raise AmpioUnsupported(
+                f"module id {module_id} sits outside the CAN group, and the raw "
+                "write topic reaches the CAN bus alone"
+            )
         return module.mac
 
     @staticmethod
@@ -1985,8 +2008,9 @@ class AmpioAdminClient(AmpioClient):
         lasts until :meth:`buzz_stop`.
 
         ``AmpioValueError`` for an argument outside its range or an
-        unknown module, both before any publish. No readback exists - the
-        panel confirms nothing on the bus - so there is no ``confirm``.
+        unknown module, and ``AmpioUnsupported`` for a module outside the CAN
+        group, all before any publish. No readback exists - the panel
+        confirms nothing on the bus - so there is no ``confirm``.
         docs/panel-writes.md ("Panel buzzer") carries the frame and the
         tone table.
         """
@@ -2052,7 +2076,8 @@ class AmpioAdminClient(AmpioClient):
         :pyattr:`AmpioModule.id`. The LED stays on until
         :meth:`identify_stop`, and the library schedules no stop.
 
-        ``AmpioValueError`` for an unknown module, before any publish. No
+        ``AmpioValueError`` for an unknown module, and ``AmpioUnsupported``
+        for a module outside the CAN group, both before any publish. No
         readback exists - the module confirms nothing on the bus - so
         there is no ``confirm``.
         docs/panel-writes.md ("Module identify") carries the frame.
@@ -2106,7 +2131,8 @@ class AmpioAdminClient(AmpioClient):
         readback.
 
         ``AmpioValueError`` for an out-of-range value, including a field
-        above :data:`MAX_PANEL_FIELD`, or an unknown module, both before
+        above :data:`MAX_PANEL_FIELD`, or an unknown module, and
+        ``AmpioUnsupported`` for a module outside the CAN group, all before
         any publish. docs/panel-writes.md carries the frame.
         """
         mac = self._raw_write_mac(module_id)
@@ -2158,7 +2184,8 @@ class AmpioAdminClient(AmpioClient):
         No readback exists.
 
         ``AmpioValueError`` for an out-of-range time or an unknown module,
-        both before any publish.
+        and ``AmpioUnsupported`` for a module outside the CAN group, all
+        before any publish.
         """
         mac = self._raw_write_mac(module_id)
         ticks = self._buzz_ticks("seconds", seconds, 655.35)
@@ -2187,19 +2214,23 @@ class AmpioAdminClient(AmpioClient):
         :pyattr:`capabilities` (docs/panel-writes.md). An object outside the
         roller description class (``roleta_procenty``, ``roleta_lamelki``) is
         refused, the plain ``roleta`` included. A non-cover's channel index can
-        belong to a cover on the same module. The four lock methods call this
-        and raise on a refusal, so a consumer that builds a lock control calls
-        it after the sweep and leaves the control out on a refusal. Raises
-        ``AmpioValueError`` for an id the catalogue does not list, and
-        ``AmpioNotConfigured`` for a mac no admitted module row carries.
+        belong to a cover on the same module. A cover outside the CAN group is
+        refused too, because the lock frame is a CAN frame. The four lock
+        methods call this and raise on a refusal, so a consumer that builds a
+        lock control calls it after the sweep and leaves the control out on a
+        refusal. Raises ``AmpioValueError`` for an id the catalogue does not
+        list, and ``AmpioNotConfigured`` for a mac no admitted module row
+        carries.
         """
         obj = self._store.objects.get(object_id)
         if obj is None:
             raise AmpioValueError(f"object {object_id} is not in the catalogue")
         if not joins_roller_records(obj.typ_komponentu):
             return LockRefusal.NOT_A_COVER
+        if not obj.address.on_can_bus:
+            return LockRefusal.NOT_ON_CAN_BUS
         mac, channel = obj.address.mac, obj.address.channel
-        if self._store.module_by_mac(mac) is None:
+        if self._store.module_at(CAN_GROUP, mac) is None:
             # The frame's whole destination is the mac. With no row on it
             # the install cannot say which module the frame would reach,
             # and the sweep can still hold what the mac answered earlier.

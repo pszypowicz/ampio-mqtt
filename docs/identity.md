@@ -16,14 +16,16 @@ The rest of this area is on its own pages.
 
 ## Modules
 
-| Field                     | Stable across module replacement?                                                  | Use it for                                                                                                                                                                                         |
-| ------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id` (DB autoincrement)   | **No** - assigned in `mac_global` order, reassigned when a module is replaced.     | The key of `AmpioAdminClient.modules` and the `module_id` argument of the module write methods, valid _within a single discovery snapshot_ only. Objects reach their module through `address.mac`. |
-| `mac` (Designer override) | **Yes** - re-stamped onto the replacement unit so CAN logic elsewhere stays valid. | The replacement-stable per-module key. Also what the raw `ampio/from/<MAC>/...` topics are keyed by.                                                                                               |
-| `mac_global` (factory id) | **No** - factory-burned, unique per physical unit, changes on swap.                | Display in diagnostics, never as identity.                                                                                                                                                         |
+| Field                     | Stable across module replacement?                                                  | Use it for                                                                                                                                                                                                                 |
+| ------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id` (DB autoincrement)   | **No** - assigned in `mac_global` order, reassigned when a module is replaced.     | The key of `AmpioAdminClient.modules` and the `module_id` argument of the module write methods, valid _within a single discovery snapshot_ only. Objects reach their module through `address.mac_group` and `address.mac`. |
+| `mac_group` (`macGroup`)  | **Yes** - the bus of the module.                                                   | The first half of the per-module key. 0 is the CAN group.                                                                                                                                                                  |
+| `mac` (Designer override) | **Yes** - re-stamped onto the replacement unit so CAN logic elsewhere stays valid. | The second half of the per-module key. In the CAN group, also what the raw `ampio/from/<MAC>/...` topics are keyed by.                                                                                                     |
+| `mac_global` (factory id) | **No** - factory-burned, unique per physical unit, changes on swap.                | Display in diagnostics, never as identity.                                                                                                                                                                                 |
 
 The M-SERV's default `mac` is `1`, which is not unique. Treat `mac` as unique
-_within a single install_ (the user assigns the overrides), not globally.
+_within a single install_ (the user assigns the overrides), not globally. The
+Designer keys a device on its bus group and its `mac` together.
 
 A mac is a bus address, and Designer shows the field in hex. Every text this
 library writes for a person therefore spells a mac in hex. `format_mac()`
@@ -33,10 +35,14 @@ that composes its own text must call it too, so one install reads one way. The
 model fields keep the integer, and `AmpioServerInfo.server_key` keeps its
 decimal form.
 
-`typ_urzadzenia` also derives two decoration fields on `AmpioModule`. `model` is
-the product name from the vendored catalogue. `mounting` is the curated
-form-factor class: `cabinet` (DIN rail), `wall` (panels, sensors, outdoor field
-devices), or `flush` (in-box `-p` modules). It reads None for virtual,
+`typ_urzadzenia` also derives two decoration fields on `AmpioModule`. Each bus
+group numbers its types on its own, so both fields read the code in the group of
+the module. `model` is the product name. In the CAN group it comes from the
+vendored catalogue. In the LoRa group it comes from the three names that the
+Designer gives: `WL-REL-2p` (3), `WL-REL-ROL1p` (4), and `WL-OC-RGBW1p` (5). Any
+other group reads None. `mounting` is the curated form-factor class: `cabinet`
+(DIN rail), `wall` (panels, sensors, outdoor field devices), or `flush` (in-box
+`-p` modules, the three LoRa products included). It reads None for virtual,
 bridge-only, handheld, and unknown codes. The classification follows Ampio's
 naming convention, which no official source asserts, so it is a hand-curated
 table (`device_types.MODULE_MOUNTING`). Both fields decorate the HA device info
@@ -49,7 +55,7 @@ only. The HA device topology must never branch on them.
 | `id`                      | **Yes**                                                                                                                                                   | The per-object unique id, exposed as `AmpioObject.object_key`.                                        |
 | `funkcja` (channel index) | **Yes** - part of the reloaded Designer config. Not unique: if the same physical signal is exposed as several Designer objects, they share one `funkcja`. | On the admin tier, the raw report index keys on it together with `address.mac` and the report prefix. |
 | `typ_komponentu`          | **Yes** - the type vocabulary (`temp`, `lin_wej`, `flaga`, ...).                                                                                          |
-| `address`                 | **Yes**. `ModuleAddress(mac, channel, sf_id, sub_sf_id)`, parsed from the leaf. `mac` is the module's override mac.                                       | The module key on every tier, and the raw write address (mac, channel, and class).                    |
+| `address`                 | **Yes**. `ModuleAddress(mac_group, mac, channel, sf_id, sub_sf_id)`, parsed from the leaf. `mac` is the module's override mac in its bus group.           | The module key on every tier, and the raw write address (mac, channel, and class) in the CAN group.   |
 | `leaf_key`                | **Yes**. `leaf_<leafId>`, the physical output the object drives. Several views of one output share it.                                                    | Grouping the views of one output.                                                                     |
 
 ## Unique id: the object id (`AmpioObject.object_key`)
@@ -97,44 +103,64 @@ therefore sees one key for several objects and loses all but one of them.
   relay, a dimmer, or a roller.
 - **The parse source.** `address` is read out of it.
 - **The join anchor.** The description-record join matches on `address.mac` and
-  `address.channel`.
+  `address.channel` in the CAN group.
 
-## Module identity on every tier: `AmpioObject.address.mac`
+## Module identity on every tier: `AmpioObject.address`
 
-The leaf embeds the owning module's override mac. `address.mac` equals
+The leaf embeds the bus group and the override mac of the owning module.
+`address.mac_group` and `address.mac` equal `AmpioModule.mac_group` and
 `AmpioModule.mac`, the M-SERV's override `1` included. A consumer therefore
 groups entities by physical module even on the standard tier, which never
-receives the module catalogue. An entry created with a standard account and
-later switched to an administrator keeps its entity-to-device mapping and only
-gains metadata.
+receives the module catalogue. The key is the pair, because the Designer keys a
+device on both. An entry created with a standard account and later switched to
+an administrator keeps its entity-to-device mapping and only gains metadata.
 
-Three helpers close the loop for a consumer that builds devices on
-`address.mac`. `AmpioObject.is_server_owned` reads `address.mac` and marks the
-objects that belong to the M-SERV itself. They anchor to the hub device
-identically on both tiers. `AmpioAdminClient.mserv` returns the M-SERV's own
-module row - name, model, versions. It is the row whose `mac_global` or `mac` is
-the server's self-reported mac, and nothing else in the list stands in for it.
-The override arm covers a replaced unit, whose factory id changes while the
-re-stamped override does not.
+Three helpers close the loop for a consumer that builds devices on the address.
+`AmpioObject.is_server_owned` reads the address and marks the objects that
+belong to the M-SERV itself: mac `1` in the CAN group. They anchor to the hub
+device identically on both tiers. `AmpioAdminClient.mserv` returns the M-SERV's
+own module row - name, model, versions. It is the row whose `mac_global` or
+`mac` is the server's self-reported mac, and nothing else in the list stands in
+for it. The override arm covers a replaced unit, whose factory id changes while
+the re-stamped override does not.
 
-`AmpioAdminClient.module_for(obj)` is one lookup on `address.mac`. It reads None
-when the list carries no row on that mac, or when two rows share it.
+`AmpioAdminClient.module_for(obj)` is one lookup on `address.mac_group` and
+`address.mac`. It reads None when the list carries no row on that address, or
+when two CAN rows share the mac.
 
 Both are members of `AmpioAdminClient`.
 
-## The address fields (`0_<macHex>_<sfId>_<subSfId>_<ioNo>`)
+## The address fields (`<macGroup>_<macHex>_<sfId>_<subSfId>_<ioNo>`)
 
 The Designer names all five segments. Its bundle builds the token, and it parses
-the token back into `macGroup`, `mac`, `sfId`, `subSfId`, and `ioNo`.
+the token back into `macGroup`, `mac`, `sfId`, `subSfId`, and `ioNo`. The bus
+group is decimal, and the mac is hex.
 
 `parse_module_address()` is the public form of the leaf parse. It returns a
 `ModuleAddress`. It raises `AmpioProtocolError` for a token that does not have
 this shape, and for an empty token.
 
-The library parses the mac, the `sfId`, the `subSfId`, and the trailing `ioNo`
-into `AmpioObject.address`. `address.channel` reads the last segment. It covers
-inputs as well as outputs. `address.sf_id` and `address.sub_sf_id` read the
-third and fourth segments. A `subSfId` has meaning only inside its `sfId`.
+The library parses all five segments into `AmpioObject.address`.
+`address.mac_group` reads the first segment and `address.mac` the second.
+`address.channel` reads the last segment. It covers inputs as well as outputs.
+`address.sf_id` and `address.sub_sf_id` read the third and fourth segments. A
+`subSfId` has meaning only inside its `sfId`.
+
+**`macGroup` names the bus of the device.** The Designer bundle gives these
+values:
+
+| `macGroup` | Bus     |
+| ---------- | ------- |
+| 0          | CAN     |
+| 1          | LoRa    |
+| 2          | EnOcean |
+| 3          | Z-Wave  |
+| 4          | Zamel   |
+| 5          | KNX     |
+
+`address.on_can_bus` and `AmpioModule.on_can_bus` are True for group 0. A device
+in another group is connected through a CAN module. The next section describes
+what the library does with such a device.
 
 **`sfId` is a per-leaf special-function id, not the module type.** `sfId` never
 equals the module's `typ_urzadzenia` on the baseline install. Virtual cover
@@ -180,3 +206,30 @@ the numeric value types, and `address.sub_sf_id` for `satel_alarm`.
 other class reports on `o`. [`panel-writes.md`](panel-writes.md) describes which
 writes ride the raw frame and which stay on `/api`. See also
 [`raw-channel-bridge.md`](raw-channel-bridge.md).
+
+## Devices outside the CAN group
+
+The Designer sends a raw frame or a `device_api` write to a device in the CAN
+group only. A device in another group is connected through a parent CAN module.
+The raw tree topics carry no bus group. For an object outside the CAN group, the
+library does these things:
+
+- It sends every command on `/api`.
+- It reads the state from the per-object topic. The raw tree never routes to the
+  object.
+- It joins no description record and no cover parameters.
+- `lock_target()` refuses it with `LockRefusal.NOT_ON_CAN_BUS`.
+
+For a module row outside the CAN group, the library does these things:
+
+- The module write methods (identify, buzzer, and panel writes) raise
+  `AmpioUnsupported` before they publish.
+- The mac-collision door does not count the row. Only two CAN rows on one mac
+  collide.
+- The sweep datasets carry no entry for the module, and `silent_macs` never
+  names it.
+
+Unverified: no LoRa hardware is on the baseline install. The `/api` commands and
+the per-object state of a LoRa object are not live-proven. It is also not known
+whether a LoRa device and a CAN module can carry the same `mac` number. The
+library keys on the pair, so the answer changes nothing it does.

@@ -37,6 +37,20 @@ def test_none_returns_none() -> None:
     assert module_model(None) is None
 
 
+@pytest.mark.parametrize(
+    ("code", "model"),
+    [(3, "WL-REL-2p"), (4, "WL-REL-ROL1p"), (5, "WL-OC-RGBW1p"), (44, None)],
+)
+def test_a_lora_type_code_reads_the_lora_name(code: int, model: str | None) -> None:
+    """The LoRa group numbers its types on its own (#320)."""
+    assert module_model(code, mac_group=1) == model
+
+
+def test_a_type_code_in_a_group_without_a_table_reads_none() -> None:
+    assert module_model(3, mac_group=2) is None
+    assert module_mounting(3, mac_group=2) is None
+
+
 # --- module_mounting (#115) -------------------------------------------------
 
 
@@ -58,6 +72,11 @@ def test_none_returns_none() -> None:
 )
 def test_module_mounting(code: int | None, mounting: str | None) -> None:
     assert module_mounting(code) == mounting
+
+
+def test_a_lora_device_mounts_in_a_flush_box() -> None:
+    """The `p` suffix of every LoRa name, as on the CAN products."""
+    assert [module_mounting(code, mac_group=1) for code in (3, 4, 5)] == ["flush"] * 3
 
 
 def test_mounting_table_stays_within_the_catalogue() -> None:
@@ -90,7 +109,13 @@ def test_unclassified_codes_are_the_deliberate_set() -> None:
 def test_ampio_module_derives_mounting() -> None:
     def module(typ: int) -> AmpioModule:
         return AmpioModule(
-            id=1, mac=1, mac_global=2, typ_urzadzenia=typ, wersja_softu=1, wersja_pcb=1
+            id=1,
+            mac_group=0,
+            mac=1,
+            mac_global=2,
+            typ_urzadzenia=typ,
+            wersja_softu=1,
+            wersja_pcb=1,
         )
 
     assert module(44).mounting == "wall"

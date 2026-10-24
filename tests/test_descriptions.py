@@ -55,7 +55,9 @@ def _object(**over: object) -> AmpioObject:
         "typ_komponentu": "",
         "interpretacja": 0,
         "funkcja": 1,
-        "address": ModuleAddress(mac=0xCAFE, channel=0, sf_id=257, sub_sf_id=0),
+        "address": ModuleAddress(
+            mac_group=0, mac=0xCAFE, channel=0, sf_id=257, sub_sf_id=0
+        ),
         "leaf_key": "leaf_0_cafe_257_0_0",
     }
     return AmpioObject(**{**row, **over})  # type: ignore[arg-type]
@@ -297,12 +299,16 @@ def test_resolve_designer_joins_location_and_type() -> None:
         64: _object(
             id=64,
             typ_komponentu="przekaznik",
-            address=ModuleAddress(mac=0xCB89, channel=0, sf_id=257, sub_sf_id=2),
+            address=ModuleAddress(
+                mac_group=0, mac=0xCB89, channel=0, sf_id=257, sub_sf_id=2
+            ),
         ),
         48: _object(
             id=48,
             typ_komponentu="roleta_procenty",
-            address=ModuleAddress(mac=0xCB89, channel=1, sf_id=5, sub_sf_id=0),
+            address=ModuleAddress(
+                mac_group=0, mac=0xCB89, channel=1, sf_id=5, sub_sf_id=0
+            ),
         ),
     }
     by_mac = {
@@ -315,22 +321,44 @@ def test_resolve_designer_joins_location_and_type() -> None:
     }
 
 
+def test_resolve_designer_skips_an_object_outside_the_can_group() -> None:
+    """The description record is a CAN module's, so a LoRa output on the
+    same mac number joins nothing (#320)."""
+    objects = {
+        64: _object(
+            id=64,
+            typ_komponentu="przekaznik",
+            address=ModuleAddress(
+                mac_group=1, mac=0xCB89, channel=0, sf_id=257, sub_sf_id=2
+            ),
+        ),
+    }
+    by_mac = {0xCB89: _entries((12, 0, 14, 256, "Lampa"))}
+    assert resolve_designer(objects, by_mac, {14: "Potter"}) == {}
+
+
 def test_resolve_designer_skips_the_unjoinable() -> None:
     objects = {
         1: _object(
             id=1,
             typ_komponentu="flaga_x",
-            address=ModuleAddress(mac=0xCB89, channel=0, sf_id=3, sub_sf_id=0),
+            address=ModuleAddress(
+                mac_group=0, mac=0xCB89, channel=0, sf_id=3, sub_sf_id=0
+            ),
         ),
         3: _object(
             id=3,
             typ_komponentu="przekaznik",
-            address=ModuleAddress(mac=0xBEEF, channel=0, sf_id=257, sub_sf_id=2),
+            address=ModuleAddress(
+                mac_group=0, mac=0xBEEF, channel=0, sf_id=257, sub_sf_id=2
+            ),
         ),
         4: _object(
             id=4,
             typ_komponentu="przekaznik",
-            address=ModuleAddress(mac=0xCB89, channel=9, sf_id=257, sub_sf_id=2),
+            address=ModuleAddress(
+                mac_group=0, mac=0xCB89, channel=9, sf_id=257, sub_sf_id=2
+            ),
         ),
     }
     by_mac = {0xCB89: _entries((12, 0, 14, 256, "L"))}
@@ -342,7 +370,9 @@ def test_resolve_designer_reads_empty_desc_as_none() -> None:
         64: _object(
             id=64,
             typ_komponentu="przekaznik",
-            address=ModuleAddress(mac=0xCB89, channel=0, sf_id=257, sub_sf_id=2),
+            address=ModuleAddress(
+                mac_group=0, mac=0xCB89, channel=0, sf_id=257, sub_sf_id=2
+            ),
         ),
     }
     by_mac = {0xCB89: _entries((12, 0, 0, 0, ""))}
@@ -358,7 +388,9 @@ def test_resolve_designer_reads_clear_sentinels_as_none() -> None:
         64: _object(
             id=64,
             typ_komponentu="przekaznik",
-            address=ModuleAddress(mac=0xCB89, channel=0, sf_id=257, sub_sf_id=2),
+            address=ModuleAddress(
+                mac_group=0, mac=0xCB89, channel=0, sf_id=257, sub_sf_id=2
+            ),
         ),
     }
     by_mac = {0xCB89: _entries((12, 0, 16383, 0, "."))}
@@ -372,7 +404,7 @@ def test_resolve_designer_joins_a_flag_on_the_binary_flag_class() -> None:
         152: _object(
             id=152,
             typ_komponentu="flaga",
-            address=ModuleAddress(mac=1, channel=0, sf_id=3, sub_sf_id=0),
+            address=ModuleAddress(mac_group=0, mac=1, channel=0, sf_id=3, sub_sf_id=0),
         )
     }
     by_mac = {1: _entries((6, 0, 19, 21, "flag"), (12, 0, 1, 266, "relay"))}
@@ -699,6 +731,79 @@ async def test_resolve_records_reports_catalogue_modules_absent_from_the_list(
         assert result.silent_macs == frozenset({0xBEEF})
         # The warning names the module to a person, so it writes an address.
         assert "Ampio modules 0xBEEF are missing" in caplog.text
+    finally:
+        await client.disconnect()
+
+
+async def test_a_row_in_another_group_leaves_a_can_board_layout_alone() -> None:
+    """A LoRa row on the same mac number names no board the params blob can
+    follow (#320)."""
+    client, broker = await _admin_client_with_catalogue()
+    try:
+        rows = (
+            {"id": 70, "typ_komponentu": "roleta_procenty", "leafId": "0_cb89_5_0_0"},
+        )
+        feed(client, ADMIN_PARAMS_DEVICES_TOPIC, params_of(*rows))
+        feed(client, ADMIN_DATA_DEVICES_TOPIC, details(*rows))
+        feed(
+            client,
+            ADMIN_DEVICES_TOPIC,
+            devices(
+                {"id": 16, "mac": 0xCB89, "typ_urzadzenia": 24, "wersja_pcb": 11},
+                {"id": 18, "macGroup": 1, "mac": 0xCB89, "typ_urzadzenia": 4},
+            ),
+        )
+        delivery = asyncio.create_task(
+            _deliver_causally(
+                client,
+                broker,
+                json.dumps({"List": [{"id": 14, "opis_menu": "Hall"}]}),
+                _list(
+                    _device(
+                        0xCB89,
+                        0xCB89,
+                        frame(12, 0, 14, 0, "x"),
+                        functions=caps((ModuleFunction.ROLLER, 1)),
+                        params=roller_params(),
+                    )
+                ),
+            )
+        )
+        try:
+            await client.resolve_records(timeout=1.0)
+        finally:
+            await delivery
+        assert client.cover_parameters[70].open_time_s == 40
+    finally:
+        await client.disconnect()
+
+
+async def test_resolve_records_expects_an_answer_from_the_can_group_alone() -> None:
+    """The device list is the CAN bus's, so a LoRa device is never silent
+    (#320)."""
+    client, broker = await _admin_client_with_catalogue()
+    try:
+        feed(
+            client,
+            ADMIN_DEVICES_TOPIC,
+            devices(
+                {"id": 16, "mac": 0xCB89},
+                {"id": 18, "macGroup": 1, "mac": 0x11000209, "typ_urzadzenia": 3},
+            ),
+        )
+        delivery = asyncio.create_task(
+            _deliver_causally(
+                client,
+                broker,
+                json.dumps({"List": [{"id": 14, "opis_menu": "Potter"}]}),
+                _list(_device(0xCB89, 0xCB89, frame(12, 0, 14, 256, "L"))),
+            )
+        )
+        try:
+            result = await client.resolve_records(timeout=0.2)
+        finally:
+            await delivery
+        assert result.silent_macs == frozenset()
     finally:
         await client.disconnect()
 

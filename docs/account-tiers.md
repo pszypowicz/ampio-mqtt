@@ -25,8 +25,8 @@ validation time. A config flow reads it to pick the class before any client
 exists. The tier is an `AccessTier` member. `AccessTier.ADMIN` is the admin
 account and maps to `AmpioAdminClient`. `AccessTier.RESTRICTED` is the standard
 account and maps to `AmpioClient`. Grouping entities by module needs no module
-row on either class: `AmpioObject.address.mac` carries the key (see
-[`identity.md`](identity.md)).
+row on either class: `AmpioObject.address.mac_group` and
+`AmpioObject.address.mac` carry the key (see [`identity.md`](identity.md)).
 
 ## What AmpioClient serves
 

@@ -260,6 +260,7 @@ _CATALOGUE_ROW = {
     "url": "",
 }
 _MODULE_ROW = {
+    "macGroup": 0,
     "mac": 0xCAFE,
     "mac_global": 0xBEEF,
     "nazwa_urzadzenia": "module",

@@ -137,17 +137,17 @@ same condition arrives as the `NotConfigured` event, and the row leaves through
 `ObjectRemoved`. The next catalogue push that restores the leaf produces
 `ObjectAdded`. `diagnostics_snapshot()` lists their ids under `not_configured`.
 
-On `AmpioAdminClient`, the module list has its own door. The door admits no
-module row whose override mac another row shares. The raw tree keys on that mac
-and cannot attribute a frame to any of those rows. The store records the shared
-mac and the module ids, and `wait_for_initial_discovery()` raises
-`AmpioNotConfigured` with the pairs in `collisions`. After connect, the same
-condition arrives as the `NotConfigured` event, and each row leaves through
-`ModuleRemoved`. The next module list that gives each module its own mac reports
-`ModuleUpdated`. The default mac `1` is not unique (see
-[`identity.md`](identity.md)), so two rows left on it fail the door. The
-installer gives each module its own mac in Designer. `diagnostics_snapshot()`
-lists the pairs under `mac_collisions`.
+On `AmpioAdminClient`, the module list has its own door. The door admits no CAN
+module row whose override mac another CAN row shares. The raw tree keys on that
+mac and cannot attribute a frame to any of those rows. A row in another bus
+group is never part of a collision. The store records the shared mac and the
+module ids, and `wait_for_initial_discovery()` raises `AmpioNotConfigured` with
+the pairs in `collisions`. After connect, the same condition arrives as the
+`NotConfigured` event, and each row leaves through `ModuleRemoved`. The next
+module list that gives each module its own mac reports `ModuleUpdated`. The
+default mac `1` is not unique (see [`identity.md`](identity.md)), so two rows
+left on it fail the door. The installer gives each module its own mac in
+Designer. `diagnostics_snapshot()` lists the pairs under `mac_collisions`.
 
 A non-empty leaf that does not parse is a server fault. The store refuses the
 reply whole as `AmpioProtocolError`, before any field changes. `data/devices`
@@ -180,12 +180,12 @@ keeps working. A rejection after a successful `connect()` arrives as the
 
 Four classes separate whose fault a refusal is:
 
-| Error                | Whose fault   | Raised for                                                                                                                                                                                |
-| -------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AmpioValueError`    | the developer | A bad argument, a value beyond the frame's range, or an id the catalogue does not list. It also covers a call that needs a sweep that did not run. It subclasses `ValueError`.            |
-| `AmpioNotConfigured` | the installer | A drivable row carries no leaf, or two or more module rows share one override mac. A lock write can also name a mac no admitted module row carries. The installer fixes each in Designer. |
-| `AmpioUnsupported`   | nobody        | The install cannot do it. Examples are an output whose kind does not answer the verb, a kind no timed write pulses, and a module without the roller lock. A consumer omits the control.   |
-| `AmpioProtocolError` | the server    | A reply lacks what its surface always serves.                                                                                                                                             |
+| Error                | Whose fault   | Raised for                                                                                                                                                                                    |
+| -------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AmpioValueError`    | the developer | A bad argument, a value beyond the frame's range, or an id the catalogue does not list. It also covers a call that needs a sweep that did not run. It subclasses `ValueError`.                |
+| `AmpioNotConfigured` | the installer | A drivable row carries no leaf, or two or more CAN module rows share one override mac. A lock write can also name a mac no admitted module row carries. The installer fixes each in Designer. |
+| `AmpioUnsupported`   | nobody        | The install cannot do it. Examples are an output whose kind does not answer the verb, a kind no timed write pulses, and a module without the roller lock. A consumer omits the control.       |
+| `AmpioProtocolError` | the server    | A reply lacks what its surface always serves.                                                                                                                                                 |
 
 ## What runs on demand, not automatically
 
@@ -242,13 +242,13 @@ Designer names stay out of the report, and the `NotConfigured` event carries
 them.
 
 The `modules` list holds one row per known module, sorted by id. Each row
-carries the module's `id`, `mac`, `typ_urzadzenia`, `model`, `last_seen`,
-`supply_voltage`, and `temperature`. A bug report about a quiet module reads its
-`last_seen` from this list. The user-given module name stays out of the row. A
-module that sends no `b/4F` frame keeps `last_seen`, `supply_voltage`, and
-`temperature` empty after a connect. Its `last_seen` moves on the first push
-from one of its objects. The modules that send the frame are listed in
-[`raw-channel-bridge.md`](raw-channel-bridge.md).
+carries the module's `id`, `mac_group`, `mac`, `typ_urzadzenia`, `model`,
+`last_seen`, `supply_voltage`, and `temperature`. A bug report about a quiet
+module reads its `last_seen` from this list. The user-given module name stays
+out of the row. A module that sends no `b/4F` frame keeps `last_seen`,
+`supply_voltage`, and `temperature` empty after a connect. Its `last_seen` moves
+on the first push from one of its objects. The modules that send the frame are
+listed in [`raw-channel-bridge.md`](raw-channel-bridge.md).
 
 The module list and the collision pairs write each mac as the string `0xCB8F`,
 which is what `format_mac()` returns. The report is read by a person, and

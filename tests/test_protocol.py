@@ -291,6 +291,7 @@ def _module_row(**over: object) -> dict[str, object]:
     """A well-formed `devices` module row."""
     row: dict[str, object] = {
         "id": 5,
+        "macGroup": 0,
         "mac": 0xCAFE,
         "mac_global": 0xBEEF,
         "nazwa_urzadzenia": "M-DOT-9",
@@ -304,8 +305,17 @@ def _module_row(**over: object) -> dict[str, object]:
 def test_parse_devices_reads_the_module_row() -> None:
     modules = parse_devices(json.loads(_rows(_module_row())))
     assert [m.id for m in modules] == [5]
+    assert modules[0].mac_group == 0 and modules[0].on_can_bus
     assert modules[0].mac == 0xCAFE and modules[0].mac_global == 0xBEEF
     assert modules[0].wersja_softu == 908 and modules[0].wersja_pcb == 12
+
+
+def test_parse_devices_reads_a_module_outside_the_can_group() -> None:
+    """A LoRa device's row carries group 1 (#320)."""
+    modules = parse_devices(
+        json.loads(_rows(_module_row(macGroup=1, mac=0x11000209, typ_urzadzenia=3)))
+    )
+    assert modules[0].mac_group == 1 and not modules[0].on_can_bus
 
 
 @pytest.mark.parametrize("column", list(_module_row()))
@@ -1058,9 +1068,16 @@ def test_raw_identify_frames_are_the_designer_pair() -> None:
     assert RAW_IDENTIFY_OFF == "7e00"
 
 
-def test_a_leaf_token_parses_into_its_four_address_fields() -> None:
+def test_a_leaf_token_parses_into_its_five_address_fields() -> None:
     assert parse_module_address("0_cb8f_76_0_3") == ModuleAddress(
-        mac=0xCB8F, channel=3, sf_id=76, sub_sf_id=0
+        mac_group=0, mac=0xCB8F, channel=3, sf_id=76, sub_sf_id=0
+    )
+
+
+def test_a_leaf_token_outside_the_can_group_parses_its_group() -> None:
+    """A LoRa relay output carries group 1 (#320)."""
+    assert parse_module_address("1_11000209_257_2_1") == ModuleAddress(
+        mac_group=1, mac=0x11000209, channel=1, sf_id=257, sub_sf_id=2
     )
 
 
@@ -1068,7 +1085,7 @@ def test_a_leaf_token_parses_into_its_four_address_fields() -> None:
     "token",
     [
         "",
-        "1_cb8f_76_0_3",
+        "x_cb8f_76_0_3",
         "0_zz_76_0_3",
         "0_cb8f_x_0_3",
         "0_cb8f_76_0",

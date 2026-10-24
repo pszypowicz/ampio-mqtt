@@ -267,7 +267,8 @@ leafed flag on the baseline install has a class-6 frame at its channel. That
 frame carries the object's own name wherever a name is set. A kind outside the
 table (`bit32`, `lin_wej`, `satel_alarm`, `temp` among them) resolves no
 location, because no class was proven for it. The join keys on `address.mac`
-against the reply's `macUser`, and it needs no module catalogue row.
+against the reply's `macUser`, and it needs no module catalogue row. The reply
+lists CAN modules only, so an object outside the CAN group joins no record.
 
 ### Coverage
 
@@ -287,8 +288,9 @@ reply listed with a readable entry. A listed device is left out of
 or empty `descriptions` field counts as an empty answer. Any other
 `descriptions` value that is not a readable base64 string also leaves the device
 out. If such a module is catalogued, it lands in `silent_macs`, together with
-the catalogued modules the reply left out. The M-SERV's own row is a device like
-any other in both sets.
+the catalogued CAN modules the reply left out. A module outside the CAN group
+never lands in `silent_macs`, and no dataset carries an entry for it. The
+M-SERV's own row is a device like any other in both sets.
 
 An entry leaves with the row it belongs to. An object that leaves the catalogue
 drops its `records` and `cover_parameters` entry. An object whose leaf moves to
@@ -300,10 +302,10 @@ A sweep changes no model field. It dispatches no `ObjectUpdated` and no
 `ModuleUpdated`, so a consumer that reads a dataset refreshes on
 `RecordSweepCompleted`.
 
-Two module rows on one override mac have no usable module identity. The admin
-door admits neither row (see [`discovery-flow.md`](discovery-flow.md)). A sweep
-reads each module's own reply, so `records`, `module_records` and `capabilities`
-can still carry entries on the shared mac. `cover_parameters` and
+Two CAN module rows on one override mac have no usable module identity. The
+admin door admits neither row (see [`discovery-flow.md`](discovery-flow.md)). A
+sweep reads each module's own reply, so `records`, `module_records` and
+`capabilities` can still carry entries on the shared mac. `cover_parameters` and
 `panel_settings` need the catalogue row for the board layout, so they carry
 nothing. The installer gives each module its own mac in Designer, and a consumer
 fixes the install rather than reading around the gap.

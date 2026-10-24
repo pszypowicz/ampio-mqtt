@@ -118,12 +118,13 @@ time. Read `AmpioObject.czas` for the raw column on any type.
 The M-SERV ships its own Matter bridge. The bridge exposes an object only when
 `params` bit 37 is set and bit 4 is clear. Bit 37 is the per-object Matter
 opt-in set in Designer. Bit 4 is the hidden/stub marker the door checks. The
-bridge reads the same `leafId` structure `0_<macHex>_<sfId>_<subSfId>_<ioNo>`
-that `AmpioObject.address` parses. The bridge also shows why a dedicated
-integration is the right path for sensors. Its object typing has known gaps. It
-does not type a `lin_wej` object, and loudness has no Matter device type at all.
-And it exposes only the channels hand-flagged for Matter - a dozen on the
-baseline install, with humidity, pressure, illuminance, and CO2 on zero modules.
+bridge reads the same `leafId` structure
+`<macGroup>_<macHex>_<sfId>_<subSfId>_<ioNo>` that `AmpioObject.address` parses.
+The bridge also shows why a dedicated integration is the right path for sensors.
+Its object typing has known gaps. It does not type a `lin_wej` object, and
+loudness has no Matter device type at all. And it exposes only the channels
+hand-flagged for Matter - a dozen on the baseline install, with humidity,
+pressure, illuminance, and CO2 on zero modules.
 
 ## The read-only marker (`AmpioObject.read_only`)
 

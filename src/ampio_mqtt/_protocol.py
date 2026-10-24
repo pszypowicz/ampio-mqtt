@@ -260,10 +260,10 @@ _PUSH = "state push"
 _GROUPS = "room table"
 _MEMBERSHIP = "room membership table"
 
-# The `leafId` shape: `0_<macHex>_<sfId>_<subSfId>_<ioNo>`, a leading
-# literal `0`, then the four fields the parse reads (docs/identity.md).
-# Strict: a half-parsed address that is wrong is worse than a refused reply.
-_LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_(\d+)_(\d+)_(\d+)")
+# The `leafId` shape: `<macGroup>_<macHex>_<sfId>_<subSfId>_<ioNo>`, the
+# group in decimal and the mac in hex (docs/identity.md). Strict: a
+# half-parsed address that is wrong is worse than a refused reply.
+_LEAF_ID_RE = re.compile(r"(\d+)_([0-9a-fA-F]+)_(\d+)_(\d+)_(\d+)")
 
 
 class LeafFault(AmpioProtocolError):
@@ -271,22 +271,24 @@ class LeafFault(AmpioProtocolError):
 
 
 def parse_module_address(leaf_id: str) -> ModuleAddress:
-    """The bus address in a ``leafId`` token.
+    """The address in a ``leafId`` token.
 
     Raises :class:`AmpioProtocolError` for any string that is not a
-    ``0_<macHex>_<sfId>_<subSfId>_<ioNo>`` token, the empty string included.
+    ``<macGroup>_<macHex>_<sfId>_<subSfId>_<ioNo>`` token, the empty string
+    included.
     """
     match = _LEAF_ID_RE.fullmatch(leaf_id)
     if match is None:
         raise LeafFault(
             f"The Ampio object catalogue carries the leafId {leaf_id!r}, "
-            "which is not a 0_<macHex>_<sfId>_<subSfId>_<ioNo> token"
+            "which is not a <macGroup>_<macHex>_<sfId>_<subSfId>_<ioNo> token"
         )
     return ModuleAddress(
-        mac=int(match.group(1), 16),
-        channel=int(match.group(4)),
-        sf_id=int(match.group(2)),
-        sub_sf_id=int(match.group(3)),
+        mac_group=int(match.group(1)),
+        mac=int(match.group(2), 16),
+        channel=int(match.group(5)),
+        sf_id=int(match.group(3)),
+        sub_sf_id=int(match.group(4)),
     )
 
 
@@ -322,6 +324,7 @@ def parse_devices(data: Mapping[str, Any]) -> list[AmpioModule]:
     return [
         AmpioModule(
             id=_int_column(row, "id", _MODULE_LIST),
+            mac_group=_int_column(row, "macGroup", _MODULE_LIST),
             mac=_int_column(row, "mac", _MODULE_LIST),
             mac_global=_int_column(row, "mac_global", _MODULE_LIST),
             nazwa_urzadzenia=_nullable_text_column(
@@ -644,7 +647,8 @@ def resolve_designer(
     """Join each object to its module's description entry.
 
     The key is ``(DESC_TYPE_BY_KIND[typ_komponentu], address.channel)``
-    within the module record of ``address.mac``.
+    within the module record of ``address.mac``. The records are CAN
+    modules', so an object outside the CAN group joins nothing.
     ``out_loc`` 0 or 16383 reads unassigned and ``out_type`` 0 untagged,
     so none produces a value. A ``desc`` that is empty or the ``.``
     placeholder reads as None, like the other two fields.
@@ -656,7 +660,7 @@ def resolve_designer(
     out: dict[int, DesignerRecord] = {}
     for obj in objects.values():
         desc_type = DESC_TYPE_BY_KIND.get(obj.typ_komponentu or "")
-        if desc_type is None:
+        if desc_type is None or not obj.address.on_can_bus:
             continue
         mac, out_no = obj.address.mac, obj.address.channel
         entry = entries_by_key.get(mac, {}).get((desc_type, out_no))
@@ -827,7 +831,8 @@ def resolve_cover_parameters(
     disagrees with the layout, the module resolves nothing rather than
     guessing.
 
-    The channel key matches ``resolve_designer``: ``address.channel``.
+    The channel key matches ``resolve_designer``: ``address.channel``,
+    and an object outside the CAN group joins nothing.
     """
     channels_by_mac: dict[int, tuple[CoverParameters, ...]] = {}
     for mac, blob in params_by_mac.items():
@@ -846,7 +851,7 @@ def resolve_cover_parameters(
 
     out: dict[int, CoverParameters] = {}
     for obj in objects.values():
-        if not joins_roller_records(obj.typ_komponentu):
+        if not joins_roller_records(obj.typ_komponentu) or not obj.address.on_can_bus:
             continue
         mac, channel = obj.address.mac, obj.address.channel
         channels = channels_by_mac.get(mac)

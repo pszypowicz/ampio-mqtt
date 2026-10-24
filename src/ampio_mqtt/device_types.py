@@ -25,6 +25,12 @@ from typing import Any, Literal
 # an in-wall installation box behind a switch or socket.
 Mounting = Literal["cabinet", "wall", "flush"]
 
+# The Designer's bus groups this module names a type code in. The raw tree,
+# the raw write topic and `device_api` reach the CAN group alone. A LoRa
+# device sits behind a CAN module and numbers its types on its own.
+CAN_GROUP = 0
+LORA_GROUP = 1
+
 
 def _load_upstream_devtypes() -> list[dict[str, Any]]:
     """Read the vendored ``_devtypes.json`` shipped with the package."""
@@ -46,11 +52,25 @@ def _build_catalogue() -> dict[int, str]:
 MODULE_MODELS = _build_catalogue()
 
 
-def module_model(type_code: int | None) -> str | None:
-    """Resolve a module type code to its model name, or None if unknown."""
+# The Designer's own names for the LoRa type codes it knows.
+LORA_MODULE_MODELS: dict[int, str] = {
+    3: "WL-REL-2p",
+    4: "WL-REL-ROL1p",
+    5: "WL-OC-RGBW1p",
+}
+
+_MODELS_BY_GROUP: dict[int, dict[int, str]] = {
+    CAN_GROUP: MODULE_MODELS,
+    LORA_GROUP: LORA_MODULE_MODELS,
+}
+
+
+def module_model(type_code: int | None, mac_group: int = CAN_GROUP) -> str | None:
+    """Resolve a module type code in its bus group to its model name, or None
+    if unknown."""
     if type_code is None:
         return None
-    return MODULE_MODELS.get(type_code)
+    return _MODELS_BY_GROUP.get(mac_group, {}).get(type_code)
 
 
 # Curated mounting class per type code (#115): the Ampio naming convention
@@ -132,8 +152,20 @@ MODULE_MOUNTING: dict[int, Mounting] = {
 }
 
 
-def module_mounting(type_code: int | None) -> Mounting | None:
-    """Resolve a module type code to its mounting class, or None."""
+# Every LoRa name carries the `p` suffix of a flush-box product.
+LORA_MODULE_MOUNTING: dict[int, Mounting] = {3: "flush", 4: "flush", 5: "flush"}
+
+_MOUNTING_BY_GROUP: dict[int, dict[int, Mounting]] = {
+    CAN_GROUP: MODULE_MOUNTING,
+    LORA_GROUP: LORA_MODULE_MOUNTING,
+}
+
+
+def module_mounting(
+    type_code: int | None, mac_group: int = CAN_GROUP
+) -> Mounting | None:
+    """Resolve a module type code in its bus group to its mounting class, or
+    None."""
     if type_code is None:
         return None
-    return MODULE_MOUNTING.get(type_code)
+    return _MOUNTING_BY_GROUP.get(mac_group, {}).get(type_code)

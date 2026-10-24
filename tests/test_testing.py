@@ -71,5 +71,5 @@ def test_apply_reply_names_an_endpoint_this_store_applies_no_reply_for() -> None
 
 def test_parse_module_address_reads_a_leaf_token() -> None:
     assert parse_module_address("0_cb8f_76_0_3") == ModuleAddress(
-        mac=0xCB8F, channel=3, sf_id=76, sub_sf_id=0
+        mac_group=0, mac=0xCB8F, channel=3, sf_id=76, sub_sf_id=0
     )

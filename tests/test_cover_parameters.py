@@ -113,7 +113,9 @@ def _object(**over: object) -> AmpioObject:
         "typ_komponentu": "roleta_procenty",
         "interpretacja": 0,
         "funkcja": 1,
-        "address": ModuleAddress(mac=0xCB89, channel=0, sf_id=5, sub_sf_id=0),
+        "address": ModuleAddress(
+            mac_group=0, mac=0xCB89, channel=0, sf_id=5, sub_sf_id=0
+        ),
         "leaf_key": "leaf_0_cb89_5_0_0",
     }
     return AmpioObject(**{**row, **over})  # type: ignore[arg-type]
@@ -125,7 +127,9 @@ def test_a_cover_joins_through_its_channel() -> None:
         11: _object(
             id=11,
             typ_komponentu="roleta_lamelki",
-            address=ModuleAddress(mac=0xCB89, channel=3, sf_id=5, sub_sf_id=0),
+            address=ModuleAddress(
+                mac_group=0, mac=0xCB89, channel=3, sf_id=5, sub_sf_id=0
+            ),
         ),
     }
     resolved = resolve_cover_parameters(objects, {0xCB89: FOUR_CHANNEL}, {}, HARDWARE)
@@ -142,7 +146,23 @@ def test_a_kind_outside_the_roller_class_resolves_nothing() -> None:
         1: _object(
             id=1,
             typ_komponentu="przekaznik",
-            address=ModuleAddress(mac=0xCB89, channel=0, sf_id=257, sub_sf_id=2),
+            address=ModuleAddress(
+                mac_group=0, mac=0xCB89, channel=0, sf_id=257, sub_sf_id=2
+            ),
+        )
+    }
+    assert _resolve(objects) == {}
+
+
+def test_a_cover_outside_the_can_group_resolves_nothing() -> None:
+    """The params blob is a CAN module's, so a LoRa cover on the same mac
+    number joins nothing (#320)."""
+    objects = {
+        3: _object(
+            id=3,
+            address=ModuleAddress(
+                mac_group=1, mac=0xCB89, channel=0, sf_id=5, sub_sf_id=0
+            ),
         )
     }
     assert _resolve(objects) == {}
@@ -151,7 +171,10 @@ def test_a_kind_outside_the_roller_class_resolves_nothing() -> None:
 def test_a_channel_past_the_count_resolves_nothing() -> None:
     objects = {
         2: _object(
-            id=2, address=ModuleAddress(mac=0xCB89, channel=9, sf_id=5, sub_sf_id=0)
+            id=2,
+            address=ModuleAddress(
+                mac_group=0, mac=0xCB89, channel=9, sf_id=5, sub_sf_id=0
+            ),
         )
     }
     assert _resolve(objects) == {}
@@ -160,7 +183,10 @@ def test_a_channel_past_the_count_resolves_nothing() -> None:
 def test_a_module_with_no_blob_resolves_nothing() -> None:
     objects = {
         3: _object(
-            id=3, address=ModuleAddress(mac=0xDEAD, channel=0, sf_id=5, sub_sf_id=0)
+            id=3,
+            address=ModuleAddress(
+                mac_group=0, mac=0xDEAD, channel=0, sf_id=5, sub_sf_id=0
+            ),
         )
     }
     assert _resolve(objects) == {}
