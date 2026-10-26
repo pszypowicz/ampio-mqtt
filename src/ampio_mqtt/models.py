@@ -631,8 +631,9 @@ class AmpioObject:
 
         The recommended per-object unique id: unique among every object
         in one discovery snapshot, served on both account tiers, and
-        never None. Scope it per M-SERV with
-        ``AmpioServerInfo.server_key``. The physical output an object
+        never None. A consumer that holds several M-SERVs scopes it with
+        an id of its own, never ``AmpioServerInfo.server_key``, which
+        changes when the unit is replaced. The physical output an object
         drives is :pyattr:`leaf_key`, which several Designer views of one
         output share by design. See docs/identity.md.
         """
@@ -724,8 +725,8 @@ class AmpioServerInfo:
     (geolocation, cloud endpoint, public key, user permissions).
     """
 
-    # the M-SERV's own CAN mac (matches its module row's mac_global, or its
-    # mac on a replaced unit)
+    # The factory id of the M-SERV unit, not its override mac. A replaced
+    # unit reports its own.
     mac: int
     # The asking account's id: -1 for the reserved `admin` login, the
     # users-table row id for an app-created user. Every reply carries it,
@@ -742,11 +743,12 @@ class AmpioServerInfo:
 
     @property
     def server_key(self) -> str:
-        """Canonical scoping key for this M-SERV, for consumer registries.
+        """The key of this M-SERV unit: the decimal form of ``mac``.
 
-        The string to prefix per-server artifacts with - unique ids, device
-        identifiers: the decimal form of ``mac``. The format is a stable
-        promise; never parse or reformat it.
+        The format is a stable promise; never parse or reformat it. The
+        value names the hardware, so a replaced unit reports a new key
+        while its object ids stay the same. Build no entity or device
+        identifier on it. docs/identity.md describes the replacement.
         """
         return str(self.mac)
 

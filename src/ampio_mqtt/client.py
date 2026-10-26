@@ -79,6 +79,7 @@ from .events import (
     RecordSweepCompleted,
 )
 from .models import (
+    MSERV_MAC,
     AccessTier,
     AmpioModule,
     AmpioObject,
@@ -1618,22 +1619,16 @@ class AmpioAdminClient(AmpioClient):
     def mserv(self) -> AmpioModule | None:
         """The M-SERV's own module row, for naming the hub device.
 
-        The row whose ``mac_global`` or ``mac`` is the server's
-        self-reported mac.
+        The row on the M-SERV's override mac, the mac
+        :pyattr:`AmpioObject.is_server_owned` reads. A replaced unit keeps
+        it, while its factory id changes.
 
-        None until both the module catalogue and the server info have
-        arrived, which :meth:`wait_for_initial_discovery` waits for. A
-        lasting None says no admitted module row is the M-SERV's own
-        (absent, or refused for a mac collision). Device grouping that needs
-        no module row at all is :pyattr:`AmpioObject.is_server_owned`.
+        None until the module catalogue has arrived, which
+        :meth:`wait_for_initial_discovery` waits for. A lasting None says
+        no admitted module row is the M-SERV's own (absent, or refused for
+        a mac collision).
         """
-        info = self._store.server_info
-        if info is None:
-            return None
-        for mod in self._store.modules.values():
-            if info.mac in (mod.mac_global, mod.mac):
-                return mod
-        return None
+        return self._store.module_by_mac(MSERV_MAC)
 
     def module_for(self, obj: AmpioObject) -> AmpioModule | None:
         """The catalogue row of the module that owns ``obj``.

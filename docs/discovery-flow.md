@@ -253,11 +253,11 @@ from one of its objects. The modules that send the frame are listed in
 The module list and the collision pairs write each mac as the string `0xCB8F`,
 which is what `format_mac()` returns. The report is read by a person, and
 [`identity.md`](identity.md) gives the rule. The mac in the server-info entry
-stays a number. The decimal form of that number is the `server_key` a consumer
-scopes its registry on. The entry is the `AmpioServerInfo` dataclass, with
-`local_ip` and `device_id` masked as `**REDACTED**`. Those two fields identify
-the host the M-SERV runs on. The parser keeps a version field only in the
-dotted-number form. A version field in any other form reads as `None`.
+stays a number. The decimal form of that number is the `server_key`. The entry
+is the `AmpioServerInfo` dataclass, with `local_ip` and `device_id` masked as
+`**REDACTED**`. Those two fields identify the host the M-SERV runs on. The
+parser keeps a version field only in the dotted-number form. A version field in
+any other form reads as `None`.
 
 Table replies retain a JSON string with only `row_count` in `last_payloads`.
 Names, URLs, state descriptions, nested data, and unknown fields are omitted.

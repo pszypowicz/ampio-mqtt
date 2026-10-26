@@ -55,15 +55,19 @@ only. The HA device topology must never branch on them.
 ## Unique id: the object id (`AmpioObject.object_key`)
 
 The recommended per-object unique id is the database object id, exposed as
-`AmpioObject.object_key` (`obj_<id>`) and scoped per server by the consumer:
+`AmpioObject.object_key` (`obj_<id>`). It is unique within one M-SERV. A
+consumer that holds one M-SERV uses it as it is. A consumer that holds several
+M-SERVs adds a prefix of its own:
 
 ```
 {prefix}_obj_{id}
 ```
 
-`prefix` is a per-M-SERV scope: use `AmpioServerInfo.server_key`, the canonical
-decimal form of the server's own CAN mac. Every account tier receives it, and it
-is guaranteed present once `wait_for_initial_discovery()` returns True.
+`prefix` is an id from the consumer's own records for that M-SERV, for example
+the id of its configuration entry. Do not use `AmpioServerInfo.server_key` as
+the prefix. That key changes when the M-SERV unit is replaced, and the object
+ids do not (see
+[The M-SERV after a replacement](#the-m-serv-after-a-replacement)).
 
 Three properties make the object id the right source:
 
@@ -112,15 +116,35 @@ Three helpers close the loop for a consumer that builds devices on
 `address.mac`. `AmpioObject.is_server_owned` reads `address.mac` and marks the
 objects that belong to the M-SERV itself. They anchor to the hub device
 identically on both tiers. `AmpioAdminClient.mserv` returns the M-SERV's own
-module row - name, model, versions. It is the row whose `mac_global` or `mac` is
-the server's self-reported mac, and nothing else in the list stands in for it.
-The override arm covers a replaced unit, whose factory id changes while the
-re-stamped override does not.
+module row - name, model, versions. It is the row on the override mac `1`, the
+mac `is_server_owned` reads. It reads None when no row is on that mac, or when
+two rows share it.
 
 `AmpioAdminClient.module_for(obj)` is one lookup on `address.mac`. It reads None
 when the list carries no row on that mac, or when two rows share it.
 
 Both are members of `AmpioAdminClient`.
+
+## The M-SERV after a replacement
+
+An installer replaces an M-SERV unit and restores its backup onto the new unit.
+The backup carries the application database, so every object id stays the same.
+The M-SERV's override mac stays `1`.
+
+Two values change, because they name the hardware:
+
+- `AmpioServerInfo.mac` is the factory id of the M-SERV unit. It is not the
+  override mac. The new unit reports its own factory id.
+- `AmpioServerInfo.server_key` is the decimal form of that mac, so it changes
+  with it.
+
+The client requests the server info again on every reconnect. After a
+replacement, `server_info` holds the new key, and no event reports the change.
+
+The key alone cannot tell a replaced unit from a different M-SERV at the same
+address. A consumer that stores `server_key` decides what a new key means.
+`AmpioAdminClient.mserv` and `AmpioObject.is_server_owned` read the override
+mac, so they find the M-SERV on the new unit too.
 
 ## The address fields (`0_<macHex>_<sfId>_<subSfId>_<ioNo>`)
 
