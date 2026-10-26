@@ -921,8 +921,8 @@ def parse_server_info(data: Mapping[str, Any]) -> AmpioServerInfo:
     """Parse a server-info reply, keeping only the safe fields.
 
     The baseline server wraps the fields in a ``Results`` object and always
-    reports two things: its ``mac``, the identity every consumer scopes a
-    registry by, and ``userId``, the asking account. A reply missing any
+    reports two things: its ``mac``, the factory id of the M-SERV unit,
+    and ``userId``, the asking account. A reply missing any
     of the three is refused, so every :class:`AmpioServerInfo` carries a
     populated :pyattr:`AmpioServerInfo.server_key` and a readable
     :pyattr:`AmpioServerInfo.access_tier`. A version field outside the
