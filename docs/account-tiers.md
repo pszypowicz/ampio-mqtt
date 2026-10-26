@@ -101,9 +101,11 @@ into one namespace per account.
 So any surface published outside `ampio/fromDB/<user>/` is unreachable from a
 standard account. Check that before you plan a consumer for one.
 
-One of the gaps is narrower than the table suggests. The M-SERV's own identity
-needs no module catalogue at all. Both tiers receive `server_info` fully, so a
-consumer can anchor its hub device on `AmpioServerInfo.mac` instead of `mserv`.
+One of the gaps is narrower than the table suggests. A consumer can build its
+hub device without the module catalogue. `AmpioObject.is_server_owned` marks the
+M-SERV's own objects on both tiers, and both tiers receive `server_info` fully.
+Do not key the hub device on `AmpioServerInfo.mac`. That value changes when the
+M-SERV unit is replaced.
 
 Grants bound reads and object writes alike. The M-SERV drops a command for an
 object outside a standard account's grant, with no effect and no reply. No state

@@ -12,6 +12,24 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Changed
+
+- **`AmpioAdminClient.mserv` is the module row on the override mac `1`.** It
+  matched a row against the mac in the server info. That mac is the factory id
+  of the M-SERV unit, so the property read None after a replacement that kept
+  the old row. It now reads the mac that `AmpioObject.is_server_owned` reads,
+  and it no longer waits for the server info.
+
+### Documentation
+
+- **`server_key` names the M-SERV hardware.** A replaced unit restored from its
+  backup keeps every object id, and it reports a new `server_key`. The docs no
+  longer recommend `server_key` as a prefix for unique ids, or
+  `AmpioServerInfo.mac` as the key of a hub device. `docs/identity.md` describes
+  the replacement.
+
 ## 0.77.0
 
 This release closes a second gap in the diagnostics report. The `server_info`

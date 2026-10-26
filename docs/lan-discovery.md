@@ -61,14 +61,17 @@ None of the records - the `ampio.local` A-record, or either `_matter._tcp`
 instance - carries the M-SERV's mac in any field. The Matter instance names are
 fabric and node identifiers from that co-located process, unrelated to the
 interface MAC. No ARP read exposes more than the OUI above. The server mac
-behind `server_key` is the M-SERV's CAN bus mac, not its Ethernet address.
+behind `server_key` is the factory id of the M-SERV unit on the CAN bus, not its
+Ethernet address.
 
 So a config flow cannot derive
 [`AmpioServerInfo.server_key`](../src/ampio_mqtt/models.py) (the mac-derived
 unique id every config entry needs) from mDNS or DHCP alone. It must probe the
 broker itself. `AmpioClient.check_connection()` connects with the candidate
 host, port, and credentials, requests the server info, and returns an
-`AmpioServerInfo`. Its `.server_key` property is the unique id to store.
+`AmpioServerInfo`. Its `.server_key` property is the unique id to store. A
+replaced M-SERV unit reports a new key, as
+[`identity.md`](identity.md#the-m-serv-after-a-replacement) describes.
 
 ## `discover()` is the manual-flow fallback
 

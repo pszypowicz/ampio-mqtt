@@ -71,10 +71,11 @@ def admin_client() -> Iterator[tuple[AmpioAdminClient, FakeBroker]]:
     yield client, broker
 
 
-def test_mserv_prefers_info_mac_cross_check() -> None:
-    """mserv is the module row whose mac_global matches info.mac."""
+def test_mserv_is_the_row_on_the_override_mac() -> None:
+    """mserv reads None until the module list lands, then the row on
+    override mac 1, with no server info."""
     client = _admin_client()
-    # Two modules with typ != 10 plus the actual M-SERV (typ=10, mac_global=47846).
+    assert client.mserv is None
     feed(
         client,
         f"ampio/fromDB/{ADMIN_USER}/config/devices",
@@ -95,31 +96,37 @@ def test_mserv_prefers_info_mac_cross_check() -> None:
             },
         ),
     )
-    feed(
-        client,
-        f"ampio/fromDB/{ADMIN_USER}/data/info",
-        info(serverVersion="1", mac="47846"),
-    )
     mserv = client.mserv
     assert mserv is not None and mserv.id == 1 and mserv.nazwa_urzadzenia == "MSERV"
 
 
-def test_mserv_reads_none_until_both_replies_land() -> None:
-    """The server mac is the only thing that identifies the row, so the
-    module list alone answers nothing. A hub-looking type code is not
-    evidence: an install can hold several."""
+def test_mserv_holds_across_a_replaced_unit() -> None:
+    """The row on override mac 1 stays the M-SERV when the server reports a
+    factory id the row does not carry."""
+    client = _admin_client()
+    feed(
+        client,
+        f"ampio/fromDB/{ADMIN_USER}/config/devices",
+        devices({"id": 5, "mac": 1, "mac_global": 47846, "typ_urzadzenia": 10}),
+    )
+    feed(client, f"ampio/fromDB/{ADMIN_USER}/data/info", info(mac="51234"))
+    assert client.mserv is not None and client.mserv.id == 5
+
+
+def test_mserv_reads_none_without_a_row_on_the_override_mac() -> None:
+    """A row whose own mac equals the server's factory id is not the
+    M-SERV, and nothing else in the list stands in for it."""
     client = _admin_client()
     feed(
         client,
         f"ampio/fromDB/{ADMIN_USER}/config/devices",
         devices(
-            {"id": 5, "mac": 1, "mac_global": 12345, "typ_urzadzenia": 10},
-            {"id": 6, "mac": 2, "mac_global": 67890, "typ_urzadzenia": 4},
+            {"id": 4, "mac": 47846, "mac_global": 999, "typ_urzadzenia": 4},
+            {"id": 6, "mac": 2, "mac_global": 67890, "typ_urzadzenia": 10},
         ),
     )
+    feed(client, f"ampio/fromDB/{ADMIN_USER}/data/info", info(mac="47846"))
     assert client.mserv is None
-    feed(client, f"ampio/fromDB/{ADMIN_USER}/data/info", info(mac="12345"))
-    assert client.mserv is not None and client.mserv.id == 5
 
 
 # --- module_for: the leaf-mac join -------------------------------------------
@@ -159,29 +166,6 @@ def test_module_for_joins_on_the_leaf_mac() -> None:
     assert client.module_for(client.objects[11]) is None
 
 
-def test_mserv_matches_the_override_mac_arm() -> None:
-    """The cross-check accepts the Designer override mac as well as the
-    factory id: after a hardware swap mac_global changes but the
-    re-stamped override does not."""
-    client = _admin_client()
-    feed(
-        client,
-        f"ampio/fromDB/{ADMIN_USER}/config/devices",
-        devices(
-            {
-                "id": 4,
-                "mac": 47846,
-                "mac_global": 999,
-                "typ_urzadzenia": 4,
-                "nazwa_urzadzenia": "SWAPPED",
-            }
-        ),
-    )
-    feed(client, f"ampio/fromDB/{ADMIN_USER}/data/info", info(mac="47846"))
-    mserv = client.mserv
-    assert mserv is not None and mserv.id == 4
-
-
 def test_read_surface_is_immutable() -> None:
     """Neither the mappings, the maps they hold, nor the frozen instances
     in them can be mutated from consumer code - the promise core builds
@@ -218,19 +202,6 @@ def test_read_surface_is_immutable() -> None:
             view[99] = None  # type: ignore[index]
     with pytest.raises(TypeError):
         client.capabilities[1][ModuleFunction.ROLLER] = 0  # type: ignore[index]
-
-
-def test_mserv_reads_none_when_no_row_carries_the_server_mac() -> None:
-    """A lasting None says the module list does not carry the M-SERV's own
-    row. Nothing else in the list stands in for it."""
-    client = _admin_client()
-    feed(
-        client,
-        f"ampio/fromDB/{ADMIN_USER}/config/devices",
-        devices({"id": 1, "mac": 1, "mac_global": 1, "typ_urzadzenia": 10}),
-    )
-    feed(client, f"ampio/fromDB/{ADMIN_USER}/data/info", info(mac="47846"))
-    assert client.mserv is None
 
 
 def test_state_updates_object_and_notifies() -> None:
@@ -728,7 +699,7 @@ async def test_discovery_stays_incomplete_without_server_identity(
     connected: tuple[AmpioClient, FakeBroker],
 ) -> None:
     """An info reply without a mac must not complete discovery: a True
-    wait promises the identity a consumer scopes its registry by (#78)."""
+    wait promises the server key a consumer stores (#78)."""
     client, _broker = connected
     feed(client, STATES_TOPIC, devices())
     feed(client, INFO_TOPIC, info(mac=None, userId=4))  # carries no identity
