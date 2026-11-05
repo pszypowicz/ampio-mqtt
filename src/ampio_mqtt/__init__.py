@@ -127,7 +127,7 @@ __all__ = [
     "parse_module_address",
 ]
 
-__version__ = "0.78.0"
+__version__ = "0.79.0"
 
 
 def __getattr__(name: str) -> object:

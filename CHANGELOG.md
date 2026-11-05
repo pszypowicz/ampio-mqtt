@@ -12,7 +12,11 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## Unreleased
+## 0.79.0
+
+This release makes `connect()` report a connection that stops for good during
+discovery. A consumer no longer needs a listener of its own before `connect()`
+to see a rejected reconnect or a crashed loop.
 
 ### Changed
 
