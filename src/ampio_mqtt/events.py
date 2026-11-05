@@ -175,7 +175,10 @@ class AuthFailed:
     ``AvailabilityChanged(False)`` has fired and the connection loop has
     stopped for good, so this is the signal to drive a reauthentication
     flow. A rejection before the first session comes up raises
-    ``AmpioAuthError`` from ``connect()`` instead and dispatches nothing.
+    ``AmpioAuthError`` from ``connect()`` instead and dispatches nothing. A
+    rejection while ``connect()`` still waits for discovery does both: a
+    listener that subscribed before receives this event, and ``connect()``
+    raises ``AmpioAuthError``.
     """
 
     reason: str
@@ -193,7 +196,9 @@ class ConnectionDied:
     exception text kept in the diagnostics snapshot's ``last_error``. Only
     a fresh ``connect()`` recovers. A crash before the first session comes
     up makes ``connect()`` raise ``AmpioConnectionError`` instead and
-    dispatches nothing.
+    dispatches nothing. A crash while ``connect()`` still waits for
+    discovery does both: a listener that subscribed before receives this
+    event, and ``connect()`` raises ``AmpioConnectionError``.
     """
 
     reason: str

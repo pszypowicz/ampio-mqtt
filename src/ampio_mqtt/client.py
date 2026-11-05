@@ -729,10 +729,11 @@ class AmpioClient:
         `discovery_timeout` elapsed first. A False leaves the connection
         up and discovery continuing; await
         :meth:`wait_for_initial_discovery` rather than restarting.
-        Raises ``AmpioNotConfigured`` as :meth:`wait_for_initial_discovery`
-        does. Raises ``AmpioAuthError`` when the broker rejects the
-        credentials and ``AmpioConnectionError`` when the session does not
-        come up within `timeout` for any other reason.
+        Raises ``AmpioNotConfigured``, ``AmpioAuthError`` and
+        ``AmpioConnectionError`` as :meth:`wait_for_initial_discovery`
+        does. Before that wait it raises ``AmpioAuthError`` when the broker
+        rejects the credentials and ``AmpioConnectionError`` when the session
+        does not come up within `timeout` for any other reason.
         """
         await self._connection.open(timeout)
         try:
@@ -748,6 +749,12 @@ class AmpioClient:
             # a second cancel from leaving the teardown half-done.
             await asyncio.shield(self.disconnect())
             raise
+
+    async def _initial_replies(self) -> None:
+        """Return once every initial reply of the class has landed."""
+        await asyncio.gather(
+            *(self._channels[name].received.wait() for name in self._initial_endpoints)
+        )
 
     async def wait_for_initial_discovery(self, *, timeout: float = 8.0) -> bool:
         """Block until the initial discovery cycle has populated the client.
@@ -771,16 +778,29 @@ class AmpioClient:
         timeout - discovery continues and this returns False. Safe to call
         repeatedly and after reconnects. Each call re-checks the door, so
         a later refusal raises even after an earlier True.
+
+        Raises ``AmpioAuthError`` once the broker has rejected the
+        credentials on a reconnect, and ``AmpioConnectionError`` once the
+        connection loop has crashed. Either stop ends the wait at once, and
+        it takes precedence over the door. :class:`AuthFailed` and
+        :class:`ConnectionDied` still reach a listener that subscribed
+        before the stop. Each call re-checks the loop too, so a stop after
+        an earlier True raises on the next call.
         """
+        discovery = asyncio.ensure_future(self._initial_replies())
+        stopped = asyncio.ensure_future(self._connection.wait_terminal())
         try:
-            async with asyncio.timeout(timeout):
-                await asyncio.gather(
-                    *(
-                        self._channels[name].received.wait()
-                        for name in self._initial_endpoints
-                    )
-                )
-        except TimeoutError:
+            done, _ = await asyncio.wait(
+                (discovery, stopped),
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            discovery.cancel()
+            stopped.cancel()
+        if (stop := self._connection.terminal_error()) is not None:
+            raise stop
+        if discovery not in done:
             return False
         failure = self._store.admission_failure()
         if failure is not None:

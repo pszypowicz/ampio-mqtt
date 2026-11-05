@@ -663,6 +663,68 @@ async def test_restricted_account_completes_via_data_surface_fallback() -> None:
         await client.disconnect()
 
 
+async def test_an_auth_rejection_before_discovery_completes_raises_from_connect() -> (
+    None
+):
+    """The session came up, then a reconnect was rejected while discovery
+    was still waiting. connect() raises at once rather than waiting out its
+    discovery timeout, and a listener registered before it still gets the
+    event."""
+    broker = FakeBroker()
+    broker.stream_error = aiomqtt.MqttError("connection lost")
+    broker.enter_errors = [None, _auth_rejection()]
+    client = make_client(broker, reconnect_interval=0.0015)
+    failures: list[AuthFailed] = []
+    client.subscribe(failures.append, of=AuthFailed)
+    try:
+        async with asyncio.timeout(2.0):
+            with pytest.raises(AmpioAuthError, match="not authorized"):
+                await client.connect(timeout=2.0, discovery_timeout=30.0)
+        assert len(failures) == 1
+        assert client.available is False
+    finally:
+        await client.disconnect()
+
+
+async def test_a_loop_crash_before_discovery_completes_raises_from_connect() -> None:
+    broker = FakeBroker()
+    broker.stream_error = RuntimeError("injected bug")
+    client = make_client(broker, reconnect_interval=0.0015)
+    try:
+        async with asyncio.timeout(2.0):
+            with pytest.raises(AmpioConnectionError, match="injected bug"):
+                await client.connect(timeout=2.0, discovery_timeout=30.0)
+    finally:
+        await client.disconnect()
+
+
+async def test_a_later_discovery_wait_raises_once_the_loop_stopped() -> None:
+    """A consumer that checks again after an await reads the stop from the
+    client, not only from an event it may have subscribed to too late."""
+    broker = FakeBroker()
+    broker.enter_errors = [None, _auth_rejection()]
+    client = make_client(broker, reconnect_interval=0.0015)
+    try:
+        await client.connect(timeout=2.0, discovery_timeout=0.01)
+        broker.drop(aiomqtt.MqttError("connection lost"))
+        async with asyncio.timeout(2.0):
+            while client.diagnostics_snapshot()["auth_failure"] is None:
+                await asyncio.sleep(0.01)
+        with pytest.raises(AmpioAuthError):
+            await client.wait_for_initial_discovery(timeout=0.01)
+    finally:
+        await client.disconnect()
+
+
+async def test_a_deliberate_disconnect_during_discovery_does_not_raise() -> None:
+    """A disconnect() is not a stop for good, so the wait times out as before."""
+    broker = FakeBroker()
+    client = make_client(broker)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    await client.disconnect()
+    assert await client.wait_for_initial_discovery(timeout=0.01) is False
+
+
 async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
     """A credential rejection on reconnect reaches the auth-failure listener.
 
@@ -672,7 +734,6 @@ async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
     seeing only the availability drop a transient outage also produces (#53).
     """
     broker = FakeBroker()
-    broker.stream_error = aiomqtt.MqttError("connection lost")
     broker.enter_errors = [None, _auth_rejection()]
     client = make_client(broker, reconnect_interval=0.0015)
     availability: list[bool] = []
@@ -680,6 +741,7 @@ async def test_runtime_auth_rejection_fires_listener_and_stops() -> None:
     client.subscribe(lambda e: availability.append(e.available), of=AvailabilityChanged)
     client.subscribe(lambda e: failures.append(e.reason), of=AuthFailed)
     await client.connect(timeout=2.0, discovery_timeout=0.05)
+    broker.drop(aiomqtt.MqttError("connection lost"))
     try:
         async with asyncio.timeout(2.0):
             while client.diagnostics_snapshot()["auth_failure"] is None:
@@ -696,17 +758,16 @@ async def test_fresh_connect_clears_a_runtime_auth_failure() -> None:
     connect() - presumably with accepted credentials - clears it and the
     connection comes back up."""
     broker = FakeBroker()
-    broker.stream_error = aiomqtt.MqttError("connection lost")
     broker.enter_errors = [None, _auth_rejection()]
     client = make_client(broker, reconnect_interval=0.0015)
     await client.connect(timeout=2.0, discovery_timeout=0.05)
+    broker.drop(aiomqtt.MqttError("connection lost"))
     async with asyncio.timeout(2.0):
         while client.diagnostics_snapshot()["auth_failure"] is None:
             await asyncio.sleep(0.01)
 
     # The broker accepts the credentials again.
     broker.enter_errors = []
-    broker.stream_error = None
     await client.connect(timeout=2.0, discovery_timeout=0.05)
     try:
         assert client.diagnostics_snapshot()["auth_failure"] is None
@@ -768,11 +829,11 @@ async def test_loop_crash_dispatches_connection_died_and_stops() -> None:
     ConnectionDied, and nothing retries - the broker being fine is exactly
     what made the dead loop indistinguishable from an outage before."""
     broker = FakeBroker()
-    broker.stream_error = RuntimeError("injected bug")
     client = make_client(broker, reconnect_interval=0.0015)
     order: list[object] = []
     client.subscribe(order.append, of=(AvailabilityChanged, ConnectionDied))
     await client.connect(timeout=2.0, discovery_timeout=0.05)
+    broker.drop(RuntimeError("injected bug"))
     async with asyncio.timeout(2.0):
         while not any(isinstance(e, ConnectionDied) for e in order):
             await asyncio.sleep(0.01)

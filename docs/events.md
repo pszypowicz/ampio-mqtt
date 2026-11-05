@@ -87,6 +87,12 @@ reply produced. `AvailabilityChanged(False)` precedes a terminal `AuthFailed` or
 `ConnectionDied`. After a terminal event, only a fresh `connect()` continues,
 and a genuinely changed password means a new client.
 
+A terminal event fires once, and the stream does not replay it. If the loop
+stops while `connect()` still waits for discovery, `connect()` raises
+`AmpioAuthError` or `AmpioConnectionError`. A listener that subscribed before
+`connect()` receives the event as well. A consumer thus needs no listener of its
+own during setup to see the stop.
+
 A catalogue reply can also make a held retained value routable, and that value
 lands after the removals of its batch. One reply can therefore dispatch
 `ObjectAdded`, then `ObjectRemoved`, then `ObjectUpdated`. The trailing update

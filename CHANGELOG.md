@@ -12,6 +12,19 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
+## Unreleased
+
+### Changed
+
+- **`connect()` raises when the connection stops for good during discovery.**
+  The session could come up and then stop on a rejected reconnect or a crashed
+  loop before the discovery replies landed. `connect()` then waited out its
+  discovery timeout and returned False. The terminal event reached only a
+  listener that subscribed before `connect()`. The discovery wait now ends at
+  once and raises `AmpioAuthError` or `AmpioConnectionError`. Every later
+  `wait_for_initial_discovery()` call raises the same error, and the
+  `AuthFailed` and `ConnectionDied` events still fire.
+
 ## 0.78.0
 
 This release keeps one unreadable leaf from emptying the catalogue. A row whose

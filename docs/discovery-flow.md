@@ -173,12 +173,16 @@ helper `apply_reply` raises `KeyError` or `RuntimeError`, as its docstring
 states. `connect()` raises `AmpioAuthError` when the broker rejects the
 credentials before the first successful connect. It raises
 `AmpioConnectionError` when the broker is unreachable within `timeout`, or when
-the connection loop stops during the connect. It raises `AmpioNotConfigured` as
-`wait_for_initial_discovery()` does. A publish while the broker is disconnected
-raises `AmpioConnectionError` too. A publish on the session raises
-`AmpioTimeoutError` when the broker does not acknowledge it in time.
-`check_connection()` publishes on its own probe session, and a timeout there
-raises `AmpioConnectionError`. `check_connection()`, the fetch helpers,
+the connection loop stops during the connect. The session can come up and then
+stop for good before discovery completes, on a rejected reconnect or a crashed
+loop. The discovery wait then ends at once and raises the same two errors.
+`wait_for_initial_discovery()` raises them on every later call too, so a
+consumer that checks again after an await reads the stop from the client. It
+raises `AmpioNotConfigured` as `wait_for_initial_discovery()` does. A publish
+while the broker is disconnected raises `AmpioConnectionError` too. A publish on
+the session raises `AmpioTimeoutError` when the broker does not acknowledge it
+in time. `check_connection()` publishes on its own probe session, and a timeout
+there raises `AmpioConnectionError`. `check_connection()`, the fetch helpers,
 `resolve_records()`, and a command with `confirm=` raise `AmpioTimeoutError`
 when an expected reply does not arrive. `AmpioTimeoutError` subclasses
 `AmpioConnectionError`, so a handler that treats every connection problem alike

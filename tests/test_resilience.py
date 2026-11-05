@@ -166,11 +166,11 @@ def test_malformed_diagnostics_frames_are_ignored(payload: bytes) -> None:
 
 async def test_disconnect_after_the_loop_died_does_not_raise() -> None:
     broker = FakeBroker()
-    broker.stream_error = RuntimeError("injected bug")
     client = make_client(broker)
     died: list[ConnectionDied] = []
     client.subscribe(died.append, of=ConnectionDied)
     await client.connect(timeout=2.0, discovery_timeout=0.05)
+    broker.drop(RuntimeError("injected bug"))
     async with asyncio.timeout(2.0):
         while not died:
             await asyncio.sleep(0.01)
