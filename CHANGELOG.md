@@ -12,7 +12,12 @@ The prior 1.x.x stream (`1.0.0` through `1.7.0`) was a development series cut
 while the HA integration was taking shape; it has been retired in favour of the
 explicit beta posture above and is no longer the supported upgrade path.
 
-## Unreleased
+## 0.78.0
+
+This release keeps one unreadable leaf from emptying the catalogue. A row whose
+`leafId` does not parse stays out alone, and the diagnostics report lists it
+with the columns that a fix needs. `AmpioAdminClient.mserv` also finds the
+M-SERV row after a hardware replacement.
 
 ### Fixed
 
