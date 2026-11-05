@@ -1,10 +1,19 @@
 {
+  "include": [
+    "src",
+    "tests",
+    "tools"
+  ],
   "venvPath": ".",
   "venv": ".venv",
   "executionEnvironments": [
     {
       "root": "tests",
-      "reportAttributeAccessIssue": "none"
+      "extraPaths": [
+        "tools"
+      ],
+      "reportAttributeAccessIssue": "none",
+      "reportOptionalMemberAccess": "none"
     },
     {
       "root": "."

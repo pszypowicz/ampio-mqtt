@@ -719,9 +719,9 @@ async def test_username_is_required(username: str | None) -> None:
     subscribe to `ampio/fromDB//...` - a namespace no M-SERV serves - and
     fail minutes later as discovery that never completes."""
     with pytest.raises(ValueError):
-        AmpioClient("host", username=username)
+        AmpioClient("host", username=username)  # type: ignore[arg-type]
     with pytest.raises(ValueError):
-        await AmpioClient.check_connection("host", username, None)
+        await AmpioClient.check_connection("host", username, None)  # type: ignore[arg-type]
 
 
 def test_subscribe_rejects_an_empty_of_tuple() -> None:

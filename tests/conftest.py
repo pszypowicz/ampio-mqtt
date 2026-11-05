@@ -13,8 +13,9 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from typing import Self
+from typing import Self, cast
 
+import aiomqtt
 import pytest
 from paho.mqtt.client import topic_matches_sub
 from paho.mqtt.packettypes import PacketTypes
@@ -100,9 +101,9 @@ class FakeBroker:
         self.dropped: int = 0
         self._queue: asyncio.Queue[Message] = asyncio.Queue()
 
-    def factory(self) -> Self:
+    def factory(self) -> aiomqtt.Client:
         """The `mqtt_client_factory` handing this instance to each connect."""
-        return self
+        return cast(aiomqtt.Client, self)
 
     async def __aenter__(self) -> Self:
         if self.enter_delay:

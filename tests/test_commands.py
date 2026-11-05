@@ -547,7 +547,7 @@ async def test_set_temperature_rejects_non_numbers(
     silently drops - the same trap the int helpers guard against."""
     client, broker = connected
     with pytest.raises(ValueError):
-        await client.set_temperature(138, bad)
+        await client.set_temperature(138, bad)  # type: ignore[arg-type]
     assert broker.published == []
 
 
@@ -1357,7 +1357,7 @@ async def test_buzz_rejects_bad_arguments_without_a_publish() -> None:
         with pytest.raises(ValueError):
             await client.buzz(7, tone=True)
         with pytest.raises(ValueError):
-            await client.buzz_pattern(7, tone=6, seconds=1.0, cycles=3.5)
+            await client.buzz_pattern(7, tone=6, seconds=1.0, cycles=3.5)  # type: ignore[arg-type]
         assert broker.published == []
     finally:
         await client.disconnect()
@@ -1551,7 +1551,7 @@ async def _admin_with_covers(
     # The newer module advertises its four roller channels; the older one
     # advertises none, which is what tells the two generations apart.
     if swept:
-        capabilities = (
+        capabilities: dict[int, dict[int, int]] = (
             {0xBE82: {}}
             if roller_count is None
             else {0xBE82: {ModuleFunction.ROLLER: roller_count}}
@@ -1629,7 +1629,7 @@ async def test_lock_target_refuses_a_mac_no_admitted_module_carries() -> None:
         assert broker.published == []
         # The raise reaches the caller through all four lock methods, so the
         # docstring the other three reference names the class as well.
-        assert "AmpioNotConfigured" in AmpioAdminClient.block_opening.__doc__
+        assert "AmpioNotConfigured" in (AmpioAdminClient.block_opening.__doc__ or "")
     finally:
         await client.disconnect()
 

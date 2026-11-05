@@ -18,6 +18,7 @@
 ## Checks
 
 - `uv run pytest -q`, `uv run ruff check src tests tools`,
-  `uv run ruff format --check src tests tools`, and
-  `uv run mypy src/ampio_mqtt tools` must pass before a commit. CI runs all
-  four. `uvx pre-commit install` wires them locally.
+  `uv run ruff format --check src tests tools`,
+  `uv run mypy src/ampio_mqtt tools`, and `uv run pyright` must pass before a
+  commit. CI runs all five. `uvx pre-commit install` wires the ruff, prettier
+  and secret-scan hooks locally.
