@@ -446,8 +446,8 @@ class AmpioClient:
         The library puts no password into it. It masks the account in
         topics, the broker host in ``last_error``, and the host
         identifiers of ``server_info``. It names the reason code of an auth
-        failure, the column of a refused reply (and the row of a refused
-        ``leafId``) without the value, and the ids of the rows the door
+        failure, the column of a refused reply (and the row of a ``leafId``
+        that is not text) without the value, and the ids of the rows the door
         left out. Two kinds of value pass through. The first is the error
         text of the MQTT stack in ``last_error``, with the account and the
         host masked. The second is the catalogue columns of a row whose

@@ -73,8 +73,8 @@ row that the installer deletes fires nothing else, because the door never
 admitted it. Only an admin session ever sees a non-empty `collisions`, because
 the module list is admin-only.
 
-The installer fixes a `leafless` row and a collision in Designer. An
-`unrecognized` row needs a library version that reads its leaf, so a consumer
+The installer fixes a `leafless` row and a collision in Designer. A library
+version that reads the leaf shape admits an `unrecognized` row, so a consumer
 can ask the user for a bug report instead. A refused row is still in the
 catalogue, although it is not in `objects`. Thus a consumer that removes the
 entities of deleted rows must keep the ids on both object sides.

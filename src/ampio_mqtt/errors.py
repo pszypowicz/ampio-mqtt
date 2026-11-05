@@ -41,10 +41,11 @@ class AmpioNotConfigured(AmpioError):
     object on the bus through its leaf alone.
 
     ``unrecognized`` names every drivable object row whose leaf this
-    library version cannot read, in the same form. Designer cannot fix
-    these rows. They need a library version that reads the leaf, and the
-    ``unrecognized`` entry of ``diagnostics_snapshot()`` is the report a
-    fix needs.
+    library version cannot read, in the same form. A library version that
+    reads the leaf shape admits such a row, and so does a later catalogue
+    that serves the row a leaf this version reads. The ``unrecognized``
+    entry of ``diagnostics_snapshot()`` is the report a fix of the parse
+    needs.
 
     ``collisions`` names each mac no single module row carries, with the
     ids of the rows on it. Two or more ids are the rows that share the

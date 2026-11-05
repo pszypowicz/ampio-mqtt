@@ -143,10 +143,11 @@ that this library version cannot read, for example a first segment that is not
 `0`. The store records the row, and `wait_for_initial_discovery()` raises
 `AmpioNotConfigured` with the pairs in `unrecognized`. The other rows are served
 and the connection stays up. After connect, the `NotConfigured` event reports
-the row. A row that the door admitted before leaves through `ObjectRemoved`.
-Designer cannot fix such a row. Only a library version that reads the leaf
-admits it. `diagnostics_snapshot()` lists each row under `unrecognized` with the
-columns that a fix of the parse needs.
+the row. A row that the door admitted before leaves through `ObjectRemoved`. A
+library version that reads the leaf shape admits the row. A later catalogue that
+serves the row a leaf that this version reads admits it too.
+`diagnostics_snapshot()` lists each row under `unrecognized` with the columns
+that a fix of the parse needs.
 
 On `AmpioAdminClient`, the module list has its own door. The door admits no
 module row whose override mac another row shares. The raw tree keys on that mac
@@ -186,12 +187,12 @@ keeps working. A rejection after a successful `connect()` arrives as the
 
 Four classes separate whose fault a refusal is:
 
-| Error                | Whose fault   | Raised for                                                                                                                                                                                                                                                                                                    |
-| -------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AmpioValueError`    | the developer | A bad argument, a value beyond the frame's range, or an id the catalogue does not list. It also covers a call that needs a sweep that did not run. It subclasses `ValueError`.                                                                                                                                |
-| `AmpioNotConfigured` | the installer | A drivable row carries no leaf, or two or more module rows share one override mac. A lock write can also name a mac no admitted module row carries. The installer fixes each in Designer. A drivable row whose leaf this library version cannot read raises it too, and only a library change fixes that row. |
-| `AmpioUnsupported`   | nobody        | The install cannot do it. Examples are an output whose kind does not answer the verb, a kind no timed write pulses, and a module without the roller lock. A consumer omits the control.                                                                                                                       |
-| `AmpioProtocolError` | the server    | A reply lacks what its surface always serves.                                                                                                                                                                                                                                                                 |
+| Error                | Whose fault   | Raised for                                                                                                                                                                                                                                                                                                                           |
+| -------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AmpioValueError`    | the developer | A bad argument, a value beyond the frame's range, or an id the catalogue does not list. It also covers a call that needs a sweep that did not run. It subclasses `ValueError`.                                                                                                                                                       |
+| `AmpioNotConfigured` | the installer | A drivable row carries no leaf, or two or more module rows share one override mac. A lock write can also name a mac no admitted module row carries. The installer fixes each in Designer. A drivable row whose leaf this library version cannot read raises it too, and a library version that reads the leaf shape admits that row. |
+| `AmpioUnsupported`   | nobody        | The install cannot do it. Examples are an output whose kind does not answer the verb, a kind no timed write pulses, and a module without the roller lock. A consumer omits the control.                                                                                                                                              |
+| `AmpioProtocolError` | the server    | A reply lacks what its surface always serves.                                                                                                                                                                                                                                                                                        |
 
 ## What runs on demand, not automatically
 
@@ -235,11 +236,12 @@ based on the hostname alone. When credentials are known, confirm identity with
 a bug report. The library puts no password into it. It masks the account in
 topics, the broker host in `last_error`, and the host identifiers of the server
 info. The auth-failure reason names the reason code alone. A refused reply names
-its column, and a refused `leafId` also names its row, without the value. The
-retained info reply keeps the values that the parser accepts and leaves every
-other key out. Two kinds of value pass through. The first is the error text of
-the MQTT stack in `last_error`, with the account and the host masked. The second
-is the catalogue columns of a row whose leaf the library cannot read.
+its column without the value. A `leafId` that is not text also names its row,
+without the value. The retained info reply keeps the values that the parser
+accepts and leaves every other key out. Two kinds of value pass through. The
+first is the error text of the MQTT stack in `last_error`, with the account and
+the host masked. The second is the catalogue columns of a row whose leaf the
+library cannot read.
 
 The report holds the availability flag, the auth-failure reason, and the safe
 server-info subset. It also holds the connection counters, the SUBACK

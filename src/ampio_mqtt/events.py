@@ -76,8 +76,8 @@ class NotConfigured:
     door fills it. ``leafless`` holds the ``(id, name)`` pairs of every
     visible object row without a leaf, which the installer fixes in
     Designer. ``unrecognized`` holds the pairs of every visible object row
-    whose leaf this library version cannot read, which only a library
-    change fixes. ``collisions`` holds the ``(mac, module ids)`` pairs of
+    whose leaf this library version cannot read, which a library version
+    that reads the leaf shape admits. ``collisions`` holds the ``(mac, module ids)`` pairs of
     every override mac two or more module rows share.
 
     A reply that changes any side reports all three, so an event with

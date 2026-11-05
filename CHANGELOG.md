@@ -30,8 +30,9 @@ explicit beta posture above and is no longer the supported upgrade path.
 - **`NotConfigured` and `AmpioNotConfigured` name the leafless side `leafless`**
   (#325). The field was `objects`. Each now carries three sides: `leafless`,
   `unrecognized`, and `collisions`. The installer fixes a leafless row in
-  Designer, and an unrecognized row needs a library change. `AmpioNotConfigured`
-  takes the three sides as keyword arguments only.
+  Designer, and a library version that reads the leaf shape admits an
+  unrecognized row. `AmpioNotConfigured` takes the three sides as keyword
+  arguments only.
 - **`diagnostics_snapshot()` lists the leafless rows under `leafless`** (#325).
   The key was `not_configured`. The `ampio_mqtt.testing` store attribute follows
   it, so `store.not_configured` is `store.leafless`.
