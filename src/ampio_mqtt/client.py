@@ -61,6 +61,7 @@ from ._protocol import (
 from ._store import AdminStore, AmpioStore, Applied
 from .classification import InputKind, OutputKind
 from .errors import (
+    AmpioAuthError,
     AmpioConnectionError,
     AmpioNotConfigured,
     AmpioProtocolError,
@@ -733,7 +734,8 @@ class AmpioClient:
         ``AmpioConnectionError`` as :meth:`wait_for_initial_discovery`
         does. Before that wait it raises ``AmpioAuthError`` when the broker
         rejects the credentials and ``AmpioConnectionError`` when the session
-        does not come up within `timeout` for any other reason.
+        does not come up within `timeout` for any other reason. Either error
+        leaves the client disconnected, with nothing of the run left behind.
         """
         await self._connection.open(timeout)
         try:
@@ -748,6 +750,11 @@ class AmpioClient:
             # caller that abandons the setup holds neither. The shield keeps
             # a second cancel from leaving the teardown half-done.
             await asyncio.shield(self.disconnect())
+            raise
+        except (AmpioAuthError, AmpioConnectionError):
+            # The loop stopped for good, so the refresh task this run started
+            # has nothing left to refresh.
+            await self.disconnect()
             raise
 
     async def _initial_replies(self) -> None:

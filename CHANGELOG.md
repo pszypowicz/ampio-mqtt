@@ -23,7 +23,8 @@ explicit beta posture above and is no longer the supported upgrade path.
   listener that subscribed before `connect()`. The discovery wait now ends at
   once and raises `AmpioAuthError` or `AmpioConnectionError`. Every later
   `wait_for_initial_discovery()` call raises the same error, and the
-  `AuthFailed` and `ConnectionDied` events still fire.
+  `AuthFailed` and `ConnectionDied` events still fire. `connect()` leaves the
+  client disconnected in this case, so no periodic refresh outlives the run.
 
 ## 0.78.0
 

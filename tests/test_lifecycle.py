@@ -698,6 +698,37 @@ async def test_a_loop_crash_before_discovery_completes_raises_from_connect() -> 
         await client.disconnect()
 
 
+@pytest.mark.parametrize(
+    ("enter_errors", "stream_error", "raised"),
+    [
+        pytest.param(
+            [None, _auth_rejection()],
+            aiomqtt.MqttError("connection lost"),
+            AmpioAuthError,
+            id="rejected-reconnect",
+        ),
+        pytest.param(
+            [], RuntimeError("injected bug"), AmpioConnectionError, id="crash"
+        ),
+    ],
+)
+async def test_a_stop_during_discovery_leaves_no_periodic_refresh(
+    enter_errors: list[BaseException | None],
+    stream_error: BaseException,
+    raised: type[Exception],
+) -> None:
+    """The loop is gone, so the refresh task connect() started goes with it,
+    even for a caller that never calls disconnect()."""
+    broker = FakeBroker()
+    broker.enter_errors = enter_errors
+    broker.stream_error = stream_error
+    client = make_client(broker, reconnect_interval=0.0015, refresh_interval=0.01)
+    async with asyncio.timeout(2.0):
+        with pytest.raises(raised):
+            await client.connect(timeout=2.0, discovery_timeout=30.0)
+    assert client._refresh_task is None
+
+
 async def test_a_later_discovery_wait_raises_once_the_loop_stopped() -> None:
     """A consumer that checks again after an await reads the stop from the
     client, not only from an event it may have subscribed to too late."""
