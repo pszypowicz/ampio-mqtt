@@ -32,6 +32,13 @@ jobs:
       # would block every merge. Acquire::Retries rides out the common ones.
       - run: sudo apt-get -o Acquire::Retries=3 update
       - run: sudo apt-get -o Acquire::Retries=3 install -y mosquitto
+      # The image's AppArmor profile for mosquitto confines its reads to
+      # /etc/mosquitto, and the broker fixture writes the config and the
+      # password file under the pytest temp directory. The local include of
+      # the profile lets mosquitto read that directory alone.
+      - run: sudo mkdir -p /etc/apparmor.d/local
+      - run: echo '/tmp/pytest-of-*/** r,' | sudo tee /etc/apparmor.d/local/mosquitto
+      - run: sudo apparmor_parser -r /etc/apparmor.d/mosquitto
       - run: python -m pytest --mqtt --cov=src/ampio_mqtt --cov-report=term-missing --cov-branch --cov-fail-under=95
 
   lint:
