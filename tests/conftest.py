@@ -60,6 +60,14 @@ class Message:
         self.retain = retain
 
 
+class _Drop(Message):
+    """The queue entry that ends the live stream with ``error``."""
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__("", b"")
+        self.error = error
+
+
 class FakeBroker:
     """Instance-based `aiomqtt.Client` stand-in for the transport seam.
 
@@ -166,6 +174,14 @@ class FakeBroker:
         raw = payload.encode() if isinstance(payload, str) else payload
         self._queue.put_nowait(Message(topic, raw, retain=retain))
 
+    def drop(self, error: BaseException) -> None:
+        """End the live stream with ``error`` once the queued messages are read.
+
+        ``stream_error`` drops every session as it comes up. This drops the
+        current one alone, at a point the test chooses.
+        """
+        self._queue.put_nowait(_Drop(error))
+
     @property
     def messages(self) -> Self:
         return self
@@ -180,7 +196,10 @@ class FakeBroker:
         # on a drop - so the fake blocks forever on an empty queue too;
         # cancellation is the only exit. An idle escape hatch here would
         # let a hung test silently reconnect instead of failing visibly.
-        return await self._queue.get()
+        message = await self._queue.get()
+        if isinstance(message, _Drop):
+            raise message.error
+        return message
 
 
 def feed(

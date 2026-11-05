@@ -21,7 +21,12 @@ from typing import TYPE_CHECKING, cast
 import aiomqtt
 
 from ._protocol import account_free_topic
-from .errors import AmpioAuthError, AmpioConnectionError, AmpioTimeoutError
+from .errors import (
+    AmpioAuthError,
+    AmpioConnectionError,
+    AmpioError,
+    AmpioTimeoutError,
+)
 from .models import ConnectionStats
 
 if TYPE_CHECKING:
@@ -147,6 +152,31 @@ class Connection:
             return None
         return self._auth_error_message or _AUTH_REJECTED
 
+    def terminal_error(self) -> AmpioError | None:
+        """The error a loop that stopped for good leaves, or None.
+
+        A credential rejection reads as ``AmpioAuthError`` and a crash as
+        ``AmpioConnectionError``. ``open()`` clears it for the next run, and
+        ``close()`` sets neither.
+        """
+        if self._auth_failed.is_set():
+            return AmpioAuthError(self._auth_error_message or _AUTH_REJECTED)
+        if self._died.is_set():
+            return AmpioConnectionError(self._fatal_message or "Connection loop died")
+        return None
+
+    async def wait_terminal(self) -> None:
+        """Return once the loop stops for good on a rejection or a crash."""
+        waiters = [
+            asyncio.create_task(self._auth_failed.wait()),
+            asyncio.create_task(self._died.wait()),
+        ]
+        try:
+            await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in waiters:
+                task.cancel()
+
     async def open(self, timeout: float) -> None:
         """Start the loop and wait for the first connection.
 
@@ -197,12 +227,8 @@ class Connection:
             if self._connected.is_set():
                 return
             await self._shutdown()
-            if self._auth_failed.is_set():
-                raise AmpioAuthError(self._auth_error_message or _AUTH_REJECTED)
-            if self._died.is_set():
-                raise AmpioConnectionError(
-                    self._fatal_message or "Connection loop died"
-                )
+            if (error := self.terminal_error()) is not None:
+                raise error
             if abort.is_set():
                 raise AmpioConnectionError("Client stopped while connecting")
             raise AmpioConnectionError("Timed out connecting to Ampio")
