@@ -14,13 +14,50 @@ explicit beta posture above and is no longer the supported upgrade path.
 
 ## Unreleased
 
+### Fixed
+
+- **A leaf that does not parse refuses only its own row** (#325). The first
+  catalogue row whose `leafId` did not parse refused the whole `data/devices`
+  reply, so no object loaded and `connect()` returned False. An install with
+  Ampio LoRa devices, whose leaves start with `1_`, hit this. The door now
+  leaves such a row out and admits every other row, as it does for an empty
+  leaf. The parse stays strict, so no row loads with a part of its address read.
+  `AmpioNotConfigured` and the `NotConfigured` event report the row in a new
+  `unrecognized` side.
+
 ### Changed
 
+- **`NotConfigured` and `AmpioNotConfigured` name the leafless side `leafless`**
+  (#325). The field was `objects`. Each now carries three sides: `leafless`,
+  `unrecognized`, and `collisions`. The installer fixes a leafless row in
+  Designer, and a library version that reads the leaf shape admits an
+  unrecognized row. `AmpioNotConfigured` takes the three sides as keyword
+  arguments only.
+- **`diagnostics_snapshot()` lists the leafless rows under `leafless`** (#325).
+  The key was `not_configured`. The `ampio_mqtt.testing` store attribute follows
+  it, so `store.not_configured` is `store.leafless`.
+- **`AmpioModule` requires `mac_group` and `parent`** (#325). A consumer that
+  builds an `AmpioModule` by hand passes both.
 - **`AmpioAdminClient.mserv` is the module row on the override mac `1`.** It
   matched a row against the mac in the server info. That mac is the factory id
   of the M-SERV unit, so the property read None after a replacement that kept
   the old row. It now reads the mac that `AmpioObject.is_server_owned` reads,
   and it no longer waits for the server info.
+
+### Added
+
+- **`diagnostics_snapshot()` reports each unrecognized row** (#325). The new
+  `unrecognized` entry lists the row's `id`, its `leafId` as served, and its
+  `typ_komponentu`, `interpretacja`, `funkcja`, `type`, and `format` columns.
+  The Designer name stays out. A leaf is bus addressing inside the install, so
+  the report carries it, and a refused leaf no longer reads as a protocol
+  violation.
+- **`AmpioModule.mac_group` and `AmpioModule.parent`** (#325) carry the
+  `macGroup` and `parent` columns of the module list, as served. The
+  administrator report adds both to each `modules` entry. Modules stay keyed on
+  `mac` alone.
+- **`store.unrecognized` on the `ampio_mqtt.testing` seam** holds the
+  `(id, name)` pairs of the unrecognized rows.
 
 ### Documentation
 

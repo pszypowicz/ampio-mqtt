@@ -37,7 +37,6 @@ from ._protocol import (
     ROLLER_BLOCK_CLOSING,
     ROLLER_BLOCK_OPENING,
     Endpoint,
-    LeafFault,
     account_free_text,
     account_free_topic,
     command_payload,
@@ -337,14 +336,6 @@ class AmpioClient:
                 channel.latch()
             else:
                 applied = self._apply_inbound(msg, retained)
-        except LeafFault as err:
-            # `leafId` rides `data/devices` alone, and the door that reads
-            # it runs on whichever reply of the pair completes it. The
-            # report names the reply that carried the row.
-            self._note_protocol_violation(
-                response_topic(ENDPOINT_BY_NAME["data_devices"], self._username), err
-            )
-            return
         except AmpioProtocolError as err:
             self._note_protocol_violation(topic, err)
             return
@@ -455,11 +446,13 @@ class AmpioClient:
         The library puts no password into it. It masks the account in
         topics, the broker host in ``last_error``, and the host
         identifiers of ``server_info``. It names the reason code of an auth
-        failure, the column of a refused reply (and the row of a refused
-        ``leafId``) without the value, and the ids of the rows the door
-        left out. The error text of the
-        MQTT stack in ``last_error`` is the one value that passes through,
-        with the account and the host masked. Keys:
+        failure, the column of a refused reply (and the row of a ``leafId``
+        that is not text) without the value, and the ids of the rows the door
+        left out. Two kinds of value pass through. The first is the error
+        text of the MQTT stack in ``last_error``, with the account and the
+        host masked. The second is the catalogue columns of a row whose
+        leaf the library cannot read, the leaf included. These columns are
+        bus addresses and type codes, and the Designer name stays out. Keys:
 
         - ``available``: whether the broker connection is up.
         - ``auth_failure``: the rejection message, which names the
@@ -484,9 +477,15 @@ class AmpioClient:
           row for. The table covers the whole catalogue on both tiers, so a
           non-empty list is a server fault: those objects read every
           Designer config flag as unset.
-        - ``not_configured``: the ids of the catalogue rows the door left
-          out because they carry no leaf. :class:`NotConfigured` carries
-          their names.
+        - ``leafless``: the ids of the catalogue rows the door left out
+          because they carry no leaf. :class:`NotConfigured` carries their
+          names.
+        - ``unrecognized``: one entry per catalogue row the door left out
+          because this library version cannot read its leaf, sorted by id.
+          Each entry holds the ``id``, the ``leafId`` as served, and the
+          columns that classify the row: ``typ_komponentu``,
+          ``interpretacja``, ``funkcja``, ``type`` (the Matter device type
+          as an integer, or None) and ``format``.
         - ``last_payloads``: each endpoint's last reply summary (a row
           count, or the masked info reply), absent until a reply arrives
           (docs/discovery-flow.md).
@@ -510,7 +509,19 @@ class AmpioClient:
                 "protocol_violations": dict(self._stats.protocol_violations),
             },
             "params_gap": sorted(self._store.missing_params_ids),
-            "not_configured": [oid for oid, _name in self._store.not_configured],
+            "leafless": [oid for oid, _name in self._store.leafless],
+            "unrecognized": [
+                {
+                    "id": row.id,
+                    "leafId": row.leaf_id,
+                    "typ_komponentu": row.typ_komponentu,
+                    "interpretacja": row.interpretacja,
+                    "funkcja": row.funkcja,
+                    "type": row.matter_device_type,
+                    "format": row.format,
+                }
+                for row in self._store.unrecognized_rows
+            ],
             "last_payloads": {
                 name: channel.last_payload
                 for name, channel in self._channels.items()
@@ -751,15 +762,15 @@ class AmpioClient:
         A True guarantees ``objects`` and ``server_info`` (and, on the
         admin client, ``modules``) are populated, with
         :pyattr:`AmpioServerInfo.server_key` a string by construction.
-        Raises :class:`AmpioNotConfigured` on either installer fault: a
-        catalogue row with no leaf, or two module rows on one override
-        mac. The rows the door admitted are served, the connection stays
-        up, and the pushed reply after the installer fixes Designer
-        admits the refused rows, after which this returns True. It never
-        raises on timeout - discovery continues and this returns False.
-        Safe to call repeatedly and after reconnects. Each call re-checks
-        the installer faults, so a later fault raises even after an
-        earlier True.
+        Raises :class:`AmpioNotConfigured` while the door refuses a row: a
+        catalogue row with no leaf, a catalogue row whose leaf this
+        library version cannot read, or two module rows on one override
+        mac. The rows the door admitted are served and the connection
+        stays up. A pushed reply that lists every refused row addressably
+        admits them, after which this returns True. It never raises on
+        timeout - discovery continues and this returns False. Safe to call
+        repeatedly and after reconnects. Each call re-checks the door, so
+        a later refusal raises even after an earlier True.
         """
         try:
             async with asyncio.timeout(timeout):
@@ -1701,8 +1712,9 @@ class AmpioAdminClient(AmpioClient):
           or more module rows share, as ``[mac, [module ids]]``.
         - ``modules``: one row per known module, sorted by id, with the
           :class:`AmpioModule` fields ``id``, ``mac``, ``typ_urzadzenia``,
-          ``model``, ``last_seen``, ``supply_voltage``, and
-          ``temperature``. The user-given module name stays out.
+          ``model``, ``last_seen``, ``supply_voltage``, ``temperature``,
+          ``mac_group``, and ``parent``. The user-given module name stays
+          out.
 
         Both entries write the mac through :func:`format_mac`, as the
         string ``"0xCB8F"``. :attr:`AmpioModule.mac` keeps the integer.
@@ -1721,6 +1733,8 @@ class AmpioAdminClient(AmpioClient):
                 "last_seen": module.last_seen,
                 "supply_voltage": module.supply_voltage,
                 "temperature": module.temperature,
+                "mac_group": module.mac_group,
+                "parent": module.parent,
             }
             for module in sorted(self._store.modules.values(), key=lambda m: m.id)
         ]

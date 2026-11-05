@@ -262,7 +262,7 @@ _MEMBERSHIP = "room membership table"
 
 # The `leafId` shape: `0_<macHex>_<sfId>_<subSfId>_<ioNo>`, a leading
 # literal `0`, then the four fields the parse reads (docs/identity.md).
-# Strict: a half-parsed address that is wrong is worse than a refused reply.
+# Strict: a half-parsed address that is wrong is worse than a refused row.
 _LEAF_ID_RE = re.compile(r"0_([0-9a-fA-F]+)_(\d+)_(\d+)_(\d+)")
 
 
@@ -331,6 +331,8 @@ def parse_devices(data: Mapping[str, Any]) -> list[AmpioModule]:
             typ_urzadzenia=_int_column(row, "typ_urzadzenia", _MODULE_LIST),
             wersja_softu=_int_column(row, "wersja_softu", _MODULE_LIST),
             wersja_pcb=_int_column(row, "wersja_pcb", _MODULE_LIST),
+            mac_group=_int_column(row, "macGroup", _MODULE_LIST),
+            parent=_text_column(row, "parent", _MODULE_LIST),
         )
         for row in require_rows(data, _MODULE_LIST)
     ]

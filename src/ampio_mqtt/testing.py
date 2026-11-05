@@ -5,14 +5,16 @@ cannot produce. This module drives a decoded reply through the store the
 client itself builds, so a fixture carries what the admission door
 admits and nothing else.
 
-Two functions and five store read attributes are the promise here:
-``objects``, ``not_configured`` and ``server_info`` on
+Two functions and six store read attributes are the promise here:
+``objects``, ``leafless``, ``unrecognized`` and ``server_info`` on
 :class:`AmpioStore`, and ``modules`` and ``collisions`` on
 :class:`AdminStore`. ``objects``, ``server_info`` and ``modules`` carry
 what the matching client attribute carries (``modules`` on
-:class:`~ampio_mqtt.AmpioAdminClient`). The
-client reports the two refusal sets through ``diagnostics_snapshot()``
-instead, under ``not_configured`` and ``mac_collisions``.
+:class:`~ampio_mqtt.AmpioAdminClient`). ``leafless``, ``unrecognized``
+and ``collisions`` carry the matching sides of
+:class:`~ampio_mqtt.NotConfigured`. The client reports the three refusal
+sets through ``diagnostics_snapshot()`` instead, under ``leafless``,
+``unrecognized`` and ``mac_collisions``.
 
 Apply a reply with :func:`apply_reply` rather than through the store,
 because the store serves the library and its signature follows the

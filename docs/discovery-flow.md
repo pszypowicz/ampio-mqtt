@@ -132,10 +132,22 @@ into `AmpioObject.address`. A row the M-SERV creates itself, `detekcja` or
 
 A row with an empty leaf stays out of `objects`. The store records it, and
 `wait_for_initial_discovery()` raises `AmpioNotConfigured` with the `(id, name)`
-pairs. The other rows are served and the connection stays up. After connect, the
-same condition arrives as the `NotConfigured` event, and the row leaves through
-`ObjectRemoved`. The next catalogue push that restores the leaf produces
-`ObjectAdded`. `diagnostics_snapshot()` lists their ids under `not_configured`.
+pairs in `leafless`. The other rows are served and the connection stays up.
+After connect, the same condition arrives as the `NotConfigured` event, and the
+row leaves through `ObjectRemoved`. The next catalogue push that restores the
+leaf produces `ObjectAdded`. `diagnostics_snapshot()` lists their ids under
+`leafless`.
+
+A row whose leaf does not parse stays out of `objects` too. Its leaf has a shape
+that this library version cannot read, for example a first segment that is not
+`0`. The store records the row, and `wait_for_initial_discovery()` raises
+`AmpioNotConfigured` with the pairs in `unrecognized`. The other rows are served
+and the connection stays up. After connect, the `NotConfigured` event reports
+the row. A row that the door admitted before leaves through `ObjectRemoved`. A
+library version that reads the leaf shape admits the row. A later catalogue that
+serves the row a leaf that this version reads admits it too.
+`diagnostics_snapshot()` lists each row under `unrecognized` with the columns
+that a fix of the parse needs.
 
 On `AmpioAdminClient`, the module list has its own door. The door admits no
 module row whose override mac another row shares. The raw tree keys on that mac
@@ -148,11 +160,6 @@ condition arrives as the `NotConfigured` event, and each row leaves through
 [`identity.md`](identity.md)), so two rows left on it fail the door. The
 installer gives each module its own mac in Designer. `diagnostics_snapshot()`
 lists the pairs under `mac_collisions`.
-
-A non-empty leaf that does not parse is a server fault. The store refuses the
-reply whole as `AmpioProtocolError`, before any field changes. `data/devices`
-carries the leaf, so `protocol_violations` names that topic whichever reply of
-the pair ran the door.
 
 A push of `data/params_devices` alone re-runs the door on the held catalogue. A
 hidden bit that changes evicts or admits its row.
@@ -180,12 +187,12 @@ keeps working. A rejection after a successful `connect()` arrives as the
 
 Four classes separate whose fault a refusal is:
 
-| Error                | Whose fault   | Raised for                                                                                                                                                                                |
-| -------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AmpioValueError`    | the developer | A bad argument, a value beyond the frame's range, or an id the catalogue does not list. It also covers a call that needs a sweep that did not run. It subclasses `ValueError`.            |
-| `AmpioNotConfigured` | the installer | A drivable row carries no leaf, or two or more module rows share one override mac. A lock write can also name a mac no admitted module row carries. The installer fixes each in Designer. |
-| `AmpioUnsupported`   | nobody        | The install cannot do it. Examples are an output whose kind does not answer the verb, a kind no timed write pulses, and a module without the roller lock. A consumer omits the control.   |
-| `AmpioProtocolError` | the server    | A reply lacks what its surface always serves.                                                                                                                                             |
+| Error                | Whose fault   | Raised for                                                                                                                                                                                                                                                                                                                           |
+| -------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AmpioValueError`    | the developer | A bad argument, a value beyond the frame's range, or an id the catalogue does not list. It also covers a call that needs a sweep that did not run. It subclasses `ValueError`.                                                                                                                                                       |
+| `AmpioNotConfigured` | the installer | A drivable row carries no leaf, or two or more module rows share one override mac. A lock write can also name a mac no admitted module row carries. The installer fixes each in Designer. A drivable row whose leaf this library version cannot read raises it too, and a library version that reads the leaf shape admits that row. |
+| `AmpioUnsupported`   | nobody        | The install cannot do it. Examples are an output whose kind does not answer the verb, a kind no timed write pulses, and a module without the roller lock. A consumer omits the control.                                                                                                                                              |
+| `AmpioProtocolError` | the server    | A reply lacks what its surface always serves.                                                                                                                                                                                                                                                                                        |
 
 ## What runs on demand, not automatically
 
@@ -229,25 +236,37 @@ based on the hostname alone. When credentials are known, confirm identity with
 a bug report. The library puts no password into it. It masks the account in
 topics, the broker host in `last_error`, and the host identifiers of the server
 info. The auth-failure reason names the reason code alone. A refused reply names
-its column, and a refused `leafId` also names its row, without the value. The
-retained info reply keeps the values that the parser accepts and leaves every
-other key out. The error text of the MQTT stack in `last_error` is the one value
-that passes through, with the account and the host masked. It holds the
-availability flag, the auth-failure reason, and the safe server-info subset. It
-also holds the connection counters, the SUBACK rejections, and each endpoint's
-last reply summary. On `AmpioAdminClient` it also holds the mac collisions and
-the module list. The `params_gap` entry names objects the params table skips.
-The `not_configured` entry lists the ids of the rows the door left out. Their
-Designer names stay out of the report, and the `NotConfigured` event carries
-them.
+its column without the value. A `leafId` that is not text also names its row,
+without the value. The retained info reply keeps the values that the parser
+accepts and leaves every other key out. Two kinds of value pass through. The
+first is the error text of the MQTT stack in `last_error`, with the account and
+the host masked. The second is the catalogue columns of a row whose leaf the
+library cannot read.
+
+The report holds the availability flag, the auth-failure reason, and the safe
+server-info subset. It also holds the connection counters, the SUBACK
+rejections, and each endpoint's last reply summary. On `AmpioAdminClient` it
+also holds the mac collisions and the module list. The `params_gap` entry names
+objects the params table skips. The `leafless` entry lists the ids of the rows
+that the door left out because they carry no leaf. Their Designer names stay out
+of the report, and the `NotConfigured` event carries them.
+
+The `unrecognized` entry holds one entry per row whose leaf this library version
+cannot read, sorted by id. Each entry carries the row's `id` and its `leafId` as
+served. It also carries the `typ_komponentu`, `interpretacja`, `funkcja`,
+`type`, and `format` columns that classify the row. These values are bus
+addresses and type codes, and the Designer name stays out. A report from an
+install with such a row thus carries what a fix of the parse needs.
 
 The `modules` list holds one row per known module, sorted by id. Each row
 carries the module's `id`, `mac`, `typ_urzadzenia`, `model`, `last_seen`,
-`supply_voltage`, and `temperature`. A bug report about a quiet module reads its
-`last_seen` from this list. The user-given module name stays out of the row. A
-module that sends no `b/4F` frame keeps `last_seen`, `supply_voltage`, and
-`temperature` empty after a connect. Its `last_seen` moves on the first push
-from one of its objects. The modules that send the frame are listed in
+`supply_voltage`, `temperature`, `mac_group`, and `parent`. The last two are the
+`macGroup` and `parent` columns of the module list, as served. A CAN module is
+in group 0. A bug report about a quiet module reads its `last_seen` from this
+list. The user-given module name stays out of the row. A module that sends no
+`b/4F` frame keeps `last_seen`, `supply_voltage`, and `temperature` empty after
+a connect. Its `last_seen` moves on the first push from one of its objects. The
+modules that send the frame are listed in
 [`raw-channel-bridge.md`](raw-channel-bridge.md).
 
 The module list and the collision pairs write each mac as the string `0xCB8F`,
