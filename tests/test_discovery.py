@@ -14,7 +14,7 @@ Two orthogonal layers are exercised:
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Self
+from typing import Any, Self, cast
 from unittest.mock import patch
 
 import pytest
@@ -141,7 +141,7 @@ async def test_resolve_mdns_uses_external_zeroconf_without_closing_it() -> None:
     external = _FakeAsyncZeroconf()
     with patch.object(discovery_mod, "AddressResolverIPv4", lambda fqdn: resolver):
         address = await discovery_mod._resolve_mdns(
-            "ampio.local", timeout=0.5, zc=external
+            "ampio.local", timeout=0.5, zc=cast(AsyncZeroconf, external)
         )
 
     assert address == "192.0.2.10"

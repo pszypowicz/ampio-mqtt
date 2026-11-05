@@ -177,7 +177,7 @@ def test_an_unlisted_board_resolves_nothing() -> None:
 def test_a_contradicted_channel_count_resolves_nothing() -> None:
     """A board that disagrees with its own table entry stays silent."""
     objects = {10: _object(id=10)}
-    caps = {0xCB89: {ModuleFunction.ROLLER: 2}}
+    caps: dict[int, dict[int, int]] = {0xCB89: {ModuleFunction.ROLLER: 2}}
     assert (
         resolve_cover_parameters(objects, {0xCB89: FOUR_CHANNEL}, caps, HARDWARE) == {}
     )
@@ -186,6 +186,6 @@ def test_a_contradicted_channel_count_resolves_nothing() -> None:
 def test_a_board_that_advertises_no_roller_still_resolves() -> None:
     """The four-channel board advertises none, so the count comes from the table."""
     objects = {10: _object(id=10)}
-    caps = {0xCB89: {ModuleFunction.OUT_BIN: 4}}
+    caps: dict[int, dict[int, int]] = {0xCB89: {ModuleFunction.OUT_BIN: 4}}
     resolved = resolve_cover_parameters(objects, {0xCB89: FOUR_CHANNEL}, caps, HARDWARE)
     assert resolved[10].open_time_s == 52

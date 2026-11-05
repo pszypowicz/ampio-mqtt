@@ -76,3 +76,7 @@ jobs:
       # so the type checker is the only thing that notices when a library
       # change leaves a tool calling something that no longer exists.
       - run: mypy src/ampio_mqtt tools
+      # Pyright is the checker an editor runs, and it covers the tests as
+      # well. pyrightconfig.json names a local .venv, so the interpreter
+      # comes from the command line here.
+      - run: pyright --pythonpath "$(which python)"

@@ -20,7 +20,12 @@ from dataclasses import dataclass
 from .errors import AmpioValueError
 
 try:
-    from zeroconf import AddressResolverIPv4, IPVersion
+    # python-zeroconf leaves AddressResolverIPv4 out of `__all__`. The mypy
+    # override in pyproject.toml reads it as public, and so does this line.
+    from zeroconf import (
+        AddressResolverIPv4,  # pyright: ignore[reportPrivateImportUsage]
+        IPVersion,
+    )
     from zeroconf.asyncio import AsyncZeroconf
 except ImportError as _err:
     raise ImportError(
