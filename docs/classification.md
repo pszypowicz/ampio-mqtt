@@ -194,7 +194,7 @@ surface. `classify()` still yields a kind for a hidden row a diagnostics report
 reads from the wire.
 
 ```python
-platform = obj.kind    # ObjectKind = SensorKind | InputKind | OutputKind | ThermostatKind
+platform = obj.kind  # ObjectKind = SensorKind | InputKind | OutputKind | ThermostatKind
 ```
 
 The two checks stay separate so that a consumer can use one without the other.
