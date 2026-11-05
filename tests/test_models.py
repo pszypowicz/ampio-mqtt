@@ -41,6 +41,8 @@ def _module(**over: object) -> AmpioModule:
         "typ_urzadzenia": 44,
         "wersja_softu": 908,
         "wersja_pcb": 1,
+        "mac_group": 0,
+        "parent": "",
     }
     return AmpioModule(**{**row, **over})  # type: ignore[arg-type]
 

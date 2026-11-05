@@ -552,14 +552,31 @@ async def test_wait_for_initial_discovery_raises_on_a_leafless_row() -> None:
         _feed_initial(client, {"id": 10, "leafId": "", "opis_menu": "Lamp"}, {"id": 11})
         with pytest.raises(AmpioNotConfigured) as caught:
             await client.wait_for_initial_discovery(timeout=1.0)
-        assert caught.value.objects == ((10, "Lamp"),)
+        assert caught.value.leafless == ((10, "Lamp"),)
         assert list(client.objects) == [11]
         # The report keeps the id and leaves the Designer name out (#297).
-        assert client.diagnostics_snapshot()["not_configured"] == [10]
+        assert client.diagnostics_snapshot()["leafless"] == [10]
         feed(client, PARAMS_DEVICES_TOPIC, params_of({"id": 10}, {"id": 11}))
         feed(client, DATA_DEVICES_TOPIC, details({"id": 10}, {"id": 11}))
         assert await client.wait_for_initial_discovery(timeout=1.0) is True
         assert sorted(client.objects) == [10, 11]
+    finally:
+        await client.disconnect()
+
+
+async def test_an_unrecognized_leaf_raises_and_serves_every_other_row() -> None:
+    """One leaf the parse does not read leaves every other row served (#325)."""
+    broker = FakeBroker()
+    client = make_client(broker)
+    await client.connect(timeout=2.0, discovery_timeout=0.01)
+    try:
+        lora = {"id": 10, "leafId": "1_11000209_257_2_0", "opis_menu": "Relay"}
+        _feed_initial(client, lora, {"id": 11})
+        with pytest.raises(AmpioNotConfigured) as caught:
+            await client.wait_for_initial_discovery(timeout=1.0)
+        assert caught.value.unrecognized == ((10, "Relay"),)
+        assert caught.value.leafless == ()
+        assert list(client.objects) == [11]
     finally:
         await client.disconnect()
 

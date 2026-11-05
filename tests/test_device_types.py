@@ -90,7 +90,14 @@ def test_unclassified_codes_are_the_deliberate_set() -> None:
 def test_ampio_module_derives_mounting() -> None:
     def module(typ: int) -> AmpioModule:
         return AmpioModule(
-            id=1, mac=1, mac_global=2, typ_urzadzenia=typ, wersja_softu=1, wersja_pcb=1
+            id=1,
+            mac=1,
+            mac_global=2,
+            typ_urzadzenia=typ,
+            wersja_softu=1,
+            wersja_pcb=1,
+            mac_group=0,
+            parent="",
         )
 
     assert module(44).mounting == "wall"

@@ -183,8 +183,10 @@ async def run(
         )
         return 0
     except AmpioNotConfigured as err:
-        for oid, name in err.objects:
-            print(f"not configured: ob/{oid} {name or ''}")
+        for oid, name in err.leafless:
+            print(f"no leaf: ob/{oid} {name or ''}")
+        for oid, name in err.unrecognized:
+            print(f"unrecognized leaf: ob/{oid} {name or ''}")
         for mac, ids in err.collisions:
             print(
                 f"mac collision: {format_mac(mac)} on modules "

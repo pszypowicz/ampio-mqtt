@@ -40,8 +40,21 @@ def test_apply_reply_refuses_a_leafless_row_the_way_the_wire_does() -> None:
     params, catalogue = _catalogue({"id": 41, "leafId": "", "opis_menu": "Lamp"})
     apply_reply(store, "params_devices", params)
     events = apply_reply(store, "data_devices", catalogue)
-    assert events == [NotConfigured(objects=((41, "Lamp"),))]
+    assert events == [NotConfigured(leafless=((41, "Lamp"),))]
+    assert store.leafless == ((41, "Lamp"),)
     assert store.objects == {}
+
+
+def test_apply_reply_refuses_an_unrecognized_leaf_the_way_the_wire_does() -> None:
+    store = build_store(AmpioClient)
+    params, catalogue = _catalogue(
+        {"id": 41, "leafId": "1_11000209_257_2_0", "opis_menu": "Relay"}, {"id": 42}
+    )
+    apply_reply(store, "params_devices", params)
+    events = apply_reply(store, "data_devices", catalogue)
+    assert events[-1] == NotConfigured(unrecognized=((41, "Relay"),))
+    assert store.unrecognized == ((41, "Relay"),)
+    assert list(store.objects) == [42]
 
 
 def test_apply_reply_reaches_the_admin_module_list() -> None:

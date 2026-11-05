@@ -266,6 +266,8 @@ _MODULE_ROW = {
     "typ_urzadzenia": 44,
     "wersja_softu": 908,
     "wersja_pcb": 1,
+    "macGroup": 0,
+    "parent": "",
 }
 _PARAMS_ROW = {"params": 0, "czas": 0, "url": ""}
 _SNAPSHOT_ROW = {"stan_json": json.dumps({"state": "0"})}

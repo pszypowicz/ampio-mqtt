@@ -670,6 +670,11 @@ class AmpioModule:
     typ_urzadzenia: int
     wersja_softu: int
     wersja_pcb: int
+    # The `macGroup` and `parent` columns, as served. A CAN module is in
+    # group 0. Modules key on `mac` alone, and nothing in the library reads
+    # either field.
+    mac_group: int
+    parent: str
     nazwa_urzadzenia: str | None = None  # user-given module name
     # Resolved model name for `typ_urzadzenia`. Derived - never passed:
     # computed on every construction (#94), None when `typ_urzadzenia` is

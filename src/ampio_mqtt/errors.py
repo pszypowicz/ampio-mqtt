@@ -33,12 +33,18 @@ class AmpioAuthError(AmpioError):
 
 
 class AmpioNotConfigured(AmpioError):
-    """Raised when the Designer configuration leaves a row unaddressable.
+    """Raised when the catalogue holds rows the library cannot address.
 
-    A drivable object row carries no leaf: Designer clears the leaf when
-    an object's Matter box is checked and then unchecked, and the library
-    addresses an object on the bus through its leaf alone, so ``objects``
-    names every such row as an ``(id, name)`` pair.
+    ``leafless`` names every drivable object row that carries no leaf, as
+    an ``(id, name)`` pair. Designer clears the leaf when an object's
+    Matter box is checked and then unchecked, and the library addresses an
+    object on the bus through its leaf alone.
+
+    ``unrecognized`` names every drivable object row whose leaf this
+    library version cannot read, in the same form. Designer cannot fix
+    these rows. They need a library version that reads the leaf, and the
+    ``unrecognized`` entry of ``diagnostics_snapshot()`` is the report a
+    fix needs.
 
     ``collisions`` names each mac no single module row carries, with the
     ids of the rows on it. Two or more ids are the rows that share the
@@ -46,26 +52,32 @@ class AmpioNotConfigured(AmpioError):
     empty tuple is a mac the module list carries no row for, so a write
     addressed by that mac reaches no module.
 
-    The installer fixes each in Designer. The connection stays up, and
-    every other row is served.
+    The installer fixes a leafless row and a collision in Designer. The
+    connection stays up, and every other row is served.
     """
 
     def __init__(
         self,
-        objects: tuple[tuple[int, str | None], ...] = (),
+        *,
+        leafless: tuple[tuple[int, str | None], ...] = (),
+        unrecognized: tuple[tuple[int, str | None], ...] = (),
         collisions: tuple[tuple[int, tuple[int, ...]], ...] = (),
     ) -> None:
-        self.objects = objects
+        self.leafless = leafless
+        self.unrecognized = unrecognized
         self.collisions = collisions
         parts: list[str] = []
-        if objects:
-            listed = ", ".join(
-                f"{oid} ({name})" if name else str(oid) for oid, name in objects
-            )
+        if leafless:
             parts.append(
-                f"Ampio object(s) {listed} carry no leaf. Designer clears the leaf "
-                "when the Matter box is checked and unchecked. Restore each in "
-                "Designer and save"
+                f"Ampio object(s) {_listed(leafless)} carry no leaf. Designer "
+                "clears the leaf when the Matter box is checked and unchecked. "
+                "Restore each in Designer and save"
+            )
+        if unrecognized:
+            parts.append(
+                f"Ampio object(s) {_listed(unrecognized)} carry a leaf that this "
+                "version of ampio-mqtt cannot read. Report it with the diagnostics "
+                "snapshot"
             )
         for mac, ids in collisions:
             if ids:
@@ -81,6 +93,11 @@ class AmpioNotConfigured(AmpioError):
                     "and save"
                 )
         super().__init__(". ".join(parts))
+
+
+def _listed(rows: tuple[tuple[int, str | None], ...]) -> str:
+    """The rows as the message names them: the id, then the name if any."""
+    return ", ".join(f"{oid} ({name})" if name else str(oid) for oid, name in rows)
 
 
 class AmpioValueError(AmpioError, ValueError):

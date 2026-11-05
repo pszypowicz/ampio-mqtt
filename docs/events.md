@@ -41,19 +41,19 @@ time.
 
 ## What arrives
 
-| Event                  | Announces                                                                                                                                                                                                                                | Tiers      | Terminal |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------- |
-| `ObjectUpdated`        | An object's state or metadata changed (live push, raw edge, snapshot correction, or a changed catalogue row).                                                                                                                            | both       | no       |
-| `ObjectAdded`          | An object's first event: initial discovery, a later catalogue addition, or re-creation after eviction. It subclasses `ObjectUpdated`, so `of=ObjectUpdated` subscriptions receive it too. `of=ObjectAdded` narrows to appearances alone. | both       | no       |
-| `ObjectRemoved`        | The catalogue stopped listing an object, or the door stopped admitting it: the hidden bit set, or the leaf cleared.                                                                                                                      | both       | no       |
-| `NotConfigured`        | The set of rows the admission door refuses changed. Carries the `(id, name)` pairs of the leafless object rows and the `(mac, ids)` pairs of the shared override macs. Two empty sides mean the door refuses nothing now.                | both       | no       |
-| `ModuleUpdated`        | A module appeared in or changed in the module list, or its diagnostics broadcast arrived. There is no separate addition event.                                                                                                           | admin only | no       |
-| `ModuleRemoved`        | The module catalogue stopped listing a module, or the mac collision door stopped admitting it.                                                                                                                                           | admin only | no       |
-| `RecordSweepCompleted` | A `resolve_records()` pass finished. Carries the `RecordSweep` it returned.                                                                                                                                                              | admin only | no       |
-| `BusEventRaised`       | Ampio logic raised a bus event (1-65535).                                                                                                                                                                                                | admin only | no       |
-| `AvailabilityChanged`  | The broker connection came up or went down (never for a `disconnect()`). `AmpioClient.available` holds the current value.                                                                                                                | both       | no       |
-| `AuthFailed`           | The broker rejected the credentials after `connect()`. The signal to run a reauthentication flow.                                                                                                                                        | both       | yes      |
-| `ConnectionDied`       | The connection loop crashed. Only a fresh `connect()` recovers.                                                                                                                                                                          | both       | yes      |
+| Event                  | Announces                                                                                                                                                                                                                                                                                                                                     | Tiers      | Terminal |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------- |
+| `ObjectUpdated`        | An object's state or metadata changed (live push, raw edge, snapshot correction, or a changed catalogue row).                                                                                                                                                                                                                                 | both       | no       |
+| `ObjectAdded`          | An object's first event: initial discovery, a later catalogue addition, or re-creation after eviction. It subclasses `ObjectUpdated`, so `of=ObjectUpdated` subscriptions receive it too. `of=ObjectAdded` narrows to appearances alone.                                                                                                      | both       | no       |
+| `ObjectRemoved`        | The catalogue stopped listing an object, or the door stopped admitting it: the hidden bit set, or the leaf cleared.                                                                                                                                                                                                                           | both       | no       |
+| `NotConfigured`        | The set of rows the admission door refuses changed. Carries the `(id, name)` pairs of the leafless object rows in `leafless`, the pairs of the object rows whose leaf the library cannot read in `unrecognized`, and the `(mac, ids)` pairs of the shared override macs in `collisions`. Three empty sides mean the door refuses nothing now. | both       | no       |
+| `ModuleUpdated`        | A module appeared in or changed in the module list, or its diagnostics broadcast arrived. There is no separate addition event.                                                                                                                                                                                                                | admin only | no       |
+| `ModuleRemoved`        | The module catalogue stopped listing a module, or the mac collision door stopped admitting it.                                                                                                                                                                                                                                                | admin only | no       |
+| `RecordSweepCompleted` | A `resolve_records()` pass finished. Carries the `RecordSweep` it returned.                                                                                                                                                                                                                                                                   | admin only | no       |
+| `BusEventRaised`       | Ampio logic raised a bus event (1-65535).                                                                                                                                                                                                                                                                                                     | admin only | no       |
+| `AvailabilityChanged`  | The broker connection came up or went down (never for a `disconnect()`). `AmpioClient.available` holds the current value.                                                                                                                                                                                                                     | both       | no       |
+| `AuthFailed`           | The broker rejected the credentials after `connect()`. The signal to run a reauthentication flow.                                                                                                                                                                                                                                             | both       | yes      |
+| `ConnectionDied`       | The connection loop crashed. Only a fresh `connect()` recovers.                                                                                                                                                                                                                                                                               | both       | yes      |
 
 `ObjectAdded` subclasses `ObjectUpdated`. A `match` statement that destructures
 the stream must put its `case ObjectAdded():` arm before
@@ -65,13 +65,19 @@ the stream must put its `case ObjectAdded():` arm before
 events (`set_event`), but it never receives them.
 
 `NotConfigured` reports the whole state of the admission door on every change of
-either side. A first refusal reports it, and so does the reply that clears the
-last refused row. If a consumer raises a notice on the fault, it must take the
-notice down when both sides arrive empty. The clearance is the only signal that
-covers every fix. A Designer row that gains a leaf also fires `ObjectAdded`. A
-Designer row that the installer deletes fires nothing else, because the door
-never admitted it. Only an admin session ever sees a non-empty `collisions`,
-because the module list is admin-only.
+any side. A first refusal reports it, and so does the reply that clears the last
+refused row. If a consumer raises a notice on the fault, it must take the notice
+down when every side arrives empty. The clearance is the only signal that covers
+every fix. A Designer row that gains a leaf also fires `ObjectAdded`. A Designer
+row that the installer deletes fires nothing else, because the door never
+admitted it. Only an admin session ever sees a non-empty `collisions`, because
+the module list is admin-only.
+
+The installer fixes a `leafless` row and a collision in Designer. An
+`unrecognized` row needs a library version that reads its leaf, so a consumer
+can ask the user for a bug report instead. A refused row is still in the
+catalogue, although it is not in `objects`. Thus a consumer that removes the
+entities of deleted rows must keep the ids on both object sides.
 
 ## Ordering and the terminal events
 

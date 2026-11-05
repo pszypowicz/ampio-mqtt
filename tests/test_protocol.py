@@ -297,6 +297,8 @@ def _module_row(**over: object) -> dict[str, object]:
         "typ_urzadzenia": 11,
         "wersja_softu": 908,
         "wersja_pcb": 12,
+        "macGroup": 0,
+        "parent": "",
     }
     return {**row, **over}
 
@@ -306,6 +308,12 @@ def test_parse_devices_reads_the_module_row() -> None:
     assert [m.id for m in modules] == [5]
     assert modules[0].mac == 0xCAFE and modules[0].mac_global == 0xBEEF
     assert modules[0].wersja_softu == 908 and modules[0].wersja_pcb == 12
+
+
+def test_parse_devices_reads_the_group_and_parent_as_served() -> None:
+    row = _module_row(mac=9, macGroup=1, parent="0_cafe")
+    (module,) = parse_devices(json.loads(_rows(row)))
+    assert (module.mac_group, module.parent) == (1, "0_cafe")
 
 
 @pytest.mark.parametrize("column", list(_module_row()))

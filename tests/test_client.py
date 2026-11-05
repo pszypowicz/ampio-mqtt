@@ -774,6 +774,8 @@ def test_diagnostics_snapshot_is_credential_free_and_complete() -> None:
         "last_seen",
         "supply_voltage",
         "temperature",
+        "mac_group",
+        "parent",
     }
     assert module_row["id"] == 7
     assert set(snap["connection"]) == {
@@ -835,7 +837,27 @@ def test_diagnostics_snapshot_module_rows_mirror_liveness() -> None:
         "last_seen": module.last_seen,
         "supply_voltage": module.supply_voltage,
         "temperature": module.temperature,
+        "mac_group": 0,
+        "parent": "",
     }
+
+
+def test_diagnostics_snapshot_module_rows_carry_the_group_and_parent() -> None:
+    """A device behind a CAN module reports the link to it as served (#325)."""
+    client = _admin_client()
+    feed(
+        client,
+        ADMIN_DEVICES,
+        devices(
+            _module_row(7, 0xCAFE),
+            {**_module_row(9, 0x09), "macGroup": 1, "parent": "0_cafe"},
+        ),
+    )
+    rows = client.diagnostics_snapshot()["modules"]
+    assert [(row["id"], row["mac_group"], row["parent"]) for row in rows] == [
+        (7, 0, ""),
+        (9, 1, "0_cafe"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -937,19 +959,54 @@ def test_the_retained_info_reply_keeps_only_parsed_values() -> None:
     }
 
 
-@pytest.mark.parametrize("leaf", ["0_secret-pass", {"password": "secret-pass"}])
-def test_a_refused_leaf_id_names_its_row_and_not_its_value(leaf: object) -> None:
-    """A protocol violation names the row that carried a bad `leafId`, and the
+def test_a_leaf_id_that_is_not_text_names_its_row_and_not_its_value() -> None:
+    """A protocol violation names the row that carried the `leafId`, and the
     value stays out of the report (#297)."""
     client = _client()
     feed(client, PARAMS_DEVICES_TOPIC, params_table({"id": 5, "params": 0}))
     feed(
-        client, f"ampio/fromDB/{USER}/data/devices", details({"id": 5, "leafId": leaf})
+        client,
+        f"ampio/fromDB/{USER}/data/devices",
+        details({"id": 5, "leafId": {"password": "secret-pass"}}),
     )
     violations = client.diagnostics_snapshot()["connection"]["protocol_violations"]
     (reason,) = violations.values()
     assert "secret-pass" not in reason
     assert "row 5" in reason
+
+
+def test_an_unrecognized_leaf_is_reported_with_its_classifying_columns() -> None:
+    """The report carries the raw leaf and the columns that classify the
+    row, and leaves the Designer name out (#325)."""
+    client = _client()
+    row = {
+        "id": 5,
+        "leafId": "1_11000209_257_2_0",
+        "typ_komponentu": "przekaznik",
+        "interpretacja": 1,
+        "funkcja": 3,
+        "type": "256",
+        "format": "%d",
+        "opis_menu": "private-relay-name",
+    }
+    feed(client, PARAMS_DEVICES_TOPIC, params_of(row, {"id": 6}))
+    feed(client, f"ampio/fromDB/{USER}/data/devices", details(row, {"id": 6}))
+    snap = client.diagnostics_snapshot()
+    assert snap["unrecognized"] == [
+        {
+            "id": 5,
+            "leafId": "1_11000209_257_2_0",
+            "typ_komponentu": "przekaznik",
+            "interpretacja": 1,
+            "funkcja": 3,
+            "type": 256,
+            "format": "%d",
+        }
+    ]
+    assert snap["leafless"] == []
+    assert snap["connection"]["protocol_violations"] == {}
+    assert list(client.objects) == [6]
+    assert "private-relay-name" not in json.dumps(snap)
 
 
 def test_a_nested_server_version_reads_as_none() -> None:

@@ -233,14 +233,19 @@ async def test_set_object_reports_the_refusal_for_an_unknown_id(
     assert "refused: object 999 is not in the catalogue" in printed
 
 
-async def test_set_object_reports_a_leafless_row(
+async def test_set_object_reports_the_refused_object_rows(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     broker = FakeBroker()
-    broker.scripted_messages = _discovery({"id": 10, "leafId": "", "opis_menu": "Lamp"})
+    broker.scripted_messages = _discovery(
+        {"id": 10, "leafId": "", "opis_menu": "Lamp"},
+        {"id": 11, "leafId": "1_11000209_257_2_0", "opis_menu": "Relay"},
+    )
     a = _parse(monkeypatch, set_object, "--object-id", "10", "--on", "--watch", "0.01")
     assert await set_object.run(a, client_factory=broker.factory) == 1
-    assert "not configured: ob/10 Lamp" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "no leaf: ob/10 Lamp" in out
+    assert "unrecognized leaf: ob/11 Relay" in out
 
 
 async def test_set_object_reports_a_mac_collision(
@@ -379,14 +384,19 @@ async def test_smoke_test_reports_a_failed_connect(
     assert "FAILED to connect: Connection loop died: boom" in capsys.readouterr().out
 
 
-async def test_smoke_test_reports_a_leafless_row(
+async def test_smoke_test_reports_the_refused_object_rows(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     broker = FakeBroker()
-    broker.scripted_messages = _discovery({"id": 10, "leafId": "", "opis_menu": "Lamp"})
+    broker.scripted_messages = _discovery(
+        {"id": 10, "leafId": "", "opis_menu": "Lamp"},
+        {"id": 11, "leafId": "1_11000209_257_2_0", "opis_menu": "Relay"},
+    )
     a = _parse(monkeypatch, smoke_test, "--duration", "0.01")
     assert await smoke_test.run(a, client_factory=broker.factory) == 1
-    assert "not configured: ob/10 Lamp" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "no leaf: ob/10 Lamp" in out
+    assert "unrecognized leaf: ob/11 Relay" in out
 
 
 async def test_smoke_test_reports_a_mac_collision(
@@ -494,15 +504,20 @@ async def test_modules_refuses_a_restricted_account(
     assert broker.published == []
 
 
-async def test_modules_reports_a_leafless_row(
+async def test_modules_reports_the_refused_object_rows(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     broker = FakeBroker()
     broker.scripted_messages = [
-        Message(ADMIN_PARAMS_DEVICES_TOPIC, params_table({"id": 10}).encode()),
+        Message(
+            ADMIN_PARAMS_DEVICES_TOPIC, params_table({"id": 10}, {"id": 11}).encode()
+        ),
         Message(
             ADMIN_DATA_DEVICES_TOPIC,
-            details({"id": 10, "leafId": "", "opis_menu": "Lamp"}).encode(),
+            details(
+                {"id": 10, "leafId": "", "opis_menu": "Lamp"},
+                {"id": 11, "leafId": "1_11000209_257_2_0", "opis_menu": "Relay"},
+            ).encode(),
         ),
         Message(ADMIN_DEVICES_TOPIC, devices().encode()),
         Message(ADMIN_STATES_TOPIC, snapshot().encode()),
@@ -510,7 +525,9 @@ async def test_modules_reports_a_leafless_row(
     ]
     a = _parse(monkeypatch, modules, user=ADMIN_USER)
     assert await modules.run(a, client_factory=broker.factory) == 1
-    assert "not configured: ob/10 Lamp" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "no leaf: ob/10 Lamp" in out
+    assert "unrecognized leaf: ob/11 Relay" in out
 
 
 async def test_modules_reports_a_mac_collision(

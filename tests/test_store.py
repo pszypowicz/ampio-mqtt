@@ -262,11 +262,11 @@ def test_a_leaf_id_that_is_not_a_string_refuses_the_whole_catalogue_reply() -> N
     store = _store()
     _feed_catalogue(store, _catalogue_row())
     objects_before = dict(store.objects)
-    not_configured_before = store.not_configured
+    leafless_before = store.leafless
     with pytest.raises(AmpioProtocolError, match="neither a string nor null"):
         _feed_catalogue(store, _catalogue_row(), _catalogue_row(id=42, leafId=123))
     assert store.objects == objects_before
-    assert store.not_configured == not_configured_before
+    assert store.leafless == leafless_before
 
 
 @pytest.mark.parametrize(
@@ -931,7 +931,7 @@ def test_a_hidden_row_never_enters_objects_nor_the_rejected_set() -> None:
     applied = _feed_catalogue(store, {"id": 41, "params": 16, "leafId": ""}, {"id": 42})
     assert [e.object.id for e in applied.events if isinstance(e, ObjectAdded)] == [42]
     assert 41 not in store.objects
-    assert store.not_configured == ()
+    assert store.leafless == ()
     assert _not_configured(applied) == []
 
 
@@ -941,18 +941,91 @@ def test_an_empty_leaf_is_recorded_and_left_out() -> None:
         store, {"id": 41, "leafId": "", "opis_menu": "Lamp"}, {"id": 42}
     )
     assert list(store.objects) == [42]
-    assert store.not_configured == ((41, "Lamp"),)
-    assert [e.objects for e in _not_configured(applied)] == [((41, "Lamp"),)]
+    assert store.leafless == ((41, "Lamp"),)
+    assert [e.leafless for e in _not_configured(applied)] == [((41, "Lamp"),)]
 
 
-def test_a_malformed_leaf_refuses_the_reply_whole() -> None:
+_LORA_LEAF = "1_11000209_257_2_0"
+
+
+def test_an_unrecognized_leaf_is_recorded_apart_and_left_out() -> None:
     store = _store()
-    _feed_catalogue(store, {"id": 42}, _DET)
-    before = dict(store.objects)
-    with pytest.raises(AmpioProtocolError, match="row 41"):
-        _feed_catalogue(store, {"id": 41, "leafId": "garbage"}, {"id": 43}, _DET)
-    assert store.objects == before
-    assert store.not_configured == ()
+    applied = _feed_catalogue(
+        store,
+        {"id": 41, "leafId": _LORA_LEAF, "opis_menu": "Relay"},
+        {"id": 42, "leafId": "", "opis_menu": "Lamp"},
+        {"id": 43},
+        _DET,
+    )
+    assert list(store.objects) == [43]
+    assert store.leafless == ((42, "Lamp"),)
+    assert store.unrecognized == ((41, "Relay"),)
+    assert _not_configured(applied) == [
+        NotConfigured(leafless=((42, "Lamp"),), unrecognized=((41, "Relay"),))
+    ]
+
+
+@pytest.mark.parametrize(
+    "leaf",
+    ["garbage", "0_cafe_257_0"],
+)
+def test_a_leaf_the_parse_does_not_read_whole_is_unrecognized(leaf: str) -> None:
+    store = _store()
+    _feed_catalogue(store, {"id": 41, "leafId": leaf}, {"id": 42})
+    assert list(store.objects) == [42]
+    assert store.unrecognized == ((41, None),)
+
+
+def test_a_leaf_that_becomes_unreadable_evicts_the_row() -> None:
+    store = _store()
+    _feed_catalogue(store, {"id": 41})
+    applied = _feed_catalogue(store, {"id": 41, "leafId": _LORA_LEAF})
+    assert [type(e) for e in applied.events] == [ObjectRemoved, NotConfigured]
+    assert store.unrecognized == ((41, None),)
+    restored = _feed_catalogue(store, {"id": 41})
+    assert [type(e) for e in restored.events] == [ObjectAdded, NotConfigured]
+    assert store.unrecognized == ()
+
+
+def test_the_unrecognized_set_reports_a_change_of_its_rows_only() -> None:
+    """A changed column on a row that stays unrecognized is not a change of
+    the set, and the snapshot reads the new value."""
+    store = _store()
+    first = _feed_catalogue(store, {"id": 41, "leafId": _LORA_LEAF})
+    again = _feed_catalogue(store, {"id": 41, "leafId": _LORA_LEAF, "format": "%d"})
+    assert len(_not_configured(first)) == 1
+    assert _not_configured(again) == []
+    assert [row.format for row in store.unrecognized_rows] == ["%d"]
+
+
+def test_a_row_that_moves_between_the_two_sets_reports_the_move() -> None:
+    store = _store()
+    _feed_catalogue(store, {"id": 41, "leafId": ""})
+    applied = _feed_catalogue(store, {"id": 41, "leafId": _LORA_LEAF})
+    assert _not_configured(applied) == [NotConfigured(unrecognized=((41, None),))]
+
+
+def test_a_hidden_row_never_reads_its_unrecognized_leaf() -> None:
+    store = _store()
+    applied = _feed_catalogue(
+        store, {"id": 41, "params": 16, "leafId": _LORA_LEAF}, {"id": 42}
+    )
+    assert store.unrecognized == ()
+    assert _not_configured(applied) == []
+
+
+def test_admission_failure_names_the_unrecognized_rows_apart() -> None:
+    store = _app_store()
+    _feed_catalogue(
+        store,
+        {"id": 41, "leafId": _LORA_LEAF, "opis_menu": "Relay"},
+        {"id": 42, "leafId": ""},
+    )
+    failure = store.admission_failure()
+    assert failure is not None
+    assert failure.leafless == ((42, None),)
+    assert failure.unrecognized == ((41, "Relay"),)
+    assert failure.collisions == ()
 
 
 def test_a_leaf_that_disappears_after_admission_evicts_the_row() -> None:
@@ -962,10 +1035,10 @@ def test_a_leaf_that_disappears_after_admission_evicts_the_row() -> None:
     assert 41 in store.records
     applied = _feed_catalogue(store, {"id": 41, "leafId": ""})
     assert [type(e) for e in applied.events] == [ObjectRemoved, NotConfigured]
-    assert store.not_configured == ((41, None),)
+    assert store.leafless == ((41, None),)
     restored = _feed_catalogue(store, {"id": 41, "typ_komponentu": "przekaznik"})
     assert [type(e) for e in restored.events] == [ObjectAdded, NotConfigured]
-    assert store.not_configured == ()
+    assert store.leafless == ()
     assert 41 not in store.records
 
 
@@ -987,8 +1060,8 @@ def test_the_rejected_set_reports_itself_when_it_empties() -> None:
     _feed_catalogue(store, {"id": 41, "leafId": ""})
     applied = _feed_catalogue(store)
     assert [type(e) for e in applied.events] == [NotConfigured]
-    assert [e.objects for e in _not_configured(applied)] == [()]
-    assert store.not_configured == ()
+    assert [e.leafless for e in _not_configured(applied)] == [()]
+    assert store.leafless == ()
     assert store.admission_failure() is None
 
 
@@ -1016,7 +1089,7 @@ def test_a_params_push_that_hides_the_refused_row_clears_the_set() -> None:
     _feed_catalogue(store, {"id": 41, "leafId": ""})
     applied = _apply(store, PARAMS_DEVICES_TOPIC, params_of({"id": 41, "params": 16}))
     assert _not_configured(applied) == [NotConfigured()]
-    assert store.not_configured == ()
+    assert store.leafless == ()
 
 
 def test_a_refused_catalogue_leaves_the_held_reply_untouched() -> None:
@@ -1026,7 +1099,7 @@ def test_a_refused_catalogue_leaves_the_held_reply_untouched() -> None:
         _apply(
             store,
             DATA_DEVICES_TOPIC,
-            details({"id": 41}, {"id": 43, "leafId": "garbage"}),
+            details({"id": 41}, {"id": 43, "leafId": 123}),
         )
     again = _apply(store, PARAMS_DEVICES_TOPIC, params_of({"id": 41}))
     assert again.events == []
@@ -1059,7 +1132,7 @@ def test_not_configured_ignores_the_order_of_the_rejected_rows() -> None:
     second = _feed_catalogue(store, {"id": 42, "leafId": ""}, {"id": 41, "leafId": ""})
     assert len(_not_configured(first)) == 1
     assert _not_configured(second) == []
-    assert store.not_configured == ((41, None), (42, None))
+    assert store.leafless == ((41, None), (42, None))
 
 
 def test_devices_populate_modules_with_model_and_versions() -> None:
@@ -1574,7 +1647,7 @@ def test_the_system_rows_never_enter_the_catalogue() -> None:
     assert store._catalogue is not None
     assert [meta.id for meta in store._catalogue] == [41]
     assert list(store.objects) == [41]
-    assert store.not_configured == ()
+    assert store.leafless == ()
     assert store.admission_failure() is None
     assert [obj.id for obj in _updated(applied)] == [41]
     assert _not_configured(applied) == []
@@ -2455,7 +2528,7 @@ def test_an_admission_event_carries_the_side_that_still_stands() -> None:
     _feed_catalogue(store, {**_flaga_row(41, 3, mac=0xA), "leafId": ""})
     applied = _feed_catalogue(store, _flaga_row(41, 3, mac=0xA))
     (event,) = _not_configured(applied)
-    assert event.objects == ()
+    assert event.leafless == ()
     assert event.collisions == ((0xB, (2, 3)),)
     assert store.admission_failure().collisions == ((0xB, (2, 3)),)
 
@@ -2469,8 +2542,8 @@ def test_a_cleared_collision_still_names_the_refused_object_rows() -> None:
     applied = _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xC))
     (event,) = _collisions(applied)
     assert event.collisions == ()
-    assert event.objects == ((41, "Flag"),)
-    assert store.admission_failure().objects == ((41, "Flag"),)
+    assert event.leafless == ((41, "Flag"),)
+    assert store.admission_failure().leafless == ((41, "Flag"),)
 
 
 def test_admission_failure_carries_both_installer_faults() -> None:
@@ -2480,7 +2553,7 @@ def test_admission_failure_carries_both_installer_faults() -> None:
     _apply(store, DEVICES_TOPIC, _devices(0xA, 0xB, 0xB))
     _feed_catalogue(store, {**_flaga_row(41, 3, mac=0xA), "leafId": ""})
     failure = store.admission_failure()
-    assert failure.objects == ((41, "Flag"),)
+    assert failure.leafless == ((41, "Flag"),)
     assert failure.collisions == ((0xB, (2, 3)),)
     assert "41 (Flag) carry no leaf" in str(failure)
     assert "modules 2, 3 share the override mac 0xB" in str(failure)

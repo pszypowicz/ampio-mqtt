@@ -109,19 +109,25 @@ def test_a_refused_reply_is_reported_in_the_diagnostics() -> None:
     assert client.objects == {}
 
 
-def test_a_malformed_leaf_names_the_reply_that_carried_it() -> None:
-    """The two catalogue replies arrive in no fixed order. A leaf the
-    library cannot parse is a fault of the reply that carried it, whichever
-    of the two landed first."""
+def test_a_malformed_leaf_refuses_its_row_whichever_reply_lands_last() -> None:
+    """The door runs on the params reply when it completes the pair, and a
+    leaf the library cannot parse still refuses only the row that carries
+    it."""
     client = _client()
     feed(
         client,
         f"ampio/fromDB/{USER}/data/devices",
-        details({"id": 41, "leafId": "garbage"}),
+        details({"id": 41, "leafId": "garbage"}, {"id": 42}),
     )
-    feed(client, f"ampio/fromDB/{USER}/data/params_devices", params_of({"id": 41}))
-    violations = client.diagnostics_snapshot()["connection"]["protocol_violations"]
-    assert list(violations) == ["ampio/fromDB/<account>/data/devices"]
+    feed(
+        client,
+        f"ampio/fromDB/{USER}/data/params_devices",
+        params_of({"id": 41}, {"id": 42}),
+    )
+    snap = client.diagnostics_snapshot()
+    assert list(client.objects) == [42]
+    assert [row["id"] for row in snap["unrecognized"]] == [41]
+    assert snap["connection"]["protocol_violations"] == {}
 
 
 def test_a_hidden_row_with_a_malformed_leaf_refuses_nothing() -> None:
@@ -139,7 +145,9 @@ def test_a_hidden_row_with_a_malformed_leaf_refuses_nothing() -> None:
         params_of({"id": 41, "params": 16}, {"id": 42}),
     )
     assert list(client.objects) == [42]
-    assert client.diagnostics_snapshot()["connection"]["protocol_violations"] == {}
+    snap = client.diagnostics_snapshot()
+    assert snap["unrecognized"] == []
+    assert snap["connection"]["protocol_violations"] == {}
 
 
 @pytest.mark.parametrize(

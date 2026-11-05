@@ -129,8 +129,8 @@ async def test_reconnect_replay_does_not_redispatch_object_added() -> None:
 
 
 def test_not_configured_is_a_store_event_and_a_client_event() -> None:
-    event = NotConfigured(objects=((5, "Lamp"),))
-    assert event.objects == ((5, "Lamp"),)
+    event = NotConfigured(leafless=((5, "Lamp"),))
+    assert event.leafless == ((5, "Lamp"),)
     assert NotConfigured in get_args(StoreEvent)
     assert NotConfigured in get_args(ClientEvent)
 

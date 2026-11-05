@@ -74,7 +74,11 @@ class AmpioStore:
         # The `(id, name)` pairs of the rows the door left out because they
         # carry no leaf, from the last apply. Empty when every listed row
         # was admitted or hidden. The client raises and reports from it.
-        self.not_configured: tuple[tuple[int, str | None], ...] = ()
+        self.leafless: tuple[tuple[int, str | None], ...] = ()
+        # The served rows the door left out because their leaf does not
+        # parse, sorted by id, from the last apply. The client reports
+        # their columns in the diagnostics snapshot.
+        self.unrecognized_rows: tuple[_protocol.ObjectMetadata, ...] = ()
         # Full-catalogue per-object config facts (`params`, `czas`, `url`)
         # from `data/params_devices`, this store's one source for them on
         # both tiers. Held because the two catalogue replies arrive in no
@@ -223,7 +227,7 @@ class AmpioStore:
         reply, the door and the buffered-push prune never see one.
 
         The door runs once the params table is in hand, and a reply the
-        door refuses leaves every held field as it was. A reply that
+        parse refuses leaves every held field as it was. A reply that
         arrives before the params table is held unseen, and a later params
         push runs the door on it.
         """
@@ -254,7 +258,7 @@ class AmpioStore:
         on both tiers, the hidden bit included, so the door waits for it. A
         push of the table alone re-runs the door on the held catalogue, so
         a hidden bit that changes evicts or admits its row. A table the
-        door refuses is not held.
+        parse refuses is not held.
         """
         params = _protocol.parse_params_devices(data)
         if self._catalogue is not None:
@@ -288,28 +292,25 @@ class AmpioStore:
         The door decides admission in one order on both tiers: a hidden row
         drops before its leaf is read because nothing drives it, and every
         remaining row must carry a leaf that parses. A row with an empty
-        leaf is recorded on ``not_configured`` and left out, and
-        :class:`NotConfigured` reports every change of the set, a change
-        to empty included. A leaf that does not parse is a server fault, raised
-        here before any store field changes, so the reply is refused whole.
+        leaf is recorded on ``leafless``, and a row whose leaf does not
+        parse on ``unrecognized_rows``. Both are left out, and
+        :class:`NotConfigured` reports every change of either set, a
+        change to empty included.
         """
         admitted: list[tuple[_protocol.ObjectMetadata, ModuleAddress]] = []
-        rejected: list[tuple[int, str | None]] = []
+        leafless: list[tuple[int, str | None]] = []
+        unrecognized: list[_protocol.ObjectMetadata] = []
         for meta in served:
             if config.get(meta.id, {}).get("params", 0) & HIDDEN_FLAG:
                 continue
             if not meta.leaf_id:
-                rejected.append((meta.id, meta.name))
+                leafless.append((meta.id, meta.name))
                 continue
             try:
                 address = _protocol.parse_module_address(meta.leaf_id)
-            except _protocol.LeafFault as err:
-                # The public parse quotes the token it refused. The report
-                # names the row, because the token is content from the install.
-                raise _protocol.LeafFault(
-                    f"The Ampio object catalogue row {meta.id} carries a leafId "
-                    "that is not a 0_<macHex>_<sfId>_<subSfId>_<ioNo> token"
-                ) from err
+            except _protocol.LeafFault:
+                unrecognized.append(meta)
+                continue
             admitted.append((meta, address))
         touched = False
         for meta, address in admitted:
@@ -321,39 +322,46 @@ class AmpioStore:
         )
         if touched or evicted:
             self._rebuild_indexes(applied)
-        self._set_not_configured(
-            tuple(sorted(rejected, key=lambda pair: pair[0])), applied
-        )
+        before = self._admission()
+        self.leafless = tuple(sorted(leafless, key=lambda pair: pair[0]))
+        self.unrecognized_rows = tuple(sorted(unrecognized, key=lambda row: row.id))
+        self._report_admission(before, applied)
 
-    def _set_not_configured(
-        self, rejected: tuple[tuple[int, str | None], ...], applied: Applied
-    ) -> None:
-        """Record the rows the door left out and report any change of the set.
+    @property
+    def unrecognized(self) -> tuple[tuple[int, str | None], ...]:
+        """The ``(id, name)`` pairs of the rows on ``unrecognized_rows``."""
+        return tuple((row.id, row.name) for row in self.unrecognized_rows)
 
-        ``rejected`` is sorted by id, so the order the reply listed the
-        rows in never reads as a change.
+    def _report_admission(self, before: NotConfigured, applied: Applied) -> None:
+        """Report the door's state if it differs from ``before``.
+
+        Every side is sorted, so the order the reply listed the rows in
+        never reads as a change.
         """
-        if rejected == self.not_configured:
-            return
-        self.not_configured = rejected
-        applied.events.append(self._admission())
+        after = self._admission()
+        if after != before:
+            applied.events.append(after)
 
     def _admission(self) -> NotConfigured:
-        """Everything the door refuses now, both sides.
+        """Everything the door refuses now, every side.
 
         The event and the error read this one answer, so a consumer that
         listens and a consumer that polls are never told different things.
-        The base store fills the object side alone, because a standard
+        The base store fills the object sides alone, because a standard
         account is served no module list.
         """
-        return NotConfigured(objects=self.not_configured)
+        return NotConfigured(leafless=self.leafless, unrecognized=self.unrecognized)
 
     def admission_failure(self) -> AmpioNotConfigured | None:
-        """The installer fault the last replies left, or None."""
+        """The fault the last replies left, or None."""
         state = self._admission()
-        if not state.objects and not state.collisions:
+        if not (state.leafless or state.unrecognized or state.collisions):
             return None
-        return AmpioNotConfigured(objects=state.objects, collisions=state.collisions)
+        return AmpioNotConfigured(
+            leafless=state.leafless,
+            unrecognized=state.unrecognized,
+            collisions=state.collisions,
+        )
 
     def _drop_sweep_entries(self, oid: int) -> None:
         """Forget what a sweep proved for one object. The base holds no sweep."""
@@ -829,20 +837,9 @@ class AdminStore(AmpioStore):
             applied.events.append(ModuleRemoved(module))
         if changed or evicted:
             self._rebuild_indexes(applied)
-        self._set_collisions(collisions, applied)
-
-    def _set_collisions(
-        self, collisions: tuple[tuple[int, tuple[int, ...]], ...], applied: Applied
-    ) -> None:
-        """Record the macs the door refused and report any change of the set.
-
-        Both the macs and the ids on each are sorted, so the order the
-        reply listed the rows in never reads as a change.
-        """
-        if collisions == self.collisions:
-            return
+        before = self._admission()
         self.collisions = collisions
-        applied.events.append(self._admission())
+        self._report_admission(before, applied)
 
     # --- live state -------------------------------------------------------
 
@@ -905,8 +902,12 @@ class AdminStore(AmpioStore):
     # --- helpers ----------------------------------------------------------
 
     def _admission(self) -> NotConfigured:
-        """Both sides: the admin session is served the module list too."""
-        return NotConfigured(objects=self.not_configured, collisions=self.collisions)
+        """Every side: the admin session is served the module list too."""
+        return NotConfigured(
+            leafless=self.leafless,
+            unrecognized=self.unrecognized,
+            collisions=self.collisions,
+        )
 
     def module_by_mac(self, mac: int) -> AmpioModule | None:
         """The module row on ``mac``, or None when the list has none."""

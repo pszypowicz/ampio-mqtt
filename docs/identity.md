@@ -153,7 +153,9 @@ the token back into `macGroup`, `mac`, `sfId`, `subSfId`, and `ioNo`.
 
 `parse_module_address()` is the public form of the leaf parse. It returns a
 `ModuleAddress`. It raises `AmpioProtocolError` for a token that does not have
-this shape, and for an empty token.
+this shape, and for an empty token. The door leaves a catalogue row with such a
+leaf out of `objects` and reports it (see
+[`discovery-flow.md`](discovery-flow.md#the-door)).
 
 The library parses the mac, the `sfId`, the `subSfId`, and the trailing `ioNo`
 into `AmpioObject.address`. `address.channel` reads the last segment. It covers

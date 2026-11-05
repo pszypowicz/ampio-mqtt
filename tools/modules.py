@@ -197,8 +197,10 @@ async def run(
             await watch_readings(client, a.watch)
         return 0
     except AmpioNotConfigured as err:
-        for oid, obj_name in err.objects:
-            print(f"not configured: ob/{oid} {obj_name or ''}")
+        for oid, obj_name in err.leafless:
+            print(f"no leaf: ob/{oid} {obj_name or ''}")
+        for oid, obj_name in err.unrecognized:
+            print(f"unrecognized leaf: ob/{oid} {obj_name or ''}")
         for mac, ids in err.collisions:
             print(
                 f"mac collision: {format_mac(mac)} on modules "
