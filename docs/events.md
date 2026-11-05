@@ -19,13 +19,13 @@ the authoritative contract for each class. This page is the map.
 ```python
 from ampio_mqtt import ModuleRemoved, ObjectRemoved, ObjectUpdated
 
-client.subscribe(on_any_event)                      # the whole stream
-client.subscribe(on_object, of=ObjectUpdated)       # one class, typed callback
+client.subscribe(on_any_event)  # the whole stream
+client.subscribe(on_object, of=ObjectUpdated)  # one class, typed callback
 client.subscribe(on_gone, of=(ObjectRemoved, ModuleRemoved))
 client.subscribe(on_135, of=ObjectUpdated, object_id=135)  # one object
 
 unsubscribe = client.subscribe(on_object, of=ObjectUpdated)
-unsubscribe()                                       # deregister
+unsubscribe()  # deregister
 ```
 
 A bare subscription receives every `ClientEvent`. `StoreEvent` is the union of
