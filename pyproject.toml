@@ -44,7 +44,7 @@ dev = [
   "pytest-cov>=4",
   "mypy>=1.10",
   "pyright==1.1.414",
-  "ruff==0.17.3",
+  "ruff==0.17.4",
   # The discovery extra, so the test suite covers the discovery module.
   "zeroconf>=0.142",
 ]
