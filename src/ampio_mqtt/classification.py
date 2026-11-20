@@ -137,7 +137,9 @@ _ALARM_BY_SUB_SF: dict[int, InputKind] = {
 _BASE_ALARM = InputKind("alarm", "Alarm")
 
 # lin_wej (analog input) measurement kind, keyed by `interpretacja`.
-# The M-SENS channel map (4=lux, 5=IAQ, 7=CO2).
+# The M-SENS channel map (4=lux, 5=IAQ, 7=CO2). It holds for a lin_wej on a
+# module's own leaf only; a bridged leaf gives `interpretacja` no meaning
+# (see `_BRIDGED_SF_FLOOR`).
 _LIN_WEJ_BY_INTERP: dict[int, SensorKind] = {
     1: SensorKind("humidity", "Humidity", "%", "humidity"),
     2: SensorKind("pressure_abs", "Pressure (absolute)", "hPa", "atmospheric_pressure"),
@@ -147,6 +149,15 @@ _LIN_WEJ_BY_INTERP: dict[int, SensorKind] = {
     6: SensorKind("pressure_rel", "Pressure (relative)", "hPa", "pressure"),
     7: SensorKind("co2", "CO2", "ppm", "carbon_dioxide", precision=0),
 }
+
+# The leaf classes above this floor are bridged slots: 1001 `temp`, 1002
+# `bit8`, 1003 `lin_wej` and 1005 `bit32`, where an RS-485 module lands a
+# Modbus reading. On such a leaf `interpretacja` repeats `funkcja`, the slot
+# number, so it selects no M-SENS measurement. A bridged lin_wej is the
+# installer's own register, the way a bridged bit16 is, and it joins the open
+# `value_<interpretacja>` family. Its unit is the one Designer stores
+# (`AmpioObject.unit`), and Designer's "Divide by" scales it at the M-SERV.
+_BRIDGED_SF_FLOOR = 1000
 
 # Generic value-only sensor for a catalogue row with no usable metadata
 # (a `typ_komponentu` missing from TYPE_PROFILES). The value may be
@@ -183,7 +194,8 @@ class _Selector(Enum):
     instance, because one ``typ_komponentu`` covers several kinds. A second
     wire field picks the member."""
 
-    ANALOG = auto()  # the interpretacja-keyed lin_wej map, open below it
+    ANALOG = auto()  # the interpretacja-keyed lin_wej map, open below it,
+    # or the NUMERIC family on a bridged leaf
     NUMERIC = auto()  # generic value_<interpretacja> measurement (integer slots)
     ALARM = auto()  # the sub_sf_id-keyed alarm partition halves
 
@@ -294,15 +306,22 @@ SENSOR_KIND_KEYS, INPUT_KIND_KEYS, OUTPUT_KIND_KEYS, THERMOSTAT_KIND_KEYS = _kin
 
 # The two open families: keys minted with the object's `interpretacja`
 # embedded (`analog_<n>` for a lin_wej measurement the map does not know,
-# `value_<n>` for the numeric bit8/bit16/sbit16/bit32 slots), so they cannot be
-# enumerated. A consumer treats each prefix as one mapping decision.
+# `value_<n>` for the numeric bit8/bit16/sbit16/bit32 slots and a bridged
+# lin_wej), so they cannot be enumerated. A consumer treats each prefix as one
+# mapping decision.
 SENSOR_KIND_KEY_PREFIXES: tuple[str, ...] = ("analog_", "value_")
+
+
+def _value_kind(interpretacja: int | None) -> SensorKind:
+    """The open ``value_<interpretacja>`` measurement of an integer slot."""
+    return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
 
 
 def classify(
     typ_komponentu: str | None,
     interpretacja: int | None,
     sub_sf_id: int = 0,
+    sf_id: int = 0,
 ) -> ObjectKind:
     """Classify a DB object into the one kind it is.
 
@@ -311,18 +330,23 @@ def classify(
     or no metadata yet) is the generic value-only sensor, so such an
     object still surfaces. ``sub_sf_id`` is
     the leaf sub-function, 0 for a single-role class, which refines
-    ``satel_alarm`` alone.
+    ``satel_alarm`` alone. ``sf_id`` is the leaf class. It refines
+    ``lin_wej`` alone: on a bridged leaf (above 1000) the object is a
+    ``value_<n>`` slot, not an M-SENS channel. 0, the default, reads as a
+    module's own leaf.
     """
     profile = TYPE_PROFILES.get(typ_komponentu) if typ_komponentu is not None else None
     if profile is None:
         return _GENERIC_SENSOR
     match profile.kind:
         case _Selector.ANALOG:
+            if sf_id > _BRIDGED_SF_FLOOR:
+                return _value_kind(interpretacja)
             if interpretacja in _LIN_WEJ_BY_INTERP:
                 return _LIN_WEJ_BY_INTERP[interpretacja]
             return SensorKind(f"analog_{interpretacja}", "Analog input", None, None)
         case _Selector.NUMERIC:
-            return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
+            return _value_kind(interpretacja)
         case _Selector.ALARM:
             return _ALARM_BY_SUB_SF.get(sub_sf_id, _BASE_ALARM)
         case kind:

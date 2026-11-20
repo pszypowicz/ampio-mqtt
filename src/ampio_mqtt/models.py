@@ -391,8 +391,8 @@ class AmpioObject:
     # on both tiers. `unit` and `decimals` read it.
     format: str = ""
     # What this object is. Derived - never passed: computed from
-    # `typ_komponentu`, `interpretacja` and `address.sub_sf_id` on every
-    # construction,
+    # `typ_komponentu`, `interpretacja`, `address.sf_id` and
+    # `address.sub_sf_id` on every construction,
     # `dataclasses.replace` included, so no instance can hold a kind that
     # disagrees with its inputs (#94).
     kind: ObjectKind = field(init=False)
@@ -421,7 +421,12 @@ class AmpioObject:
         object.__setattr__(
             self,
             "kind",
-            classify(self.typ_komponentu, self.interpretacja, self.address.sub_sf_id),
+            classify(
+                self.typ_komponentu,
+                self.interpretacja,
+                self.address.sub_sf_id,
+                self.address.sf_id,
+            ),
         )
 
     @property

@@ -82,6 +82,32 @@ def test_lin_wej_unknown_interp_is_generic() -> None:
     assert kind.device_class is None
 
 
+@pytest.mark.parametrize("interp", [1, 4, 7, 9])
+def test_bridged_lin_wej_is_a_value_slot(interp) -> None:
+    """A lin_wej on a bridged leaf (a Modbus register on an RS-485 module) repeats
+    the slot number in `interpretacja`, so the M-SENS map must not read it:
+    slot 7 is not CO2. It joins the open value_<n> family the integer
+    slots use, and its unit is the one Designer stores."""
+    kind = classify("lin_wej", interp, 0, 1003)
+    assert kind == classify("bit16", interp)
+    assert isinstance(kind, SensorKind)
+    assert kind.key == f"value_{interp}"
+    assert kind.unit is None
+    assert kind.device_class is None
+
+
+@pytest.mark.parametrize("sf_id", [0, 73, 74, 75, 76, 257])
+def test_lin_wej_on_a_module_leaf_keeps_the_msens_map(sf_id) -> None:
+    kind = classify("lin_wej", 7, 0, sf_id)
+    assert isinstance(kind, SensorKind)
+    assert kind.key == "co2"
+
+
+@pytest.mark.parametrize("typ", ["temp", "bit8", "bit32"])
+def test_bridged_leaf_refines_lin_wej_alone(typ) -> None:
+    assert classify(typ, 1, 0, 1003) == classify(typ, 1)
+
+
 def test_bit32_is_generic_measurement() -> None:
     kind = _sensor("bit32", 3)
     assert kind is not None
@@ -327,11 +353,12 @@ def test_classify_never_leaves_the_exported_vocabulary() -> None:
     }
     for typ in [None, "no_such_type", *TYPE_PROFILES]:
         for interp in [None, *range(9), 99]:
-            kind = classify(typ, interp)
-            key = kind.key
-            assert key in vocab[type(kind)] or key.startswith(
-                SENSOR_KIND_KEY_PREFIXES
-            ), (typ, interp, key)
+            for sf_id in (0, 74, 1003):
+                kind = classify(typ, interp, 0, sf_id)
+                key = kind.key
+                assert key in vocab[type(kind)] or key.startswith(
+                    SENSOR_KIND_KEY_PREFIXES
+                ), (typ, interp, sf_id, key)
 
 
 # --- the analog flags and the alarm halves (#239) ---------------------------

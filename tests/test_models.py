@@ -226,6 +226,27 @@ def test_kind_derives_from_the_metadata_inputs() -> None:
     assert _object(id=1).kind == classify(None, None)  # the generic sensor
 
 
+def test_kind_reads_the_leaf_class_for_a_bridged_linear_input() -> None:
+    """A Modbus register on an RS-485 module is a lin_wej on leaf class
+    1003, and its `interpretacja` repeats the slot number. The object is a
+    value slot with the unit Designer stores, not the M-SENS channel the
+    number names (7 would read as CO2)."""
+    bridged = ModuleAddress(mac=0x130, channel=6, sf_id=1003, sub_sf_id=0)
+    obj = _object(
+        id=139,
+        typ_komponentu="lin_wej",
+        interpretacja=7,
+        funkcja=7,
+        address=bridged,
+        leaf_key="leaf_0_130_1003_0_6",
+        url="%",
+    )
+    assert obj.kind.key == "value_7"
+    assert obj.unit == "%"
+    msens = replace(obj, address=replace(bridged, sf_id=74))
+    assert msens.kind.key == "co2"
+
+
 def test_kind_rederives_on_replace() -> None:
     obj = _object(id=1, typ_komponentu="led")
     assert replace(obj, typ_komponentu="rgbw").kind == classify("rgbw", None)
