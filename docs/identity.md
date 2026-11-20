@@ -168,17 +168,17 @@ objects hosted on a relay module carry the roller code, so the code follows the
 configured leaf class, not the host product. The low codes match the Designer
 bundle's IO type enum exactly where both are known:
 
-| `sfId` | Leaf class                                                      |
-| ------ | --------------------------------------------------------------- |
-| 3      | binary flag (`flaga`)                                           |
-| 5      | roller (`roleta_*`)                                             |
-| 13     | heating regulator (`reg`)                                       |
-| 30     | `rgbw`                                                          |
-| 67     | open-collector output (`led`/`przekaznik` on M-INOC)            |
-| 73-76  | M-SENS channels (`lin_wej`, `temp`)                             |
-| 257    | binary I/O                                                      |
-| 296    | `satel_alarm`                                                   |
-| >1000  | bridged/wireless leaves: 1001 `temp`, 1002 `bit8`, 1005 `bit32` |
+| `sfId` | Leaf class                                                                      |
+| ------ | ------------------------------------------------------------------------------- |
+| 3      | binary flag (`flaga`)                                                           |
+| 5      | roller (`roleta_*`)                                                             |
+| 13     | heating regulator (`reg`)                                                       |
+| 30     | `rgbw`                                                                          |
+| 67     | open-collector output (`led`/`przekaznik` on M-INOC)                            |
+| 73-76  | M-SENS channels (`lin_wej`, `temp`)                                             |
+| 257    | binary I/O                                                                      |
+| 296    | `satel_alarm`                                                                   |
+| >1000  | bridged/wireless leaves: 1001 `temp`, 1002 `bit8`, 1003 `lin_wej`, 1005 `bit32` |
 
 **`subSfId` selects a sub-function inside its `sfId`**, not a bank index. The
 Designer nests the sub-functions under each special function, so a value has
@@ -201,8 +201,10 @@ app-sync catalogue the standard tier receives), but it cannot replace the module
 type code. Both tables are coverage, not a specification, so an unlisted code
 proves nothing. `kind` reads `typ_komponentu`, `interpretacja` for `lin_wej` and
 the numeric value types, and `address.sub_sf_id` for `satel_alarm`.
-`address.sf_id` does not enter `kind`. The raw bridge reads `address.sf_id` for
-`przekaznik` objects only. A leaf of class 67 reports on the `a` prefix. Any
+`address.sf_id` enters `kind` for `lin_wej` only. A bridged leaf (above 1000)
+makes the object a `value_<n>` slot (see
+[`classification.md`](classification.md)). The raw bridge reads `address.sf_id`
+for `przekaznik` objects only. A leaf of class 67 reports on the `a` prefix. Any
 other class reports on `o`. [`panel-writes.md`](panel-writes.md) describes which
 writes ride the raw frame and which stay on `/api`. See also
 [`raw-channel-bridge.md`](raw-channel-bridge.md).

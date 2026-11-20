@@ -6,7 +6,7 @@ classifies each object the door admits into exactly one kind (see
 platforms), `InputKind` (binary or boolean platforms), `OutputKind`
 (controllable platforms), and `ThermostatKind` (the `reg` temperature
 controllers, climate platform).
-`classify(typ_komponentu, interpretacja, sub_sf_id)` in
+`classify(typ_komponentu, interpretacja, sub_sf_id, sf_id)` in
 `ampio_mqtt.classification` returns it. A component type is a measurement, a
 boolean input, something controllable, or a thermostat, and never two of these.
 The four kinds are thus alternatives, not optional slots on the object.
@@ -16,12 +16,12 @@ The tables themselves live in
 are not repeated here. Each row of `TYPE_PROFILES` covers one known
 `typ_komponentu`. It gives the kind and the raw-bridge channel prefix.
 `_LIN_WEJ_BY_INTERP` maps a `lin_wej` object's `interpretacja` to its
-measurement. The `OutputKind` flags say which command verbs an output answers,
-and `InputKind.switchable` says the same for an input. `pulsable` sits on both
-classes. It says whether a `setValue` time argument reverts the object, and
-`AmpioObject.pulse_ms` gates on it. A type absent from `TYPE_PROFILES` (or an
-`interpretacja` absent from the analog map) still classifies, as the generic
-value sensor or the `analog_<n>` fallback.
+measurement on a module's own leaf. The `OutputKind` flags say which command
+verbs an output answers, and `InputKind.switchable` says the same for an input.
+`pulsable` sits on both classes. It says whether a `setValue` time argument
+reverts the object, and `AmpioObject.pulse_ms` gates on it. A type absent from
+`TYPE_PROFILES` (or an `interpretacja` absent from the analog map) still
+classifies, as the generic value sensor or the `analog_<n>` fallback.
 
 ## Wire notes the tables cannot carry
 
@@ -70,6 +70,12 @@ value sensor or the `analog_<n>` fallback.
   `value_<interpretacja>` family. The kind carries no unit and no device class,
   because what a slot holds is the installer's choice. `AmpioObject.unit` and
   `AmpioObject.decimals` serve what Designer stores for the object (see below).
+- A `lin_wej` on a bridged leaf (leaf class above 1000, such as 1003) is a
+  Modbus register that an RS-485 module reads, not an M-SENS channel. On such a
+  leaf `interpretacja` repeats `funkcja`, the slot number. The M-SENS map would
+  read slot 7 as CO2 and slot 1 as humidity. Thus a bridged `lin_wej` classifies
+  into the open `value_<interpretacja>` family, the same as the integer slots.
+  Its unit is the one Designer stores, and Designer's "Divide by" scales it.
 - `satel_alarm` is the armed and alarmed pair of an alarm partition. The prefix
   is not Satel-specific: a Jablotron behind an M-CON lands here too. The
   catalogue row cannot tell the two halves apart, because both carry the same
@@ -159,7 +165,7 @@ type it does not map.
 
 ## What classification keys on (and what it ignores)
 
-Classification uses exactly three wire fields:
+Classification uses exactly four wire fields:
 
 - **`typ_komponentu`** - the object type, the primary discriminator. It alone
   decides the family.
@@ -168,6 +174,9 @@ Classification uses exactly three wire fields:
   it names the `value_<n>` key.
 - **`sub_sf_id`** - a refinement for `satel_alarm` only, read from
   `address.sub_sf_id`. It names the armed half or the alarmed half.
+- **`sf_id`** - a refinement for `lin_wej` only, read from `address.sf_id`. A
+  leaf class above 1000 is a bridged slot, so the object is a `value_<n>`
+  measurement and not an M-SENS channel.
 
 It does **not** use:
 
