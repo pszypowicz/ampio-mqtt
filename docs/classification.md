@@ -20,9 +20,8 @@ measurement on the M-SENS leaf classes. The `OutputKind` flags say which command
 verbs an output answers, and `InputKind.switchable` says the same for an input.
 `pulsable` sits on both classes. It says whether a `setValue` time argument
 reverts the object, and `AmpioObject.pulse_ms` gates on it. A type absent from
-`TYPE_PROFILES` still classifies, as the generic value sensor. On an M-SENS leaf
-class, an `interpretacja` absent from the analog map classifies as the
-`analog_<n>` fallback.
+`TYPE_PROFILES` still classifies, as the generic value sensor. A `lin_wej` whose
+number names no M-SENS measurement classifies as a `value_<n>` slot.
 
 ## Wire notes the tables cannot carry
 
@@ -163,13 +162,13 @@ arrives.
 `SENSOR_KIND_KEYS`, `INPUT_KIND_KEYS`, `OUTPUT_KIND_KEYS`, and
 `THERMOSTAT_KIND_KEYS` export every static `kind.key` the library can emit. They
 derive from `TYPE_PROFILES` and the `lin_wej` map at import time, so they cannot
-drift. Two key families embed `interpretacja` and stay open.
-`SENSOR_KIND_KEY_PREFIXES` (`analog_`, `value_`) names them. A consumer maps
-`kind.key` to its own entity descriptions. Its CI must assert that every
-exported key is either mapped or deliberately excluded. Each open prefix counts
-as one decision. Then a library upgrade that adds a kind fails a test instead of
-a silent drop of entities. The M-SERV's own Matter bridge omits an object whose
-type it does not map.
+drift. One key family embeds `interpretacja` and stays open.
+`SENSOR_KIND_KEY_PREFIXES` (`value_`) names it. A consumer maps `kind.key` to
+its own entity descriptions. Its CI must assert that every exported key is
+either mapped or deliberately excluded. Each open prefix counts as one decision.
+Then a library upgrade that adds a kind fails a test instead of a silent drop of
+entities. The M-SERV's own Matter bridge omits an object whose type it does not
+map.
 
 ## What classification keys on (and what it ignores)
 
@@ -178,7 +177,7 @@ Classification uses exactly four wire fields:
 - **`typ_komponentu`** - the object type, the primary discriminator. It alone
   decides the kind class: sensor, input, output or thermostat.
 - **`interpretacja`** - a refinement. For a `lin_wej` on an M-SENS leaf class it
-  selects the measurement, or names the `analog_<n>` fallback. For any other
+  selects the measurement when the map holds the number. For every other
   `lin_wej`, and for `bit8`, `bit16`, `sbit16`, and `bit32`, it names the
   `value_<n>` key.
 - **`sub_sf_id`** - a refinement for `satel_alarm` only, read from

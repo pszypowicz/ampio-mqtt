@@ -92,10 +92,15 @@ def test_msens_lin_wej_channels(
     assert (kind.key, kind.unit, kind.device_class) == (key, unit, device_class)
 
 
-def test_an_unmapped_msens_number_is_the_analog_fallback() -> None:
-    kind = _sensor("lin_wej", 42, _leaf(73))
-    assert kind is not None
-    assert (kind.key, kind.device_class) == ("analog_42", None)
+@pytest.mark.parametrize(("sf_id", "interp"), [(73, 42), (75, 8), (74, None)])
+def test_an_unmapped_msens_number_is_a_value_slot(
+    sf_id: int, interp: int | None
+) -> None:
+    """On an M-SENS class, a number outside 1 to 7 or no number names no
+    measurement, so the object is the same open value slot as an integer
+    slot."""
+    kind = classify("lin_wej", interp, _leaf(sf_id))
+    assert kind == classify("bit8", interp, _leaf(1002))
 
 
 @pytest.mark.parametrize("sf_id", [20, 285, 1003])
@@ -350,6 +355,7 @@ def test_kind_key_vocabulary_contents() -> None:
         "pressure_rel",
         "co2",
     } == SENSOR_KIND_KEYS
+    assert SENSOR_KIND_KEY_PREFIXES == ("value_",)
 
 
 def test_classify_never_leaves_the_exported_vocabulary() -> None:

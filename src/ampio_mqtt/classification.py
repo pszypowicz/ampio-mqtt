@@ -306,12 +306,11 @@ def _kind_keys() -> tuple[
 # consumer-CI contract built on these lives in docs/classification.md.
 SENSOR_KIND_KEYS, INPUT_KIND_KEYS, OUTPUT_KIND_KEYS, THERMOSTAT_KIND_KEYS = _kind_keys()
 
-# The two open families: keys minted with the object's `interpretacja`
-# embedded (`analog_<n>` for an M-SENS lin_wej number the map does not know,
-# `value_<n>` for the numeric bit8/bit16/sbit16/bit32 slots and a lin_wej off
-# the M-SENS classes), so they cannot be enumerated. A consumer treats each
-# prefix as one mapping decision.
-SENSOR_KIND_KEY_PREFIXES: tuple[str, ...] = ("analog_", "value_")
+# The open family: `value_<n>` keys minted with the object's `interpretacja`
+# embedded, for the numeric bit8/bit16/sbit16/bit32 slots and every lin_wej
+# that names no M-SENS measurement, so they cannot be enumerated. A consumer
+# treats the prefix as one mapping decision.
+SENSOR_KIND_KEY_PREFIXES: tuple[str, ...] = ("value_",)
 
 
 def _value_kind(interpretacja: int | None) -> SensorKind:
@@ -329,9 +328,10 @@ def classify(
     ``interpretacja`` selects the M-SENS measurement and names the numeric
     ``value_<n>`` key. A ``typ_komponentu`` with no table entry (unknown,
     or no metadata yet) is the generic value-only sensor, so such an
-    object still surfaces. The leaf ``address`` refines two types. Its
-    ``sf_id`` gives a ``lin_wej`` the M-SENS map on an M-SENS class and
-    the ``value_<n>`` family elsewhere. Its ``sub_sf_id`` names the
+    object still surfaces. The leaf ``address`` refines two types. A
+    ``lin_wej`` takes its measurement from the M-SENS map when its
+    ``sf_id`` is an M-SENS class and the map holds its number, and is a
+    ``value_<n>`` slot otherwise. The ``sub_sf_id`` names the
     ``satel_alarm`` half.
     """
     profile = TYPE_PROFILES.get(typ_komponentu) if typ_komponentu is not None else None
@@ -339,11 +339,10 @@ def classify(
         return _GENERIC_SENSOR
     match profile.kind:
         case _Selector.ANALOG:
-            if address.sf_id not in _MSENS_LIN_WEJ_SF:
-                return _value_kind(interpretacja)
-            if interpretacja in _LIN_WEJ_BY_INTERP:
+            msens = address.sf_id in _MSENS_LIN_WEJ_SF
+            if msens and interpretacja in _LIN_WEJ_BY_INTERP:
                 return _LIN_WEJ_BY_INTERP[interpretacja]
-            return SensorKind(f"analog_{interpretacja}", "Analog input", None, None)
+            return _value_kind(interpretacja)
         case _Selector.NUMERIC:
             return _value_kind(interpretacja)
         case _Selector.ALARM:
