@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from .models import ModuleAddress
 
 # Device-class strings the library can emit. Values match Home Assistant's
 # SensorDeviceClass enum so consumers may pass them through directly.
@@ -136,8 +139,11 @@ _ALARM_BY_SUB_SF: dict[int, InputKind] = {
 # for the reason the two halves take none.
 _BASE_ALARM = InputKind("alarm", "Alarm")
 
-# lin_wej (analog input) measurement kind, keyed by `interpretacja`.
-# The M-SENS channel map (4=lux, 5=IAQ, 7=CO2).
+# The M-SENS lin_wej measurements, keyed by `interpretacja`. Designer writes
+# one number into both `interpretacja` and `funkcja`: the leaf channel plus
+# one, plus an offset the leaf class sets. The offsets of the classes in
+# `_MSENS_LIN_WEJ_SF` number the M-SENS channels 1 to 7, so on those classes
+# alone the number names a measurement.
 _LIN_WEJ_BY_INTERP: dict[int, SensorKind] = {
     1: SensorKind("humidity", "Humidity", "%", "humidity"),
     2: SensorKind("pressure_abs", "Pressure (absolute)", "hPa", "atmospheric_pressure"),
@@ -147,6 +153,14 @@ _LIN_WEJ_BY_INTERP: dict[int, SensorKind] = {
     6: SensorKind("pressure_rel", "Pressure (relative)", "hPa", "pressure"),
     7: SensorKind("co2", "CO2", "ppm", "carbon_dioxide", precision=0),
 }
+
+# The M-SENS leaf classes that hold a lin_wej: 73 humidity, absolute pressure
+# and loudness, 74 illuminance, air quality and relative pressure, 75 CO2.
+# A lin_wej on any other class, such as a generic analog input, a 0-10 V
+# input or a bridge slot, holds its channel plus one. It joins the open
+# `value_<interpretacja>` family of the integer slots, and its unit is the
+# one Designer stores (`AmpioObject.unit`).
+_MSENS_LIN_WEJ_SF = frozenset({73, 74, 75})
 
 # Generic value-only sensor for a catalogue row with no usable metadata
 # (a `typ_komponentu` missing from TYPE_PROFILES). The value may be
@@ -183,7 +197,7 @@ class _Selector(Enum):
     instance, because one ``typ_komponentu`` covers several kinds. A second
     wire field picks the member."""
 
-    ANALOG = auto()  # the interpretacja-keyed lin_wej map, open below it
+    ANALOG = auto()  # the M-SENS map on an M-SENS leaf, else the NUMERIC family
     NUMERIC = auto()  # generic value_<interpretacja> measurement (integer slots)
     ALARM = auto()  # the sub_sf_id-keyed alarm partition halves
 
@@ -292,39 +306,47 @@ def _kind_keys() -> tuple[
 # consumer-CI contract built on these lives in docs/classification.md.
 SENSOR_KIND_KEYS, INPUT_KIND_KEYS, OUTPUT_KIND_KEYS, THERMOSTAT_KIND_KEYS = _kind_keys()
 
-# The two open families: keys minted with the object's `interpretacja`
-# embedded (`analog_<n>` for a lin_wej measurement the map does not know,
-# `value_<n>` for the numeric bit8/bit16/sbit16/bit32 slots), so they cannot be
-# enumerated. A consumer treats each prefix as one mapping decision.
-SENSOR_KIND_KEY_PREFIXES: tuple[str, ...] = ("analog_", "value_")
+# The open family: `value_<n>` keys minted with the object's `interpretacja`
+# embedded, for the numeric bit8/bit16/sbit16/bit32 slots and every lin_wej
+# that names no M-SENS measurement, so they cannot be enumerated. A consumer
+# treats the prefix as one mapping decision.
+SENSOR_KIND_KEY_PREFIXES: tuple[str, ...] = ("value_",)
+
+
+def _value_kind(interpretacja: int | None) -> SensorKind:
+    """The open ``value_<interpretacja>`` measurement."""
+    return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
 
 
 def classify(
     typ_komponentu: str | None,
     interpretacja: int | None,
-    sub_sf_id: int = 0,
+    address: ModuleAddress,
 ) -> ObjectKind:
     """Classify a DB object into the one kind it is.
 
-    ``interpretacja`` selects the lin_wej measurement and names the numeric
+    ``interpretacja`` selects the M-SENS measurement and names the numeric
     ``value_<n>`` key. A ``typ_komponentu`` with no table entry (unknown,
     or no metadata yet) is the generic value-only sensor, so such an
-    object still surfaces. ``sub_sf_id`` is
-    the leaf sub-function, 0 for a single-role class, which refines
-    ``satel_alarm`` alone.
+    object still surfaces. The leaf ``address`` refines two types. A
+    ``lin_wej`` takes its measurement from the M-SENS map when its
+    ``sf_id`` is an M-SENS class and the map holds its number, and is a
+    ``value_<n>`` slot otherwise. The ``sub_sf_id`` names the
+    ``satel_alarm`` half.
     """
     profile = TYPE_PROFILES.get(typ_komponentu) if typ_komponentu is not None else None
     if profile is None:
         return _GENERIC_SENSOR
     match profile.kind:
         case _Selector.ANALOG:
-            if interpretacja in _LIN_WEJ_BY_INTERP:
+            msens = address.sf_id in _MSENS_LIN_WEJ_SF
+            if msens and interpretacja in _LIN_WEJ_BY_INTERP:
                 return _LIN_WEJ_BY_INTERP[interpretacja]
-            return SensorKind(f"analog_{interpretacja}", "Analog input", None, None)
+            return _value_kind(interpretacja)
         case _Selector.NUMERIC:
-            return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
+            return _value_kind(interpretacja)
         case _Selector.ALARM:
-            return _ALARM_BY_SUB_SF.get(sub_sf_id, _BASE_ALARM)
+            return _ALARM_BY_SUB_SF.get(address.sub_sf_id, _BASE_ALARM)
         case kind:
             return kind
 

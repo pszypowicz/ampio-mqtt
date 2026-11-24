@@ -817,6 +817,8 @@ def test_details_populate_and_classify() -> None:
             "id": 107,
             "typ_komponentu": "lin_wej",
             "interpretacja": 7,
+            "funkcja": 7,
+            "leafId": "0_cafe_75_0_0",
             "opis_menu": "CO2",
         },
         {
@@ -835,6 +837,7 @@ def test_details_populate_and_classify() -> None:
     # The raw `interpretacja` selector is retained on the object for consumers,
     # alongside the resolved `kind` the library derives from it.
     assert store.objects[107].interpretacja == 7
+    assert store.objects[107].kind.key == "co2"
     # relay is not a sensor
     assert not isinstance(store.objects[1].kind, SensorKind)
     # The Designer's Matter device type tag rides the merge; untagged rows
@@ -1665,12 +1668,12 @@ def test_a_push_for_a_system_row_is_pruned_by_the_next_catalogue() -> None:
 # --- the app-sync data surface (standard accounts) --------------------------
 
 
-def _app_row(oid: int, leaf: str, name: str = "Air quality", interp: int = 5) -> dict:
+def _app_row(oid: int, leaf: str, name: str = "Air quality") -> dict:
     """One `data/devices` row: the catalogue shape minus the config columns."""
     return {
         "id": oid,
         "typ_komponentu": "lin_wej",
-        "interpretacja": interp,
+        "interpretacja": 5,
         "funkcja": 5,
         "leafId": leaf,
         "opis_menu": name,
@@ -1679,10 +1682,10 @@ def _app_row(oid: int, leaf: str, name: str = "Air quality", interp: int = 5) ->
 
 def test_data_devices_populate_and_classify() -> None:
     store = _app_store()
-    _feed_catalogue(store, _app_row(24, "0_cb9b_74_0_1", interp=7))
+    _feed_catalogue(store, _app_row(24, "0_cb9b_74_0_1"))
     obj = store.objects[24]
     assert obj.name == "Air quality"
-    assert obj.kind is not None and obj.kind.device_class == "carbon_dioxide"
+    assert obj.kind is not None and obj.kind.device_class == "aqi"
     assert obj.funkcja == 5
     assert obj.address == ModuleAddress(mac=0xCB9B, channel=1, sf_id=74, sub_sf_id=0)
 
