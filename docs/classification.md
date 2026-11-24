@@ -6,7 +6,7 @@ classifies each object the door admits into exactly one kind (see
 platforms), `InputKind` (binary or boolean platforms), `OutputKind`
 (controllable platforms), and `ThermostatKind` (the `reg` temperature
 controllers, climate platform).
-`classify(typ_komponentu, interpretacja, sub_sf_id, sf_id)` in
+`classify(typ_komponentu, interpretacja, address)` in
 `ampio_mqtt.classification` returns it. A component type is a measurement, a
 boolean input, something controllable, or a thermostat, and never two of these.
 The four kinds are thus alternatives, not optional slots on the object.
@@ -16,12 +16,13 @@ The tables themselves live in
 are not repeated here. Each row of `TYPE_PROFILES` covers one known
 `typ_komponentu`. It gives the kind and the raw-bridge channel prefix.
 `_LIN_WEJ_BY_INTERP` maps a `lin_wej` object's `interpretacja` to its
-measurement on a module's own leaf. The `OutputKind` flags say which command
+measurement on the M-SENS leaf classes. The `OutputKind` flags say which command
 verbs an output answers, and `InputKind.switchable` says the same for an input.
 `pulsable` sits on both classes. It says whether a `setValue` time argument
 reverts the object, and `AmpioObject.pulse_ms` gates on it. A type absent from
-`TYPE_PROFILES` (or an `interpretacja` absent from the analog map) still
-classifies, as the generic value sensor or the `analog_<n>` fallback.
+`TYPE_PROFILES` still classifies, as the generic value sensor. On an M-SENS leaf
+class, an `interpretacja` absent from the analog map classifies as the
+`analog_<n>` fallback.
 
 ## Wire notes the tables cannot carry
 
@@ -70,12 +71,18 @@ classifies, as the generic value sensor or the `analog_<n>` fallback.
   `value_<interpretacja>` family. The kind carries no unit and no device class,
   because what a slot holds is the installer's choice. `AmpioObject.unit` and
   `AmpioObject.decimals` serve what Designer stores for the object (see below).
-- A `lin_wej` on a bridged leaf (leaf class above 1000, such as 1003) is a
-  Modbus register that an RS-485 module reads, not an M-SENS channel. On such a
-  leaf `interpretacja` repeats `funkcja`, the slot number. The M-SENS map would
-  read slot 7 as CO2 and slot 1 as humidity. Thus a bridged `lin_wej` classifies
-  into the open `value_<interpretacja>` family, the same as the integer slots.
-  Its unit is the one Designer stores, and Designer's "Divide by" scales it.
+- `lin_wej` is a linear input. Designer writes one number into both `funkcja`
+  and `interpretacja`. The number is the leaf channel plus one, plus an offset
+  that the leaf class sets. The three M-SENS leaf classes set the offsets 0, 3
+  and 6, so their channels read 1 to 7 and each number names a measurement.
+  Class 73 holds humidity, absolute pressure and loudness. Class 74 holds
+  illuminance, air quality and relative pressure. Class 75 holds CO2. The M-SENS
+  map applies on these classes only. Designer also creates a `lin_wej` for a
+  generic analog input (class 20), a 0-10 V input (class 285) and a bridge slot
+  (class 1003). A gateway module such as an M-CON-485 lands a Modbus register in
+  a bridge slot. These classes set no offset, so the number is the channel plus
+  one. Thus such an object classifies into the open `value_<interpretacja>`
+  family, the same as the integer slots. Its unit is the one Designer stores.
 - `satel_alarm` is the armed and alarmed pair of an alarm partition. The prefix
   is not Satel-specific: a Jablotron behind an M-CON lands here too. The
   catalogue row cannot tell the two halves apart, because both carry the same
@@ -92,9 +99,9 @@ classifies, as the generic value sensor or the `analog_<n>` fallback.
 ## Units and display precision
 
 The kind tables fix a unit for the known measurements only (`temp` and the
-`lin_wej` map). The open `value_<n>` family carries none. Designer stores the
-installer's choice per object, and the library serves it on two columns and two
-derived properties.
+M-SENS `lin_wej` map). The open `value_<n>` family carries none. Designer stores
+the installer's choice per object, and the library serves it on two columns and
+two derived properties.
 
 - `AmpioObject.url` is Designer's "Unit" field, verbatim. The Dictionary
   dialog's "Add unit to description" writes the same column. Designer writes a
@@ -120,9 +127,10 @@ Designer's "Divide by" checkbox lives in the Dictionary dialog, not on the main
 form. It sets `params` bit 5 and stores the divider in the `max` column. The
 M-SERV applies the divider to the published state. A slot that holds 37 with
 "Divide by" 100 arrives as `"state": "0.370000"`. The library needs no scale
-logic of its own, and it reads neither the bit nor the divider. The same
-mechanism explains the float noise on linear inputs, which Designer creates with
-"Divide by" 10.
+logic of its own, and it reads neither the bit nor the divider. Designer sets
+"Divide by" 10 on a generic analog input, a bridge slot and a hand-added
+`lin_wej`. It sets "Divide by" 100 on a 0-10 V input. An M-SENS `lin_wej` gets
+no divider. The divider explains the float noise on the inputs that carry one.
 
 ## Platform shapes
 
@@ -168,15 +176,16 @@ type it does not map.
 Classification uses exactly four wire fields:
 
 - **`typ_komponentu`** - the object type, the primary discriminator. It alone
-  decides the family.
-- **`interpretacja`** - a refinement. For `lin_wej` it selects the measurement,
-  or names the `analog_<n>` fallback. For `bit8`, `bit16`, `sbit16`, and `bit32`
-  it names the `value_<n>` key.
+  decides the kind class: sensor, input, output or thermostat.
+- **`interpretacja`** - a refinement. For a `lin_wej` on an M-SENS leaf class it
+  selects the measurement, or names the `analog_<n>` fallback. For any other
+  `lin_wej`, and for `bit8`, `bit16`, `sbit16`, and `bit32`, it names the
+  `value_<n>` key.
 - **`sub_sf_id`** - a refinement for `satel_alarm` only, read from
   `address.sub_sf_id`. It names the armed half or the alarmed half.
-- **`sf_id`** - a refinement for `lin_wej` only, read from `address.sf_id`. A
-  leaf class above 1000 is a bridged slot, so the object is a `value_<n>`
-  measurement and not an M-SENS channel.
+- **`sf_id`** - a refinement for `lin_wej` only, read from `address.sf_id`. The
+  M-SENS classes 73, 74 and 75 select the M-SENS map. Any other class makes the
+  object a `value_<n>` measurement.
 
 It does **not** use:
 

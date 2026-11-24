@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from .models import ModuleAddress
 
 # Device-class strings the library can emit. Values match Home Assistant's
 # SensorDeviceClass enum so consumers may pass them through directly.
@@ -136,10 +139,11 @@ _ALARM_BY_SUB_SF: dict[int, InputKind] = {
 # for the reason the two halves take none.
 _BASE_ALARM = InputKind("alarm", "Alarm")
 
-# lin_wej (analog input) measurement kind, keyed by `interpretacja`.
-# The M-SENS channel map (4=lux, 5=IAQ, 7=CO2). It holds for a lin_wej on a
-# module's own leaf only; a bridged leaf gives `interpretacja` no meaning
-# (see `_BRIDGED_SF_FLOOR`).
+# The M-SENS lin_wej measurements, keyed by `interpretacja`. Designer writes
+# one number into both `interpretacja` and `funkcja`: the leaf channel plus
+# one, plus an offset the leaf class sets. The offsets of the classes in
+# `_MSENS_LIN_WEJ_SF` number the M-SENS channels 1 to 7, so on those classes
+# alone the number names a measurement.
 _LIN_WEJ_BY_INTERP: dict[int, SensorKind] = {
     1: SensorKind("humidity", "Humidity", "%", "humidity"),
     2: SensorKind("pressure_abs", "Pressure (absolute)", "hPa", "atmospheric_pressure"),
@@ -150,14 +154,13 @@ _LIN_WEJ_BY_INTERP: dict[int, SensorKind] = {
     7: SensorKind("co2", "CO2", "ppm", "carbon_dioxide", precision=0),
 }
 
-# The leaf classes above this floor are bridged slots: 1001 `temp`, 1002
-# `bit8`, 1003 `lin_wej` and 1005 `bit32`, where an RS-485 module lands a
-# Modbus reading. On such a leaf `interpretacja` repeats `funkcja`, the slot
-# number, so it selects no M-SENS measurement. A bridged lin_wej is the
-# installer's own register, the way a bridged bit16 is, and it joins the open
-# `value_<interpretacja>` family. Its unit is the one Designer stores
-# (`AmpioObject.unit`), and Designer's "Divide by" scales it at the M-SERV.
-_BRIDGED_SF_FLOOR = 1000
+# The M-SENS leaf classes that hold a lin_wej: 73 humidity, absolute pressure
+# and loudness, 74 illuminance, air quality and relative pressure, 75 CO2.
+# A lin_wej on any other class, such as a generic analog input, a 0-10 V
+# input or a bridge slot, holds its channel plus one. It joins the open
+# `value_<interpretacja>` family of the integer slots, and its unit is the
+# one Designer stores (`AmpioObject.unit`).
+_MSENS_LIN_WEJ_SF = frozenset({73, 74, 75})
 
 # Generic value-only sensor for a catalogue row with no usable metadata
 # (a `typ_komponentu` missing from TYPE_PROFILES). The value may be
@@ -194,8 +197,7 @@ class _Selector(Enum):
     instance, because one ``typ_komponentu`` covers several kinds. A second
     wire field picks the member."""
 
-    ANALOG = auto()  # the interpretacja-keyed lin_wej map, open below it,
-    # or the NUMERIC family on a bridged leaf
+    ANALOG = auto()  # the M-SENS map on an M-SENS leaf, else the NUMERIC family
     NUMERIC = auto()  # generic value_<interpretacja> measurement (integer slots)
     ALARM = auto()  # the sub_sf_id-keyed alarm partition halves
 
@@ -305,42 +307,39 @@ def _kind_keys() -> tuple[
 SENSOR_KIND_KEYS, INPUT_KIND_KEYS, OUTPUT_KIND_KEYS, THERMOSTAT_KIND_KEYS = _kind_keys()
 
 # The two open families: keys minted with the object's `interpretacja`
-# embedded (`analog_<n>` for a lin_wej measurement the map does not know,
-# `value_<n>` for the numeric bit8/bit16/sbit16/bit32 slots and a bridged
-# lin_wej), so they cannot be enumerated. A consumer treats each prefix as one
-# mapping decision.
+# embedded (`analog_<n>` for an M-SENS lin_wej number the map does not know,
+# `value_<n>` for the numeric bit8/bit16/sbit16/bit32 slots and a lin_wej off
+# the M-SENS classes), so they cannot be enumerated. A consumer treats each
+# prefix as one mapping decision.
 SENSOR_KIND_KEY_PREFIXES: tuple[str, ...] = ("analog_", "value_")
 
 
 def _value_kind(interpretacja: int | None) -> SensorKind:
-    """The open ``value_<interpretacja>`` measurement of an integer slot."""
+    """The open ``value_<interpretacja>`` measurement."""
     return SensorKind(f"value_{interpretacja}", "Measurement", None, None)
 
 
 def classify(
     typ_komponentu: str | None,
     interpretacja: int | None,
-    sub_sf_id: int = 0,
-    sf_id: int = 0,
+    address: ModuleAddress,
 ) -> ObjectKind:
     """Classify a DB object into the one kind it is.
 
-    ``interpretacja`` selects the lin_wej measurement and names the numeric
+    ``interpretacja`` selects the M-SENS measurement and names the numeric
     ``value_<n>`` key. A ``typ_komponentu`` with no table entry (unknown,
     or no metadata yet) is the generic value-only sensor, so such an
-    object still surfaces. ``sub_sf_id`` is
-    the leaf sub-function, 0 for a single-role class, which refines
-    ``satel_alarm`` alone. ``sf_id`` is the leaf class. It refines
-    ``lin_wej`` alone: on a bridged leaf (above 1000) the object is a
-    ``value_<n>`` slot, not an M-SENS channel. 0, the default, reads as a
-    module's own leaf.
+    object still surfaces. The leaf ``address`` refines two types. Its
+    ``sf_id`` gives a ``lin_wej`` the M-SENS map on an M-SENS class and
+    the ``value_<n>`` family elsewhere. Its ``sub_sf_id`` names the
+    ``satel_alarm`` half.
     """
     profile = TYPE_PROFILES.get(typ_komponentu) if typ_komponentu is not None else None
     if profile is None:
         return _GENERIC_SENSOR
     match profile.kind:
         case _Selector.ANALOG:
-            if sf_id > _BRIDGED_SF_FLOOR:
+            if address.sf_id not in _MSENS_LIN_WEJ_SF:
                 return _value_kind(interpretacja)
             if interpretacja in _LIN_WEJ_BY_INTERP:
                 return _LIN_WEJ_BY_INTERP[interpretacja]
@@ -348,7 +347,7 @@ def classify(
         case _Selector.NUMERIC:
             return _value_kind(interpretacja)
         case _Selector.ALARM:
-            return _ALARM_BY_SUB_SF.get(sub_sf_id, _BASE_ALARM)
+            return _ALARM_BY_SUB_SF.get(address.sub_sf_id, _BASE_ALARM)
         case kind:
             return kind
 

@@ -17,6 +17,8 @@ from ampio_mqtt.classification import ThermostatKind, classify
 from ampio_mqtt.device_types import module_model
 from ampio_mqtt.models import MSERV_MAC, DesignerRecord, ModuleRecord
 
+_ADDRESS = ModuleAddress(mac=0xCAFE, channel=0, sf_id=257, sub_sf_id=0)
+
 
 # Every catalogue row carries these columns on both tiers, so an object
 # always holds them. A test names only what it is about.
@@ -26,7 +28,7 @@ def _object(**over: object) -> AmpioObject:
         "typ_komponentu": "",
         "interpretacja": 0,
         "funkcja": 1,
-        "address": ModuleAddress(mac=0xCAFE, channel=0, sf_id=257, sub_sf_id=0),
+        "address": _ADDRESS,
         "leaf_key": "leaf_0_cafe_257_0_0",
     }
     return AmpioObject(**{**row, **over})  # type: ignore[arg-type]
@@ -222,15 +224,13 @@ def test_bell_reads_params_bit_15_only_on_relay_and_flag(
 def test_kind_derives_from_the_metadata_inputs() -> None:
     """A seeded instance carries the same kind the store would compute -
     the derivation lives in the model, not at every construction site."""
-    assert _object(id=1, typ_komponentu="led").kind == classify("led", None)
-    assert _object(id=1).kind == classify(None, None)  # the generic sensor
+    assert _object(id=1, typ_komponentu="led").kind == classify("led", None, _ADDRESS)
+    assert _object(id=1).kind == classify(None, None, _ADDRESS)  # the generic sensor
 
 
-def test_kind_reads_the_leaf_class_for_a_bridged_linear_input() -> None:
-    """A Modbus register on an RS-485 module is a lin_wej on leaf class
-    1003, and its `interpretacja` repeats the slot number. The object is a
-    value slot with the unit Designer stores, not the M-SENS channel the
-    number names (7 would read as CO2)."""
+def test_kind_reads_the_leaf_class_of_a_linear_input() -> None:
+    """A lin_wej on a bridge slot (class 1003) is a value slot with the unit
+    Designer stores. The same number on the M-SENS CO2 class is CO2."""
     bridged = ModuleAddress(mac=0x130, channel=6, sf_id=1003, sub_sf_id=0)
     obj = _object(
         id=139,
@@ -243,19 +243,19 @@ def test_kind_reads_the_leaf_class_for_a_bridged_linear_input() -> None:
     )
     assert obj.kind.key == "value_7"
     assert obj.unit == "%"
-    msens = replace(obj, address=replace(bridged, sf_id=74))
+    msens = replace(obj, address=replace(bridged, channel=0, sf_id=75))
     assert msens.kind.key == "co2"
 
 
 def test_kind_rederives_on_replace() -> None:
     obj = _object(id=1, typ_komponentu="led")
-    assert replace(obj, typ_komponentu="rgbw").kind == classify("rgbw", None)
+    assert replace(obj, typ_komponentu="rgbw").kind == classify("rgbw", None, _ADDRESS)
 
 
 def test_kind_cannot_be_passed() -> None:
     """No instance can hold a kind that disagrees with its inputs."""
     with pytest.raises(TypeError):
-        _object(id=1, kind=classify("led", None))  # type: ignore[call-arg]
+        _object(id=1, kind=classify("led", None, _ADDRESS))  # type: ignore[call-arg]
 
 
 def test_module_model_derives_from_type() -> None:

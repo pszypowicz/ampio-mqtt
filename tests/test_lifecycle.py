@@ -638,7 +638,7 @@ async def test_restricted_account_completes_via_data_surface_fallback() -> None:
                     "id": 24,
                     "typ_komponentu": "lin_wej",
                     "interpretacja": 7,
-                    "funkcja": 5,
+                    "funkcja": 7,
                     "leafId": "0_cb9b_75_0_0",
                     "opis_menu": "CO2",
                 }

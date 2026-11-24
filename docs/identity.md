@@ -168,17 +168,22 @@ objects hosted on a relay module carry the roller code, so the code follows the
 configured leaf class, not the host product. The low codes match the Designer
 bundle's IO type enum exactly where both are known:
 
-| `sfId` | Leaf class                                                                      |
-| ------ | ------------------------------------------------------------------------------- |
-| 3      | binary flag (`flaga`)                                                           |
-| 5      | roller (`roleta_*`)                                                             |
-| 13     | heating regulator (`reg`)                                                       |
-| 30     | `rgbw`                                                                          |
-| 67     | open-collector output (`led`/`przekaznik` on M-INOC)                            |
-| 73-76  | M-SENS channels (`lin_wej`, `temp`)                                             |
-| 257    | binary I/O                                                                      |
-| 296    | `satel_alarm`                                                                   |
-| >1000  | bridged/wireless leaves: 1001 `temp`, 1002 `bit8`, 1003 `lin_wej`, 1005 `bit32` |
+| `sfId`    | Leaf class                                                                          |
+| --------- | ----------------------------------------------------------------------------------- |
+| 3         | binary flag (`flaga`)                                                               |
+| 5         | roller (`roleta_*`)                                                                 |
+| 13        | heating regulator (`reg`)                                                           |
+| 20        | analog input (`lin_wej`)                                                            |
+| 30        | `rgbw`                                                                              |
+| 67        | open-collector output (`led`/`przekaznik` on M-INOC)                                |
+| 73        | M-SENS humidity, absolute pressure and loudness (`lin_wej`)                         |
+| 74        | M-SENS illuminance, air quality and relative pressure (`lin_wej`)                   |
+| 75        | M-SENS CO2 (`lin_wej`)                                                              |
+| 76        | M-SENS temperature (`temp`)                                                         |
+| 257       | binary I/O                                                                          |
+| 285       | 0-10 V input (`lin_wej`)                                                            |
+| 296       | `satel_alarm`                                                                       |
+| 1001-1005 | bridge slots: 1001 `temp`, 1002 `bit8`, 1003 `lin_wej`, 1004 `sbit16`, 1005 `bit32` |
 
 **`subSfId` selects a sub-function inside its `sfId`**, not a bank index. The
 Designer nests the sub-functions under each special function, so a value has
@@ -201,8 +206,8 @@ app-sync catalogue the standard tier receives), but it cannot replace the module
 type code. Both tables are coverage, not a specification, so an unlisted code
 proves nothing. `kind` reads `typ_komponentu`, `interpretacja` for `lin_wej` and
 the numeric value types, and `address.sub_sf_id` for `satel_alarm`.
-`address.sf_id` enters `kind` for `lin_wej` only. A bridged leaf (above 1000)
-makes the object a `value_<n>` slot (see
+`address.sf_id` enters `kind` for `lin_wej` only. The M-SENS classes 73, 74 and
+75 select the M-SENS map. Any other class makes it a `value_<n>` slot (see
 [`classification.md`](classification.md)). The raw bridge reads `address.sf_id`
 for `przekaznik` objects only. A leaf of class 67 reports on the `a` prefix. Any
 other class reports on `o`. [`panel-writes.md`](panel-writes.md) describes which
